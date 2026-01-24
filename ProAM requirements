@@ -36,6 +36,7 @@ In any of these events, one man and one woman will compete with eachother in a t
 
     ### Bull/Belle and Overall Team
     * At the end of both days of competition, we will need a tabulation of the top 5 College Teams, as well as the top 5 individual Men and the top 5 individual women. The top overall man is designated as "Bull of the Woods" and the top overall woman is designated as the "Belle of the Woods" 
+* At the end of both days, in addition to the overall and team scores, there will need to be a printout of the results of every single event.
 
 ## Events Lists
 
@@ -124,7 +125,16 @@ During registration, if a partner is not explicitly listed on the form, I want a
 
 ## Scoring
 
-There is no show-wide tracking of points for pro competitors, but payouts need to be tracked. Payouts will vary by dollar amount and the placing that it will pay out to for every event and will be distributed at the end of the show.
+* There is no show-wide tracking of points for pro competitors, but payouts need to be tracked. Payouts will vary by dollar amount and the placing that it will pay out to for every event and will be distributed at the end of the show.
+
+* At the end of both days there will need to be a printout of the results of every single event.
+
+* An example of the current college Scoring format is included in the project files: 
+
+C:\Users\Alex Kaper\Desktop\John Ruffato Startup Challenge\Python\Missoula Pro Am\College Entry Examples\1. event scoring-UM 25-working 1.xlsx
+
+College Entry Examples\2. team-individual scoring-UM 25-working file 1.xlsx
+
 
 ## Events Lists
 
@@ -202,6 +212,26 @@ NOTE: The results of this relay do not count towards team or individual college 
     Partnered Axe Throw: 1 target for finals
 
 # Show Entry
+
+
+## Professional Entries 
+* Professional entries are done individually. At theend we can develop the most optimized entry form for the system.
+
+* Professional entries will have entry fees. The enry fees will be by-event, and the price will vary with each event
+
+* Professional entry form needs to ask whether they are a current American Lumberjack Assosciation (ALA) Member. There needs to be an option in the menu to check whether a memeber has self-reported current membership.
+
+* Professional competitors will also indicate whether they are interested in entering the Pro-Am lottery when they register
+
+* In addition to Events entered, we need to track a competitor's name, gender, address, phone number, email address, and shirt size
+
+* There needs to be an option to indicate whether or not you are sharing gear with another compeitor and what events you will be sharing the equipment. Some competitors share expensive gear or gear that is difficult to travel with like Springboards, hotsaws, or single saws. This is to prevent two competitors that are sharing from being put in the same heat.
+
+
+## College Entries
+* Colleges submit their entires by school. We have a working excel signup sheet already, and is included here: 
+
+C:\Users\Alex Kaper\Desktop\John Ruffato Startup Challenge\Python\Missoula Pro Am\College Entry Examples\College entry form.xlsx
 
 
 
