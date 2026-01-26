@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Payout Summary - {{ tournament.name }} {{ tournament.year }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            padding: 0.5in;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+            border-bottom: 3px solid #2d5a27;
+            padding-bottom: 15px;
+        }
+        .header h1 { font-size: 22pt; color: #2d5a27; }
+        .header h2 { font-size: 14pt; font-weight: normal; color: #666; }
+
+        .summary-box {
+            background: #f5f5f5;
+            border: 2px solid #2d5a27;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        .summary-box .total {
+            font-size: 28pt;
+            color: #198754;
+            font-weight: bold;
+        }
+        .summary-box .label {
+            font-size: 12pt;
+            color: #666;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #2d5a27;
+            color: white;
+        }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+
+        .rank { text-align: center; width: 50px; font-weight: bold; }
+        .rank-1 { color: #daa520; font-size: 14pt; }
+        .rank-2 { color: #888; }
+        .rank-3 { color: #cd7f32; }
+
+        .earnings { text-align: right; font-weight: bold; color: #198754; }
+        .events { text-align: center; }
+
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 9pt;
+            color: #999;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+        }
+
+        .signature-line {
+            margin-top: 50px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .signature-block {
+            width: 45%;
+            border-top: 1px solid #333;
+            padding-top: 5px;
+            text-align: center;
+            font-size: 10pt;
+        }
+
+        @media print {
+            body { padding: 0; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{ tournament.name }} {{ tournament.year }}</h1>
+        <h2>Professional Competition - Payout Summary</h2>
+    </div>
+
+    <div class="summary-box">
+        <div class="label">Total Payouts Distributed</div>
+        <div class="total">${{ "%.2f"|format(total_paid) }}</div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th class="rank">Rank</th>
+                <th>Competitor</th>
+                <th class="events">Events</th>
+                <th class="earnings">Total Earnings</th>
+                <th style="text-align: center; width: 100px;">Signature</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in competitors %}
+            <tr>
+                <td class="rank rank-{{ loop.index if loop.index <= 3 else '' }}">{{ loop.index }}</td>
+                <td>
+                    <strong>{{ c.name }}</strong>
+                    {% if c.is_ala_member %}<small style="color: #0d6efd;">(ALA)</small>{% endif %}
+                </td>
+                <td class="events">{{ c.get_events_entered()|length }}</td>
+                <td class="earnings">${{ "%.2f"|format(c.total_earnings) }}</td>
+                <td></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr style="background-color: #d4edda;">
+                <td colspan="3" style="text-align: right;"><strong>Total</strong></td>
+                <td class="earnings" style="font-size: 14pt;">${{ "%.2f"|format(total_paid) }}</td>
+                <td></td>
+            </tr>
+        </tfoot>
+    </table>
+
+    <div class="signature-line">
+        <div class="signature-block">
+            Tournament Director
+        </div>
+        <div class="signature-block">
+            Date
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>Missoula Pro Am Tournament Manager</p>
+        <p>This document serves as official record of payouts distributed.</p>
+    </div>
+
+    <button class="no-print" onclick="window.print()" style="position: fixed; top: 10px; right: 10px; padding: 10px 20px; cursor: pointer;">
+        Print
+    </button>
+</body>
+</html>

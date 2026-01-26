@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Heats - {{ event.display_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Events</a></li>
+                    <li class="breadcrumb-item active">{{ event.display_name }}</li>
+                </ol>
+            </nav>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-layers text-primary"></i>
+                        {{ event.display_name }} - Heats
+                    </h1>
+                    <p class="text-muted mb-0">
+                        <span class="badge bg-secondary">{{ event.scoring_type }}</span>
+                        <span class="badge bg-info">{{ event.max_stands or '?' }} stands</span>
+                        {% if event.requires_dual_runs %}
+                            <span class="badge bg-warning text-dark">Dual Runs Required</span>
+                        {% endif %}
+                    </p>
+                </div>
+                <div>
+                    {% if not heats %}
+                    <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST" style="display:inline;">
+                        <button type="submit" class="btn btn-proam">
+                            <i class="bi bi-shuffle"></i> Generate Heats
+                        </button>
+                    </form>
+                    {% else %}
+                    <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST" style="display:inline;">
+                        <button type="submit" class="btn btn-outline-warning" onclick="return confirm('This will regenerate all heats. Continue?')">
+                            <i class="bi bi-arrow-repeat"></i> Regenerate
+                        </button>
+                    </form>
+                    {% endif %}
+                    <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}" class="btn btn-outline-success">
+                        <i class="bi bi-clipboard-data"></i> View Results
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if heats %}
+    <div class="row">
+        {% for heat in heats %}
+        <div class="col-md-4 col-lg-3 mb-4">
+            <div class="card h-100 {% if heat.status == 'completed' %}border-success{% endif %}">
+                <div class="card-header d-flex justify-content-between align-items-center
+                            {% if heat.status == 'completed' %}bg-success text-white{% else %}bg-light{% endif %}">
+                    <span>
+                        <strong>Heat {{ heat.heat_number }}</strong>
+                        {% if event.requires_dual_runs %}
+                            <small>- Run {{ heat.run_number }}</small>
+                        {% endif %}
+                    </span>
+                    {% if heat.status == 'completed' %}
+                        <i class="bi bi-check-circle-fill"></i>
+                    {% elif heat.status == 'in_progress' %}
+                        <span class="badge bg-primary">Active</span>
+                    {% endif %}
+                </div>
+                <ul class="list-group list-group-flush">
+                    {% set competitors = heat.get_competitors() %}
+                    {% set assignments = heat.get_stand_assignments() %}
+                    {% for comp_id in competitors %}
+                        {% if event.event_type == 'college' %}
+                            {% set comp = tournament.college_competitors.filter_by(id=comp_id).first() %}
+                        {% else %}
+                            {% set comp = tournament.pro_competitors.filter_by(id=comp_id).first() %}
+                        {% endif %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+                            <span>
+                                <span class="badge bg-secondary me-1">{{ assignments.get(comp_id|string, '?') }}</span>
+                                {{ comp.name if comp else 'Unknown' }}
+                            </span>
+                        </li>
+                    {% endfor %}
+                </ul>
+                <div class="card-footer">
+                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}"
+                       class="btn btn-sm {% if heat.status == 'completed' %}btn-outline-success{% else %}btn-proam{% endif %} w-100">
+                        {% if heat.status == 'completed' %}
+                            <i class="bi bi-pencil"></i> Edit Results
+                        {% else %}
+                            <i class="bi bi-play-fill"></i> Enter Results
+                        {% endif %}
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <i class="bi bi-layers display-1 text-muted"></i>
+                    <h4 class="mt-4">No Heats Generated Yet</h4>
+                    <p class="text-muted">Generate heats to distribute competitors across stands using snake draft.</p>
+                    <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST">
+                        <button type="submit" class="btn btn-proam btn-lg">
+                            <i class="bi bi-shuffle"></i> Generate Heats Now
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

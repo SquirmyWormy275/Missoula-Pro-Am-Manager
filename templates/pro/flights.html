@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Flights - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-layers text-warning"></i>
+                        Pro Competition Flights
+                    </h1>
+                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }} - Saturday Show Schedule</p>
+                </div>
+                <div>
+                    {% if not flights %}
+                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}" class="btn btn-warning">
+                        <i class="bi bi-plus-circle"></i> Build Flights
+                    </a>
+                    {% else %}
+                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}" class="btn btn-outline-warning">
+                        <i class="bi bi-arrow-repeat"></i> Rebuild Flights
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if flights %}
+    <div class="row">
+        {% for flight in flights %}
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 {% if flight.status == 'completed' %}border-success{% elif flight.status == 'in_progress' %}border-warning{% endif %}">
+                <div class="card-header d-flex justify-content-between align-items-center
+                            {% if flight.status == 'completed' %}bg-success text-white
+                            {% elif flight.status == 'in_progress' %}bg-warning text-dark
+                            {% else %}bg-light{% endif %}">
+                    <h5 class="mb-0">
+                        <i class="bi bi-layers"></i>
+                        Flight {{ flight.flight_number }}
+                    </h5>
+                    {% if flight.status == 'completed' %}
+                        <span class="badge bg-light text-success">Complete</span>
+                    {% elif flight.status == 'in_progress' %}
+                        <span class="badge bg-dark">Active</span>
+                    {% endif %}
+                </div>
+                <div class="card-body p-0">
+                    <ul class="list-group list-group-flush">
+                        {% for heat in flight.get_heats_ordered() %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+                            <span>
+                                <strong>{{ heat.event.display_name if heat.event else 'Unknown' }}</strong>
+                                <br>
+                                <small class="text-muted">Heat {{ heat.heat_number }} - {{ heat.competitor_count }} competitors</small>
+                            </span>
+                            <span>
+                                {% if heat.status == 'completed' %}
+                                    <span class="badge bg-success"><i class="bi bi-check"></i></span>
+                                {% elif heat.status == 'in_progress' %}
+                                    <span class="badge bg-warning text-dark">Active</span>
+                                {% else %}
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}"
+                                       class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-play"></i>
+                                    </a>
+                                {% endif %}
+                            </span>
+                        </li>
+                        {% else %}
+                        <li class="list-group-item text-center text-muted py-3">
+                            No heats in this flight
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <div class="card-footer text-muted text-center">
+                    <small>{{ flight.heat_count }} heats | {{ flight.event_variety }} events</small>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <i class="bi bi-layers display-1 text-muted"></i>
+                    <h4 class="mt-4">No Flights Built Yet</h4>
+                    <p class="text-muted">
+                        Build flights to organize heats from different events into a show schedule.
+                        <br>
+                        Flights mix events for crowd variety and engagement.
+                    </p>
+                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}" class="btn btn-warning btn-lg">
+                        <i class="bi bi-plus-circle"></i> Build Flights Now
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

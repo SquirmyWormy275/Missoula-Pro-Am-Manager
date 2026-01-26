@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+
+{% block title %}Partnered Axe Throw Prelims - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('partnered_axe.dashboard', tournament_id=tournament.id) }}">Partnered Axe Throw</a></li>
+                    <li class="breadcrumb-item active">Prelims</li>
+                </ol>
+            </nav>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-1-circle text-primary"></i>
+                        Preliminary Round
+                    </h1>
+                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }} - Top 4 advance to finals</p>
+                </div>
+                <div>
+                    {% if can_advance and stage == 'prelims' %}
+                    <form action="{{ url_for('partnered_axe.advance_to_finals', tournament_id=tournament.id) }}" method="POST" class="d-inline">
+                        <button type="submit" class="btn btn-warning btn-lg"
+                                onclick="return confirm('Advance top 4 pairs to finals?')">
+                            <i class="bi bi-arrow-right-circle"></i> Advance to Finals
+                        </button>
+                    </form>
+                    {% elif stage != 'prelims' %}
+                    <span class="badge bg-success fs-5">Prelims Complete</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Score Entry -->
+        <div class="col-md-4 mb-4">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-bullseye"></i> Record Prelim Score</h5>
+                </div>
+                <div class="card-body">
+                    {% if stage == 'prelims' and pairs %}
+                    <form action="{{ url_for('partnered_axe.record_prelim', tournament_id=tournament.id) }}" method="POST">
+                        <div class="mb-3">
+                            <label class="form-label">Pair</label>
+                            <select name="pair_id" class="form-select form-select-lg" required>
+                                {% for pair in pairs %}
+                                <option value="{{ pair.pair_id }}"
+                                    {% if pair.prelim_score is not none %}disabled{% endif %}>
+                                    Pair {{ pair.pair_id }}: {{ pair.competitor1.name }} & {{ pair.competitor2.name }}
+                                    {% if pair.prelim_score is not none %}(Scored: {{ pair.prelim_score }}){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Total Hits</label>
+                            <input type="number" name="hits" class="form-control form-control-lg"
+                                   min="0" max="20" required placeholder="Combined hits">
+                            <div class="form-text">Enter total hits for both competitors combined</div>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-lg w-100">
+                            <i class="bi bi-check-circle"></i> Record Score
+                        </button>
+                    </form>
+                    {% elif stage != 'prelims' %}
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle"></i>
+                        Prelims are complete. View results or proceed to finals.
+                    </div>
+                    <a href="{{ url_for('partnered_axe.finals', tournament_id=tournament.id) }}" class="btn btn-warning w-100">
+                        <i class="bi bi-trophy"></i> Go to Finals
+                    </a>
+                    {% else %}
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        No pairs registered yet.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Progress -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Progress</h5>
+                </div>
+                <div class="card-body">
+                    {% set completed = pairs|selectattr('prelim_score', 'ne', none)|list|length %}
+                    {% set total = pairs|length %}
+                    <div class="mb-2">
+                        <strong>{{ completed }} / {{ total }}</strong> pairs scored
+                    </div>
+                    <div class="progress" style="height: 30px;">
+                        <div class="progress-bar bg-success" style="width: {{ (completed / total * 100) if total > 0 else 0 }}%">
+                            {{ ((completed / total * 100)|int if total > 0 else 0) }}%
+                        </div>
+                    </div>
+                    {% if completed == total and total >= 4 %}
+                    <div class="alert alert-info mt-3 mb-0">
+                        <i class="bi bi-info-circle"></i>
+                        All prelim scores recorded. Ready to advance top 4 to finals!
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Standings -->
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-list-ol"></i> Prelim Standings</h5>
+                    <span class="badge bg-warning text-dark">Top 4 advance to finals</span>
+                </div>
+                <div class="card-body">
+                    {% if standings %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-proam">
+                                <tr>
+                                    <th class="text-center" style="width: 60px;">Rank</th>
+                                    <th>Pair</th>
+                                    <th>Competitors</th>
+                                    <th class="text-center">Hits</th>
+                                    <th class="text-center">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for pair in standings %}
+                                <tr class="{% if loop.index <= 4 %}table-success{% endif %}">
+                                    <td class="text-center">
+                                        {% if loop.index <= 4 %}
+                                            <span class="badge bg-success">{{ loop.index }}</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">{{ loop.index }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td><strong>Pair {{ pair.pair_id }}</strong></td>
+                                    <td>{{ pair.competitor1.name }} & {{ pair.competitor2.name }}</td>
+                                    <td class="text-center">
+                                        <span class="badge bg-primary fs-6">{{ pair.prelim_score }}</span>
+                                    </td>
+                                    <td class="text-center">
+                                        {% if loop.index <= 4 %}
+                                            <span class="badge bg-success"><i class="bi bi-check"></i> Qualifying</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Eliminated</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5 text-muted">
+                        <i class="bi bi-hourglass display-1"></i>
+                        <h4 class="mt-3">No Scores Yet</h4>
+                        <p>Record prelim scores to see standings.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Unscored Pairs -->
+            {% set unscored = pairs|selectattr('prelim_score', 'none')|list %}
+            {% if unscored %}
+            <div class="card mt-3">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-hourglass-split"></i> Awaiting Scores</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        {% for pair in unscored %}
+                        <div class="col-md-6 mb-2">
+                            <div class="d-flex justify-content-between align-items-center p-2 bg-light rounded">
+                                <span>
+                                    <strong>Pair {{ pair.pair_id }}:</strong>
+                                    {{ pair.competitor1.name }} & {{ pair.competitor2.name }}
+                                </span>
+                                <span class="badge bg-secondary">Pending</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

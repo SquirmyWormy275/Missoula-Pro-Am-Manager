@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}College Registration - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">College</a></li>
+                    <li class="breadcrumb-item active">Registration</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-upload text-primary"></i>
+                College Team Registration
+            </h1>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Upload Form -->
+        <div class="col-md-4 mb-4">
+            <div class="card">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-excel"></i> Import Entry Form</h6>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Upload an Excel file (.xlsx) with team entry information.</p>
+
+                    <form action="{{ url_for('registration.upload_college_entry', tournament_id=tournament.id) }}"
+                          method="POST" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="file" class="form-label">Select Entry Form</label>
+                            <input type="file" class="form-control" id="file" name="file"
+                                   accept=".xlsx,.xls" required>
+                        </div>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-proam">
+                                <i class="bi bi-upload"></i> Upload & Import
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Format Info -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-info-circle"></i> Expected Format</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted">The entry form should include columns for:</p>
+                    <ul class="small text-muted mb-0">
+                        <li>School/University name</li>
+                        <li>Team code (e.g., UM-A, CSU-B)</li>
+                        <li>Competitor name</li>
+                        <li>Gender (M/F)</li>
+                        <li>Events entered (optional)</li>
+                        <li>Partners (optional)</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Teams List -->
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-people"></i> Registered Teams</h6>
+                    <span class="badge bg-primary">{{ teams|length }} teams</span>
+                </div>
+                <div class="card-body">
+                    {% if teams %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-proam">
+                                <tr>
+                                    <th>Team</th>
+                                    <th>School</th>
+                                    <th>Men</th>
+                                    <th>Women</th>
+                                    <th>Total</th>
+                                    <th>Valid</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for t in teams %}
+                                <tr>
+                                    <td><strong>{{ t.team_code }}</strong></td>
+                                    <td>{{ t.school_name }}</td>
+                                    <td>{{ t.male_count }}</td>
+                                    <td>{{ t.female_count }}</td>
+                                    <td>{{ t.member_count }}</td>
+                                    <td>
+                                        {% if t.is_valid %}
+                                            <span class="badge bg-success"><i class="bi bi-check"></i></span>
+                                        {% else %}
+                                            <span class="badge bg-danger" title="Need min 2 per gender, max 8 total">
+                                                <i class="bi bi-x"></i>
+                                            </span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="{{ url_for('registration.team_detail', tournament_id=tournament.id, team_id=t.id) }}"
+                                           class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-eye"></i> View
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Summary -->
+                    <div class="mt-3 p-3 bg-light rounded">
+                        <div class="row text-center">
+                            <div class="col">
+                                <h4 class="mb-0">{{ teams|length }}</h4>
+                                <small class="text-muted">Teams</small>
+                            </div>
+                            <div class="col">
+                                <h4 class="mb-0">{{ teams|sum(attribute='member_count') }}</h4>
+                                <small class="text-muted">Competitors</small>
+                            </div>
+                            <div class="col">
+                                <h4 class="mb-0">{{ teams|selectattr('is_valid')|list|length }}</h4>
+                                <small class="text-muted">Valid Teams</small>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-inbox display-4 text-muted"></i>
+                        <p class="mt-3 text-muted">No teams registered yet.</p>
+                        <p class="small text-muted">Upload an entry form to get started.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

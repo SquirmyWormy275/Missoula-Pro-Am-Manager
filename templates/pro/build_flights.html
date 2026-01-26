@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}Build Flights - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}">Flights</a></li>
+                    <li class="breadcrumb-item active">Build Flights</li>
+                </ol>
+            </nav>
+
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-layers"></i> Build Pro Flights</h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>About Flights:</strong>
+                        Flights group heats from different events together for the pro show.
+                        This creates variety for the crowd and keeps the show engaging.
+                    </div>
+
+                    <h6 class="mb-3">Events with Generated Heats</h6>
+
+                    {% if events %}
+                    <div class="table-responsive mb-4">
+                        <table class="table table-sm">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Event</th>
+                                    <th class="text-center">Heats</th>
+                                    <th class="text-center">Competitors</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% set total_heats = 0 %}
+                                {% for event in events %}
+                                {% set heat_count = event.heats.count() %}
+                                {% if heat_count > 0 %}
+                                <tr>
+                                    <td>{{ event.display_name }}</td>
+                                    <td class="text-center">{{ heat_count }}</td>
+                                    <td class="text-center">{{ event.results.count() }}</td>
+                                </tr>
+                                {% endif %}
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <form method="POST">
+                        <div class="mb-3">
+                            <label for="heats_per_flight" class="form-label">Target Heats per Flight</label>
+                            <select class="form-select" id="heats_per_flight" name="heats_per_flight">
+                                <option value="6">6 heats (shorter flights)</option>
+                                <option value="8" selected>8 heats (recommended)</option>
+                                <option value="10">10 heats (longer flights)</option>
+                                <option value="12">12 heats (extended flights)</option>
+                            </select>
+                            <small class="text-muted">The system will distribute heats across flights for maximum event variety.</small>
+                        </div>
+
+                        <hr>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-warning btn-lg">
+                                <i class="bi bi-shuffle"></i> Build Flights
+                            </button>
+                            <a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left"></i> Cancel
+                            </a>
+                        </div>
+                    </form>
+                    {% else %}
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-calendar-x display-4"></i>
+                        <p class="mt-3">No pro events with heats yet.</p>
+                        <p class="small">Configure events and generate heats first.</p>
+                        <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="btn btn-primary">
+                            <i class="bi bi-calendar-plus"></i> Configure Events
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

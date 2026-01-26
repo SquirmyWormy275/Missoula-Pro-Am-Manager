@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}College Standings - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-bar-chart text-primary"></i>
+                        College Standings
+                    </h1>
+                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
+                </div>
+                <a href="{{ url_for('reporting.college_standings_print', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary" target="_blank">
+                    <i class="bi bi-printer"></i> Print View
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Bull of the Woods -->
+        <div class="col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-trophy-fill"></i>
+                        Bull of the Woods
+                    </h5>
+                    <small>Top Individual Men</small>
+                </div>
+                <div class="card-body p-0">
+                    {% if bull %}
+                    <table class="table table-hover mb-0">
+                        <tbody>
+                            {% for c in bull %}
+                            <tr>
+                                <td class="text-center" style="width: 50px;">
+                                    {% if loop.index == 1 %}
+                                        <span class="badge badge-gold fs-5">1</span>
+                                    {% elif loop.index == 2 %}
+                                        <span class="badge badge-silver fs-5">2</span>
+                                    {% elif loop.index == 3 %}
+                                        <span class="badge badge-bronze fs-5">3</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">{{ loop.index }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <strong>{{ c.name }}</strong>
+                                    <br>
+                                    <small class="text-muted">{{ c.team.team_code if c.team else 'N/A' }}</small>
+                                </td>
+                                <td class="text-end">
+                                    <span class="fs-5 fw-bold text-primary">{{ c.individual_points }}</span>
+                                    <small class="text-muted">pts</small>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-hourglass display-4"></i>
+                        <p class="mt-2">No results yet</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Belle of the Woods -->
+        <div class="col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-trophy-fill"></i>
+                        Belle of the Woods
+                    </h5>
+                    <small>Top Individual Women</small>
+                </div>
+                <div class="card-body p-0">
+                    {% if belle %}
+                    <table class="table table-hover mb-0">
+                        <tbody>
+                            {% for c in belle %}
+                            <tr>
+                                <td class="text-center" style="width: 50px;">
+                                    {% if loop.index == 1 %}
+                                        <span class="badge badge-gold fs-5">1</span>
+                                    {% elif loop.index == 2 %}
+                                        <span class="badge badge-silver fs-5">2</span>
+                                    {% elif loop.index == 3 %}
+                                        <span class="badge badge-bronze fs-5">3</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">{{ loop.index }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <strong>{{ c.name }}</strong>
+                                    <br>
+                                    <small class="text-muted">{{ c.team.team_code if c.team else 'N/A' }}</small>
+                                </td>
+                                <td class="text-end">
+                                    <span class="fs-5 fw-bold text-info">{{ c.individual_points }}</span>
+                                    <small class="text-muted">pts</small>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-hourglass display-4"></i>
+                        <p class="mt-2">No results yet</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Team Standings -->
+        <div class="col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header card-header-proam">
+                    <h5 class="mb-0">
+                        <i class="bi bi-people-fill"></i>
+                        Team Standings
+                    </h5>
+                    <small>Combined Team Points</small>
+                </div>
+                <div class="card-body p-0">
+                    {% if team_standings %}
+                    <table class="table table-hover mb-0">
+                        <tbody>
+                            {% for t in team_standings %}
+                            <tr>
+                                <td class="text-center" style="width: 50px;">
+                                    {% if loop.index == 1 %}
+                                        <span class="badge badge-gold fs-5">1</span>
+                                    {% elif loop.index == 2 %}
+                                        <span class="badge badge-silver fs-5">2</span>
+                                    {% elif loop.index == 3 %}
+                                        <span class="badge badge-bronze fs-5">3</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">{{ loop.index }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <strong>{{ t.team_code }}</strong>
+                                    <br>
+                                    <small class="text-muted">{{ t.school_name }}</small>
+                                </td>
+                                <td class="text-end">
+                                    <span class="fs-5 fw-bold text-success">{{ t.total_points }}</span>
+                                    <small class="text-muted">pts</small>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-hourglass display-4"></i>
+                        <p class="mt-2">No results yet</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

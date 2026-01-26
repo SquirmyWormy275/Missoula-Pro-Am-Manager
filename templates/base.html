@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Missoula Pro Am Manager{% endblock %}</title>
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+
+    <style>
+        :root {
+            --proam-green: #2d5a27;
+            --proam-brown: #8b4513;
+            --proam-gold: #daa520;
+        }
+
+        .navbar-proam {
+            background-color: var(--proam-green) !important;
+        }
+
+        .btn-proam {
+            background-color: var(--proam-green);
+            border-color: var(--proam-green);
+            color: white;
+        }
+
+        .btn-proam:hover {
+            background-color: #1e3d1a;
+            border-color: #1e3d1a;
+            color: white;
+        }
+
+        .card-header-proam {
+            background-color: var(--proam-green);
+            color: white;
+        }
+
+        .table-proam thead {
+            background-color: var(--proam-green);
+            color: white;
+        }
+
+        .badge-gold {
+            background-color: var(--proam-gold);
+            color: black;
+        }
+
+        .badge-silver {
+            background-color: #c0c0c0;
+            color: black;
+        }
+
+        .badge-bronze {
+            background-color: #cd7f32;
+            color: white;
+        }
+
+        .sidebar {
+            min-height: calc(100vh - 56px);
+            background-color: #f8f9fa;
+            border-right: 1px solid #dee2e6;
+        }
+
+        .sidebar .nav-link {
+            color: #333;
+        }
+
+        .sidebar .nav-link.active {
+            background-color: var(--proam-green);
+            color: white;
+        }
+
+        .sidebar .nav-link:hover {
+            background-color: #e9ecef;
+        }
+
+        .sidebar .nav-link.active:hover {
+            background-color: #1e3d1a;
+        }
+
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            .sidebar {
+                display: none !important;
+            }
+        }
+    </style>
+
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark navbar-proam no-print">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="{{ url_for('main.index') }}">
+                <i class="bi bi-tree-fill"></i> Missoula Pro Am
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                {% if tournament is defined and tournament %}
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
+                            <i class="bi bi-house"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">
+                            <i class="bi bi-mortarboard"></i> College
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">
+                            <i class="bi bi-trophy"></i> Pro
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">
+                            <i class="bi bi-calendar-event"></i> Events
+                        </a>
+                    </li>
+                </ul>
+                <span class="navbar-text">
+                    {{ tournament.name }} {{ tournament.year }}
+                </span>
+                {% else %}
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('main.index') }}">
+                            <i class="bi bi-house"></i> Home
+                        </a>
+                    </li>
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <!-- Flash Messages -->
+    <div class="container-fluid mt-2 no-print">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'success' if category == 'success' else 'danger' if category == 'error' else 'warning' }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+    </div>
+
+    <!-- Main Content -->
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-light py-3 mt-5 no-print">
+        <div class="container text-center text-muted">
+            <small>Missoula Pro Am Tournament Manager &copy; 2026</small>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

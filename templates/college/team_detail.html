@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}{{ team.team_code }} - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">College</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}">Teams</a></li>
+                    <li class="breadcrumb-item active">{{ team.team_code }}</li>
+                </ol>
+            </nav>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-people-fill text-primary"></i>
+                        {{ team.team_code }}
+                    </h1>
+                    <p class="text-muted mb-0">{{ team.school_name }}</p>
+                </div>
+                <div>
+                    {% if team.is_valid %}
+                        <span class="badge bg-success fs-6"><i class="bi bi-check-circle"></i> Valid Team</span>
+                    {% else %}
+                        <span class="badge bg-danger fs-6"><i class="bi bi-x-circle"></i> Invalid - Check Requirements</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Team Stats -->
+        <div class="col-md-4 mb-4">
+            <div class="card">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0"><i class="bi bi-bar-chart"></i> Team Stats</h6>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>Total Members</span>
+                        <span class="badge bg-primary rounded-pill">{{ team.member_count }}</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>Men</span>
+                        <span class="badge {% if team.male_count >= 2 %}bg-success{% else %}bg-danger{% endif %} rounded-pill">
+                            {{ team.male_count }} {% if team.male_count < 2 %}(need 2){% endif %}
+                        </span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>Women</span>
+                        <span class="badge {% if team.female_count >= 2 %}bg-success{% else %}bg-danger{% endif %} rounded-pill">
+                            {{ team.female_count }} {% if team.female_count < 2 %}(need 2){% endif %}
+                        </span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span><strong>Team Points</strong></span>
+                        <span class="badge bg-warning text-dark fs-5">{{ team.total_points }}</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-info-circle"></i> Requirements</h6>
+                </div>
+                <div class="card-body">
+                    <ul class="list-unstyled mb-0">
+                        <li>
+                            <i class="bi bi-{% if team.male_count >= 2 %}check-circle text-success{% else %}x-circle text-danger{% endif %}"></i>
+                            Minimum 2 men
+                        </li>
+                        <li>
+                            <i class="bi bi-{% if team.female_count >= 2 %}check-circle text-success{% else %}x-circle text-danger{% endif %}"></i>
+                            Minimum 2 women
+                        </li>
+                        <li>
+                            <i class="bi bi-{% if team.member_count <= 8 %}check-circle text-success{% else %}x-circle text-danger{% endif %}"></i>
+                            Maximum 8 members total
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Team Members -->
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-person-lines-fill"></i> Team Members</h6>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-proam">
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Gender</th>
+                                    <th>Events</th>
+                                    <th>Individual Points</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for member in team.get_members_sorted() %}
+                                <tr class="{{ 'table-secondary' if member.status == 'scratched' else '' }}">
+                                    <td><strong>{{ member.name }}</strong></td>
+                                    <td>
+                                        {% if member.gender == 'M' %}
+                                            <span class="badge bg-primary">M</span>
+                                        {% else %}
+                                            <span class="badge bg-info">F</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ member.get_events_entered()|length }}</td>
+                                    <td>
+                                        <span class="badge bg-warning text-dark">{{ member.individual_points }} pts</span>
+                                    </td>
+                                    <td>
+                                        {% if member.status == 'active' %}
+                                            <span class="badge bg-success">Active</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Scratched</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted py-4">
+                                        No members registered yet.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

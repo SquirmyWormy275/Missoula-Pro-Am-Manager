@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>College Standings - {{ tournament.name }} {{ tournament.year }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 12pt;
+            line-height: 1.4;
+            padding: 0.5in;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 3px double #2d5a27;
+            padding-bottom: 15px;
+        }
+
+        .header h1 {
+            font-size: 24pt;
+            color: #2d5a27;
+            margin-bottom: 5px;
+        }
+
+        .header h2 {
+            font-size: 14pt;
+            font-weight: normal;
+            color: #666;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            page-break-inside: avoid;
+        }
+
+        .section-title {
+            font-size: 16pt;
+            color: #2d5a27;
+            border-bottom: 2px solid #2d5a27;
+            padding-bottom: 5px;
+            margin-bottom: 15px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #2d5a27;
+            color: white;
+            font-weight: bold;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        .rank {
+            text-align: center;
+            font-weight: bold;
+            width: 50px;
+        }
+
+        .rank-1 { color: #daa520; font-size: 14pt; }
+        .rank-2 { color: #888; font-size: 13pt; }
+        .rank-3 { color: #cd7f32; font-size: 13pt; }
+
+        .points {
+            text-align: right;
+            font-weight: bold;
+            width: 80px;
+        }
+
+        .team-code {
+            font-weight: bold;
+        }
+
+        .school-name {
+            color: #666;
+            font-size: 10pt;
+        }
+
+        .columns {
+            display: flex;
+            gap: 30px;
+        }
+
+        .column {
+            flex: 1;
+        }
+
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 10pt;
+            color: #999;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+        }
+
+        @media print {
+            body { padding: 0; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{ tournament.name }} {{ tournament.year }}</h1>
+        <h2>College Competition - Final Standings</h2>
+    </div>
+
+    <div class="columns">
+        <!-- Bull of the Woods -->
+        <div class="column">
+            <div class="section">
+                <h3 class="section-title">Bull of the Woods - Top Men</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th class="rank">Rank</th>
+                            <th>Competitor</th>
+                            <th>Team</th>
+                            <th class="points">Points</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in bull %}
+                        <tr>
+                            <td class="rank rank-{{ loop.index if loop.index <= 3 else '' }}">{{ loop.index }}</td>
+                            <td><strong>{{ c.name }}</strong></td>
+                            <td>{{ c.team.team_code if c.team else 'N/A' }}</td>
+                            <td class="points">{{ c.individual_points }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Belle of the Woods -->
+        <div class="column">
+            <div class="section">
+                <h3 class="section-title">Belle of the Woods - Top Women</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th class="rank">Rank</th>
+                            <th>Competitor</th>
+                            <th>Team</th>
+                            <th class="points">Points</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in belle %}
+                        <tr>
+                            <td class="rank rank-{{ loop.index if loop.index <= 3 else '' }}">{{ loop.index }}</td>
+                            <td><strong>{{ c.name }}</strong></td>
+                            <td>{{ c.team.team_code if c.team else 'N/A' }}</td>
+                            <td class="points">{{ c.individual_points }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Team Standings -->
+    <div class="section">
+        <h3 class="section-title">Team Standings</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th class="rank">Rank</th>
+                    <th>Team</th>
+                    <th>School</th>
+                    <th style="text-align: center;">Members</th>
+                    <th class="points">Points</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in team_standings %}
+                <tr>
+                    <td class="rank rank-{{ loop.index if loop.index <= 3 else '' }}">{{ loop.index }}</td>
+                    <td class="team-code">{{ t.team_code }}</td>
+                    <td>{{ t.school_name }}</td>
+                    <td style="text-align: center;">{{ t.member_count }}</td>
+                    <td class="points">{{ t.total_points }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="footer">
+        <p>Missoula Pro Am Tournament Manager</p>
+        <p>Scoring: 1st = 10 pts | 2nd = 7 pts | 3rd = 5 pts | 4th = 3 pts | 5th = 2 pts | 6th = 1 pt</p>
+    </div>
+
+    <button class="no-print" onclick="window.print()" style="position: fixed; top: 10px; right: 10px; padding: 10px 20px; cursor: pointer;">
+        Print
+    </button>
+</body>
+</html>

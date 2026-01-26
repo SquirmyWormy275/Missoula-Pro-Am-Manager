@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block title %}College Competition - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1>
+                <i class="bi bi-mortarboard text-primary"></i>
+                College Competition
+            </h1>
+            <p class="text-muted">{{ tournament.name }} {{ tournament.year }} - Friday</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Sidebar / Quick Links -->
+        <div class="col-md-3 mb-4">
+            <div class="card">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h6>
+                </div>
+                <div class="list-group list-group-flush">
+                    <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-upload"></i> Import Entry Forms
+                    </a>
+                    <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-calendar-plus"></i> Configure Events
+                    </a>
+                    <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-list-ul"></i> View Events
+                    </a>
+                    <a href="{{ url_for('reporting.college_standings', tournament_id=tournament.id) }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-bar-chart"></i> View Standings
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="col-md-9">
+            <div class="row">
+                <!-- Bull of the Woods -->
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-header bg-primary text-white">
+                            <h6 class="mb-0"><i class="bi bi-trophy"></i> Bull of the Woods (Top 5 Men)</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if bull %}
+                            <ol class="list-group list-group-numbered">
+                                {% for c in bull %}
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <span>{{ c.name }} <small class="text-muted">({{ c.team.team_code if c.team else 'N/A' }})</small></span>
+                                    <span class="badge {% if loop.index == 1 %}badge-gold{% elif loop.index == 2 %}badge-silver{% elif loop.index == 3 %}badge-bronze{% else %}bg-secondary{% endif %} rounded-pill">
+                                        {{ c.individual_points }} pts
+                                    </span>
+                                </li>
+                                {% endfor %}
+                            </ol>
+                            {% else %}
+                            <p class="text-muted text-center">No results yet</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Belle of the Woods -->
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0"><i class="bi bi-trophy"></i> Belle of the Woods (Top 5 Women)</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if belle %}
+                            <ol class="list-group list-group-numbered">
+                                {% for c in belle %}
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <span>{{ c.name }} <small class="text-muted">({{ c.team.team_code if c.team else 'N/A' }})</small></span>
+                                    <span class="badge {% if loop.index == 1 %}badge-gold{% elif loop.index == 2 %}badge-silver{% elif loop.index == 3 %}badge-bronze{% else %}bg-secondary{% endif %} rounded-pill">
+                                        {{ c.individual_points }} pts
+                                    </span>
+                                </li>
+                                {% endfor %}
+                            </ol>
+                            {% else %}
+                            <p class="text-muted text-center">No results yet</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Team Standings -->
+                <div class="col-12 mb-4">
+                    <div class="card">
+                        <div class="card-header card-header-proam">
+                            <h6 class="mb-0"><i class="bi bi-people"></i> Team Standings (Top 5)</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if team_standings %}
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Rank</th>
+                                            <th>Team</th>
+                                            <th>School</th>
+                                            <th>Members</th>
+                                            <th class="text-end">Points</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for t in team_standings %}
+                                        <tr>
+                                            <td>
+                                                {% if loop.index == 1 %}
+                                                    <span class="badge badge-gold">1st</span>
+                                                {% elif loop.index == 2 %}
+                                                    <span class="badge badge-silver">2nd</span>
+                                                {% elif loop.index == 3 %}
+                                                    <span class="badge badge-bronze">3rd</span>
+                                                {% else %}
+                                                    {{ loop.index }}
+                                                {% endif %}
+                                            </td>
+                                            <td><strong>{{ t.team_code }}</strong></td>
+                                            <td>{{ t.school_name }}</td>
+                                            <td>{{ t.member_count }}</td>
+                                            <td class="text-end"><strong>{{ t.total_points }}</strong></td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <p class="text-muted text-center">No teams registered yet</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Teams List -->
+                <div class="col-12 mb-4">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0"><i class="bi bi-list"></i> All Teams</h6>
+                            <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}" class="btn btn-sm btn-proam">
+                                <i class="bi bi-plus"></i> Add Team
+                            </a>
+                        </div>
+                        <div class="card-body">
+                            {% if teams %}
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead class="table-proam">
+                                        <tr>
+                                            <th>Team</th>
+                                            <th>School</th>
+                                            <th>Men</th>
+                                            <th>Women</th>
+                                            <th>Total</th>
+                                            <th>Points</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for t in teams %}
+                                        <tr>
+                                            <td><strong>{{ t.team_code }}</strong></td>
+                                            <td>{{ t.school_name }}</td>
+                                            <td>{{ t.male_count }}</td>
+                                            <td>{{ t.female_count }}</td>
+                                            <td>{{ t.member_count }}</td>
+                                            <td>{{ t.total_points }}</td>
+                                            <td>
+                                                {% if t.is_valid %}
+                                                    <span class="badge bg-success">Valid</span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">Invalid</span>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                <a href="{{ url_for('registration.team_detail', tournament_id=tournament.id, team_id=t.id) }}" class="btn btn-sm btn-outline-primary">
+                                                    <i class="bi bi-eye"></i>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="text-center py-4">
+                                <i class="bi bi-people display-4 text-muted"></i>
+                                <p class="mt-3 text-muted">No teams registered yet.</p>
+                                <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}" class="btn btn-proam">
+                                    <i class="bi bi-upload"></i> Import Entry Forms
+                                </a>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

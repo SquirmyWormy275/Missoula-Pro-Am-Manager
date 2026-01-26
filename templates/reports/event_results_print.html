@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ event.display_name }} - {{ tournament.name }} {{ tournament.year }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            padding: 0.5in;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #2d5a27;
+            padding-bottom: 10px;
+        }
+        .header h1 { font-size: 20pt; color: #2d5a27; }
+        .header h2 { font-size: 14pt; font-weight: normal; color: #666; }
+        .event-type {
+            display: inline-block;
+            padding: 3px 10px;
+            background: {% if event.event_type == 'college' %}#0d6efd{% else %}#ffc107{% endif %};
+            color: {% if event.event_type == 'college' %}white{% else %}black{% endif %};
+            border-radius: 3px;
+            font-size: 10pt;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            padding: 8px 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #2d5a27;
+            color: white;
+        }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .rank { text-align: center; width: 60px; font-weight: bold; }
+        .rank-1 { color: #daa520; font-size: 14pt; }
+        .rank-2 { color: #888; }
+        .rank-3 { color: #cd7f32; }
+        .result { text-align: right; }
+        .points, .payout { text-align: right; font-weight: bold; width: 80px; }
+        .payout { color: #198754; }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 9pt;
+            color: #999;
+        }
+        @media print {
+            body { padding: 0; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{ event.display_name }}</h1>
+        <h2>{{ tournament.name }} {{ tournament.year }}</h2>
+        <span class="event-type">{{ event.event_type|capitalize }} Competition</span>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th class="rank">Pos</th>
+                <th>Competitor</th>
+                {% if event.is_partnered %}
+                <th>Partner</th>
+                {% endif %}
+                <th class="result">Result</th>
+                {% if event.event_type == 'college' %}
+                <th class="points">Points</th>
+                {% else %}
+                <th class="payout">Payout</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in results %}
+            <tr>
+                <td class="rank rank-{{ r.final_position if r.final_position and r.final_position <= 3 else '' }}">
+                    {% if r.final_position %}
+                        {{ r.final_position }}{{ 'st' if r.final_position == 1 else 'nd' if r.final_position == 2 else 'rd' if r.final_position == 3 else 'th' }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td><strong>{{ r.competitor_name }}</strong></td>
+                {% if event.is_partnered %}
+                <td>{{ r.partner_name or '-' }}</td>
+                {% endif %}
+                <td class="result">
+                    {% if r.result_value %}
+                        {% if event.scoring_type == 'time' %}
+                            {{ "%.2f"|format(r.result_value) }}s
+                        {% elif event.scoring_type == 'hits' %}
+                            {{ r.result_value|int }} hits
+                        {% elif event.scoring_type == 'distance' %}
+                            {{ "%.1f"|format(r.result_value) }} ft
+                        {% else %}
+                            {{ r.result_value }}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                {% if event.event_type == 'college' %}
+                <td class="points">{{ r.points_awarded or '-' }}</td>
+                {% else %}
+                <td class="payout">{% if r.payout_amount %}${{ "%.2f"|format(r.payout_amount) }}{% else %}-{% endif %}</td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer">
+        <p>Missoula Pro Am Tournament Manager</p>
+    </div>
+
+    <button class="no-print" onclick="window.print()" style="position: fixed; top: 10px; right: 10px; padding: 10px 20px;">Print</button>
+</body>
+</html>

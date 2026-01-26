@@ -1,22 +1,4 @@
-# Missoula Pro Am Manager
-
-A web-based tournament management system for the Missoula Pro Am timbersports competition.
-
-## Quick Start
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the application
-python app.py
-```
-
-Then open your browser to `http://localhost:5000`
-
----
-
-## User Guide
+# Missoula Pro Am Manager - User Guide
 
 Welcome! This guide will help you use the Missoula Pro Am Tournament Manager software to run your competition smoothly.
 
@@ -412,17 +394,6 @@ If you run into problems not covered here:
 2. Try refreshing your browser
 3. Restart the program if needed
 4. Contact the system administrator
-
----
-
-## For Developers
-
-See [DEVELOPMENT.md](DEVELOPMENT.md) for technical documentation including:
-- Architecture and project structure
-- Data models
-- API routes
-- Configuration reference
-- Future development considerations
 
 ---
 

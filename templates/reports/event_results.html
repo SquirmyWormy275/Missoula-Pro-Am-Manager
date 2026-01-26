@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}{{ event.display_name }} Results - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}">All Results</a></li>
+                    <li class="breadcrumb-item active">{{ event.display_name }}</li>
+                </ol>
+            </nav>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-trophy text-warning"></i>
+                        {{ event.display_name }}
+                    </h1>
+                    <p class="text-muted">
+                        {{ tournament.name }} {{ tournament.year }} -
+                        <span class="badge bg-{{ 'primary' if event.event_type == 'college' else 'warning' }}">
+                            {{ event.event_type|capitalize }}
+                        </span>
+                    </p>
+                </div>
+                <a href="{{ url_for('reporting.event_results_print', tournament_id=tournament.id, event_id=event.id) }}"
+                   class="btn btn-outline-secondary" target="_blank">
+                    <i class="bi bi-printer"></i> Print
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header card-header-proam">
+                    <h5 class="mb-0"><i class="bi bi-list-ol"></i> Final Results</h5>
+                </div>
+                <div class="card-body">
+                    {% if results %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Position</th>
+                                    <th>Competitor</th>
+                                    {% if event.is_partnered %}
+                                    <th>Partner</th>
+                                    {% endif %}
+                                    <th>Result</th>
+                                    {% if event.event_type == 'college' %}
+                                    <th>Points</th>
+                                    {% else %}
+                                    <th>Payout</th>
+                                    {% endif %}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for r in results %}
+                                <tr>
+                                    <td>
+                                        {% if r.final_position == 1 %}
+                                            <span class="badge badge-gold fs-5">1st</span>
+                                        {% elif r.final_position == 2 %}
+                                            <span class="badge badge-silver fs-5">2nd</span>
+                                        {% elif r.final_position == 3 %}
+                                            <span class="badge badge-bronze fs-5">3rd</span>
+                                        {% elif r.final_position %}
+                                            <span class="badge bg-secondary">{{ r.final_position }}{{ 'th' if r.final_position > 3 else ['st','nd','rd'][r.final_position-1] }}</span>
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td><strong>{{ r.competitor_name }}</strong></td>
+                                    {% if event.is_partnered %}
+                                    <td>{{ r.partner_name or '-' }}</td>
+                                    {% endif %}
+                                    <td>
+                                        {% if r.result_value %}
+                                            {% if event.scoring_type == 'time' %}
+                                                {{ "%.2f"|format(r.result_value) }}s
+                                            {% elif event.scoring_type == 'hits' %}
+                                                {{ r.result_value|int }} hits
+                                            {% elif event.scoring_type == 'distance' %}
+                                                {{ "%.1f"|format(r.result_value) }} ft
+                                            {% else %}
+                                                {{ r.result_value }}
+                                            {% endif %}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    {% if event.event_type == 'college' %}
+                                    <td>
+                                        {% if r.points_awarded %}
+                                            <span class="badge bg-primary fs-6">{{ r.points_awarded }} pts</span>
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    {% else %}
+                                    <td>
+                                        {% if r.payout_amount %}
+                                            <span class="text-success fs-5">${{ "%.2f"|format(r.payout_amount) }}</span>
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    {% endif %}
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5 text-muted">
+                        <i class="bi bi-clipboard display-4"></i>
+                        <p class="mt-3">No results recorded yet.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Event Info Sidebar -->
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-info-circle"></i> Event Info</h6>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Scoring Type</span>
+                        <strong>{{ event.scoring_type|capitalize }}</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Total Competitors</span>
+                        <strong>{{ results|length }}</strong>
+                    </li>
+                    {% if event.event_type == 'college' %}
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Points Awarded</span>
+                        <strong>{{ results|sum(attribute='points_awarded') }}</strong>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Total Payouts</span>
+                        <strong class="text-success">${{ "%.2f"|format(results|sum(attribute='payout_amount')) }}</strong>
+                    </li>
+                    {% endif %}
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Status</span>
+                        <span class="badge bg-{{ 'success' if event.status == 'completed' else 'warning' }}">
+                            {{ event.status|capitalize }}
+                        </span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}Enter Results - Heat {{ heat.heat_number }} - {{ event.display_name }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}">{{ event.display_name }}</a></li>
+                    <li class="breadcrumb-item active">Heat {{ heat.heat_number }}{% if event.requires_dual_runs %} - Run {{ heat.run_number }}{% endif %}</li>
+                </ol>
+            </nav>
+
+            <div class="card">
+                <div class="card-header card-header-proam">
+                    <h5 class="mb-0">
+                        <i class="bi bi-pencil-square"></i>
+                        Enter Results: Heat {{ heat.heat_number }}
+                        {% if event.requires_dual_runs %} - Run {{ heat.run_number }}{% endif %}
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>{{ event.display_name }}</strong> -
+                        {% if event.scoring_type == 'time' %}
+                            Enter time in seconds (lower is better)
+                        {% elif event.scoring_type == 'hits' %}
+                            Enter number of hits (fewer is better)
+                        {% elif event.scoring_type == 'score' %}
+                            Enter score (higher is better)
+                        {% elif event.scoring_type == 'distance' %}
+                            Enter distance in feet (greater is better)
+                        {% endif %}
+                    </div>
+
+                    <form method="POST">
+                        <table class="table">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Stand</th>
+                                    <th>Competitor</th>
+                                    <th>Result</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for comp in competitors %}
+                                <tr>
+                                    <td>
+                                        <span class="badge bg-secondary">{{ comp.stand or 'N/A' }}</span>
+                                    </td>
+                                    <td>
+                                        <strong>{{ comp.name }}</strong>
+                                    </td>
+                                    <td>
+                                        <div class="input-group">
+                                            <input type="number"
+                                                   class="form-control"
+                                                   name="result_{{ comp.id }}"
+                                                   step="0.01"
+                                                   min="0"
+                                                   placeholder="{% if event.scoring_type == 'time' %}seconds{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}feet{% else %}score{% endif %}">
+                                            <span class="input-group-text">
+                                                {% if event.scoring_type == 'time' %}s{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}ft{% else %}pts{% endif %}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <select class="form-select" name="status_{{ comp.id }}">
+                                            <option value="completed">Completed</option>
+                                            <option value="dnf">DNF</option>
+                                            <option value="scratched">Scratched</option>
+                                        </select>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+
+                        <hr>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-proam btn-lg">
+                                <i class="bi bi-check-circle"></i> Save Results
+                            </button>
+                            <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
+                               class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left"></i> Back to Event
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Auto-focus first empty input
+    document.addEventListener('DOMContentLoaded', function() {
+        const inputs = document.querySelectorAll('input[type="number"]');
+        for (let input of inputs) {
+            if (!input.value) {
+                input.focus();
+                break;
+            }
+        }
+    });
+
+    // Enter key moves to next input
+    document.querySelectorAll('input[type="number"]').forEach((input, index, inputs) => {
+        input.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (index < inputs.length - 1) {
+                    inputs[index + 1].focus();
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}

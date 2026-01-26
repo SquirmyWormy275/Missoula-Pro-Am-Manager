@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}All Results - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-file-text text-primary"></i>
+                        All Event Results
+                    </h1>
+                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
+                </div>
+                <a href="{{ url_for('reporting.all_results_print', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary" target="_blank">
+                    <i class="bi bi-printer"></i> Print All
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- College Events -->
+    {% if college_events %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <h3 class="text-primary"><i class="bi bi-mortarboard"></i> College Events (Friday)</h3>
+            <hr>
+        </div>
+    </div>
+    <div class="row">
+        {% for event in college_events %}
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-primary text-white">
+                    <h6 class="mb-0">{{ event.display_name }}</h6>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-sm mb-0">
+                        <tbody>
+                            {% for r in event.get_results_sorted()[:6] %}
+                            <tr>
+                                <td class="text-center" style="width: 40px;">
+                                    {% if r.final_position == 1 %}
+                                        <span class="badge badge-gold">1</span>
+                                    {% elif r.final_position == 2 %}
+                                        <span class="badge badge-silver">2</span>
+                                    {% elif r.final_position == 3 %}
+                                        <span class="badge badge-bronze">3</span>
+                                    {% else %}
+                                        <small>{{ r.final_position }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>{{ r.competitor_name }}</td>
+                                <td class="text-end">
+                                    <small class="text-muted">
+                                        {% if event.scoring_type == 'time' %}
+                                            {{ "%.2f"|format(r.result_value) if r.result_value else '-' }}s
+                                        {% else %}
+                                            {{ r.result_value or '-' }}
+                                        {% endif %}
+                                    </small>
+                                </td>
+                                <td class="text-end" style="width: 50px;">
+                                    <span class="badge bg-primary">{{ r.points_awarded or 0 }}</span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-footer text-center">
+                    <a href="{{ url_for('reporting.event_results_report', tournament_id=tournament.id, event_id=event.id) }}"
+                       class="btn btn-sm btn-outline-primary">
+                        View Full Results
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Pro Events -->
+    {% if pro_events %}
+    <div class="row mb-4 mt-4">
+        <div class="col-12">
+            <h3 class="text-warning"><i class="bi bi-trophy"></i> Pro Events (Saturday)</h3>
+            <hr>
+        </div>
+    </div>
+    <div class="row">
+        {% for event in pro_events %}
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-warning text-dark">
+                    <h6 class="mb-0">{{ event.display_name }}</h6>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-sm mb-0">
+                        <tbody>
+                            {% for r in event.get_results_sorted()[:6] %}
+                            <tr>
+                                <td class="text-center" style="width: 40px;">
+                                    {% if r.final_position == 1 %}
+                                        <span class="badge badge-gold">1</span>
+                                    {% elif r.final_position == 2 %}
+                                        <span class="badge badge-silver">2</span>
+                                    {% elif r.final_position == 3 %}
+                                        <span class="badge badge-bronze">3</span>
+                                    {% else %}
+                                        <small>{{ r.final_position }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>{{ r.competitor_name }}</td>
+                                <td class="text-end">
+                                    <small class="text-muted">
+                                        {% if event.scoring_type == 'time' %}
+                                            {{ "%.2f"|format(r.result_value) if r.result_value else '-' }}s
+                                        {% else %}
+                                            {{ r.result_value or '-' }}
+                                        {% endif %}
+                                    </small>
+                                </td>
+                                <td class="text-end" style="width: 60px;">
+                                    {% if r.payout_amount %}
+                                        <span class="text-success">${{ "%.0f"|format(r.payout_amount) }}</span>
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-footer text-center">
+                    <a href="{{ url_for('reporting.event_results_report', tournament_id=tournament.id, event_id=event.id) }}"
+                       class="btn btn-sm btn-outline-warning">
+                        View Full Results
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if not college_events and not pro_events %}
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <i class="bi bi-clipboard-x display-1 text-muted"></i>
+                    <h4 class="mt-4">No Completed Events Yet</h4>
+                    <p class="text-muted">Results will appear here once events are finalized.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

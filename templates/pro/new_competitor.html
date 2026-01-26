@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}New Pro Competitor - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}">Registration</a></li>
+                    <li class="breadcrumb-item active">New Competitor</li>
+                </ol>
+            </nav>
+
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-person-plus"></i> Register Pro Competitor</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <!-- Personal Info -->
+                        <h6 class="text-muted mb-3">Personal Information</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-8">
+                                <label for="name" class="form-label">Full Name *</label>
+                                <input type="text" class="form-control" id="name" name="name" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="gender" class="form-label">Gender *</label>
+                                <select class="form-select" id="gender" name="gender" required>
+                                    <option value="M">Male</option>
+                                    <option value="F">Female</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Contact Info -->
+                        <h6 class="text-muted mb-3 mt-4">Contact Information</h6>
+                        <div class="mb-3">
+                            <label for="address" class="form-label">Address</label>
+                            <textarea class="form-control" id="address" name="address" rows="2"></textarea>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="phone" class="form-label">Phone</label>
+                                <input type="tel" class="form-control" id="phone" name="phone">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="email" class="form-label">Email</label>
+                                <input type="email" class="form-control" id="email" name="email">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="shirt_size" class="form-label">Shirt Size</label>
+                            <select class="form-select" id="shirt_size" name="shirt_size">
+                                <option value="">-- Select --</option>
+                                <option value="XS">XS</option>
+                                <option value="S">S</option>
+                                <option value="M">M</option>
+                                <option value="L">L</option>
+                                <option value="XL">XL</option>
+                                <option value="2XL">2XL</option>
+                                <option value="3XL">3XL</option>
+                            </select>
+                        </div>
+
+                        <!-- Competition Options -->
+                        <h6 class="text-muted mb-3 mt-4">Competition Options</h6>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="is_ala_member" name="is_ala_member">
+                                <label class="form-check-label" for="is_ala_member">
+                                    Current ALA Member
+                                    <small class="text-muted">(American Lumberjack Association)</small>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="pro_am_lottery" name="pro_am_lottery">
+                                <label class="form-check-label" for="pro_am_lottery">
+                                    Opt into Pro-Am Relay Lottery
+                                </label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="left_handed" name="left_handed">
+                                <label class="form-check-label" for="left_handed">
+                                    Left-handed Springboard Cutter
+                                </label>
+                            </div>
+                        </div>
+
+                        <hr>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-warning">
+                                <i class="bi bi-check-circle"></i> Register Competitor
+                            </button>
+                            <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

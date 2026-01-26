@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}Pro-Am Relay Results Entry - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}">Pro-Am Relay</a></li>
+                    <li class="breadcrumb-item active">Enter Results</li>
+                </ol>
+            </nav>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-stopwatch text-warning"></i>
+                        Enter Relay Results
+                    </h1>
+                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
+                </div>
+                <div>
+                    <a href="{{ url_for('proam_relay.standings', tournament_id=tournament.id) }}" class="btn btn-info">
+                        <i class="bi bi-trophy"></i> View Standings
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if teams %}
+    <div class="row">
+        <!-- Results Entry Form -->
+        <div class="col-md-5 mb-4">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-plus-circle"></i> Record Result</h5>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('proam_relay.enter_results', tournament_id=tournament.id) }}" method="POST">
+                        <div class="mb-3">
+                            <label class="form-label">Team</label>
+                            <select name="team_number" class="form-select form-select-lg" required>
+                                {% for team in teams %}
+                                <option value="{{ team.team_number }}">{{ team.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Event</label>
+                            <select name="event_name" class="form-select form-select-lg" required>
+                                <option value="jj_sawing">J&J Sawing</option>
+                                <option value="standing_block">Standing Butcher Block</option>
+                                <option value="underhand">Underhand Butcher Block</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Time</label>
+                            <input type="text" name="time_seconds" class="form-control form-control-lg"
+                                   placeholder="e.g., 45.67 or 1:23.45" required
+                                   pattern="(\d+:\d+\.\d+|\d+\.?\d*)"
+                                   title="Enter time in seconds (45.67) or MM:SS.ms (1:23.45)">
+                            <div class="form-text">Enter seconds (45.67) or MM:SS.ms format (1:23.45)</div>
+                        </div>
+
+                        <button type="submit" class="btn btn-success btn-lg w-100">
+                            <i class="bi bi-check-circle"></i> Record Result
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Results -->
+        <div class="col-md-7">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-table"></i> Current Results</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-proam">
+                                <tr>
+                                    <th>Team</th>
+                                    <th class="text-center">J&J Sawing</th>
+                                    <th class="text-center">Standing Block</th>
+                                    <th class="text-center">Underhand</th>
+                                    <th class="text-end">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for team in teams %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ team.name }}</strong>
+                                    </td>
+                                    <td class="text-center">
+                                        {% if team.events.jj_sawing.result %}
+                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.jj_sawing.result) }}s</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if team.events.standing_block.result %}
+                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.standing_block.result) }}s</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if team.events.underhand.result %}
+                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.underhand.result) }}s</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        {% if team.total_time %}
+                                            <strong class="text-success">{{ "%.2f"|format(team.total_time) }}s</strong>
+                                        {% else %}
+                                            <span class="text-muted">Incomplete</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress Indicators -->
+            <div class="row mt-4">
+                {% for team in teams %}
+                <div class="col-md-6 mb-3">
+                    <div class="card">
+                        <div class="card-body">
+                            <h6>{{ team.name }} Progress</h6>
+                            {% set completed = [team.events.jj_sawing, team.events.standing_block, team.events.underhand]|selectattr('status', 'equalto', 'completed')|list|length %}
+                            <div class="progress" style="height: 25px;">
+                                <div class="progress-bar bg-success" style="width: {{ (completed / 3) * 100 }}%">
+                                    {{ completed }}/3 Events
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <i class="bi bi-exclamation-triangle display-1 text-warning"></i>
+                    <h4 class="mt-4">No Teams Drawn Yet</h4>
+                    <p class="text-muted">You need to draw teams before entering results.</p>
+                    <a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}" class="btn btn-warning btn-lg">
+                        <i class="bi bi-shuffle"></i> Go to Lottery
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

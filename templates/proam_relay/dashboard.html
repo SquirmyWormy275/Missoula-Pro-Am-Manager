@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+
+{% block title %}Pro-Am Relay - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-people-fill text-warning"></i>
+                        Pro-Am Relay
+                    </h1>
+                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }} - Team Lottery & Competition</p>
+                </div>
+                <div>
+                    <span class="badge fs-5
+                        {% if status == 'completed' %}bg-success
+                        {% elif status == 'in_progress' %}bg-warning text-dark
+                        {% elif status == 'drawn' %}bg-info
+                        {% else %}bg-secondary{% endif %}">
+                        {% if status == 'completed' %}Complete
+                        {% elif status == 'in_progress' %}In Progress
+                        {% elif status == 'drawn' %}Teams Drawn
+                        {% else %}Not Drawn{% endif %}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card bg-warning text-dark">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ eligible_pro|length }}</h3>
+                    <small>Pro Competitors Opted In</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-primary text-white">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ eligible_college|length }}</h3>
+                    <small>College Competitors</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ teams|length }}</h3>
+                    <small>Teams Formed</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white">
+                <div class="card-body text-center">
+                    <h3 class="mb-0">{{ (eligible_pro|length // 3) if eligible_pro|length // 3 < eligible_college|length // 3 else eligible_college|length // 3 }}</h3>
+                    <small>Max Possible Teams</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Lottery Controls -->
+        <div class="col-md-4 mb-4">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-shuffle"></i> Lottery Controls</h5>
+                </div>
+                <div class="card-body">
+                    {% if status == 'not_drawn' %}
+                    <p class="text-muted">
+                        Draw teams for the Pro-Am Relay. Each team will have:
+                    </p>
+                    <ul class="mb-3">
+                        <li>3 Professional competitors</li>
+                        <li>3 College competitors</li>
+                    </ul>
+                    <form action="{{ url_for('proam_relay.draw_lottery', tournament_id=tournament.id) }}" method="POST">
+                        <div class="mb-3">
+                            <label class="form-label">Number of Teams</label>
+                            <select name="num_teams" class="form-select">
+                                <option value="2" selected>2 Teams</option>
+                                <option value="3">3 Teams</option>
+                                <option value="4">4 Teams</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-warning btn-lg w-100">
+                            <i class="bi bi-shuffle"></i> Draw Teams
+                        </button>
+                    </form>
+                    {% else %}
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        Teams have been drawn. {{ teams|length }} teams are ready to compete.
+                    </div>
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('proam_relay.view_teams', tournament_id=tournament.id) }}" class="btn btn-primary">
+                            <i class="bi bi-people"></i> View Teams
+                        </a>
+                        <a href="{{ url_for('proam_relay.enter_results', tournament_id=tournament.id) }}" class="btn btn-success">
+                            <i class="bi bi-stopwatch"></i> Enter Results
+                        </a>
+                        <a href="{{ url_for('proam_relay.standings', tournament_id=tournament.id) }}" class="btn btn-info">
+                            <i class="bi bi-trophy"></i> View Standings
+                        </a>
+                        <hr>
+                        <form action="{{ url_for('proam_relay.redraw_lottery', tournament_id=tournament.id) }}" method="POST"
+                              onsubmit="return confirm('This will clear all teams and results. Are you sure?')">
+                            <button type="submit" class="btn btn-outline-danger w-100">
+                                <i class="bi bi-arrow-repeat"></i> Redraw Lottery
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Relay Events Info -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-list-check"></i> Relay Events</h6>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>J&J Sawing</span>
+                        <span class="badge bg-secondary">Timed</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Standing Butcher Block</span>
+                        <span class="badge bg-secondary">Timed</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Underhand Butcher Block</span>
+                        <span class="badge bg-secondary">Timed</span>
+                    </li>
+                </ul>
+                <div class="card-footer text-muted">
+                    <small>Team's total time across all events determines winner</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Eligible Competitors -->
+        <div class="col-md-8">
+            <div class="row">
+                <!-- Pro Competitors -->
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-header bg-warning text-dark">
+                            <h6 class="mb-0"><i class="bi bi-star-fill"></i> Pro Competitors (Opted In)</h6>
+                        </div>
+                        <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                            {% if eligible_pro %}
+                            <table class="table table-sm table-hover mb-0">
+                                <thead class="sticky-top bg-light">
+                                    <tr>
+                                        <th>Name</th>
+                                        <th class="text-center">Gender</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for pro in eligible_pro %}
+                                    <tr>
+                                        <td>{{ pro.name }}</td>
+                                        <td class="text-center">
+                                            <span class="badge {% if pro.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">
+                                                {{ pro.gender }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <div class="text-center py-4 text-muted">
+                                <i class="bi bi-person-x display-4"></i>
+                                <p class="mt-2">No pro competitors have opted into the lottery</p>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="card-footer">
+                            <small class="text-muted">
+                                {{ eligible_pro|selectattr('gender', 'equalto', 'M')|list|length }} Male,
+                                {{ eligible_pro|selectattr('gender', 'equalto', 'F')|list|length }} Female
+                            </small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- College Competitors -->
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-header card-header-proam">
+                            <h6 class="mb-0"><i class="bi bi-mortarboard-fill"></i> College Competitors</h6>
+                        </div>
+                        <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                            {% if eligible_college %}
+                            <table class="table table-sm table-hover mb-0">
+                                <thead class="sticky-top bg-light">
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Team</th>
+                                        <th class="text-center">Gender</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for college in eligible_college %}
+                                    <tr>
+                                        <td>{{ college.name }}</td>
+                                        <td><span class="badge bg-secondary">{{ college.team }}</span></td>
+                                        <td class="text-center">
+                                            <span class="badge {% if college.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">
+                                                {{ college.gender }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <div class="text-center py-4 text-muted">
+                                <i class="bi bi-person-x display-4"></i>
+                                <p class="mt-2">No college competitors registered</p>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="card-footer">
+                            <small class="text-muted">
+                                {{ eligible_college|selectattr('gender', 'equalto', 'M')|list|length }} Male,
+                                {{ eligible_college|selectattr('gender', 'equalto', 'F')|list|length }} Female
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
