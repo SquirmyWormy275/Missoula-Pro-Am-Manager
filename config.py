@@ -5,7 +5,10 @@ import os
 
 # Application settings
 SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
-SQLALCHEMY_DATABASE_URI = 'sqlite:///proam.db'
+DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///proam.db')
+if DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+SQLALCHEMY_DATABASE_URI = DATABASE_URL
 SQLALCHEMY_TRACK_MODIFICATIONS = False
 UPLOAD_FOLDER = 'uploads'
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max upload

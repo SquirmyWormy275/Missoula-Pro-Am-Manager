@@ -6,6 +6,7 @@ Flask-SQLAlchemy==3.1.1
 
 # Database
 SQLAlchemy==2.0.23
+psycopg2-binary
 
 # Excel Processing
 pandas==2.1.3
