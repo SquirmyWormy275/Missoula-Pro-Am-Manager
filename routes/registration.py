@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 import os
 from database import db
 from models import Tournament, Team, CollegeCompetitor, ProCompetitor
+import strings as text
 
 registration_bp = Blueprint('registration', __name__)
 
@@ -34,13 +35,13 @@ def upload_college_entry(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
 
     if 'file' not in request.files:
-        flash('No file selected.', 'error')
+        flash(text.FLASH['no_file'], 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
     file = request.files['file']
 
     if file.filename == '':
-        flash('No file selected.', 'error')
+        flash(text.FLASH['no_file'], 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
     if file and allowed_file(file.filename):
@@ -53,13 +54,13 @@ def upload_college_entry(tournament_id):
 
         try:
             result = process_college_entry_form(filepath, tournament)
-            flash(f'Successfully imported {result["teams"]} team(s) with {result["competitors"]} competitor(s).', 'success')
+            flash(text.FLASH['import_success'].format(teams=result["teams"], competitors=result["competitors"]), 'success')
         except Exception as e:
-            flash(f'Error processing file: {str(e)}', 'error')
+            flash(text.FLASH['import_error'].format(error=str(e)), 'error')
 
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
-    flash('Invalid file type. Please upload an Excel file (.xlsx or .xls).', 'error')
+    flash(text.FLASH['invalid_file_type'], 'error')
     return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
 
@@ -107,7 +108,7 @@ def new_pro_competitor(tournament_id):
         db.session.add(competitor)
         db.session.commit()
 
-        flash(f'Competitor "{competitor.name}" added successfully!', 'success')
+        flash(text.FLASH['competitor_added'].format(name=competitor.name), 'success')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
 
     return render_template('pro/new_competitor.html', tournament=tournament)
@@ -131,5 +132,5 @@ def scratch_pro_competitor(tournament_id, competitor_id):
     competitor.status = 'scratched'
     db.session.commit()
 
-    flash(f'Competitor "{competitor.name}" has been scratched.', 'warning')
+    flash(text.FLASH['competitor_scratched'].format(name=competitor.name), 'warning')
     return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))

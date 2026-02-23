@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Missoula Pro Am Manager{% endblock %}</title>
+    <title>{% block title %}{{ COMPETITION.app_title }}{% endblock %}</title>
 
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -98,7 +98,7 @@
     <nav class="navbar navbar-expand-lg navbar-dark navbar-proam no-print">
         <div class="container-fluid">
             <a class="navbar-brand" href="{{ url_for('main.index') }}">
-                <i class="bi bi-tree-fill"></i> Missoula Pro Am
+                <i class="bi bi-tree-fill"></i> {{ NAV.brand }}
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
@@ -108,22 +108,22 @@
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
-                            <i class="bi bi-house"></i> Dashboard
+                            <i class="bi bi-house"></i> {{ NAV.dashboard }}
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">
-                            <i class="bi bi-mortarboard"></i> College
+                            <i class="bi bi-mortarboard"></i> {{ NAV.college }}
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">
-                            <i class="bi bi-trophy"></i> Pro
+                            <i class="bi bi-trophy"></i> {{ NAV.pro }}
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">
-                            <i class="bi bi-calendar-event"></i> Events
+                            <i class="bi bi-calendar-event"></i> {{ NAV.events }}
                         </a>
                     </li>
                 </ul>
@@ -134,7 +134,7 @@
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('main.index') }}">
-                            <i class="bi bi-house"></i> Home
+                            <i class="bi bi-house"></i> {{ NAV.home }}
                         </a>
                     </li>
                 </ul>
@@ -165,7 +165,7 @@
     <!-- Footer -->
     <footer class="bg-light py-3 mt-5 no-print">
         <div class="container text-center text-muted">
-            <small>Missoula Pro Am Tournament Manager &copy; 2026</small>
+            <small>{{ COMPETITION.app_footer }} &copy; 2026</small>
         </div>
     </footer>
 

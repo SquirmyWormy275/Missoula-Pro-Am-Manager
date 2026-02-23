@@ -6,6 +6,7 @@ from database import db
 from models import Tournament, Event, EventResult, Heat
 from models.competitor import CollegeCompetitor, ProCompetitor
 import config
+import strings as text
 
 scoring_bp = Blueprint('scoring', __name__)
 
@@ -82,7 +83,7 @@ def enter_heat_results(tournament_id, heat_id):
         if all_heats_complete and not event.requires_dual_runs:
             _calculate_positions(event)
 
-        flash('Heat results saved successfully!', 'success')
+        flash(text.FLASH['heat_saved'], 'success')
         return redirect(url_for('scoring.event_results',
                                 tournament_id=tournament_id,
                                 event_id=event.id))
@@ -159,7 +160,7 @@ def finalize_event(tournament_id, event_id):
 
     _calculate_positions(event)
 
-    flash(f'{event.display_name} has been finalized.', 'success')
+    flash(text.FLASH['event_finalized'].format(event_name=event.display_name), 'success')
     return redirect(url_for('scoring.event_results',
                             tournament_id=tournament_id,
                             event_id=event_id))
@@ -172,7 +173,7 @@ def configure_payouts(tournament_id, event_id):
     event = Event.query.get_or_404(event_id)
 
     if event.event_type != 'pro':
-        flash('Payouts can only be configured for pro events.', 'error')
+        flash(text.FLASH['pro_only_payouts'], 'error')
         return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
     if request.method == 'POST':
@@ -185,7 +186,7 @@ def configure_payouts(tournament_id, event_id):
         event.set_payouts(payouts)
         db.session.commit()
 
-        flash('Payouts configured successfully!', 'success')
+        flash(text.FLASH['payouts_saved'], 'success')
         return redirect(url_for('scoring.event_results',
                                 tournament_id=tournament_id,
                                 event_id=event_id))

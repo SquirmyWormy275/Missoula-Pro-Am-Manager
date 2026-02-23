@@ -4,6 +4,7 @@ Main routes for dashboard and navigation.
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from database import db
 from models import Tournament
+import strings as text
 
 main_bp = Blueprint('main', __name__)
 
@@ -36,7 +37,7 @@ def new_tournament():
         db.session.add(tournament)
         db.session.commit()
 
-        flash(f'Tournament "{name} {year}" created successfully!', 'success')
+        flash(text.FLASH['tournament_created'].format(name=name, year=year), 'success')
         return redirect(url_for('main.tournament_detail', tournament_id=tournament.id))
 
     return render_template('tournament_new.html')
@@ -68,12 +69,12 @@ def activate_competition(tournament_id, competition_type):
 
     if competition_type == 'college':
         tournament.status = 'college_active'
-        flash('College competition is now active!', 'success')
+        flash(text.FLASH['college_active'], 'success')
     elif competition_type == 'pro':
         tournament.status = 'pro_active'
-        flash('Professional competition is now active!', 'success')
+        flash(text.FLASH['pro_active'], 'success')
     else:
-        flash('Invalid competition type.', 'error')
+        flash(text.FLASH['invalid_comp_type'], 'error')
 
     db.session.commit()
     return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))

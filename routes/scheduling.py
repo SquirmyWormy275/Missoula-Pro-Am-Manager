@@ -5,6 +5,7 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request
 from database import db
 from models import Tournament, Event, Heat, Flight
 import config
+import strings as text
 
 scheduling_bp = Blueprint('scheduling', __name__)
 
@@ -39,7 +40,7 @@ def setup_events(tournament_id):
             _create_pro_events(tournament, request.form)
 
         db.session.commit()
-        flash('Events configured successfully!', 'success')
+        flash(text.FLASH['events_configured'], 'success')
         return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
     return render_template('scheduling/setup_events.html',
@@ -139,9 +140,9 @@ def generate_heats(tournament_id, event_id):
 
     try:
         num_heats = generate_event_heats(event)
-        flash(f'Generated {num_heats} heat(s) for {event.display_name}.', 'success')
+        flash(text.FLASH['heats_generated'].format(num_heats=num_heats, event_name=event.display_name), 'success')
     except Exception as e:
-        flash(f'Error generating heats: {str(e)}', 'error')
+        flash(text.FLASH['heats_error'].format(error=str(e)), 'error')
 
     return redirect(url_for('scheduling.event_heats',
                             tournament_id=tournament_id,
@@ -169,9 +170,9 @@ def build_flights(tournament_id):
 
         try:
             num_flights = build_pro_flights(tournament)
-            flash(f'Built {num_flights} flight(s) for pro competition.', 'success')
+            flash(text.FLASH['flights_built'].format(num_flights=num_flights), 'success')
         except Exception as e:
-            flash(f'Error building flights: {str(e)}', 'error')
+            flash(text.FLASH['flights_error'].format(error=str(e)), 'error')
 
         return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 

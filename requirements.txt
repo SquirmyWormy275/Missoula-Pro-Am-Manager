@@ -13,3 +13,6 @@ openpyxl==3.1.2
 
 # Utilities
 Werkzeug==3.0.1
+
+# WSGI server
+gunicorn

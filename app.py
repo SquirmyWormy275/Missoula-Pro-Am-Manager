@@ -5,6 +5,7 @@ import os
 from flask import Flask
 from database import db, init_db
 import config
+import strings as text
 
 def create_app():
     """Create and configure the Flask application."""
@@ -22,6 +23,11 @@ def create_app():
 
     # Initialize database
     init_db(app)
+
+    # Inject text constants into all templates
+    @app.context_processor
+    def inject_strings():
+        return {'NAV': text.NAV, 'COMPETITION': text.COMPETITION}
 
     # Register blueprints
     from routes.main import main_bp
@@ -46,5 +52,6 @@ def create_app():
 
 
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
     app = create_app()
-    app.run(debug=True, port=5000)
+    app.run(host='0.0.0.0', port=port, debug=False)
