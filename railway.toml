@@ -1,0 +1,2 @@
+[deploy]
+releaseCommand = "flask db upgrade"
