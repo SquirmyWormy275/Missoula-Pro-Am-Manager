@@ -27,7 +27,9 @@
                     </p>
                 </div>
                 <div>
-                    {% if not heats %}
+                    {% if signup_list_mode %}
+                    <span class="badge bg-dark">Signup List Event (No Heats)</span>
+                    {% elif not heats %}
                     <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST" style="display:inline;">
                         <button type="submit" class="btn btn-proam">
                             <i class="bi bi-shuffle"></i> Generate Heats
@@ -48,7 +50,24 @@
         </div>
     </div>
 
-    {% if heats %}
+    {% if signup_list_mode %}
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-dark text-white">
+                    <strong>Signed Up Competitors / Pairs</strong>
+                </div>
+                <div class="card-body">
+                    {% for row in signup_rows %}
+                        <div>{{ row }}</div>
+                    {% else %}
+                        <div class="text-muted">No signups yet.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% elif heats %}
     <div class="row">
         {% for heat in heats %}
         <div class="col-md-4 col-lg-3 mb-4">

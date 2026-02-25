@@ -8,6 +8,13 @@ from models.competitor import CollegeCompetitor, ProCompetitor
 import config
 import math
 
+LIST_ONLY_EVENT_NAMES = {
+    'axethrow',
+    'peaveylogroll',
+    'cabertoss',
+    'pulptoss',
+}
+
 
 def generate_event_heats(event: Event) -> int:
     """
@@ -31,6 +38,13 @@ def generate_event_heats(event: Event) -> int:
     if not competitors:
         raise ValueError(f"No competitors entered for {event.display_name}")
 
+    # OPEN/CLOSED-list events are tracked as signups only, without heats.
+    if _is_list_only_event(event):
+        Heat.query.filter_by(event_id=event.id).delete()
+        event.status = 'in_progress'
+        db.session.commit()
+        return 0
+
     # Get stand configuration
     stand_config = config.STAND_CONFIGS.get(event.stand_type, {})
     max_per_heat = stand_config.get('total', 4)
@@ -50,6 +64,7 @@ def generate_event_heats(event: Event) -> int:
         heats = _generate_standard_heats(competitors, num_heats, max_per_heat, event=event)
 
     # Create Heat objects
+    stand_numbers = _stand_numbers_for_event(event, max_per_heat, stand_config)
     for heat_num, heat_competitors in enumerate(heats, start=1):
         heat = Heat(
             event_id=event.id,
@@ -60,7 +75,7 @@ def generate_event_heats(event: Event) -> int:
 
         # Assign stands
         for i, comp in enumerate(heat_competitors):
-            stand_num = i + 1
+            stand_num = stand_numbers[i]
             heat.set_stand_assignment(comp['id'], stand_num)
 
         db.session.add(heat)
@@ -76,10 +91,9 @@ def generate_event_heats(event: Event) -> int:
             heat.set_competitors([c['id'] for c in heat_competitors])
 
             # Swap stand assignments for run 2 (e.g., Course 1 <-> Course 2)
+            run2_stands = list(reversed(stand_numbers))
             for i, comp in enumerate(heat_competitors):
-                # Swap positions
-                swapped_pos = (max_per_heat - 1 - i) % max_per_heat + 1
-                heat.set_stand_assignment(comp['id'], swapped_pos)
+                heat.set_stand_assignment(comp['id'], run2_stands[i])
 
             db.session.add(heat)
 
@@ -334,6 +348,26 @@ def _advance_snake_index(heat_idx: int, direction: int, num_heats: int):
         direction = 1
         heat_idx = 0
     return heat_idx, direction
+
+
+def _normalize_name(value: str) -> str:
+    return ''.join(ch for ch in str(value or '').lower() if ch.isalnum())
+
+
+def _is_list_only_event(event: Event) -> bool:
+    return event.event_type == 'college' and _normalize_name(event.name) in LIST_ONLY_EVENT_NAMES
+
+
+def _stand_numbers_for_event(event: Event, max_per_heat: int, stand_config: dict) -> list[int]:
+    if event.event_type == 'college' and _normalize_name(event.name) == _normalize_name('Stock Saw'):
+        # Missoula rule: college stock saw runs only on saw stands 7 and 8.
+        return [7, 8][:max_per_heat]
+
+    specific = stand_config.get('specific_stands')
+    if specific:
+        return list(specific)[:max_per_heat]
+
+    return list(range(1, max_per_heat + 1))
 
 
 def _has_gear_sharing_conflict(comp: dict, heat_competitors: list, event: Event) -> bool:

@@ -4,7 +4,7 @@ Day schedule builder for Friday/Saturday show planning.
 from __future__ import annotations
 
 import re
-from models import Event, Tournament
+from models import Event, Tournament, Flight
 
 
 COLLEGE_SATURDAY_PRIORITY = [
@@ -46,13 +46,14 @@ def build_day_schedule(
 
     friday_day = _build_friday_day_block(friday_college)
     friday_feature = _build_friday_feature_block(friday_feature_college, friday_feature_pro)
-    saturday_show = _build_saturday_show_block(friday_show_pro, saturday_college)
+    saturday_show, saturday_source = _build_saturday_show_block(tournament, friday_show_pro, saturday_college)
     saturday_show = _add_mandatory_chokerman_run2(saturday_show, college_events)
 
     return {
         'friday_day': friday_day,
         'friday_feature': friday_feature,
         'saturday_show': saturday_show,
+        'saturday_source': saturday_source,
     }
 
 
@@ -72,11 +73,75 @@ def _build_friday_day_block(events: list[Event]) -> list[dict]:
 def _build_friday_feature_block(college_events: list[Event], pro_events: list[Event]) -> list[dict]:
     ordered_college = sorted(college_events, key=_college_friday_sort_key)
     ordered_pro = sorted(pro_events, key=_pro_sort_key)
-    ordered = ordered_college + ordered_pro
+    hot_saw_first = [e for e in ordered_pro if _normalize_name(e.name) == _normalize_name('Hot Saw')]
+    other_pro = [e for e in ordered_pro if _normalize_name(e.name) != _normalize_name('Hot Saw')]
+    ordered = hot_saw_first + ordered_college + other_pro
     return _to_schedule_entries(ordered, start_slot=1)
 
 
-def _build_saturday_show_block(pro_events: list[Event], college_spillover: list[Event]) -> list[dict]:
+def _build_saturday_show_block(
+    tournament: Tournament,
+    pro_events: list[Event],
+    college_spillover: list[Event]
+) -> tuple[list[dict], str]:
+    """Build Saturday show from pro flights when available; fallback to event order."""
+    allowed_pro_event_ids = {event.id for event in pro_events}
+    flight_entries = _build_saturday_from_flights(tournament, allowed_pro_event_ids)
+    if flight_entries:
+        return _append_college_spillover(flight_entries, college_spillover), 'flights'
+
+    fallback_entries = _build_saturday_from_event_order(pro_events, college_spillover)
+    return fallback_entries, 'events'
+
+
+def _build_saturday_from_flights(tournament: Tournament, allowed_event_ids: set[int]) -> list[dict]:
+    """Flatten built flights/heats into schedule slots."""
+    flights = Flight.query.filter_by(tournament_id=tournament.id).order_by(Flight.flight_number).all()
+    if not flights:
+        return []
+
+    entries = []
+    slot = 1
+    for flight in flights:
+        heats = flight.get_heats_ordered()
+        for heat in heats:
+            event = heat.event
+            if not event:
+                continue
+            if allowed_event_ids and event.id not in allowed_event_ids:
+                continue
+            run_suffix = f' Run {heat.run_number}' if event.requires_dual_runs else ''
+            entries.append({
+                'slot': slot,
+                'event_id': event.id,
+                'label': f'Flight {flight.flight_number}: {event.display_name} - Heat {heat.heat_number}{run_suffix}',
+                'event_type': event.event_type,
+                'stand_type': event.stand_type,
+                'flight_number': flight.flight_number,
+                'heat_id': heat.id,
+            })
+            slot += 1
+
+    return entries
+
+
+def _append_college_spillover(existing_entries: list[dict], college_spillover: list[Event]) -> list[dict]:
+    """Append selected college spillover events after flight-based schedule."""
+    entries = list(existing_entries)
+    slot = len(entries) + 1
+    for event in sorted(college_spillover, key=_spillover_sort_key):
+        entries.append({
+            'slot': slot,
+            'event_id': event.id,
+            'label': f'{event.display_name} (College Spillover)',
+            'event_type': event.event_type,
+            'stand_type': event.stand_type,
+        })
+        slot += 1
+    return entries
+
+
+def _build_saturday_from_event_order(pro_events: list[Event], college_spillover: list[Event]) -> list[dict]:
     """Intermix Saturday college spillover events into pro show order."""
     ordered_pro = sorted(pro_events, key=_pro_sort_key)
     ordered_spillover = sorted(college_spillover, key=_spillover_sort_key)

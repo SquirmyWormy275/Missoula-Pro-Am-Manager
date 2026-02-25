@@ -94,9 +94,25 @@
                                     <td>{{ t.college_competitor_count }}</td>
                                     <td>{{ t.pro_competitor_count }}</td>
                                     <td>
-                                        <a href="{{ url_for('main.tournament_detail', tournament_id=t.id) }}" class="btn btn-sm btn-outline-primary">
-                                            <i class="bi bi-eye"></i> {{ ui('view') }}
-                                        </a>
+                                        <div class="btn-group btn-group-sm" role="group">
+                                            <a href="{{ url_for('main.tournament_detail', tournament_id=t.id) }}" class="btn btn-outline-primary">
+                                                <i class="bi bi-eye"></i> {{ ui('view') }}
+                                            </a>
+                                            <form method="POST"
+                                                  action="{{ url_for('main.delete_tournament', tournament_id=t.id) }}"
+                                                  style="display:inline;"
+                                                  onsubmit="
+                                                      const typed = prompt('Type DELETE to permanently remove {{ t.name }} {{ t.year }}.');
+                                                      if (typed === null) { return false; }
+                                                      this.querySelector('input[name=confirm_delete]').value = typed;
+                                                      return true;
+                                                  ">
+                                                <input type="hidden" name="confirm_delete" value="">
+                                                <button type="submit" class="btn btn-outline-danger">
+                                                    <i class="bi bi-trash"></i> Delete
+                                                </button>
+                                            </form>
+                                        </div>
                                     </td>
                                 </tr>
                                 {% endfor %}

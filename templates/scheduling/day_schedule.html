@@ -119,11 +119,23 @@
                 <div class="card-header bg-warning text-dark">
                     <h5 class="mb-0">Saturday Show</h5>
                 </div>
+                <div class="card-body py-2 border-bottom">
+                    {% if schedule.saturday_source == 'flights' %}
+                        <small class="text-success"><i class="bi bi-check-circle"></i> Using built pro flights</small>
+                    {% else %}
+                        <small class="text-danger"><i class="bi bi-exclamation-triangle"></i> No flights found. Using fallback event order.</small>
+                    {% endif %}
+                </div>
                 <ul class="list-group list-group-flush">
                     {% for item in schedule.saturday_show %}
                     <li class="list-group-item">
                         <strong>{{ item.slot }}.</strong> {{ item.label }}
-                        <small class="text-muted d-block">{{ item.event_type|title }} | {{ item.stand_type }}</small>
+                        <small class="text-muted d-block">
+                            {{ item.event_type|title }} | {{ item.stand_type }}
+                            {% if item.flight_number %}
+                                | Flight {{ item.flight_number }}
+                            {% endif %}
+                        </small>
                     </li>
                     {% else %}
                     <li class="list-group-item text-muted">No events in this block.</li>

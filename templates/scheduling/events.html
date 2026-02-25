@@ -45,6 +45,7 @@
                                     <th>OPEN/CLOSED</th>
                                     <th>Competitors</th>
                                     <th>Heats</th>
+                                    <th>Assignments</th>
                                     <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
@@ -69,8 +70,40 @@
                                             <span class="badge bg-warning text-dark">CLOSED</span>
                                         {% endif %}
                                     </td>
-                                    <td>{{ e.results.count() }}</td>
+                                    <td>{{ entrant_counts.get(e.id, 0) }}</td>
                                     <td>{{ e.heats.count() }}</td>
+                                    <td>
+                                        {% set detail = assignment_details.get(e.id, {}) %}
+                                        {% if detail.mode == 'signup' %}
+                                            <span class="badge bg-dark mb-1">Signup List (No Heats)</span>
+                                            <details>
+                                                <summary>{{ detail.count }} entrant(s)</summary>
+                                                <div class="small mt-1">
+                                                    {% for row in detail.rows %}
+                                                        <div>{{ row }}</div>
+                                                    {% else %}
+                                                        <div class="text-muted">No signups yet</div>
+                                                    {% endfor %}
+                                                </div>
+                                            </details>
+                                        {% else %}
+                                            <details>
+                                                <summary>{{ detail.count }} heat(s)</summary>
+                                                <div class="small mt-1">
+                                                    {% for heat in detail.rows %}
+                                                        <div class="mb-1">
+                                                            <strong>H{{ heat.heat_number }}{% if e.requires_dual_runs %}-R{{ heat.run_number }}{% endif %}:</strong>
+                                                            {% for comp in heat.competitors %}
+                                                                <span class="me-1">S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>
+                                                            {% endfor %}
+                                                        </div>
+                                                    {% else %}
+                                                        <div class="text-muted">No heats yet</div>
+                                                    {% endfor %}
+                                                </div>
+                                            </details>
+                                        {% endif %}
+                                    </td>
                                     <td>
                                         {% if e.status == 'pending' %}
                                             <span class="badge bg-secondary">Pending</span>
@@ -129,6 +162,7 @@
                                     <th>Scoring</th>
                                     <th>Competitors</th>
                                     <th>Heats</th>
+                                    <th>Assignments</th>
                                     <th>Payouts</th>
                                     <th>Status</th>
                                     <th>Actions</th>
@@ -147,8 +181,26 @@
                                         {% endif %}
                                     </td>
                                     <td>{{ e.scoring_type }}</td>
-                                    <td>{{ e.results.count() }}</td>
+                                    <td>{{ entrant_counts.get(e.id, 0) }}</td>
                                     <td>{{ e.heats.count() }}</td>
+                                    <td>
+                                        {% set detail = assignment_details.get(e.id, {}) %}
+                                        <details>
+                                            <summary>{{ detail.count or 0 }} heat(s)</summary>
+                                            <div class="small mt-1">
+                                                {% for heat in detail.rows or [] %}
+                                                    <div class="mb-1">
+                                                        <strong>H{{ heat.heat_number }}{% if e.requires_dual_runs %}-R{{ heat.run_number }}{% endif %}:</strong>
+                                                        {% for comp in heat.competitors %}
+                                                            <span class="me-1">S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>
+                                                        {% endfor %}
+                                                    </div>
+                                                {% else %}
+                                                    <div class="text-muted">No heats yet</div>
+                                                {% endfor %}
+                                            </div>
+                                        </details>
+                                    </td>
                                     <td>
                                         {% set payouts = e.get_payouts() %}
                                         {% if payouts %}

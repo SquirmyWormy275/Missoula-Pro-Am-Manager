@@ -128,13 +128,13 @@ PRO_EVENTS = [
     {'name': 'Underhand', 'scoring_type': 'time', 'stand_type': 'underhand', 'is_gendered': True},
     {'name': 'Standing Block', 'scoring_type': 'time', 'stand_type': 'standing_block', 'is_gendered': True},
     {'name': 'Stock Saw', 'scoring_type': 'time', 'stand_type': 'stock_saw', 'is_gendered': True},
-    {'name': 'Hot Saw', 'scoring_type': 'time', 'stand_type': 'hot_saw', 'is_gendered': True},
+    {'name': 'Hot Saw', 'scoring_type': 'time', 'stand_type': 'hot_saw'},
     {'name': 'Single Buck', 'scoring_type': 'time', 'stand_type': 'saw_hand', 'is_gendered': True},
     {'name': 'Double Buck', 'scoring_type': 'time', 'stand_type': 'saw_hand', 'is_gendered': True, 'is_partnered': True},
     {'name': 'Jack & Jill Sawing', 'scoring_type': 'time', 'stand_type': 'saw_hand', 'is_partnered': True, 'partner_gender': 'mixed'},
     {'name': 'Partnered Axe Throw', 'scoring_type': 'score', 'stand_type': 'axe_throw', 'is_partnered': True, 'has_prelims': True},
     {'name': 'Obstacle Pole', 'scoring_type': 'time', 'stand_type': 'obstacle_pole'},
-    {'name': 'Pole Climb', 'scoring_type': 'time', 'stand_type': 'speed_climb', 'is_gendered': True},
+    {'name': 'Pole Climb', 'scoring_type': 'time', 'stand_type': 'speed_climb'},
     {'name': 'Cookie Stack', 'scoring_type': 'time', 'stand_type': 'cookie_stack'},
 ]
 

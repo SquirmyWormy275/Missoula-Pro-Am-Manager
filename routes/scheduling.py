@@ -5,10 +5,17 @@ import re
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from database import db
 from models import Tournament, Event, Heat, Flight
+from models.competitor import CollegeCompetitor, ProCompetitor
 import config
 import strings as text
 
 scheduling_bp = Blueprint('scheduling', __name__)
+LIST_ONLY_EVENT_NAMES = {
+    'axethrow',
+    'peaveylogroll',
+    'cabertoss',
+    'pulptoss',
+}
 
 
 @scheduling_bp.route('/<int:tournament_id>/events')
@@ -18,11 +25,18 @@ def event_list(tournament_id):
 
     college_events = tournament.events.filter_by(event_type='college').all()
     pro_events = tournament.events.filter_by(event_type='pro').all()
+    assignment_details = _build_assignment_details(tournament, college_events + pro_events)
+    entrant_counts = {
+        event.id: len(_signed_up_competitors(event))
+        for event in (college_events + pro_events)
+    }
 
     return render_template('scheduling/events.html',
                            tournament=tournament,
                            college_events=college_events,
-                           pro_events=pro_events)
+                           pro_events=pro_events,
+                           assignment_details=assignment_details,
+                           entrant_counts=entrant_counts)
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])
@@ -175,6 +189,155 @@ def _event_signature(name, event_type, gender):
     return f"{event_type}|{name}|{gender or ''}"
 
 
+def _normalize_name(value: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
+
+
+def _normalize_person_name(value: str) -> str:
+    return str(value or '').strip().lower()
+
+
+def _is_list_only_event(event: Event) -> bool:
+    return event.event_type == 'college' and _normalize_name(event.name) in LIST_ONLY_EVENT_NAMES
+
+
+def _build_assignment_details(tournament: Tournament, events: list[Event]) -> dict:
+    details = {}
+    for event in events:
+        if _is_list_only_event(event):
+            signup_rows = _build_signup_rows(event)
+            details[event.id] = {
+                'mode': 'signup',
+                'rows': signup_rows,
+                'count': len(signup_rows),
+            }
+            continue
+
+        heats = event.heats.order_by(Heat.heat_number, Heat.run_number).all()
+        all_comp_ids = []
+        for heat in heats:
+            all_comp_ids.extend(heat.get_competitors())
+        comp_lookup = _load_competitor_lookup(event, all_comp_ids)
+
+        heat_rows = []
+        for heat in heats:
+            assignments = heat.get_stand_assignments()
+            competitors = []
+            for comp_id in heat.get_competitors():
+                comp = comp_lookup.get(comp_id)
+                competitors.append({
+                    'name': comp.name if comp else f'Unknown ({comp_id})',
+                    'stand': assignments.get(str(comp_id)),
+                })
+            heat_rows.append({
+                'heat_number': heat.heat_number,
+                'run_number': heat.run_number,
+                'competitors': competitors,
+            })
+
+        details[event.id] = {
+            'mode': 'heats',
+            'rows': heat_rows,
+            'count': len(heat_rows),
+        }
+
+    return details
+
+
+def _load_competitor_lookup(event: Event, competitor_ids: list[int]) -> dict:
+    ids = sorted(set(int(cid) for cid in competitor_ids if cid is not None))
+    if not ids:
+        return {}
+    if event.event_type == 'college':
+        competitors = CollegeCompetitor.query.filter(CollegeCompetitor.id.in_(ids)).all()
+    else:
+        competitors = ProCompetitor.query.filter(ProCompetitor.id.in_(ids)).all()
+    return {c.id: c for c in competitors}
+
+
+def _build_signup_rows(event: Event) -> list[str]:
+    competitors = _signed_up_competitors(event)
+    if not event.is_partnered:
+        return [c.name for c in competitors]
+
+    rows = []
+    used = set()
+    by_name = {_normalize_person_name(c.name): c for c in competitors}
+    for comp in competitors:
+        if comp.id in used:
+            continue
+        partner_name = _resolve_partner_name(comp, event)
+        partner = by_name.get(_normalize_person_name(partner_name)) if partner_name else None
+        if partner and partner.id not in used:
+            rows.append(f'{comp.name} + {partner.name}')
+            used.add(comp.id)
+            used.add(partner.id)
+        else:
+            rows.append(comp.name)
+            used.add(comp.id)
+
+    return rows
+
+
+def _signed_up_competitors(event: Event) -> list:
+    if event.event_type == 'college':
+        all_comps = CollegeCompetitor.query.filter_by(
+            tournament_id=event.tournament_id,
+            status='active'
+        ).all()
+    else:
+        all_comps = ProCompetitor.query.filter_by(
+            tournament_id=event.tournament_id,
+            status='active'
+        ).all()
+
+    signed = []
+    for comp in all_comps:
+        entered = comp.get_events_entered() if hasattr(comp, 'get_events_entered') else []
+        if _competitor_entered_event(event, entered):
+            if event.gender and getattr(comp, 'gender', None) != event.gender:
+                continue
+            signed.append(comp)
+
+    return sorted(signed, key=lambda c: c.name.lower())
+
+
+def _competitor_entered_event(event: Event, entered_events: list) -> bool:
+    entered = entered_events if isinstance(entered_events, list) else []
+    target_id = str(event.id)
+    target_name = _normalize_name(event.name)
+    target_display_name = _normalize_name(event.display_name)
+
+    for raw in entered:
+        value = str(raw).strip()
+        if not value:
+            continue
+        if value == target_id:
+            return True
+        normalized = _normalize_name(value)
+        if normalized in {target_name, target_display_name}:
+            return True
+    return False
+
+
+def _resolve_partner_name(competitor, event: Event) -> str:
+    partners = competitor.get_partners() if hasattr(competitor, 'get_partners') else {}
+    if not isinstance(partners, dict):
+        return ''
+    candidates = [
+        str(event.id),
+        event.name,
+        event.display_name,
+        event.name.lower(),
+        event.display_name.lower(),
+    ]
+    for key in candidates:
+        value = partners.get(key)
+        if str(value or '').strip():
+            return str(value).strip()
+    return ''
+
+
 def _remove_deselected_events(tournament, event_type, selected_signatures):
     """Remove deselected events unless they already contain generated data."""
     skipped = 0
@@ -289,11 +452,15 @@ def event_heats(tournament_id, event_id):
     event = Event.query.get_or_404(event_id)
 
     heats = event.heats.order_by(Heat.heat_number, Heat.run_number).all()
+    signup_list_mode = _is_list_only_event(event)
+    signup_rows = _build_signup_rows(event) if signup_list_mode else []
 
     return render_template('scheduling/heats.html',
                            tournament=tournament,
                            event=event,
-                           heats=heats)
+                           heats=heats,
+                           signup_rows=signup_rows,
+                           signup_list_mode=signup_list_mode)
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/generate-heats', methods=['POST'])
@@ -306,7 +473,10 @@ def generate_heats(tournament_id, event_id):
 
     try:
         num_heats = generate_event_heats(event)
-        flash(text.FLASH['heats_generated'].format(num_heats=num_heats, event_name=event.display_name), 'success')
+        if _is_list_only_event(event):
+            flash(f'{event.display_name} uses signups only (no heats).', 'success')
+        else:
+            flash(text.FLASH['heats_generated'].format(num_heats=num_heats, event_name=event.display_name), 'success')
     except Exception as e:
         flash(text.FLASH['heats_error'].format(error=str(e)), 'error')
 

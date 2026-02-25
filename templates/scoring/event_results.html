@@ -4,6 +4,7 @@
 
 {% block content %}
 <div class="container-fluid py-4">
+    {% set list_only_event = event.event_type == 'college' and event.name in ['Axe Throw', 'Peavey Log Roll', 'Caber Toss', 'Pulp Toss'] %}
     <div class="row mb-4">
         <div class="col-12">
             <nav aria-label="breadcrumb">
@@ -89,11 +90,17 @@
                     {% else %}
                         <div class="list-group-item text-center text-muted py-4">
                             <i class="bi bi-inbox display-6"></i>
-                            <p class="mt-2 mb-0">No heats generated yet</p>
+                            <p class="mt-2 mb-0">
+                                {% if list_only_event %}
+                                    This event uses signups only (no heats)
+                                {% else %}
+                                    No heats generated yet
+                                {% endif %}
+                            </p>
                         </div>
                     {% endif %}
                 </div>
-                {% if not heats %}
+                {% if not heats and not list_only_event %}
                 <div class="card-footer">
                     <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST">
                         <button type="submit" class="btn btn-proam w-100">

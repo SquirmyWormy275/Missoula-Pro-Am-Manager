@@ -4,7 +4,7 @@ Main routes for dashboard and navigation.
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from urllib.parse import urlsplit
 from database import db
-from models import Tournament
+from models import Tournament, Event, Heat, HeatAssignment, Flight
 import strings as text
 
 main_bp = Blueprint('main', __name__)
@@ -108,6 +108,44 @@ def activate_competition(tournament_id, competition_type):
 
     db.session.commit()
     return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
+
+
+@main_bp.route('/tournament/<int:tournament_id>/delete', methods=['POST'])
+def delete_tournament(tournament_id):
+    """Delete a tournament from the dashboard list."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament_name = f'{tournament.name} {tournament.year}'
+    confirmation = request.form.get('confirm_delete', '').strip()
+
+    if confirmation != 'DELETE':
+        flash(f'Deletion cancelled for "{tournament_name}". Type DELETE to confirm.', 'warning')
+        return redirect(url_for('main.index'))
+
+    try:
+        # Clear heat assignments that are not ORM-linked for cascade delete.
+        event_ids = [eid for (eid,) in tournament.events.with_entities(Event.id).all()]
+        if event_ids:
+            heat_ids = [hid for (hid,) in Heat.query.filter(Heat.event_id.in_(event_ids)).with_entities(Heat.id).all()]
+            if heat_ids:
+                HeatAssignment.query.filter(HeatAssignment.heat_id.in_(heat_ids)).delete(synchronize_session=False)
+
+        # Remove flight references before deleting flights.
+        flight_ids = [fid for (fid,) in Flight.query.filter_by(tournament_id=tournament_id).with_entities(Flight.id).all()]
+        if flight_ids:
+            Heat.query.filter(Heat.flight_id.in_(flight_ids)).update(
+                {Heat.flight_id: None},
+                synchronize_session=False
+            )
+            Flight.query.filter(Flight.id.in_(flight_ids)).delete(synchronize_session=False)
+
+        db.session.delete(tournament)
+        db.session.commit()
+        flash(f'Deleted tournament: {tournament_name}', 'success')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Could not delete tournament "{tournament_name}": {exc}', 'error')
+
+    return redirect(url_for('main.index'))
 
 
 @main_bp.route('/tournament/<int:tournament_id>/college')
