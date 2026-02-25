@@ -65,22 +65,31 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
 
     # Group by team if team column exists
     if team_col:
-        grouped = df.groupby(team_col)
+        grouped = df.groupby(team_col, sort=False)
     elif school_col:
-        grouped = df.groupby(school_col)
+        grouped = df.groupby(school_col, sort=False)
     else:
         # Treat entire file as one team
         grouped = [(df.iloc[0].get(school_col, 'Unknown'), df)]
+
+    last_real_team = None
 
     for team_identifier, team_df in grouped:
         # Skip empty groups
         if len(team_df) == 0:
             continue
+        # Ignore note/placeholder groups with no valid competitor names.
+        valid_team_df = team_df[team_df[name_col].apply(_is_valid_competitor_name)]
+        if len(valid_team_df) == 0:
+            note = _extract_gear_sharing_note(team_identifier, team_df, school_col)
+            if note and last_real_team is not None:
+                _apply_gear_sharing_note_to_team(last_real_team, note)
+            continue
 
         # Determine school and team code
         if team_col:
             team_code = str(team_identifier)
-            school_name = team_df[school_col].iloc[0] if school_col else (default_school_name or team_code)
+            school_name = valid_team_df[school_col].iloc[0] if school_col else (default_school_name or team_code)
         else:
             team_code = str(team_identifier)
             school_name = default_school_name or team_code
@@ -104,9 +113,10 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
             db.session.add(team)
             db.session.flush()  # Get the ID
             teams_created += 1
+        last_real_team = team
 
         # Add competitors to team
-        for _, row in team_df.iterrows():
+        for _, row in valid_team_df.iterrows():
             name = row.get(name_col)
             if pd.isna(name) or not str(name).strip():
                 continue
@@ -284,6 +294,74 @@ def _infer_default_gender(df: pd.DataFrame, gender_col: str = None) -> str:
     if female_markers > male_markers:
         return 'F'
     return 'M'
+
+
+def _is_valid_competitor_name(value) -> bool:
+    """Return True only for real competitor name rows."""
+    if pd.isna(value):
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    normalized = _normalize_label(text)
+    if any(marker in normalized for marker in ['gear being shared', 'pro am lottery', 'do not count']):
+        return False
+    if normalized in {'a team', 'b team', 'c team', 'd team', 'team'}:
+        return False
+    return True
+
+
+def _extract_gear_sharing_note(team_identifier, team_df: pd.DataFrame, school_col: str = None):
+    """Extract possible gear-sharing note text from a non-competitor group."""
+    candidates = []
+
+    # Group key can be the note itself when grouped by school/team code.
+    if team_identifier is not None and not pd.isna(team_identifier):
+        candidates.append(str(team_identifier).strip())
+
+    if school_col and school_col in team_df.columns:
+        for value in team_df[school_col].dropna().tolist():
+            text = str(value).strip()
+            if text:
+                candidates.append(text)
+
+    for _, row in team_df.iterrows():
+        for value in row.tolist():
+            if pd.isna(value):
+                continue
+            text = str(value).strip()
+            if text:
+                candidates.append(text)
+
+    for text in candidates:
+        normalized = _normalize_label(text)
+        if any(marker in normalized for marker in ['crosscut', 'gear', 'share']):
+            return text
+    return None
+
+
+def _apply_gear_sharing_note_to_team(team: Team, note_text: str):
+    """Map imported gear-sharing notes to team members for heat generation constraints."""
+    categories = _infer_gear_categories(note_text)
+    if not categories:
+        return
+
+    for category in categories:
+        group_token = f'group:team:{team.id}:{category}'
+        event_key = f'category:{category}'
+        for competitor in team.members.filter_by(status='active').all():
+            competitor.set_gear_sharing(event_key, group_token)
+
+
+def _infer_gear_categories(note_text: str) -> list:
+    """Infer gear categories from free-text notes."""
+    normalized = _normalize_label(note_text)
+    categories = []
+    if any(token in normalized for token in ['crosscut', 'single buck', 'double buck', 'buck', 'saw']):
+        categories.append('crosscut')
+    if any(token in normalized for token in ['stock saw', 'powersaw', 'power saw', 'hot saw']):
+        categories.append('chainsaw')
+    return categories
 
 
 def _parse_gender(value) -> str:

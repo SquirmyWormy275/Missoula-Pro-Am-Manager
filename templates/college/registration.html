@@ -109,6 +109,13 @@
                                            class="btn btn-sm btn-outline-primary">
                                             <i class="bi bi-eye"></i> View
                                         </a>
+                                        <form action="{{ url_for('registration.delete_college_team', tournament_id=tournament.id, team_id=t.id) }}"
+                                              method="POST" class="d-inline"
+                                              onsubmit="return confirm('Delete team {{ t.team_code }} and all competitors? This cannot be undone.');">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-trash"></i> Delete
+                                            </button>
+                                        </form>
                                     </td>
                                 </tr>
                                 {% endfor %}

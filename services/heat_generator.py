@@ -43,11 +43,11 @@ def generate_event_heats(event: Event) -> int:
 
     # Apply special constraints
     if event.stand_type == 'springboard':
-        heats = _generate_springboard_heats(competitors, num_heats, max_per_heat, stand_config)
+        heats = _generate_springboard_heats(competitors, num_heats, max_per_heat, stand_config, event=event)
     elif event.stand_type in ['saw_hand']:
-        heats = _generate_saw_heats(competitors, num_heats, max_per_heat, stand_config)
+        heats = _generate_saw_heats(competitors, num_heats, max_per_heat, stand_config, event=event)
     else:
-        heats = _generate_standard_heats(competitors, num_heats, max_per_heat)
+        heats = _generate_standard_heats(competitors, num_heats, max_per_heat, event=event)
 
     # Create Heat objects
     for heat_num, heat_competitors in enumerate(heats, start=1):
@@ -136,7 +136,7 @@ def _get_event_competitors(event: Event) -> list:
                     'name': comp.name,
                     'gender': comp.gender,
                     'is_left_handed': False,
-                    'gear_sharing': {}
+                    'gear_sharing': comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {}
                 })
         else:
             all_comps = ProCompetitor.query.filter_by(
@@ -169,7 +169,7 @@ def _get_event_competitors(event: Event) -> list:
     return competitors
 
 
-def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: int) -> list:
+def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: int, event: Event = None) -> list:
     """
     Generate heats using snake draft distribution.
 
@@ -182,23 +182,32 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
     heat_idx = 0
 
     for comp in competitors:
-        heats[heat_idx].append(comp)
+        placed = False
 
-        # Move to next heat (snake pattern)
-        heat_idx += direction
+        # First pass: look for a heat with capacity and no gear-sharing conflict.
+        for _ in range(num_heats):
+            if len(heats[heat_idx]) < max_per_heat and not _has_gear_sharing_conflict(comp, heats[heat_idx], event):
+                heats[heat_idx].append(comp)
+                placed = True
+                break
+            heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
 
-        if heat_idx >= num_heats:
-            direction = -1
-            heat_idx = num_heats - 1
-        elif heat_idx < 0:
-            direction = 1
-            heat_idx = 0
+        # Fallback: place despite conflict if every heat conflicts/full.
+        if not placed:
+            for _ in range(num_heats):
+                if len(heats[heat_idx]) < max_per_heat:
+                    heats[heat_idx].append(comp)
+                    placed = True
+                    break
+                heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
+
+        heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
 
     return heats
 
 
 def _generate_springboard_heats(competitors: list, num_heats: int,
-                                 max_per_heat: int, stand_config: dict) -> list:
+                                 max_per_heat: int, stand_config: dict, event: Event = None) -> list:
     """
     Generate springboard heats with left-handed cutter grouping.
 
@@ -210,7 +219,7 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
 
     # If no left-handed, use standard distribution
     if not left_handed:
-        return _generate_standard_heats(competitors, num_heats, max_per_heat)
+        return _generate_standard_heats(competitors, num_heats, max_per_heat, event=event)
 
     # Create heats ensuring left-handed are spread out
     heats = [[] for _ in range(num_heats)]
@@ -229,29 +238,18 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
         # Find next heat with space
         while heats[heat_idx] and len(heats[heat_idx]) >= max_per_heat:
             heat_idx += direction
-            if heat_idx >= num_heats:
-                direction = -1
-                heat_idx = num_heats - 1
-            elif heat_idx < 0:
-                direction = 1
-                heat_idx = 0
+            heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
 
         heats[heat_idx].append(comp)
 
         # Move to next heat
-        heat_idx += direction
-        if heat_idx >= num_heats:
-            direction = -1
-            heat_idx = num_heats - 1
-        elif heat_idx < 0:
-            direction = 1
-            heat_idx = 0
+        heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
 
     return heats
 
 
 def _generate_saw_heats(competitors: list, num_heats: int,
-                        max_per_heat: int, stand_config: dict) -> list:
+                        max_per_heat: int, stand_config: dict, event: Event = None) -> list:
     """
     Generate saw heats respecting stand group constraints.
 
@@ -261,7 +259,80 @@ def _generate_saw_heats(competitors: list, num_heats: int,
     actual_max = min(max_per_heat, 4)  # Saw groups are 4 each
     num_heats = math.ceil(len(competitors) / actual_max)
 
-    return _generate_standard_heats(competitors, num_heats, actual_max)
+    return _generate_standard_heats(competitors, num_heats, actual_max, event=event)
+
+
+def _advance_snake_index(heat_idx: int, direction: int, num_heats: int):
+    """Advance heat index in snake-draft pattern."""
+    heat_idx += direction
+    if heat_idx >= num_heats:
+        direction = -1
+        heat_idx = num_heats - 1
+    elif heat_idx < 0:
+        direction = 1
+        heat_idx = 0
+    return heat_idx, direction
+
+
+def _has_gear_sharing_conflict(comp: dict, heat_competitors: list, event: Event) -> bool:
+    """Return True if comp conflicts with anyone already in heat for this event."""
+    for other in heat_competitors:
+        if _competitors_share_gear_for_event(comp, other, event):
+            return True
+    return False
+
+
+def _competitors_share_gear_for_event(comp1: dict, comp2: dict, event: Event) -> bool:
+    """Check event-specific gear-sharing conflict between two competitors."""
+    sharing1 = comp1.get('gear_sharing', {}) or {}
+    sharing2 = comp2.get('gear_sharing', {}) or {}
+    name1 = str(comp1.get('name', '')).strip().lower()
+    name2 = str(comp2.get('name', '')).strip().lower()
+
+    for key1, value1 in sharing1.items():
+        if not _gear_key_matches_event(key1, event):
+            continue
+
+        value1_text = str(value1).strip()
+        if not value1_text:
+            continue
+
+        # Partner-name style rules.
+        if value1_text.lower() == name2:
+            return True
+
+        # Group-token style rules from team-level gear notes.
+        if value1_text.startswith('group:'):
+            for key2, value2 in sharing2.items():
+                if _gear_key_matches_event(key2, event) and str(value2).strip() == value1_text:
+                    return True
+
+    # Symmetric check for partner-name rules set on comp2 only.
+    for key2, value2 in sharing2.items():
+        if _gear_key_matches_event(key2, event) and str(value2).strip().lower() == name1:
+            return True
+
+    return False
+
+
+def _gear_key_matches_event(key: str, event: Event) -> bool:
+    """Match a gear-sharing key against an event."""
+    key = str(key).strip().lower()
+    event_name = (event.display_name if event else '').lower()
+
+    if not event:
+        return False
+    if key == str(event.id):
+        return True
+    if key.startswith('category:'):
+        category = key.split(':', 1)[1]
+        if category == 'crosscut':
+            return event.stand_type == 'saw_hand' or any(token in event_name for token in ['buck', 'saw', 'crosscut'])
+        if category == 'chainsaw':
+            return any(token in event_name for token in ['stock saw', 'power saw', 'hot saw'])
+        return False
+
+    return key in event_name
 
 
 def check_gear_sharing_conflicts(heats: list) -> list:

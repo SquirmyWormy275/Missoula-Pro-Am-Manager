@@ -4,8 +4,9 @@ Registration routes for uploading and managing competitor entries.
 from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app
 from werkzeug.utils import secure_filename
 import os
+import json
 from database import db
-from models import Tournament, Team, CollegeCompetitor, ProCompetitor
+from models import Tournament, Team, CollegeCompetitor, ProCompetitor, Event, EventResult, Heat
 import strings as text
 
 registration_bp = Blueprint('registration', __name__)
@@ -69,10 +70,100 @@ def team_detail(tournament_id, team_id):
     """View and edit team details."""
     tournament = Tournament.query.get_or_404(tournament_id)
     team = Team.query.get_or_404(team_id)
+    if team.tournament_id != tournament.id:
+        flash('Team not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    members = sorted(
+        team.members.all(),
+        key=lambda m: (m.status != 'active', -m.individual_points, m.name.lower())
+    )
 
     return render_template('college/team_detail.html',
                            tournament=tournament,
-                           team=team)
+                           team=team,
+                           members=members)
+
+
+@registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/scratch', methods=['POST'])
+def scratch_college_competitor(tournament_id, competitor_id):
+    """Scratch a college competitor and remove from uncompleted heats."""
+    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    competitor.status = 'scratched'
+    _remove_college_competitor_from_unfinished_heats(competitor.id, tournament_id)
+
+    college_event_ids = [e.id for e in Event.query.filter_by(tournament_id=tournament_id, event_type='college').all()]
+    if college_event_ids:
+        EventResult.query.filter(
+            EventResult.event_id.in_(college_event_ids),
+            EventResult.competitor_type == 'college',
+            EventResult.competitor_id == competitor.id,
+            EventResult.status != 'completed'
+        ).update({EventResult.status: 'scratched'}, synchronize_session=False)
+
+    db.session.commit()
+    flash(text.FLASH['competitor_scratched'].format(name=competitor.name), 'warning')
+    return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
+
+
+@registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/delete', methods=['POST'])
+def delete_college_competitor(tournament_id, competitor_id):
+    """Delete a college competitor from registration and schedule."""
+    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    team_id = competitor.team_id
+    comp_name = competitor.name
+
+    _remove_college_competitor_from_unfinished_heats(competitor.id, tournament_id)
+    college_event_ids = [e.id for e in Event.query.filter_by(tournament_id=tournament_id, event_type='college').all()]
+    if college_event_ids:
+        EventResult.query.filter(
+            EventResult.event_id.in_(college_event_ids),
+            EventResult.competitor_type == 'college',
+            EventResult.competitor_id == competitor.id
+        ).delete(synchronize_session=False)
+
+    db.session.delete(competitor)
+    db.session.commit()
+
+    flash(f'Competitor "{comp_name}" deleted.', 'warning')
+    return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
+
+
+@registration_bp.route('/<int:tournament_id>/college/team/<int:team_id>/delete', methods=['POST'])
+def delete_college_team(tournament_id, team_id):
+    """Delete a college team and all its competitors."""
+    team = Team.query.get_or_404(team_id)
+    if team.tournament_id != tournament_id:
+        flash('Team not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    team_code = team.team_code
+    members = team.members.all()
+    college_event_ids = [e.id for e in Event.query.filter_by(tournament_id=tournament_id, event_type='college').all()]
+
+    for competitor in members:
+        _remove_college_competitor_from_unfinished_heats(competitor.id, tournament_id)
+        if college_event_ids:
+            EventResult.query.filter(
+                EventResult.event_id.in_(college_event_ids),
+                EventResult.competitor_type == 'college',
+                EventResult.competitor_id == competitor.id
+            ).delete(synchronize_session=False)
+        db.session.delete(competitor)
+
+    db.session.delete(team)
+    db.session.commit()
+
+    flash(f'Team "{team_code}" and {len(members)} competitor(s) deleted.', 'warning')
+    return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
 
 @registration_bp.route('/<int:tournament_id>/pro')
@@ -134,3 +225,22 @@ def scratch_pro_competitor(tournament_id, competitor_id):
 
     flash(text.FLASH['competitor_scratched'].format(name=competitor.name), 'warning')
     return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
+
+
+def _remove_college_competitor_from_unfinished_heats(competitor_id: int, tournament_id: int):
+    """Remove a competitor from uncompleted college heats and stand assignments."""
+    heats = Heat.query.join(Event).filter(
+        Event.tournament_id == tournament_id,
+        Event.id == Heat.event_id,
+        Event.event_type == 'college',
+        Heat.status != 'completed'
+    ).all()
+
+    for heat in heats:
+        comp_ids = heat.get_competitors()
+        if competitor_id in comp_ids:
+            heat.remove_competitor(competitor_id)
+            assignments = heat.get_stand_assignments()
+            if str(competitor_id) in assignments:
+                del assignments[str(competitor_id)]
+                heat.stand_assignments = json.dumps(assignments)

@@ -49,6 +49,22 @@ class CollegeCompetitor(db.Model):
         partners[str(event_id)] = partner_name
         self.partners = json.dumps(partners)
 
+    def get_gear_sharing(self):
+        """Return dict of gear-sharing constraints for this competitor."""
+        partners = self.get_partners()
+        gear_sharing = partners.get('__gear_sharing__', {})
+        return gear_sharing if isinstance(gear_sharing, dict) else {}
+
+    def set_gear_sharing(self, event_key, partner_or_group):
+        """Set gear-sharing rule for an event key/category."""
+        partners = self.get_partners()
+        gear_sharing = partners.get('__gear_sharing__', {})
+        if not isinstance(gear_sharing, dict):
+            gear_sharing = {}
+        gear_sharing[str(event_key)] = partner_or_group
+        partners['__gear_sharing__'] = gear_sharing
+        self.partners = json.dumps(partners)
+
     def add_points(self, points):
         """Add points to individual total and update team total."""
         self.individual_points += points
