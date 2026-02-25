@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}Day Schedule - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-calendar-week text-dark"></i>
+                        Day Schedule Generator
+                    </h1>
+                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
+                </div>
+                <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to Events
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-sliders"></i> Schedule Options</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <div class="row">
+                            <div class="col-lg-6 mb-3">
+                                <h6 class="text-muted">Run Pro Events on Friday Night Feature</h6>
+                                {% if pro_events %}
+                                    {% for event in pro_events %}
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                               name="friday_pro_event_ids" value="{{ event.id }}"
+                                               id="friday_pro_{{ event.id }}"
+                                               {% if event.id in selected_friday_pro_event_ids %}checked{% endif %}>
+                                        <label class="form-check-label" for="friday_pro_{{ event.id }}">
+                                            {{ event.display_name }}
+                                        </label>
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p class="text-muted mb-0">No pro events configured.</p>
+                                {% endif %}
+                            </div>
+
+                            <div class="col-lg-6 mb-3">
+                                <h6 class="text-muted">Roll College Events to Saturday (Priority List)</h6>
+                                {% if college_sat_options %}
+                                    {% for event in college_sat_options %}
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                               name="saturday_college_event_ids" value="{{ event.id }}"
+                                               id="sat_college_{{ event.id }}"
+                                               {% if event.id in selected_saturday_college_event_ids %}checked{% endif %}>
+                                        <label class="form-check-label" for="sat_college_{{ event.id }}">
+                                            {{ event.display_name }}
+                                        </label>
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p class="text-muted mb-0">No eligible college spillover events configured.</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-dark">
+                            <i class="bi bi-arrow-repeat"></i> Generate Schedule
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Friday Day Show</h5>
+                </div>
+                <ul class="list-group list-group-flush">
+                    {% for item in schedule.friday_day %}
+                    <li class="list-group-item">
+                        <strong>{{ item.slot }}.</strong> {{ item.label }}
+                        <small class="text-muted d-block">{{ item.event_type|title }} | {{ item.stand_type }}</small>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item text-muted">No events in this block.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+        <div class="col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">Friday Night Feature</h5>
+                </div>
+                <ul class="list-group list-group-flush">
+                    {% for item in schedule.friday_feature %}
+                    <li class="list-group-item">
+                        <strong>{{ item.slot }}.</strong> {{ item.label }}
+                        <small class="text-muted d-block">{{ item.event_type|title }} | {{ item.stand_type }}</small>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item text-muted">No events in this block.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+        <div class="col-lg-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">Saturday Show</h5>
+                </div>
+                <ul class="list-group list-group-flush">
+                    {% for item in schedule.saturday_show %}
+                    <li class="list-group-item">
+                        <strong>{{ item.slot }}.</strong> {{ item.label }}
+                        <small class="text-muted d-block">{{ item.event_type|title }} | {{ item.stand_type }}</small>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item text-muted">No events in this block.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

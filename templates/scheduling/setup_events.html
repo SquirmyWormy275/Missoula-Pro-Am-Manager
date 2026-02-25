@@ -42,13 +42,15 @@
                                     </div>
                                     <div>
                                         <div class="btn-group btn-group-sm" role="group">
-                                            <input type="radio" class="btn-check" name="open_{{ event.name }}"
-                                                   id="open_{{ event.name }}_open" value="open" checked>
-                                            <label class="btn btn-outline-success" for="open_{{ event.name }}_open">OPEN</label>
+                                            <input type="radio" class="btn-check" name="open_{{ event.field_key }}"
+                                                   id="open_{{ event.field_key }}_open" value="open"
+                                                   {% if existing_config.college_open_state.get(event.name, True) %}checked{% endif %}>
+                                            <label class="btn btn-outline-success" for="open_{{ event.field_key }}_open">OPEN</label>
 
-                                            <input type="radio" class="btn-check" name="open_{{ event.name }}"
-                                                   id="open_{{ event.name }}_closed" value="closed">
-                                            <label class="btn btn-outline-warning" for="open_{{ event.name }}_closed">CLOSED</label>
+                                            <input type="radio" class="btn-check" name="open_{{ event.field_key }}"
+                                                   id="open_{{ event.field_key }}_closed" value="closed"
+                                                   {% if not existing_config.college_open_state.get(event.name, True) %}checked{% endif %}>
+                                            <label class="btn btn-outline-warning" for="open_{{ event.field_key }}_closed">CLOSED</label>
                                         </div>
                                     </div>
                                 </div>
@@ -65,9 +67,10 @@
                             <div class="col-md-6 mb-2">
                                 <div class="form-check">
                                     <input type="checkbox" class="form-check-input"
-                                           name="enable_{{ event.name }}"
-                                           id="college_{{ event.name }}" checked>
-                                    <label class="form-check-label" for="college_{{ event.name }}">
+                                           name="enable_{{ event.field_key }}"
+                                           id="college_{{ event.field_key }}"
+                                           {% if existing_config.college_closed_enabled.get(event.name, True) %}checked{% endif %}>
+                                    <label class="form-check-label" for="college_{{ event.field_key }}">
                                         {{ event.name }}
                                         <small class="text-muted">({{ event.scoring_type }})</small>
                                     </label>
@@ -104,9 +107,10 @@
                                     <div class="col-md-5">
                                         <div class="form-check">
                                             <input type="checkbox" class="form-check-input"
-                                                   name="enable_{{ event.name }}"
-                                                   id="pro_{{ event.name }}">
-                                            <label class="form-check-label" for="pro_{{ event.name }}">
+                                                   name="enable_{{ event.field_key }}"
+                                                   id="pro_{{ event.field_key }}"
+                                                   {% if existing_config.pro_enabled.get(event.name, False) %}checked{% endif %}>
+                                            <label class="form-check-label" for="pro_{{ event.field_key }}">
                                                 <strong>{{ event.name }}</strong>
                                             </label>
                                         </div>
@@ -115,15 +119,17 @@
                                         {% if event.get('is_gendered', False) %}
                                         <div class="form-check form-check-inline">
                                             <input type="checkbox" class="form-check-input"
-                                                   name="enable_{{ event.name }}_M"
-                                                   id="pro_{{ event.name }}_M">
-                                            <label class="form-check-label" for="pro_{{ event.name }}_M">Men's</label>
+                                                   name="enable_{{ event.field_key }}_M"
+                                                   id="pro_{{ event.field_key }}_M"
+                                                   {% if existing_config.pro_gender.get(event.name, {}).get('M', False) %}checked{% endif %}>
+                                            <label class="form-check-label" for="pro_{{ event.field_key }}_M">Men's</label>
                                         </div>
                                         <div class="form-check form-check-inline">
                                             <input type="checkbox" class="form-check-input"
-                                                   name="enable_{{ event.name }}_F"
-                                                   id="pro_{{ event.name }}_F">
-                                            <label class="form-check-label" for="pro_{{ event.name }}_F">Women's</label>
+                                                   name="enable_{{ event.field_key }}_F"
+                                                   id="pro_{{ event.field_key }}_F"
+                                                   {% if existing_config.pro_gender.get(event.name, {}).get('F', False) %}checked{% endif %}>
+                                            <label class="form-check-label" for="pro_{{ event.field_key }}_F">Women's</label>
                                         </div>
                                         {% else %}
                                         <span class="text-muted small">Mixed/Open event</span>

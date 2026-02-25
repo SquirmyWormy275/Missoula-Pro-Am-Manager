@@ -123,7 +123,7 @@ ARAPAHO_OVERRIDES = {
         'language_changed': "Heenetiit nih'ookuuni3i' {language}.",
     },
     'UI': {
-        'language': 'Heenetiit',
+        'language': "Hinono'eitiit, Bee3osohoot",
         'home': "beyeihi'",
         'college': "tesco'ouutou3eino'oowu'",
         'year': 'cec',
@@ -137,7 +137,7 @@ ARAPAHO_OVERRIDES = {
 # Dictionary-backed phrase substitutions used for full-page translation
 # in Arapaho mode. Unknown terms intentionally remain English for safety.
 ARAPAHO_VERIFIED_PHRASES = {
-    'Language': 'Heenetiit',
+    'Language': "Hinono'eitiit, Bee3osohoot",
     'Home': "beyeihi'",
     'Homepage': "niiheyoo niihenehiitono",
     'Arapaho': "hinono'ei'",
@@ -154,8 +154,9 @@ ARAPAHO_VERIFIED_PHRASES = {
     'Week': "niiseti'",
     'Month': 'biikousiis',
     'Year': 'cec',
-    'Person': 'hinenitee',
-    'People': "hineniteeno'",
+    'Person': "Hinono'eino",
+    'People': "Hinono'eiteen",
+    'Country': "Hinono'eino' Biito'owu'",
     'Man': 'hinen',
     'Woman': 'hisei',
     'Pay': 'honoontoone3en',
@@ -277,11 +278,28 @@ def translate_html(html: str, lang: str | None = None) -> str:
         return html
 
     parts = re.split(r'(<[^>]+>)', html)
+    in_style = False
+    in_script = False
+
     for idx, chunk in enumerate(parts):
-        if not chunk or chunk.startswith('<'):
+        if not chunk:
             continue
-        if chunk.isspace():
+
+        if chunk.startswith('<'):
+            tag = chunk.lower()
+            if tag.startswith('<style'):
+                in_style = True
+            elif tag.startswith('</style'):
+                in_style = False
+            elif tag.startswith('<script'):
+                in_script = True
+            elif tag.startswith('</script'):
+                in_script = False
             continue
+
+        if in_style or in_script or chunk.isspace():
+            continue
+
         parts[idx] = free_text(chunk, lang=lang_code)
     return ''.join(parts)
 

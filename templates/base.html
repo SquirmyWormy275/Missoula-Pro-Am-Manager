@@ -17,6 +17,10 @@
             --proam-gold: #daa520;
         }
 
+        body {
+            min-height: 100vh;
+        }
+
         .navbar-proam {
             background-color: var(--proam-green) !important;
         }
@@ -81,6 +85,72 @@
             background-color: #1e3d1a;
         }
 
+        body.lang-arp {
+            --proam-green: #000000;
+            --proam-brown: #ff0000;
+            --proam-gold: #ffffff;
+            --bs-primary: #c40000;
+            --bs-primary-rgb: 196, 0, 0;
+            --bs-warning: #000000;
+            --bs-warning-rgb: 0, 0, 0;
+            --bs-link-color: #8d0000;
+            --bs-link-hover-color: #5a0000;
+            background-image: url("{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}");
+            background-size: cover;
+            background-position: center center;
+            background-attachment: fixed;
+            background-repeat: no-repeat;
+        }
+
+        body.lang-arp::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.76);
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        body.lang-arp .navbar-proam,
+        body.lang-arp .card-header-proam,
+        body.lang-arp .table-proam thead {
+            background-color: #000000 !important;
+            color: #ffffff !important;
+        }
+
+        body.lang-arp .btn-proam {
+            background-color: #c40000;
+            border-color: #c40000;
+            color: #ffffff;
+        }
+
+        body.lang-arp .btn-proam:hover {
+            background-color: #8d0000;
+            border-color: #8d0000;
+            color: #ffffff;
+        }
+
+        body.lang-arp .sidebar .nav-link.active {
+            background-color: #c40000;
+            color: #ffffff;
+        }
+
+        body.lang-arp .sidebar .nav-link.active:hover {
+            background-color: #8d0000;
+        }
+
+        body.lang-arp .card,
+        body.lang-arp .list-group-item,
+        body.lang-arp .table,
+        body.lang-arp .alert,
+        body.lang-arp footer {
+            background-color: rgba(255, 255, 255, 0.92) !important;
+        }
+
+        body.lang-arp footer {
+            border-top: 2px solid #000000;
+        }
+
         @media print {
             .no-print {
                 display: none !important;
@@ -93,7 +163,7 @@
 
     {% block extra_css %}{% endblock %}
 </head>
-<body>
+<body class="{% if CURRENT_LANG == 'arp' %}lang-arp{% endif %}">
     <!-- Navigation -->
     <nav class="navbar navbar-expand-lg navbar-dark navbar-proam no-print">
         <div class="container-fluid">

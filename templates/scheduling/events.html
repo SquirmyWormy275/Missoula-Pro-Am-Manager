@@ -14,9 +14,14 @@
                     </h1>
                     <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
                 </div>
-                <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}" class="btn btn-proam">
-                    <i class="bi bi-plus-circle"></i> Configure Events
-                </a>
+                <div class="d-flex gap-2">
+                    <a href="{{ url_for('scheduling.day_schedule', tournament_id=tournament.id) }}" class="btn btn-outline-dark">
+                        <i class="bi bi-calendar-week"></i> Generate Day Schedule
+                    </a>
+                    <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}" class="btn btn-proam">
+                        <i class="bi bi-plus-circle"></i> Configure Events
+                    </a>
+                </div>
             </div>
         </div>
     </div>
