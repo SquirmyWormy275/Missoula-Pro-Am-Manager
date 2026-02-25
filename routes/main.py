@@ -2,11 +2,24 @@
 Main routes for dashboard and navigation.
 """
 from flask import Blueprint, render_template, redirect, url_for, flash, request
+from urllib.parse import urlsplit
 from database import db
 from models import Tournament
 import strings as text
 
 main_bp = Blueprint('main', __name__)
+
+
+def _safe_redirect_target(target: str | None):
+    """Only allow local relative redirects."""
+    if not target:
+        return None
+    parsed = urlsplit(target)
+    if parsed.scheme or parsed.netloc:
+        return None
+    if not target.startswith('/'):
+        return None
+    return target
 
 
 @main_bp.route('/')
@@ -20,6 +33,23 @@ def index():
     return render_template('dashboard.html',
                            tournaments=tournaments,
                            active_tournament=active_tournament)
+
+
+@main_bp.route('/language/<lang_code>')
+def set_language(lang_code):
+    """Update UI language and return user to the previous page."""
+    if text.set_language(lang_code):
+        flash(
+            text.FLASH['language_changed'].format(language=text.get_language_name(lang_code)),
+            'success'
+        )
+    else:
+        flash(text.FLASH['invalid_language'], 'error')
+
+    next_page = _safe_redirect_target(request.args.get('next'))
+    if not next_page:
+        next_page = _safe_redirect_target(request.referrer)
+    return redirect(next_page or url_for('main.index'))
 
 
 @main_bp.route('/tournament/new', methods=['GET', 'POST'])

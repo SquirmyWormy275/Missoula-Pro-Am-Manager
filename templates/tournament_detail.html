@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ tournament.name }} {{ tournament.year }} - Missoula Pro Am Manager{% endblock %}
+{% block title %}{{ tournament.name }} {{ tournament.year }} - {{ COMPETITION.app_title }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-4">
@@ -11,15 +11,15 @@
                 {{ tournament.name }} {{ tournament.year }}
             </h1>
             <p class="text-muted">
-                Status:
+                {{ ui('status') }}:
                 {% if tournament.status == 'setup' %}
-                    <span class="badge bg-secondary">Setup</span>
+                    <span class="badge bg-secondary">{{ ui('setup') }}</span>
                 {% elif tournament.status == 'college_active' %}
-                    <span class="badge bg-primary">College Competition Active</span>
+                    <span class="badge bg-primary">{{ ui('college_competition_active') }}</span>
                 {% elif tournament.status == 'pro_active' %}
-                    <span class="badge bg-warning text-dark">Pro Competition Active</span>
+                    <span class="badge bg-warning text-dark">{{ ui('pro_competition_active') }}</span>
                 {% elif tournament.status == 'completed' %}
-                    <span class="badge bg-success">Completed</span>
+                    <span class="badge bg-success">{{ ui('completed') }}</span>
                 {% endif %}
             </p>
         </div>
@@ -31,7 +31,7 @@
             <div class="card text-center">
                 <div class="card-body">
                     <h3 class="card-title text-primary">{{ stats.college_teams }}</h3>
-                    <p class="card-text text-muted">College Teams</p>
+                    <p class="card-text text-muted">{{ ui('college_teams') }}</p>
                 </div>
             </div>
         </div>
@@ -39,7 +39,7 @@
             <div class="card text-center">
                 <div class="card-body">
                     <h3 class="card-title text-primary">{{ stats.college_competitors }}</h3>
-                    <p class="card-text text-muted">College Competitors</p>
+                    <p class="card-text text-muted">{{ ui('college_competitors') }}</p>
                 </div>
             </div>
         </div>
@@ -47,7 +47,7 @@
             <div class="card text-center">
                 <div class="card-body">
                     <h3 class="card-title text-warning">{{ stats.pro_competitors }}</h3>
-                    <p class="card-text text-muted">Pro Competitors</p>
+                    <p class="card-text text-muted">{{ ui('pro_competitors') }}</p>
                 </div>
             </div>
         </div>
@@ -55,7 +55,7 @@
             <div class="card text-center">
                 <div class="card-body">
                     <h3 class="card-title text-success">{{ stats.completed_events }}/{{ stats.events }}</h3>
-                    <p class="card-text text-muted">Events Completed</p>
+                    <p class="card-text text-muted">{{ ui('events_completed') }}</p>
                 </div>
             </div>
         </div>
@@ -67,7 +67,7 @@
         <div class="col-md-6 mb-4">
             <div class="card h-100">
                 <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-mortarboard"></i> College Competition (Friday)</h5>
+                    <h5 class="mb-0"><i class="bi bi-mortarboard"></i> {{ COMPETITION.college_title }} ({{ COMPETITION.college_day }})</h5>
                 </div>
                 <div class="card-body">
                     <p>Team-based competition with individual point scoring.</p>
@@ -81,10 +81,10 @@
                 <div class="card-footer">
                     <div class="d-grid gap-2">
                         <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}" class="btn btn-outline-primary">
-                            <i class="bi bi-upload"></i> Import Teams
+                            <i class="bi bi-upload"></i> {{ ui('import_teams') }}
                         </a>
                         <a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}" class="btn btn-primary">
-                            <i class="bi bi-arrow-right-circle"></i> Go to College Dashboard
+                            <i class="bi bi-arrow-right-circle"></i> {{ ui('go_to_college_dashboard') }}
                         </a>
                     </div>
                 </div>
@@ -95,7 +95,7 @@
         <div class="col-md-6 mb-4">
             <div class="card h-100">
                 <div class="card-header bg-warning text-dark">
-                    <h5 class="mb-0"><i class="bi bi-trophy"></i> Pro Competition (Saturday)</h5>
+                    <h5 class="mb-0"><i class="bi bi-trophy"></i> {{ COMPETITION.pro_title }} ({{ COMPETITION.pro_day }})</h5>
                 </div>
                 <div class="card-body">
                     <p>Flight-based professional show with payouts.</p>
@@ -109,10 +109,10 @@
                 <div class="card-footer">
                     <div class="d-grid gap-2">
                         <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}" class="btn btn-outline-warning">
-                            <i class="bi bi-person-plus"></i> Register Competitors
+                            <i class="bi bi-person-plus"></i> {{ ui('register_competitors') }}
                         </a>
                         <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}" class="btn btn-warning">
-                            <i class="bi bi-arrow-right-circle"></i> Go to Pro Dashboard
+                            <i class="bi bi-arrow-right-circle"></i> {{ ui('go_to_pro_dashboard') }}
                         </a>
                     </div>
                 </div>
@@ -125,23 +125,23 @@
         <div class="col-12">
             <div class="card">
                 <div class="card-header">
-                    <h5 class="mb-0"><i class="bi bi-lightning"></i> Quick Actions</h5>
+                    <h5 class="mb-0"><i class="bi bi-lightning"></i> {{ ui('quick_actions') }}</h5>
                 </div>
                 <div class="card-body">
                     <div class="row">
                         <div class="col-md-4">
                             <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}" class="btn btn-outline-primary w-100 mb-2">
-                                <i class="bi bi-calendar-plus"></i> Configure Events
+                                <i class="bi bi-calendar-plus"></i> {{ ui('configure_events') }}
                             </a>
                         </div>
                         <div class="col-md-4">
                             <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="btn btn-outline-primary w-100 mb-2">
-                                <i class="bi bi-list-ul"></i> View All Events
+                                <i class="bi bi-list-ul"></i> {{ ui('view_all_events') }}
                             </a>
                         </div>
                         <div class="col-md-4">
                             <a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}" class="btn btn-outline-primary w-100 mb-2">
-                                <i class="bi bi-file-text"></i> View All Results
+                                <i class="bi bi-file-text"></i> {{ ui('view_all_results') }}
                             </a>
                         </div>
                     </div>

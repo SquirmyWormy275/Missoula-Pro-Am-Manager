@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ CURRENT_LANG }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -127,7 +127,7 @@
                         </a>
                     </li>
                 </ul>
-                <span class="navbar-text">
+                <span class="navbar-text me-3">
                     {{ tournament.name }} {{ tournament.year }}
                 </span>
                 {% else %}
@@ -139,6 +139,26 @@
                     </li>
                 </ul>
                 {% endif %}
+
+                <div class="dropdown">
+                    <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-translate"></i> {{ ui('language') }}
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li>
+                            <a class="dropdown-item {% if CURRENT_LANG == 'en' %}active{% endif %}"
+                               href="{{ url_for('main.set_language', lang_code='en', next=request.full_path if request.query_string else request.path) }}">
+                                {{ ui('language_english') }}
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item {% if CURRENT_LANG == 'arp' %}active{% endif %}"
+                               href="{{ url_for('main.set_language', lang_code='arp', next=request.full_path if request.query_string else request.path) }}">
+                                {{ ui('language_arapaho') }}
+                            </a>
+                        </li>
+                    </ul>
+                </div>
             </div>
         </div>
     </nav>

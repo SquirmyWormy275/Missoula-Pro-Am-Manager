@@ -55,7 +55,7 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
     school_col = _find_column(df, ['school', 'university', 'college', 'institution'])
     team_col = _find_column(df, ['team', 'team_code', 'team_id', 'team name'])
     name_col = _find_column(df, ['name', 'first and last name', 'competitor', 'athlete', 'full name', 'competitor name'])
-    gender_col = _find_column(df, ['gender', 'sex', 'm/f'])
+    gender_col = _find_column(df, ['gender', 'sex', 'm/f', 'male/female', 'male female', 'mf'])
     events_col = _find_column(df, ['events', 'event', 'entered'])
     event_marker_cols = _find_event_marker_columns(df, excluded_cols=[school_col, team_col, name_col, gender_col, events_col])
     default_gender = _infer_default_gender(df, gender_col)
@@ -121,7 +121,7 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
             if pd.isna(name) or not str(name).strip():
                 continue
 
-            gender = _parse_gender(row.get(gender_col, default_gender))
+            gender = _resolve_row_gender(row, gender_col, default_gender, event_marker_cols)
 
             # Check if competitor already exists
             existing = CollegeCompetitor.query.filter_by(
@@ -294,6 +294,43 @@ def _infer_default_gender(df: pd.DataFrame, gender_col: str = None) -> str:
     if female_markers > male_markers:
         return 'F'
     return 'M'
+
+
+def _resolve_row_gender(row: pd.Series, gender_col: str, default_gender: str, event_marker_cols: list) -> str:
+    """Resolve competitor gender from explicit column first, then event markers."""
+    if gender_col:
+        raw_gender = row.get(gender_col)
+        if not pd.isna(raw_gender) and str(raw_gender).strip():
+            return _parse_gender(raw_gender)
+
+    # Fallback: infer from selected event columns for this row.
+    selected_event_cols = []
+    for col in event_marker_cols or []:
+        value = row.get(col)
+        if pd.isna(value):
+            continue
+        marker = str(value).strip().lower()
+        if marker in {'x', 'y', 'yes', '1', 'true', 't'}:
+            selected_event_cols.append(col)
+
+    female_marks = sum(1 for col in selected_event_cols if _event_column_gender_hint(col) == 'F')
+    male_marks = sum(1 for col in selected_event_cols if _event_column_gender_hint(col) == 'M')
+    if female_marks > male_marks:
+        return 'F'
+    if male_marks > female_marks:
+        return 'M'
+
+    return _parse_gender(default_gender)
+
+
+def _event_column_gender_hint(column_name: str):
+    """Return 'M'/'F'/None based on an event column header."""
+    normalized = _normalize_label(column_name)
+    if normalized.startswith('w ') or normalized.startswith('women') or normalized.startswith('female'):
+        return 'F'
+    if normalized.startswith('m ') or normalized.startswith('men') or normalized.startswith('male'):
+        return 'M'
+    return None
 
 
 def _is_valid_competitor_name(value) -> bool:

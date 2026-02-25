@@ -2,7 +2,7 @@
 Flask application entry point for the Missoula Pro Am Tournament Manager.
 """
 import os
-from flask import Flask
+from flask import Flask, Response
 from database import db, init_db
 import config
 import strings as text
@@ -27,7 +27,13 @@ def create_app():
     # Inject text constants into all templates
     @app.context_processor
     def inject_strings():
-        return {'NAV': text.NAV, 'COMPETITION': text.COMPETITION}
+        return {
+            'NAV': text.section('NAV'),
+            'COMPETITION': text.section('COMPETITION'),
+            'LANGUAGES': text.SUPPORTED_LANGUAGES,
+            'CURRENT_LANG': text.get_language(),
+            'ui': text.ui,
+        }
 
     # Register blueprints
     from routes.main import main_bp
@@ -47,6 +53,21 @@ def create_app():
     app.register_blueprint(proam_relay_bp)
     app.register_blueprint(partnered_axe_bp)
     app.register_blueprint(validation_bp)
+
+    @app.after_request
+    def apply_language_translation(response: Response):
+        """Apply full-page translation for HTML responses."""
+        content_type = response.content_type or ''
+        if response.direct_passthrough or 'text/html' not in content_type:
+            return response
+        if response.status_code < 200 or response.status_code >= 300:
+            return response
+
+        body = response.get_data(as_text=True)
+        translated = text.translate_html(body)
+        if translated != body:
+            response.set_data(translated)
+        return response
 
     return app
 

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard - {{ COMPETITION.app_title }}{% endblock %}
+{% block title %}{{ ui('dashboard') }} - {{ COMPETITION.app_title }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-4">
@@ -21,25 +21,25 @@
                 <div class="card-header card-header-proam">
                     <h5 class="mb-0">
                         <i class="bi bi-play-circle"></i>
-                        Active Tournament: {{ active_tournament.name }} {{ active_tournament.year }}
+                        {{ ui('active_tournament') }}: {{ active_tournament.name }} {{ active_tournament.year }}
                     </h5>
                 </div>
                 <div class="card-body">
                     <div class="row">
                         <div class="col-md-4">
-                            <p><strong>Status:</strong>
+                            <p><strong>{{ ui('status') }}:</strong>
                                 {% if active_tournament.status == 'setup' %}
-                                    <span class="badge bg-secondary">Setup</span>
+                                    <span class="badge bg-secondary">{{ ui('setup') }}</span>
                                 {% elif active_tournament.status == 'college_active' %}
-                                    <span class="badge bg-primary">College Competition Active</span>
+                                    <span class="badge bg-primary">{{ ui('college_competition_active') }}</span>
                                 {% elif active_tournament.status == 'pro_active' %}
-                                    <span class="badge bg-warning text-dark">Pro Competition Active</span>
+                                    <span class="badge bg-warning text-dark">{{ ui('pro_competition_active') }}</span>
                                 {% endif %}
                             </p>
                         </div>
                         <div class="col-md-8 text-end">
                             <a href="{{ url_for('main.tournament_detail', tournament_id=active_tournament.id) }}" class="btn btn-proam">
-                                <i class="bi bi-arrow-right-circle"></i> Go to Tournament
+                                <i class="bi bi-arrow-right-circle"></i> {{ ui('go_to_tournament') }}
                             </a>
                         </div>
                     </div>
@@ -54,9 +54,9 @@
         <div class="col-12">
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="bi bi-list-ul"></i> Tournaments</h5>
+                    <h5 class="mb-0"><i class="bi bi-list-ul"></i> {{ ui('tournaments') }}</h5>
                     <a href="{{ url_for('main.new_tournament') }}" class="btn btn-proam btn-sm">
-                        <i class="bi bi-plus-circle"></i> New Tournament
+                        <i class="bi bi-plus-circle"></i> {{ ui('new_tournament') }}
                     </a>
                 </div>
                 <div class="card-body">
@@ -65,13 +65,13 @@
                         <table class="table table-hover">
                             <thead class="table-proam">
                                 <tr>
-                                    <th>Tournament</th>
-                                    <th>Year</th>
-                                    <th>Status</th>
-                                    <th>Teams</th>
-                                    <th>College</th>
-                                    <th>Pro</th>
-                                    <th>Actions</th>
+                                    <th>{{ ui('tournament') }}</th>
+                                    <th>{{ ui('year') }}</th>
+                                    <th>{{ ui('status') }}</th>
+                                    <th>{{ ui('teams') }}</th>
+                                    <th>{{ ui('college') }}</th>
+                                    <th>{{ ui('pro') }}</th>
+                                    <th>{{ ui('actions') }}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -81,13 +81,13 @@
                                     <td>{{ t.year }}</td>
                                     <td>
                                         {% if t.status == 'setup' %}
-                                            <span class="badge bg-secondary">Setup</span>
+                                            <span class="badge bg-secondary">{{ ui('setup') }}</span>
                                         {% elif t.status == 'college_active' %}
-                                            <span class="badge bg-primary">College Active</span>
+                                            <span class="badge bg-primary">{{ ui('college_active') }}</span>
                                         {% elif t.status == 'pro_active' %}
-                                            <span class="badge bg-warning text-dark">Pro Active</span>
+                                            <span class="badge bg-warning text-dark">{{ ui('pro_active') }}</span>
                                         {% elif t.status == 'completed' %}
-                                            <span class="badge bg-success">Completed</span>
+                                            <span class="badge bg-success">{{ ui('completed') }}</span>
                                         {% endif %}
                                     </td>
                                     <td>{{ t.college_team_count }}</td>
@@ -95,7 +95,7 @@
                                     <td>{{ t.pro_competitor_count }}</td>
                                     <td>
                                         <a href="{{ url_for('main.tournament_detail', tournament_id=t.id) }}" class="btn btn-sm btn-outline-primary">
-                                            <i class="bi bi-eye"></i> View
+                                            <i class="bi bi-eye"></i> {{ ui('view') }}
                                         </a>
                                     </td>
                                 </tr>
@@ -106,9 +106,9 @@
                     {% else %}
                     <div class="text-center py-5">
                         <i class="bi bi-folder-x display-4 text-muted"></i>
-                        <p class="mt-3 text-muted">No tournaments created yet.</p>
+                        <p class="mt-3 text-muted">{{ ui('no_tournaments') }}</p>
                         <a href="{{ url_for('main.new_tournament') }}" class="btn btn-proam">
-                            <i class="bi bi-plus-circle"></i> Create Your First Tournament
+                            <i class="bi bi-plus-circle"></i> {{ ui('create_first_tournament') }}
                         </a>
                     </div>
                     {% endif %}
