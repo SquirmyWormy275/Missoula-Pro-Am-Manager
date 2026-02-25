@@ -3,6 +3,7 @@ Excel import/export service for college and pro registration.
 Maintains compatibility with existing college entry form format.
 """
 import pandas as pd
+import config
 from database import db
 from models import Tournament, Team, CollegeCompetitor, ProCompetitor
 
@@ -50,6 +51,7 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
     """Process a standard format entry form with school/team columns."""
     teams_created = 0
     competitors_created = 0
+    touched_team_ids = set()
 
     # Get column mappings (flexible to handle variations)
     school_col = _find_column(df, ['school', 'university', 'college', 'institution'])
@@ -114,6 +116,7 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
             db.session.flush()  # Get the ID
             teams_created += 1
         last_real_team = team
+        touched_team_ids.add(team.id)
 
         # Add competitors to team
         for _, row in valid_team_df.iterrows():
@@ -139,12 +142,20 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
                 )
 
                 # Process events if column exists
+                events = []
                 if events_col and not pd.isna(row.get(events_col)):
                     events = _parse_events(row.get(events_col))
-                    competitor.set_events_entered(events)
                 elif event_marker_cols:
                     events = _parse_event_markers(row, event_marker_cols)
-                    competitor.set_events_entered(events)
+
+                # Process partnered-event partner columns and ensure paired events are included.
+                pairings = _extract_partner_entries(row, list(df.columns))
+                for event_name in pairings.keys():
+                    if event_name not in events:
+                        events.append(event_name)
+                competitor.set_events_entered(sorted(set(events)))
+                for event_name, partner_name in pairings.items():
+                    competitor.set_partner(event_name, partner_name)
 
                 # Process partners if column exists
                 partners_col = _find_column(df, ['partner', 'partners', 'partner name'])
@@ -154,6 +165,8 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
                 db.session.add(competitor)
                 competitors_created += 1
 
+    db.session.flush()
+    _validate_college_entry_constraints(touched_team_ids)
     db.session.commit()
 
     return {
@@ -274,8 +287,8 @@ def _parse_event_markers(row: pd.Series, event_columns: list) -> list:
             continue
         marker = str(value).strip().lower()
         if marker in {'x', 'y', 'yes', '1', 'true', 't'}:
-            selected.append(str(col).strip())
-    return selected
+            selected.append(_canonicalize_event_name(str(col).strip()))
+    return sorted(set(e for e in selected if e))
 
 
 def _infer_default_gender(df: pd.DataFrame, gender_col: str = None) -> str:
@@ -470,7 +483,234 @@ def _parse_events(events_str) -> list:
     # Split by common delimiters
     import re
     events = re.split(r'[,;/\n]', str(events_str))
-    return [e.strip() for e in events if e.strip()]
+    normalized = [_canonicalize_event_name(e.strip()) for e in events if e.strip()]
+    return sorted(set(e for e in normalized if e))
+
+
+def _canonicalize_event_name(raw_name: str) -> str:
+    """Normalize free-form/column event labels into configured event names."""
+    normalized = _normalize_label(raw_name)
+
+    if 'jack' in normalized and 'jill' in normalized:
+        return 'Jack & Jill Sawing'
+    if 'double buck' in normalized:
+        return 'Double Buck'
+    if 'single buck' in normalized:
+        return 'Single Buck'
+    if 'stock saw' in normalized or 'power saw' in normalized:
+        return 'Stock Saw'
+    if 'obstacle' in normalized and 'pole' in normalized:
+        return 'Obstacle Pole'
+    if 'choker' in normalized:
+        return "Chokerman's Race"
+    if 'climb' in normalized:
+        return 'Speed Climb'
+    if 'birling' in normalized:
+        return 'Birling'
+    if 'kaber' in normalized or 'caber' in normalized:
+        return 'Caber Toss'
+    if 'axe throw' in normalized:
+        return 'Axe Throw'
+    if 'pulp toss' in normalized:
+        return 'Pulp Toss'
+    if 'peavey' in normalized or 'pv log roll' in normalized:
+        return 'Peavey Log Roll'
+    if ('horiz' in normalized or 'horizontal' in normalized) and ('h hit' in normalized or 'hard hit' in normalized):
+        return 'Underhand Hard Hit'
+    if ('horiz' in normalized or 'horizontal' in normalized) and ('sp chop' in normalized or 'speed' in normalized):
+        return 'Underhand Speed'
+    if ('vert' in normalized or 'vertical' in normalized) and ('h hit' in normalized or 'hard hit' in normalized):
+        return 'Standing Block Hard Hit'
+    if ('vert' in normalized or 'vertical' in normalized) and ('speed' in normalized):
+        return 'Standing Block Speed'
+    if 'springboard' in normalized or '1 board' in normalized:
+        return '1-Board Springboard'
+
+    return raw_name.strip()
+
+
+def _validate_college_entry_constraints(team_ids: set):
+    """Validate college entry constraints for touched teams before commit."""
+    if not team_ids:
+        return
+
+    MAX_EVENTS_PER_COMPETITOR = 6
+    MAX_PER_EVENT_PER_GENDER_PER_TEAM = 3
+    MAX_PAIRS_PER_PARTNERED_EVENT = 3
+    MAX_CHOPPING_EVENTS_PER_COMPETITOR = 2
+    CHOPPING_EVENTS = {
+        'Underhand Hard Hit',
+        'Underhand Speed',
+        'Standing Block Hard Hit',
+        'Standing Block Speed'
+    }
+    errors = []
+    partner_gender_requirements = _partnered_event_gender_requirements()
+
+    for team_id in team_ids:
+        team = Team.query.get(team_id)
+        if not team:
+            continue
+
+        per_event_gender_counts = {}
+        active_members = team.members.filter_by(status='active').all()
+        member_events_map = {}
+        member_partners_map = {}
+        member_by_norm_name = {}
+
+        for member in active_members:
+            member_name_norm = _normalize_person_name(member.name)
+            events = [_canonicalize_event_name(e) for e in member.get_events_entered() if str(e).strip()]
+            events = sorted(set(events))
+            member_events_map[member_name_norm] = set(events)
+            member_partners_map[member_name_norm] = member.get_partners() if isinstance(member.get_partners(), dict) else {}
+            member_by_norm_name[member_name_norm] = member
+
+        for member in active_members:
+            events = [_canonicalize_event_name(e) for e in member.get_events_entered() if str(e).strip()]
+            events = sorted(set(events))
+            member_name_norm = _normalize_person_name(member.name)
+
+            if len(events) > MAX_EVENTS_PER_COMPETITOR:
+                errors.append(
+                    f'{team.team_code}: {member.name} entered {len(events)} events (max {MAX_EVENTS_PER_COMPETITOR})'
+                )
+
+            chopping_count = sum(1 for e in events if e in CHOPPING_EVENTS)
+            if chopping_count > MAX_CHOPPING_EVENTS_PER_COMPETITOR:
+                errors.append(
+                    f'{team.team_code}: {member.name} entered {chopping_count} chopping events (max {MAX_CHOPPING_EVENTS_PER_COMPETITOR})'
+                )
+
+            for event_name in events:
+                if event_name in partner_gender_requirements:
+                    continue
+                key = (event_name, member.gender)
+                per_event_gender_counts[key] = per_event_gender_counts.get(key, 0) + 1
+
+        for (event_name, gender), count in per_event_gender_counts.items():
+            if count > MAX_PER_EVENT_PER_GENDER_PER_TEAM:
+                errors.append(
+                    f'{team.team_code}: {count} {gender} competitors entered "{event_name}" (max {MAX_PER_EVENT_PER_GENDER_PER_TEAM})'
+                )
+
+        # Partnered events are limited by number of pairs, not number of people.
+        pair_counts = {}
+        for member in active_members:
+            member_name = member.name.strip()
+            member_name_norm = _normalize_person_name(member_name)
+            member_gender = (member.gender or '').strip().upper()
+            partners = member_partners_map.get(member_name_norm, {})
+            events = member_events_map.get(member_name_norm, set())
+
+            for event_name in events:
+                if event_name not in partner_gender_requirements:
+                    continue
+
+                partner_name = str(partners.get(event_name, '')).strip()
+                if not partner_name:
+                    errors.append(
+                        f'{team.team_code}: {member_name} entered "{event_name}" without a partner name'
+                    )
+                    continue
+
+                partner_name_norm = _normalize_person_name(partner_name)
+                partner_member = member_by_norm_name.get(partner_name_norm)
+                if not partner_member:
+                    errors.append(
+                        f'{team.team_code}: {member_name} lists "{partner_name}" for "{event_name}" but that partner is not on this team'
+                    )
+                    continue
+
+                partner_events = member_events_map.get(partner_name_norm, set())
+                if event_name not in partner_events:
+                    errors.append(
+                        f'{team.team_code}: {member_name} lists {partner_member.name} for "{event_name}" but {partner_member.name} is not entered in that event'
+                    )
+                    continue
+
+                partner_partners = member_partners_map.get(partner_name_norm, {})
+                reciprocal_name = str(partner_partners.get(event_name, '')).strip()
+                if _normalize_person_name(reciprocal_name) != member_name_norm:
+                    errors.append(
+                        f'{team.team_code}: partner mismatch in "{event_name}" between {member_name} and {partner_member.name}'
+                    )
+                    continue
+
+                requirement = partner_gender_requirements.get(event_name, 'any')
+                bucket = 'ALL' if requirement in ['mixed', 'any'] else member_gender
+                pair_id = tuple(sorted([member_name_norm, partner_name_norm]))
+                key = (event_name, bucket)
+                pair_counts.setdefault(key, set()).add(pair_id)
+
+        for (event_name, bucket), pairs in pair_counts.items():
+            pair_count = len(pairs)
+            if pair_count > MAX_PAIRS_PER_PARTNERED_EVENT:
+                if bucket == 'ALL':
+                    errors.append(
+                        f'{team.team_code}: {pair_count} pairs entered "{event_name}" (max {MAX_PAIRS_PER_PARTNERED_EVENT})'
+                    )
+                else:
+                    errors.append(
+                        f'{team.team_code}: {pair_count} {bucket} pairs entered "{event_name}" (max {MAX_PAIRS_PER_PARTNERED_EVENT})'
+                    )
+
+    if errors:
+        preview = '; '.join(errors[:8])
+        remaining = len(errors) - 8
+        if remaining > 0:
+            preview += f'; ...and {remaining} more'
+        raise ValueError(f'Entry form limit violations: {preview}')
+
+
+def _partnered_event_gender_requirements() -> dict:
+    """Return dict of partnered college event name -> gender requirement."""
+    partnered = {}
+    for event in config.COLLEGE_OPEN_EVENTS + config.COLLEGE_CLOSED_EVENTS:
+        if event.get('is_partnered'):
+            name = _canonicalize_event_name(event['name'])
+            partnered[name] = event.get('partner_gender', 'any')
+    return partnered
+
+
+def _extract_partner_entries(row: pd.Series, columns: list) -> dict:
+    """Extract partnered event -> partner name mappings from row columns."""
+    pairings = {}
+    partnered_events = set(_partnered_event_gender_requirements().keys())
+
+    for idx, column_name in enumerate(columns):
+        event_name = _canonicalize_event_name(str(column_name).strip())
+        if event_name not in partnered_events:
+            continue
+
+        # Event should be selected (or partner provided) to count as entered.
+        selected = False
+        event_value = row.get(column_name)
+        if not pd.isna(event_value):
+            marker = str(event_value).strip().lower()
+            selected = marker in {'x', 'y', 'yes', '1', 'true', 't'}
+
+        partner_name = ''
+        if idx + 1 < len(columns):
+            next_col = str(columns[idx + 1]).strip()
+            if _normalize_label(next_col).startswith('partner'):
+                raw_partner = row.get(columns[idx + 1])
+                if not pd.isna(raw_partner):
+                    partner_name = str(raw_partner).strip()
+
+        if selected or partner_name:
+            if partner_name:
+                pairings[event_name] = partner_name
+
+    return pairings
+
+
+def _normalize_person_name(name: str) -> str:
+    """Normalize person names for robust matching."""
+    import re
+    text = '' if name is None else str(name).strip().lower()
+    text = re.sub(r'[^a-z0-9]+', '', text)
+    return text
 
 
 def _process_partners(competitor: CollegeCompetitor, partners_str):

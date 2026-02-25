@@ -57,6 +57,7 @@ def upload_college_entry(tournament_id):
             result = process_college_entry_form(filepath, tournament)
             flash(text.FLASH['import_success'].format(teams=result["teams"], competitors=result["competitors"]), 'success')
         except Exception as e:
+            db.session.rollback()
             flash(text.FLASH['import_error'].format(error=str(e)), 'error')
 
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -78,11 +79,31 @@ def team_detail(tournament_id, team_id):
         team.members.all(),
         key=lambda m: (m.status != 'active', -m.individual_points, m.name.lower())
     )
+    college_events = Event.query.filter_by(tournament_id=tournament.id, event_type='college').all()
+    event_name_by_id = {str(event.id): event.display_name for event in college_events}
+    event_name_lookup = {}
+    for event in college_events:
+        event_name_lookup[event.name.strip().lower()] = event.display_name
+        event_name_lookup[event.display_name.strip().lower()] = event.display_name
+
+    member_event_labels = {}
+    for member in members:
+        labels = []
+        for entered_event in member.get_events_entered():
+            event_key = str(entered_event).strip()
+            if not event_key:
+                continue
+            if event_key in event_name_by_id:
+                labels.append(event_name_by_id[event_key])
+            else:
+                labels.append(event_name_lookup.get(event_key.lower(), event_key))
+        member_event_labels[member.id] = list(dict.fromkeys(labels))
 
     return render_template('college/team_detail.html',
                            tournament=tournament,
                            team=team,
-                           members=members)
+                           members=members,
+                           member_event_labels=member_event_labels)
 
 
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/scratch', methods=['POST'])

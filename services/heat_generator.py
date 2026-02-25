@@ -136,7 +136,8 @@ def _get_event_competitors(event: Event) -> list:
                     'name': comp.name,
                     'gender': comp.gender,
                     'is_left_handed': False,
-                    'gear_sharing': comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {}
+                    'gear_sharing': comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {},
+                    'partner_name': _get_partner_name_for_event(comp, event)
                 })
         else:
             all_comps = ProCompetitor.query.filter_by(
@@ -162,7 +163,8 @@ def _get_event_competitors(event: Event) -> list:
                     'name': comp.name,
                     'gender': comp.gender,
                     'is_left_handed': comp.is_left_handed_springboard,
-                    'gear_sharing': comp.get_gear_sharing()
+                    'gear_sharing': comp.get_gear_sharing(),
+                    'partner_name': _get_partner_name_for_event(comp, event)
                 })
 
     db.session.flush()
@@ -176,18 +178,22 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
     Snake draft ensures each heat has a mix of skill levels.
     """
     heats = [[] for _ in range(num_heats)]
+    units = _build_partner_units(competitors, event)
 
     # Snake draft distribution
     direction = 1
     heat_idx = 0
 
-    for comp in competitors:
+    for unit in units:
         placed = False
 
         # First pass: look for a heat with capacity and no gear-sharing conflict.
         for _ in range(num_heats):
-            if len(heats[heat_idx]) < max_per_heat and not _has_gear_sharing_conflict(comp, heats[heat_idx], event):
-                heats[heat_idx].append(comp)
+            if (
+                (len(heats[heat_idx]) + len(unit)) <= max_per_heat and
+                not any(_has_gear_sharing_conflict(comp, heats[heat_idx], event) for comp in unit)
+            ):
+                heats[heat_idx].extend(unit)
                 placed = True
                 break
             heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
@@ -195,8 +201,8 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
         # Fallback: place despite conflict if every heat conflicts/full.
         if not placed:
             for _ in range(num_heats):
-                if len(heats[heat_idx]) < max_per_heat:
-                    heats[heat_idx].append(comp)
+                if (len(heats[heat_idx]) + len(unit)) <= max_per_heat:
+                    heats[heat_idx].extend(unit)
                     placed = True
                     break
                 heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
@@ -204,6 +210,62 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
         heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
 
     return heats
+
+
+def _build_partner_units(competitors: list, event: Event) -> list:
+    """Build assignment units; partnered events keep recognized pairs together."""
+    if not event or not event.is_partnered:
+        return [[c] for c in competitors]
+
+    by_name = {_norm_name(c.get('name')): c for c in competitors}
+    used = set()
+    units = []
+
+    for comp in competitors:
+        comp_id = comp['id']
+        if comp_id in used:
+            continue
+
+        partner_name = _norm_name(comp.get('partner_name'))
+        partner = by_name.get(partner_name) if partner_name else None
+
+        if partner and partner['id'] not in used:
+            # Pair if either side references the other.
+            partner_ref = _norm_name(partner.get('partner_name'))
+            if partner_ref == _norm_name(comp.get('name')) or partner_name == _norm_name(partner.get('name')):
+                units.append([comp, partner])
+                used.add(comp_id)
+                used.add(partner['id'])
+                continue
+
+        units.append([comp])
+        used.add(comp_id)
+
+    return units
+
+
+def _norm_name(value) -> str:
+    return str(value or '').strip().lower()
+
+
+def _get_partner_name_for_event(competitor, event: Event) -> str:
+    """Get competitor's partner name for this event, if provided."""
+    if not hasattr(competitor, 'get_partners'):
+        return ''
+    partners = competitor.get_partners()
+    if not isinstance(partners, dict):
+        return ''
+
+    candidates = [
+        event.name,
+        event.display_name,
+        event.name.lower(),
+        event.display_name.lower()
+    ]
+    for key in candidates:
+        if key in partners and str(partners.get(key)).strip():
+            return str(partners.get(key)).strip()
+    return ''
 
 
 def _generate_springboard_heats(competitors: list, num_heats: int,

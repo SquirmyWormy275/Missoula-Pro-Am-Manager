@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from collections.abc import Mapping
+import json
+from pathlib import Path
 import re
 from flask import has_request_context, session
 
@@ -113,6 +115,7 @@ ARAPAHO_OVERRIDES = {
     },
     'COMPETITION': {
         'college_title': "tesco'ouutou3eino'oowu' hoonoyoo3etiit",
+        'pro_title': "Pro hoonoyoo3etiit",
         'college_day': "neh'eheiniisi'",
         'pro_day': "hooxobeti'",
     },
@@ -123,53 +126,43 @@ ARAPAHO_OVERRIDES = {
         'language': 'Heenetiit',
         'home': "beyeihi'",
         'college': "tesco'ouutou3eino'oowu'",
+        'year': 'cec',
+        'college_competitors': "tesco'ouutou3eino'oowu' hineniteeno'",
+        'pro_competitors': "Pro hineniteeno'",
         'language_english': 'English',
         'language_arapaho': 'Northern Arapaho',
     },
 }
 
-# Dictionary-backed phrase and word substitutions used for full-page translation
+# Dictionary-backed phrase substitutions used for full-page translation
 # in Arapaho mode. Unknown terms intentionally remain English for safety.
-ARAPAHO_PHRASES = {
+ARAPAHO_VERIFIED_PHRASES = {
     'Language': 'Heenetiit',
     'Home': "beyeihi'",
+    'Homepage': "niiheyoo niihenehiitono",
+    'Arapaho': "hinono'ei'",
     'College Competition': "tesco'ouutou3eino'oowu' hoonoyoo3etiit",
     'Competition': 'hoonoyoo3etiit',
     'Friday': "neh'eheiniisi'",
     'Saturday': "hooxobeti'",
     'School': "neyei3eino'oowu'",
-    'Create': "ceebii'ootiit",
-    'Save': "hee'neetouhunoo",
-    'Search': "nootiiho'",
+    'Create': "ceebii'ootiit",  # dictionary entry: CREATE
+    'Save': "hee'neetouhunoo",  # dictionary entry: SAVE
+    'Search': "nootiiho'",  # dictionary entry: SEARCH
     'Error': 'nontoot',
     'Day': "hiisi'",
     'Week': "niiseti'",
     'Month': 'biikousiis',
     'Year': 'cec',
-    'Complete': "hoono'utoyoo'",
-    'Completed': "hoono'utoyoo'",
+    'Person': 'hinenitee',
+    'People': "hineniteeno'",
+    'Man': 'hinen',
+    'Woman': 'hisei',
+    'Pay': 'honoontoone3en',
+    'Score': "3eneiikuu3ei'it",
 }
 
-ARAPAHO_WORDS = {
-    'language': 'heenetiit',
-    'home': "beyeihi'",
-    'college': "tesco'ouutou3eino'oowu'",
-    'competition': 'hoonoyoo3etiit',
-    'friday': "neh'eheiniisi'",
-    'saturday': "hooxobeti'",
-    'school': "neyei3eino'oowu'",
-    'create': "ceebii'ootiit",
-    'save': "hee'neetouhunoo",
-    'search': "nootiiho'",
-    'error': 'nontoot',
-    'day': "hiisi'",
-    'week': "niiseti'",
-    'month': 'biikousiis',
-    'year': 'cec',
-    'complete': "hoono'utoyoo'",
-    'completed': "hoono'utoyoo'",
-    'add': "henii3itonitiinoo",
-}
+_GLOSSARY_FILE = Path(__file__).with_name('arapaho_glossary.json')
 
 
 def _merge_nested(base: dict, overrides: dict) -> dict:
@@ -230,25 +223,47 @@ def _replace_phrase_case_insensitive(text_value: str, source: str, target: str) 
     return pattern.sub(target, text_value)
 
 
+def _load_custom_glossary() -> dict[str, str]:
+    """
+    Load user-approved glossary overrides.
+    File format: {"English phrase": "Northern Arapaho phrase"}
+    """
+    if not _GLOSSARY_FILE.exists():
+        return {}
+    try:
+        raw = json.loads(_GLOSSARY_FILE.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    clean = {}
+    for key, value in raw.items():
+        if isinstance(key, str) and isinstance(value, str) and key.strip() and value.strip():
+            clean[key.strip()] = value.strip()
+    return clean
+
+
+def _phrase_map(lang_code: str) -> dict[str, str]:
+    if lang_code != 'arp':
+        return {}
+    # User glossary wins over built-ins for community-approved phrasing.
+    merged = dict(ARAPAHO_VERIFIED_PHRASES)
+    merged.update(_load_custom_glossary())
+    return merged
+
+
 def free_text(text_value: str, lang: str | None = None) -> str:
-    """Translate free-form UI text with safe dictionary-backed substitutions."""
+    """Translate free-form UI text with strict phrase-level substitutions only."""
     lang_code = lang or get_language()
     if lang_code != 'arp' or not text_value:
         return text_value
 
     translated = text_value
+    phrase_map = _phrase_map(lang_code)
 
-    # Phrase-first replacement preserves common labels and badges.
-    for src, dst in sorted(ARAPAHO_PHRASES.items(), key=lambda item: len(item[0]), reverse=True):
+    for src, dst in sorted(phrase_map.items(), key=lambda item: len(item[0]), reverse=True):
         translated = _replace_phrase_case_insensitive(translated, src, dst)
 
-    # Word fallback replacement for remaining simple tokens.
-    def _word_sub(match: re.Match) -> str:
-        word = match.group(0)
-        repl = ARAPAHO_WORDS.get(word.lower())
-        return repl if repl else word
-
-    translated = re.sub(r'\b[A-Za-z]+\b', _word_sub, translated)
     return translated
 
 

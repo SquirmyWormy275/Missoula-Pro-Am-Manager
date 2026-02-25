@@ -91,6 +91,10 @@
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h6 class="mb-0"><i class="bi bi-person-lines-fill"></i> Team Members</h6>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" role="switch" id="toggleMemberEvents">
+                        <label class="form-check-label small" for="toggleMemberEvents">Show signed-up events</label>
+                    </div>
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
@@ -146,6 +150,21 @@
                                         </form>
                                     </td>
                                 </tr>
+                                <tr class="member-events-row d-none {{ 'table-secondary' if member.status == 'scratched' else '' }}">
+                                    <td colspan="6">
+                                        {% set signed_up_events = member_event_labels.get(member.id, []) %}
+                                        {% if signed_up_events %}
+                                            <div class="small">
+                                                <span class="text-muted me-2">Signed-up events:</span>
+                                                {% for event_name in signed_up_events %}
+                                                    <span class="badge bg-light text-dark border me-1 mb-1">{{ event_name }}</span>
+                                                {% endfor %}
+                                            </div>
+                                        {% else %}
+                                            <span class="small text-muted">No events entered.</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
                                 {% else %}
                                 <tr>
                                     <td colspan="6" class="text-center text-muted py-4">
@@ -161,4 +180,18 @@
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const toggle = document.getElementById('toggleMemberEvents');
+    const eventRows = document.querySelectorAll('.member-events-row');
+    if (!toggle || eventRows.length === 0) return;
+
+    toggle.addEventListener('change', function () {
+        eventRows.forEach(function (row) {
+            row.classList.toggle('d-none', !toggle.checked);
+        });
+    });
+});
+</script>
 {% endblock %}
