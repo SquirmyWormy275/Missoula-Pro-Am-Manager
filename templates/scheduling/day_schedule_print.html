@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Day Schedule - {{ tournament.name }} {{ tournament.year }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; font-size: 11pt; margin: 24px; }
+        h1, h2 { margin: 0 0 8px 0; }
+        .muted { color: #666; font-size: 10pt; }
+        .section { margin-top: 22px; page-break-inside: avoid; }
+        .slot { margin: 10px 0; padding: 8px; border: 1px solid #ddd; }
+        .slot-title { font-weight: 700; }
+        .heat { margin: 6px 0 0 14px; }
+        .comp { margin-right: 10px; }
+        @media print {
+            .no-print { display: none; }
+            body { margin: 0.3in; }
+        }
+    </style>
+</head>
+<body>
+    <h1>{{ tournament.name }} {{ tournament.year }} - Day Schedule</h1>
+    <div class="muted">Saturday source: {{ 'Flights' if schedule.saturday_source == 'flights' else 'Fallback Event Order' }}</div>
+
+    <div class="section">
+        <h2>Friday Day Show</h2>
+        {% for item in detailed_schedule.friday_day %}
+            <div class="slot">
+                <div class="slot-title">{{ item.slot }}. {{ item.label }}</div>
+                <div class="muted">{{ item.event_type|title }} | {{ item.stand_type }}</div>
+                {% for heat in item.heats %}
+                    <div class="heat">
+                        Heat {{ heat.heat_number }}{% if heat.run_number > 1 %} Run {{ heat.run_number }}{% endif %}:
+                        {% for comp in heat.competitors %}
+                            <span class="comp">S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>
+                        {% endfor %}
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="muted">No events in this block.</div>
+        {% endfor %}
+    </div>
+
+    <div class="section">
+        <h2>Friday Night Feature</h2>
+        {% for item in detailed_schedule.friday_feature %}
+            <div class="slot">
+                <div class="slot-title">{{ item.slot }}. {{ item.label }}</div>
+                <div class="muted">{{ item.event_type|title }} | {{ item.stand_type }}</div>
+                {% for heat in item.heats %}
+                    <div class="heat">
+                        Heat {{ heat.heat_number }}{% if heat.run_number > 1 %} Run {{ heat.run_number }}{% endif %}:
+                        {% for comp in heat.competitors %}
+                            <span class="comp">S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>
+                        {% endfor %}
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="muted">No events in this block.</div>
+        {% endfor %}
+    </div>
+
+    <div class="section">
+        <h2>Saturday Show</h2>
+        {% for item in detailed_schedule.saturday_show %}
+            <div class="slot">
+                <div class="slot-title">{{ item.slot }}. {{ item.label }}</div>
+                <div class="muted">
+                    {{ item.event_type|title }} | {{ item.stand_type }}
+                    {% if item.flight_number %}| Flight {{ item.flight_number }}{% endif %}
+                </div>
+                {% for heat in item.heats %}
+                    <div class="heat">
+                        Heat {{ heat.heat_number }}{% if heat.run_number > 1 %} Run {{ heat.run_number }}{% endif %}:
+                        {% for comp in heat.competitors %}
+                            <span class="comp">S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>
+                        {% endfor %}
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="muted">No events in this block.</div>
+        {% endfor %}
+    </div>
+
+    <button class="no-print" onclick="window.print()" style="position: fixed; top: 10px; right: 10px; padding: 10px 16px;">Print</button>
+</body>
+</html>

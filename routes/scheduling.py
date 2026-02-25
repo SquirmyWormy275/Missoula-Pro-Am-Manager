@@ -397,6 +397,8 @@ def _get_existing_event_config(tournament):
 def day_schedule(tournament_id):
     """Generate a Friday/Saturday schedule using Missoula Pro Am rules."""
     from services.schedule_builder import build_day_schedule, COLLEGE_SATURDAY_PRIORITY
+    from services.heat_generator import generate_event_heats
+    from services.flight_builder import build_pro_flights
 
     tournament = Tournament.query.get_or_404(tournament_id)
     pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
@@ -414,14 +416,20 @@ def day_schedule(tournament_id):
     saved = session.get(session_key, {})
 
     if request.method == 'POST':
-        friday_pro_event_ids = [int(eid) for eid in request.form.getlist('friday_pro_event_ids')]
-        saturday_college_event_ids = [int(eid) for eid in request.form.getlist('saturday_college_event_ids')]
+        action = request.form.get('action', 'generate_schedule')
+        friday_pro_event_ids = [int(eid) for eid in request.form.getlist('friday_pro_event_ids') if str(eid).strip()]
+        saturday_college_event_ids = [int(eid) for eid in request.form.getlist('saturday_college_event_ids') if str(eid).strip()]
         saved = {
             'friday_pro_event_ids': friday_pro_event_ids,
             'saturday_college_event_ids': saturday_college_event_ids,
         }
         session[session_key] = saved
         session.modified = True
+        if action == 'generate_all':
+            _generate_all_heats(tournament, generate_event_heats)
+            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
+            if flights is not None:
+                flash(f'Built {flights} pro flight(s).', 'success')
     else:
         saved = {
             'friday_pro_event_ids': [int(eid) for eid in saved.get('friday_pro_event_ids', [])],
@@ -433,6 +441,7 @@ def day_schedule(tournament_id):
         friday_pro_event_ids=saved['friday_pro_event_ids'],
         saturday_college_event_ids=saved['saturday_college_event_ids']
     )
+    detailed_schedule = _hydrate_schedule_for_display(tournament, schedule)
 
     return render_template(
         'scheduling/day_schedule.html',
@@ -441,7 +450,34 @@ def day_schedule(tournament_id):
         college_sat_options=college_sat_options,
         selected_friday_pro_event_ids=saved['friday_pro_event_ids'],
         selected_saturday_college_event_ids=saved['saturday_college_event_ids'],
-        schedule=schedule
+        schedule=schedule,
+        detailed_schedule=detailed_schedule
+    )
+
+
+@scheduling_bp.route('/<int:tournament_id>/day-schedule/print')
+def day_schedule_print(tournament_id):
+    """Printable day schedule with heat/stand assignments."""
+    from services.schedule_builder import build_day_schedule
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    session_key = f'schedule_options_{tournament_id}'
+    saved = session.get(session_key, {})
+    friday_pro_event_ids = [int(eid) for eid in saved.get('friday_pro_event_ids', [])]
+    saturday_college_event_ids = [int(eid) for eid in saved.get('saturday_college_event_ids', [])]
+
+    schedule = build_day_schedule(
+        tournament,
+        friday_pro_event_ids=friday_pro_event_ids,
+        saturday_college_event_ids=saturday_college_event_ids
+    )
+    detailed_schedule = _hydrate_schedule_for_display(tournament, schedule)
+
+    return render_template(
+        'scheduling/day_schedule_print.html',
+        tournament=tournament,
+        schedule=schedule,
+        detailed_schedule=detailed_schedule
     )
 
 
@@ -483,6 +519,90 @@ def generate_heats(tournament_id, event_id):
     return redirect(url_for('scheduling.event_heats',
                             tournament_id=tournament_id,
                             event_id=event_id))
+
+
+def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
+    """Generate heats for all configured events."""
+    events = tournament.events.order_by(Event.event_type, Event.name, Event.gender).all()
+    generated = 0
+    skipped = 0
+    errors = 0
+
+    for event in events:
+        try:
+            generate_event_heats_fn(event)
+            generated += 1
+        except Exception as exc:
+            if 'No competitors entered' in str(exc):
+                skipped += 1
+            else:
+                errors += 1
+                flash(f'Heat generation error for {event.display_name}: {exc}', 'error')
+
+    flash(f'Heats generated for {generated} event(s). Skipped {skipped} without entrants.', 'success')
+    if errors:
+        flash(f'Failed to generate heats for {errors} event(s).', 'error')
+
+
+def _build_pro_flights_if_possible(tournament: Tournament, build_pro_flights_fn):
+    """Build pro flights if there are any pro heats."""
+    pro_heats = Heat.query.join(Event).filter(
+        Event.tournament_id == tournament.id,
+        Event.event_type == 'pro',
+        Heat.run_number == 1
+    ).count()
+    if pro_heats == 0:
+        flash('No pro heats available yet, so no flights were built.', 'warning')
+        return None
+    return build_pro_flights_fn(tournament)
+
+
+def _hydrate_schedule_for_display(tournament: Tournament, schedule: dict) -> dict:
+    """Attach heat + stand assignment details to schedule entries for display/print."""
+    return {
+        'friday_day': _hydrate_schedule_entries(tournament, schedule.get('friday_day', [])),
+        'friday_feature': _hydrate_schedule_entries(tournament, schedule.get('friday_feature', [])),
+        'saturday_show': _hydrate_schedule_entries(tournament, schedule.get('saturday_show', [])),
+    }
+
+
+def _hydrate_schedule_entries(tournament: Tournament, entries: list[dict]) -> list[dict]:
+    hydrated = []
+    for item in entries:
+        event = Event.query.get(item.get('event_id')) if item.get('event_id') else None
+        detail_heats = []
+        if event:
+            if item.get('heat_id'):
+                heat = Heat.query.get(item['heat_id'])
+                if heat:
+                    detail_heats = [_serialize_heat_detail(tournament, event, heat)]
+            else:
+                event_heats = event.heats.order_by(Heat.heat_number, Heat.run_number).all()
+                detail_heats = [_serialize_heat_detail(tournament, event, h) for h in event_heats]
+
+        hydrated.append({
+            **item,
+            'heats': detail_heats,
+        })
+    return hydrated
+
+
+def _serialize_heat_detail(tournament: Tournament, event: Event, heat: Heat) -> dict:
+    assignments = heat.get_stand_assignments()
+    comp_lookup = _load_competitor_lookup(event, heat.get_competitors())
+    competitors = []
+    for comp_id in heat.get_competitors():
+        comp = comp_lookup.get(comp_id)
+        competitors.append({
+            'name': comp.name if comp else f'Unknown ({comp_id})',
+            'stand': assignments.get(str(comp_id)),
+        })
+    return {
+        'heat_id': heat.id,
+        'heat_number': heat.heat_number,
+        'run_number': heat.run_number,
+        'competitors': competitors,
+    }
 
 
 @scheduling_bp.route('/<int:tournament_id>/flights')
