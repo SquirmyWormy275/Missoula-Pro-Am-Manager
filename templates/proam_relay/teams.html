@@ -91,17 +91,17 @@
                             </thead>
                             <tbody>
                                 <tr>
-                                    <td>J&J Sawing</td>
+                                    <td>Partnered Sawing</td>
                                     <td class="text-center">
-                                        {% if team.events.jj_sawing.status == 'completed' %}
+                                        {% if team.events.partnered_sawing.status == 'completed' %}
                                             <span class="badge bg-success"><i class="bi bi-check"></i></span>
                                         {% else %}
                                             <span class="badge bg-secondary">Pending</span>
                                         {% endif %}
                                     </td>
                                     <td class="text-end">
-                                        {% if team.events.jj_sawing.result %}
-                                            {{ "%.2f"|format(team.events.jj_sawing.result) }}s
+                                        {% if team.events.partnered_sawing.result %}
+                                            {{ "%.2f"|format(team.events.partnered_sawing.result) }}s
                                         {% else %}
                                             -
                                         {% endif %}
@@ -110,15 +110,15 @@
                                 <tr>
                                     <td>Standing Butcher Block</td>
                                     <td class="text-center">
-                                        {% if team.events.standing_block.status == 'completed' %}
+                                        {% if team.events.standing_butcher_block.status == 'completed' %}
                                             <span class="badge bg-success"><i class="bi bi-check"></i></span>
                                         {% else %}
                                             <span class="badge bg-secondary">Pending</span>
                                         {% endif %}
                                     </td>
                                     <td class="text-end">
-                                        {% if team.events.standing_block.result %}
-                                            {{ "%.2f"|format(team.events.standing_block.result) }}s
+                                        {% if team.events.standing_butcher_block.result %}
+                                            {{ "%.2f"|format(team.events.standing_butcher_block.result) }}s
                                         {% else %}
                                             -
                                         {% endif %}
@@ -127,15 +127,32 @@
                                 <tr>
                                     <td>Underhand Butcher Block</td>
                                     <td class="text-center">
-                                        {% if team.events.underhand.status == 'completed' %}
+                                        {% if team.events.underhand_butcher_block.status == 'completed' %}
                                             <span class="badge bg-success"><i class="bi bi-check"></i></span>
                                         {% else %}
                                             <span class="badge bg-secondary">Pending</span>
                                         {% endif %}
                                     </td>
                                     <td class="text-end">
-                                        {% if team.events.underhand.result %}
-                                            {{ "%.2f"|format(team.events.underhand.result) }}s
+                                        {% if team.events.underhand_butcher_block.result %}
+                                            {{ "%.2f"|format(team.events.underhand_butcher_block.result) }}s
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Team Axe Throw</td>
+                                    <td class="text-center">
+                                        {% if team.events.team_axe_throw.status == 'completed' %}
+                                            <span class="badge bg-success"><i class="bi bi-check"></i></span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Pending</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        {% if team.events.team_axe_throw.result %}
+                                            {{ "%.2f"|format(team.events.team_axe_throw.result) }}s
                                         {% else %}
                                             -
                                         {% endif %}

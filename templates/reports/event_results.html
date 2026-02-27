@@ -8,7 +8,9 @@
         <div class="col-12">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}">All Results</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}">Reports</a></li>
                     <li class="breadcrumb-item active">{{ event.display_name }}</li>
                 </ol>
             </nav>

@@ -23,6 +23,7 @@
                 <div>
                     {% if can_advance and stage == 'prelims' %}
                     <form action="{{ url_for('partnered_axe.advance_to_finals', tournament_id=tournament.id) }}" method="POST" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-warning btn-lg"
                                 onclick="return confirm('Advance top 4 pairs to finals?')">
                             <i class="bi bi-arrow-right-circle"></i> Advance to Finals
@@ -46,6 +47,7 @@
                 <div class="card-body">
                     {% if stage == 'prelims' and pairs %}
                     <form action="{{ url_for('partnered_axe.record_prelim', tournament_id=tournament.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">
                             <label class="form-label">Pair</label>
                             <select name="pair_id" class="form-select form-select-lg" required>

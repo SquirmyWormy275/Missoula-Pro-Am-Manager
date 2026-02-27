@@ -23,6 +23,7 @@
                 </div>
                 <div class="card-body">
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="event_type" value="college">
 
                         <!-- OPEN Events -->
@@ -96,6 +97,7 @@
                 </div>
                 <div class="card-body">
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="event_type" value="pro">
 
                         <p class="small text-muted">Select which events to include and whether to run men's/women's divisions.</p>

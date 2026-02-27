@@ -2,12 +2,15 @@
 Scheduling routes for heat and flight generation.
 """
 import re
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session
+import json
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort
 from database import db
 from models import Tournament, Event, Heat, Flight
 from models.competitor import CollegeCompetitor, ProCompetitor
 import config
 import strings as text
+from services.audit import log_action
+from services.background_jobs import submit as submit_job
 
 scheduling_bp = Blueprint('scheduling', __name__)
 LIST_ONLY_EVENT_NAMES = {
@@ -25,10 +28,15 @@ def event_list(tournament_id):
 
     college_events = tournament.events.filter_by(event_type='college').all()
     pro_events = tournament.events.filter_by(event_type='pro').all()
+    all_events = college_events + pro_events
     assignment_details = _build_assignment_details(tournament, college_events + pro_events)
     entrant_counts = {
         event.id: len(_signed_up_competitors(event))
-        for event in (college_events + pro_events)
+        for event in all_events
+    }
+    event_progress = {
+        event.id: _build_event_progress(event, entrant_counts[event.id])
+        for event in all_events
     }
 
     return render_template('scheduling/events.html',
@@ -36,7 +44,8 @@ def event_list(tournament_id):
                            college_events=college_events,
                            pro_events=pro_events,
                            assignment_details=assignment_details,
-                           entrant_counts=entrant_counts)
+                           entrant_counts=entrant_counts,
+                           event_progress=event_progress)
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])
@@ -417,8 +426,12 @@ def day_schedule(tournament_id):
 
     if request.method == 'POST':
         action = request.form.get('action', 'generate_schedule')
-        friday_pro_event_ids = [int(eid) for eid in request.form.getlist('friday_pro_event_ids') if str(eid).strip()]
-        saturday_college_event_ids = [int(eid) for eid in request.form.getlist('saturday_college_event_ids') if str(eid).strip()]
+        try:
+            friday_pro_event_ids = [int(eid) for eid in request.form.getlist('friday_pro_event_ids') if str(eid).strip()]
+            saturday_college_event_ids = [int(eid) for eid in request.form.getlist('saturday_college_event_ids') if str(eid).strip()]
+        except (TypeError, ValueError):
+            flash('Invalid event ID in schedule submission.', 'error')
+            return redirect(url_for('scheduling.day_schedule', tournament_id=tournament_id))
         saved = {
             'friday_pro_event_ids': friday_pro_event_ids,
             'saturday_college_event_ids': saturday_college_event_ids,
@@ -430,6 +443,10 @@ def day_schedule(tournament_id):
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
                 flash(f'Built {flights} pro flight(s).', 'success')
+        elif action == 'rebuild_flights':
+            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
+            if flights is not None:
+                flash(f'Rebuilt {flights} pro flight(s).', 'success')
     else:
         saved = {
             'friday_pro_event_ids': [int(eid) for eid in saved.get('friday_pro_event_ids', [])],
@@ -486,6 +503,8 @@ def event_heats(tournament_id, event_id):
     """View and manage heats for an event."""
     tournament = Tournament.query.get_or_404(tournament_id)
     event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament.id:
+        abort(404)
 
     heats = event.heats.order_by(Heat.heat_number, Heat.run_number).all()
     signup_list_mode = _is_list_only_event(event)
@@ -503,6 +522,8 @@ def event_heats(tournament_id, event_id):
 def generate_heats(tournament_id, event_id):
     """Generate heats for an event using snake draft distribution."""
     event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id:
+        abort(404)
 
     # Import heat generation service
     from services.heat_generator import generate_event_heats
@@ -519,6 +540,65 @@ def generate_heats(tournament_id, event_id):
     return redirect(url_for('scheduling.event_heats',
                             tournament_id=tournament_id,
                             event_id=event_id))
+
+
+@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/move-competitor', methods=['POST'])
+def move_competitor_between_heats(tournament_id, event_id):
+    """Move a competitor between heats (and mirrored dual run heat, if needed)."""
+    event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id:
+        abort(404)
+
+    try:
+        competitor_id = int(request.form.get('competitor_id', ''))
+        from_heat_id = int(request.form.get('from_heat_id', ''))
+        to_heat_id = int(request.form.get('to_heat_id', ''))
+    except (TypeError, ValueError):
+        flash('Invalid move request.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    from_heat = Heat.query.get_or_404(from_heat_id)
+    to_heat = Heat.query.get_or_404(to_heat_id)
+    if from_heat.event_id != event.id or to_heat.event_id != event.id:
+        abort(404)
+    if from_heat.id == to_heat.id:
+        flash('Select a different destination heat.', 'warning')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    run_numbers = [1, 2] if event.requires_dual_runs else [from_heat.run_number]
+    from_pairs = []
+    to_pairs = []
+    for run_number in run_numbers:
+        source = event.heats.filter_by(heat_number=from_heat.heat_number, run_number=run_number).first()
+        target = event.heats.filter_by(heat_number=to_heat.heat_number, run_number=run_number).first()
+        if not source or not target:
+            flash('Could not find matching source/destination heats for move.', 'error')
+            return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+        from_pairs.append(source)
+        to_pairs.append(target)
+
+    for source, target in zip(from_pairs, to_pairs):
+        source_ids = source.get_competitors()
+        if competitor_id not in source_ids:
+            flash('Competitor is not in the selected source heat.', 'error')
+            return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+        target_ids = target.get_competitors()
+        if competitor_id in target_ids:
+            continue
+        source.remove_competitor(competitor_id)
+        target.add_competitor(competitor_id)
+
+        source_assignments = source.get_stand_assignments()
+        source_assignments.pop(str(competitor_id), None)
+        source.stand_assignments = json.dumps(source_assignments)
+
+        target_assignments = target.get_stand_assignments()
+        target_assignments[str(competitor_id)] = _next_open_stand(target_ids, target_assignments, event)
+        target.stand_assignments = json.dumps(target_assignments)
+
+    db.session.commit()
+    flash('Competitor moved successfully.', 'success')
+    return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
 
 def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
@@ -605,6 +685,43 @@ def _serialize_heat_detail(tournament: Tournament, event: Event, heat: Heat) -> 
     }
 
 
+def _build_event_progress(event: Event, entrant_count: int) -> dict:
+    """Build progress metrics for event list tables."""
+    heat_count = event.heats.count()
+    completed_heats = event.heats.filter_by(status='completed').count()
+    results_completed = event.results.filter_by(status='completed').count()
+    heat_pct = int((completed_heats / heat_count) * 100) if heat_count else 0
+    result_pct = int((results_completed / entrant_count) * 100) if entrant_count else 0
+    ready_to_finalize = entrant_count > 0 and results_completed >= entrant_count
+    return {
+        'heat_count': heat_count,
+        'completed_heats': completed_heats,
+        'heat_pct': heat_pct,
+        'results_completed': results_completed,
+        'result_pct': result_pct,
+        'ready_to_finalize': ready_to_finalize,
+    }
+
+
+def _next_open_stand(target_ids: list[int], assignments: dict, event: Event) -> int | None:
+    """Return next available stand number for a target heat."""
+    stand_config = config.STAND_CONFIGS.get(event.stand_type or '', {})
+    total = stand_config.get('total', max(len(target_ids), 1))
+    if event.stand_type == 'saw_hand':
+        total = min(total, 4)
+    if event.event_type == 'college' and _normalize_name(event.name) == _normalize_name('Stock Saw'):
+        available = [7, 8]
+    elif stand_config.get('specific_stands'):
+        available = list(stand_config['specific_stands'])
+    else:
+        available = list(range(1, total + 1))
+    used = {int(v) for v in assignments.values() if str(v).isdigit()}
+    for stand in available:
+        if stand not in used:
+            return stand
+    return available[0] if available else None
+
+
 @scheduling_bp.route('/<int:tournament_id>/flights')
 def flight_list(tournament_id):
     """View and manage flights for pro competition."""
@@ -624,8 +741,17 @@ def build_flights(tournament_id):
     if request.method == 'POST':
         from services.flight_builder import build_pro_flights
 
+        if request.form.get('run_async') == '1':
+            job_id = submit_job('build_pro_flights', build_pro_flights, tournament)
+            log_action('flight_build_job_started', 'tournament', tournament_id, {'job_id': job_id})
+            db.session.commit()
+            flash('Flight build started in the background.', 'success')
+            return redirect(url_for('reporting.export_results_job_status', tournament_id=tournament_id, job_id=job_id))
+
         try:
             num_flights = build_pro_flights(tournament)
+            log_action('flights_built', 'tournament', tournament_id, {'count': num_flights})
+            db.session.commit()
             flash(text.FLASH['flights_built'].format(num_flights=num_flights), 'success')
         except Exception as e:
             flash(text.FLASH['flights_error'].format(error=str(e)), 'error')

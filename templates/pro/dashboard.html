@@ -4,6 +4,17 @@
 
 {% block content %}
 <div class="container-fluid py-4">
+    <div class="row mb-2">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item active">Pro</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
     <div class="row mb-4">
         <div class="col-12">
             <h1>
@@ -24,6 +35,9 @@
                 <div class="list-group list-group-flush">
                     <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}" class="list-group-item list-group-item-action">
                         <i class="bi bi-person-plus"></i> Register Competitors
+                    </a>
+                    <a href="{{ url_for('import_pro.upload_pro_entries', tournament_id=tournament.id) }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-file-earmark-spreadsheet"></i> Import Pro Entries
                     </a>
                     <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}" class="list-group-item list-group-item-action">
                         <i class="bi bi-calendar-plus"></i> Configure Events
@@ -56,6 +70,38 @@
                         <span>Outstanding:</span>
                         <strong class="text-danger">${{ "%.2f"|format(total_fees - collected_fees) }}</strong>
                     </div>
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-graph-up-arrow"></i> Live Top Earners</h6>
+                </div>
+                <div class="list-group list-group-flush">
+                    {% for c in top_earners %}
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>{{ c.name }}</span>
+                        <strong class="text-success">${{ "%.2f"|format(c.total_earnings) }}</strong>
+                    </div>
+                    {% else %}
+                    <div class="list-group-item text-muted">No earnings posted yet.</div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header bg-dark text-white">
+                    <h6 class="mb-0"><i class="bi bi-activity"></i> Live Event Leaders (Redundant Score View)</h6>
+                </div>
+                <div class="list-group list-group-flush">
+                    {% for row in live_event_leaders %}
+                    <div class="list-group-item">
+                        <div class="small text-muted">{{ row.event_name }}</div>
+                        <div><strong>{{ row.competitor }}</strong></div>
+                    </div>
+                    {% else %}
+                    <div class="list-group-item text-muted">No completed pro events yet.</div>
+                    {% endfor %}
                 </div>
             </div>
         </div>

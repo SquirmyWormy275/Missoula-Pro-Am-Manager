@@ -24,6 +24,11 @@ class Heat(db.Model):
     """Represents a heat within an event (group of competitors running together)."""
 
     __tablename__ = 'heats'
+    __table_args__ = (
+        db.UniqueConstraint('event_id', 'heat_number', 'run_number', name='uq_event_heat_run'),
+        db.Index('ix_heats_event_status', 'event_id', 'status'),
+        db.Index('ix_heats_flight_id', 'flight_id'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=False)
@@ -38,6 +43,11 @@ class Heat(db.Model):
 
     # Status
     status = db.Column(db.String(20), default='pending')  # pending, in_progress, completed
+    version_id = db.Column(db.Integer, nullable=False, default=1)
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
 
     # Optional flight assignment (pro only)
     flight_id = db.Column(db.Integer, db.ForeignKey('flights.id'), nullable=True)

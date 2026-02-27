@@ -36,8 +36,12 @@ def register_pair(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     pat = get_partnered_axe_throw(tournament_id)
 
-    competitor1_id = int(request.form.get('competitor1_id'))
-    competitor2_id = int(request.form.get('competitor2_id'))
+    try:
+        competitor1_id = int(request.form.get('competitor1_id'))
+        competitor2_id = int(request.form.get('competitor2_id'))
+    except (TypeError, ValueError):
+        flash('Invalid competitor selection.', 'error')
+        return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))
 
     if competitor1_id == competitor2_id:
         flash('Cannot pair a competitor with themselves', 'danger')
@@ -73,8 +77,12 @@ def record_prelim(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     pat = get_partnered_axe_throw(tournament_id)
 
-    pair_id = int(request.form.get('pair_id'))
-    hits = int(request.form.get('hits'))
+    try:
+        pair_id = int(request.form.get('pair_id'))
+        hits = int(request.form.get('hits'))
+    except (TypeError, ValueError):
+        flash('Invalid pair ID or hit count.', 'error')
+        return redirect(url_for('partnered_axe.prelims', tournament_id=tournament_id))
 
     pat.record_prelim_result(pair_id, hits)
     flash(f'Prelim result recorded for Pair {pair_id}', 'success')
@@ -117,8 +125,12 @@ def record_final(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     pat = get_partnered_axe_throw(tournament_id)
 
-    pair_id = int(request.form.get('pair_id'))
-    hits = int(request.form.get('hits'))
+    try:
+        pair_id = int(request.form.get('pair_id'))
+        hits = int(request.form.get('hits'))
+    except (TypeError, ValueError):
+        flash('Invalid pair ID or hit count.', 'error')
+        return redirect(url_for('partnered_axe.finals', tournament_id=tournament_id))
 
     pat.record_final_result(pair_id, hits)
 

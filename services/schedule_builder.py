@@ -3,17 +3,33 @@ Day schedule builder for Friday/Saturday show planning.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 from models import Event, Tournament, Flight
+import config
 
 
-COLLEGE_SATURDAY_PRIORITY = [
-    ('Standing Block Speed', 'M'),
-    ('Standing Block Hard Hit', 'M'),
-    ('Standing Block Speed', 'F'),
-    ('Standing Block Hard Hit', 'F'),
-    ('Obstacle Pole', 'M'),
-]
+def _load_college_saturday_priority() -> list[tuple[str, str]]:
+    path = config.get_config().EVENT_ORDER_CONFIG_PATH
+    if path and os.path.exists(path):
+        try:
+            with open(path, encoding='utf-8') as fh:
+                payload = json.load(fh)
+            raw = payload.get('college_saturday_priority', [])
+            parsed = []
+            for row in raw:
+                if not isinstance(row, list | tuple) or len(row) != 2:
+                    continue
+                parsed.append((str(row[0]), str(row[1])))
+            if parsed:
+                return parsed
+        except Exception:
+            pass
+    return list(config.COLLEGE_SATURDAY_PRIORITY_DEFAULT)
+
+
+COLLEGE_SATURDAY_PRIORITY = _load_college_saturday_priority()
 
 
 def build_day_schedule(

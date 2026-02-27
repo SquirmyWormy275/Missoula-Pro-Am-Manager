@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Competitor Portal - {{ COMPETITION.app_title }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h3 class="mb-0">{{ competitor.name }} - Competitor Portal</h3>
+        <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
+           href="{{ request.path }}?{% if tournament and competitor_type and competitor %}tournament_id={{ tournament.id }}&competitor_type={{ competitor_type }}&competitor_id={{ competitor.id }}&{% endif %}view={{ 'desktop' if mobile_view else 'mobile' }}">
+            Switch to {{ 'Desktop' if mobile_view else 'Mobile' }} View
+        </a>
+    </div>
+
+    {% if mobile_view %}
+    <div class="row g-3">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">My Schedule</h6>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        {% for row in schedule_rows %}
+                        <div class="card">
+                            <div class="card-body py-2">
+                                <div class="fw-semibold">{{ row.event_name }}</div>
+                                <small class="text-muted">
+                                    Heat {{ row.heat_number }}{% if row.run_number %} | Run {{ row.run_number }}{% endif %} | Stand {{ row.stand_number or '-' }}
+                                </small>
+                                <div><small class="text-muted">Flight {{ row.flight_number or '-' }} | {{ row.status }}</small></div>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="text-muted">No heats scheduled yet.</div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">My Results</h6>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        {% for row in results_rows %}
+                        <div class="card">
+                            <div class="card-body py-2">
+                                <div class="fw-semibold">{{ row.event_name }}</div>
+                                <small class="text-muted">Place {{ row.position or '-' }} | Points {{ row.points_awarded or '-' }}</small>
+                                <div>{{ row.result_value if row.result_value is not none else '-' }}{% if row.result_unit %} {{ row.result_unit }}{% endif %}</div>
+                                <div><small class="text-muted">Payout: ${{ '%.2f'|format(row.payout_amount or 0) }}</small></div>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="text-muted">No recorded results yet.</div>
+                        {% endfor %}
+                    </div>
+                    <div class="mt-2">
+                        <strong>Total Payout:</strong> ${{ '%.2f'|format(total_payout) }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="row g-3">
+        <div class="col-lg-7">
+            <div class="card shadow-sm">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">My Schedule (Heats / Flights / Stands)</h6>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Event</th>
+                                    <th>Heat</th>
+                                    <th>Run</th>
+                                    <th>Stand</th>
+                                    <th>Flight</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in schedule_rows %}
+                                <tr>
+                                    <td>{{ row.event_name }}</td>
+                                    <td>{{ row.heat_number }}</td>
+                                    <td>{{ row.run_number }}</td>
+                                    <td>{{ row.stand_number or '-' }}</td>
+                                    <td>{{ row.flight_number or '-' }}</td>
+                                    <td>{{ row.status }}</td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="6" class="text-muted">No heats scheduled yet.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="card shadow-sm mb-3">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">My Results</h6>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Event</th>
+                                    <th>Result</th>
+                                    <th>Place</th>
+                                    <th>Points</th>
+                                    <th>Payout</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in results_rows %}
+                                <tr>
+                                    <td>{{ row.event_name }}</td>
+                                    <td>{{ row.result_value if row.result_value is not none else '-' }}</td>
+                                    <td>{{ row.position or '-' }}</td>
+                                    <td>{{ row.points_awarded or '-' }}</td>
+                                    <td>${{ '%.2f'|format(row.payout_amount or 0) }}</td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="5" class="text-muted">No recorded results yet.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-2">
+                        <strong>Total Payout:</strong> ${{ '%.2f'|format(total_payout) }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

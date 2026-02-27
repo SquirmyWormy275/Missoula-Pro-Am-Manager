@@ -8,6 +8,8 @@
         <div class="col-12">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('validation.validation_dashboard', tournament_id=tournament.id) }}">Validation</a></li>
                     <li class="breadcrumb-item active">College</li>
                 </ol>

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Export Status - {{ tournament.name }}{% endblock %}
+{% block content %}
+<div class="container py-4">
+    <div class="card shadow-sm">
+        <div class="card-header card-header-proam">
+            <h5 class="mb-0">Export Job Status</h5>
+        </div>
+        <div class="card-body">
+            <p><strong>Job:</strong> {{ job.label }}</p>
+            <p><strong>Status:</strong> {{ job.status }}</p>
+            <p class="text-muted mb-0">Refresh this page to check progress.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

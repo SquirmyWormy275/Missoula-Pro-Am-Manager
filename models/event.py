@@ -9,6 +9,9 @@ class Event(db.Model):
     """Represents a competition event (e.g., Men's Underhand Speed)."""
 
     __tablename__ = 'events'
+    __table_args__ = (
+        db.Index('ix_events_tournament_type_status', 'tournament_id', 'event_type', 'status'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     tournament_id = db.Column(db.Integer, db.ForeignKey('tournaments.id'), nullable=False)
@@ -87,6 +90,10 @@ class EventResult(db.Model):
     """Represents a competitor's result in an event."""
 
     __tablename__ = 'event_results'
+    __table_args__ = (
+        db.UniqueConstraint('event_id', 'competitor_id', 'competitor_type', name='uq_event_result_competitor'),
+        db.Index('ix_event_results_event_status', 'event_id', 'status'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=False)
@@ -119,6 +126,11 @@ class EventResult(db.Model):
 
     # Status
     status = db.Column(db.String(20), default='pending')  # pending, completed, scratched, dnf
+    version_id = db.Column(db.Integer, nullable=False, default=1)
+
+    __mapper_args__ = {
+        'version_id_col': version_id,
+    }
 
     def __repr__(self):
         return f'<EventResult {self.competitor_name} - {self.result_value}>'

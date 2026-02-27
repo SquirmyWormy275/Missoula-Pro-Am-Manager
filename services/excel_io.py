@@ -59,7 +59,11 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
     name_col = _find_column(df, ['name', 'first and last name', 'competitor', 'athlete', 'full name', 'competitor name'])
     gender_col = _find_column(df, ['gender', 'sex', 'm/f', 'male/female', 'male female', 'mf'])
     events_col = _find_column(df, ['events', 'event', 'entered'])
-    event_marker_cols = _find_event_marker_columns(df, excluded_cols=[school_col, team_col, name_col, gender_col, events_col])
+    relay_lottery_col = _find_column(df, ['pro-am relay lottery', 'pro am relay lottery', 'pro-am lottery', 'relay lottery'])
+    event_marker_cols = _find_event_marker_columns(
+        df,
+        excluded_cols=[school_col, team_col, name_col, gender_col, events_col, relay_lottery_col]
+    )
     default_gender = _infer_default_gender(df, gender_col)
 
     if not name_col:
@@ -133,6 +137,8 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
                 name=str(name).strip()
             ).first()
 
+            relay_opt_in = _parse_relay_opt_in(row.get(relay_lottery_col)) if relay_lottery_col else False
+
             if not existing:
                 competitor = CollegeCompetitor(
                     tournament_id=tournament.id,
@@ -162,8 +168,12 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
                 if partners_col and not pd.isna(row.get(partners_col)):
                     _process_partners(competitor, row.get(partners_col))
 
+                competitor.pro_am_lottery_opt_in = relay_opt_in
                 db.session.add(competitor)
                 competitors_created += 1
+            else:
+                existing.gender = gender
+                existing.pro_am_lottery_opt_in = relay_opt_in
 
     db.session.flush()
     _validate_college_entry_constraints(touched_team_ids)
@@ -423,6 +433,14 @@ def _parse_gender(value) -> str:
     if value in ['F', 'FEMALE', 'W', 'WOMAN', 'WOMEN']:
         return 'F'
     return 'M'
+
+
+def _parse_relay_opt_in(value) -> bool:
+    """Parse lottery opt-in marker values from import sheets."""
+    if pd.isna(value):
+        return False
+    marker = str(value).strip().lower()
+    return marker in {'x', 'y', 'yes', '1', 'true', 't'}
 
 
 def _generate_team_code(school_name: str, tournament: Tournament) -> str:

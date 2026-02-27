@@ -1,17 +1,55 @@
-"""
-Configuration constants for the Missoula Pro Am Tournament Manager.
-"""
+"""Configuration constants and runtime profiles for the app."""
 import os
 
-# Application settings
-SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///proam.db')
-if DATABASE_URL.startswith('postgres://'):
-    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-SQLALCHEMY_DATABASE_URI = DATABASE_URL
-SQLALCHEMY_TRACK_MODIFICATIONS = False
-UPLOAD_FOLDER = 'uploads'
-MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max upload
+
+def _normalized_database_url() -> str:
+    url = os.environ.get('DATABASE_URL', 'sqlite:///proam.db')
+    if url.startswith('postgres://'):
+        return url.replace('postgres://', 'postgresql://', 1)
+    return url
+
+
+class BaseConfig:
+    SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
+    SQLALCHEMY_DATABASE_URI = _normalized_database_url()
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_ENGINE_OPTIONS = {'pool_pre_ping': True}
+    UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', 'uploads')
+    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max upload
+    STRUCTURED_LOGGING = os.environ.get('STRUCTURED_LOGGING', '1') == '1'
+    SENTRY_DSN = os.environ.get('SENTRY_DSN', '').strip()
+    JOB_MAX_WORKERS = int(os.environ.get('JOB_MAX_WORKERS', '2'))
+    REPORT_CACHE_TTL_SECONDS = int(os.environ.get('REPORT_CACHE_TTL_SECONDS', '60'))
+    ENABLE_UPLOAD_MALWARE_SCAN = os.environ.get('ENABLE_UPLOAD_MALWARE_SCAN', '0') == '1'
+    MALWARE_SCAN_COMMAND = os.environ.get('MALWARE_SCAN_COMMAND', '').strip()
+    EVENT_ORDER_CONFIG_PATH = os.environ.get('EVENT_ORDER_CONFIG_PATH', 'instance/event_order.json')
+
+
+class DevelopmentConfig(BaseConfig):
+    ENV_NAME = 'development'
+
+
+class ProductionConfig(BaseConfig):
+    ENV_NAME = 'production'
+
+
+def get_config():
+    env = os.environ.get('FLASK_ENV', '').strip().lower()
+    if env == 'production' or os.environ.get('PRODUCTION', '').strip() == '1':
+        return ProductionConfig
+    return DevelopmentConfig
+
+
+def validate_runtime(app_config: dict) -> None:
+    """Fail fast for production misconfiguration."""
+    env_name = app_config.get('ENV_NAME', 'development')
+    if env_name != 'production':
+        return
+
+    secret = app_config.get('SECRET_KEY') or ''
+    weak_values = {'dev-key-change-in-production', 'changeme', 'secret', 'default'}
+    if len(secret) < 16 or secret.lower() in weak_values:
+        raise RuntimeError('Invalid SECRET_KEY for production. Set a strong random secret.')
 
 # Scoring points for college competition
 PLACEMENT_POINTS = {
@@ -145,3 +183,12 @@ MAX_CLOSED_EVENTS_PER_ATHLETE = 6
 
 # Shirt sizes
 SHIRT_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
+
+# Saturday priority ordering defaults (override via EVENT_ORDER_CONFIG_PATH if needed).
+COLLEGE_SATURDAY_PRIORITY_DEFAULT = [
+    ('Standing Block Speed', 'M'),
+    ('Standing Block Hard Hit', 'M'),
+    ('Standing Block Speed', 'F'),
+    ('Standing Block Hard Hit', 'F'),
+    ('Obstacle Pole', 'M'),
+]

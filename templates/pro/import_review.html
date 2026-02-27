@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block title %}Review Import - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('import_pro.upload_pro_entries', tournament_id=tournament.id) }}">Import Entries</a></li>
+            <li class="breadcrumb-item active">Review</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex align-items-center gap-3 mb-4">
+        <h2 class="mb-0">
+            <i class="bi bi-table text-warning"></i>
+            Review Import
+        </h2>
+        <span class="badge bg-secondary fs-6">{{ total_competitors }} competitor{{ 's' if total_competitors != 1 }}</span>
+    </div>
+
+    {% if has_warnings %}
+    <div class="alert alert-warning d-flex align-items-center gap-2 mb-4">
+        <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+        <div>
+            Some rows have issues highlighted below.
+            <strong>Red rows</strong> have no signed waiver.
+            <strong>Yellow rows</strong> have partner or gear-sharing issues.
+            You can still confirm the import — issues are informational only.
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card mb-4">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-sm mb-0 align-middle">
+                    <thead class="table-proam">
+                        <tr>
+                            <th>#</th>
+                            <th>Name</th>
+                            <th>Gender</th>
+                            <th>ALA</th>
+                            <th>Events</th>
+                            <th>Fees</th>
+                            <th>Relay</th>
+                            <th>Partner Issues</th>
+                            <th>Gear Sharing</th>
+                            <th>Waiver</th>
+                            <th>Notes / Flags</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for e in entries %}
+                        <tr class="{{ e.flag_class }}">
+                            <td class="text-muted">{{ loop.index }}</td>
+
+                            <td>
+                                <strong>{{ e.name }}</strong>
+                                {% if e.email %}
+                                    <br><small class="text-muted">{{ e.email }}</small>
+                                {% endif %}
+                            </td>
+
+                            <td>{{ e.gender }}</td>
+
+                            <td>
+                                {% if e.ala_member %}
+                                    <span class="badge bg-success">Yes</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">No</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {% if e.events %}
+                                    <span class="badge bg-primary">{{ e.events | length }}</span>
+                                    <small class="d-block text-muted" style="max-width:200px;">
+                                        {{ e.events | join(', ') }}
+                                    </small>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                <strong>${{ e.total_fees }}</strong>
+                                {% if e.chopping_fees or e.other_fees or e.relay_fee %}
+                                <small class="d-block text-muted">
+                                    {% if e.chopping_fees %}${{ e.chopping_fees }} chop{% endif %}
+                                    {% if e.other_fees %}{% if e.chopping_fees %} + {% endif %}${{ e.other_fees }} other{% endif %}
+                                    {% if e.relay_fee %} + ${{ e.relay_fee }} relay{% endif %}
+                                </small>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {% if e.relay_lottery %}
+                                    <span class="badge bg-primary">In</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Out</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {% if e.partners %}
+                                    {% for event_name, partner_name in e.partners.items() %}
+                                        <small class="d-block">
+                                            <span class="text-muted">{{ event_name }}:</span>
+                                            {{ partner_name }}
+                                        </small>
+                                    {% endfor %}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {% if e.gear_sharing %}
+                                    <i class="bi bi-check-circle-fill text-success"></i>
+                                    {% if e.gear_sharing_details %}
+                                        <small class="d-block text-muted">{{ e.gear_sharing_details }}</small>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {% if e.waiver_accepted %}
+                                    <i class="bi bi-check-circle-fill text-success" title="Signed: {{ e.waiver_signature or 'Yes' }}"></i>
+                                    {% if e.waiver_signature %}
+                                        <small class="d-block text-muted">{{ e.waiver_signature }}</small>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="badge bg-danger">NO WAIVER</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {% for flag in e.flags %}
+                                    <span class="badge {{ 'bg-danger' if 'WAIVER' in flag else 'bg-warning text-dark' }} d-block mb-1">
+                                        {{ flag }}
+                                    </span>
+                                {% endfor %}
+                                {% if e.notes %}
+                                    <small class="text-muted">{{ e.notes }}</small>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary footer -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card text-center">
+                <div class="card-body py-3">
+                    <div class="fs-3 fw-bold">{{ total_competitors }}</div>
+                    <div class="text-muted">Competitor{{ 's' if total_competitors != 1 }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center">
+                <div class="card-body py-3">
+                    <div class="fs-3 fw-bold text-success">${{ total_fees }}</div>
+                    <div class="text-muted">Total Fees</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center">
+                <div class="card-body py-3">
+                    {% set waiver_count = entries | selectattr('waiver_accepted') | list | length %}
+                    <div class="fs-3 fw-bold {{ 'text-danger' if waiver_count < total_competitors else 'text-success' }}">
+                        {{ waiver_count }}/{{ total_competitors }}
+                    </div>
+                    <div class="text-muted">Waivers Signed</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="d-flex gap-3">
+        <form method="POST"
+              action="{{ url_for('import_pro.confirm_pro_entries', tournament_id=tournament.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-success btn-lg">
+                <i class="bi bi-check2-circle"></i>
+                Confirm Import ({{ total_competitors }} competitor{{ 's' if total_competitors != 1 }})
+            </button>
+        </form>
+
+        <a href="{{ url_for('import_pro.upload_pro_entries', tournament_id=tournament.id) }}"
+           class="btn btn-outline-secondary btn-lg">
+            <i class="bi bi-x-circle"></i> Cancel
+        </a>
+    </div>
+</div>
+{% endblock %}

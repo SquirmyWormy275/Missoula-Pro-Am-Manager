@@ -1,115 +1,445 @@
 {% extends "base.html" %}
 
-{% block title %}{{ ui('dashboard') }} - {{ COMPETITION.app_title }}{% endblock %}
+{% block title %}{{ ui('dashboard') }} — {{ COMPETITION.app_title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ── COMMAND CENTRE HERO ─────────────────────────────────────── */
+    .cmd-hero {
+        background:
+            linear-gradient(135deg,
+                rgba(232,57,31,0.07) 0%,
+                rgba(11,13,17,0) 45%,
+                rgba(232,144,18,0.04) 100%),
+            var(--sx-surface);
+        border: 1px solid var(--sx-border);
+        border-left: 3px solid var(--sx-fire);
+        border-radius: 14px;
+        overflow: hidden;
+        position: relative;
+    }
+
+    /* Subtle diagonal grain texture */
+    .cmd-hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 12px,
+            rgba(255,255,255,0.012) 12px,
+            rgba(255,255,255,0.012) 13px
+        );
+        pointer-events: none;
+    }
+
+    .cmd-hero-inner { position: relative; z-index: 1; }
+
+    /* Dual logo lockup */
+    .hero-logo-lockup {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+    }
+
+    .hero-badge {
+        width: 80px;
+        height: 80px;
+        border-radius: 14px;
+        background: #ffffff;
+        border: 1px solid rgba(255,255,255,0.15);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        flex-shrink: 0;
+        padding: 6px;
+    }
+    .hero-badge img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    .hero-badge-strathex {
+        width: 80px;
+        height: 80px;
+        border-radius: 14px;
+        background: #000;
+        border: 1px solid rgba(232,57,31,0.35);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        flex-shrink: 0;
+        padding: 10px;
+    }
+    .hero-badge-strathex img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    .hero-lockup-separator {
+        width: 1px;
+        height: 56px;
+        background: linear-gradient(to bottom, transparent, var(--sx-border-bright), transparent);
+        flex-shrink: 0;
+    }
+
+    .hero-title {
+        font-family: "Orbitron", sans-serif;
+        font-weight: 800;
+        font-size: 1.65rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--sx-text);
+        line-height: 1.1;
+        margin-bottom: 0.35rem;
+    }
+
+    .hero-subtitle {
+        color: var(--sx-text-2);
+        font-size: 0.875rem;
+        margin-bottom: 0;
+    }
+
+    .hero-powered-by {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        margin-top: 1rem;
+        background: rgba(232,57,31,0.08);
+        border: 1px solid rgba(232,57,31,0.25);
+        border-radius: 999px;
+        padding: 0.22rem 0.7rem 0.22rem 0.45rem;
+    }
+    .hero-powered-by img {
+        height: 15px;
+        width: auto;
+        max-width: 72px;
+        object-fit: contain;
+    }
+    .hero-powered-by span {
+        font-family: "Orbitron", sans-serif;
+        font-size: 0.52rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--sx-fire);
+        font-weight: 700;
+    }
+
+    /* Feature pills */
+    .feature-pills {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        align-items: flex-end;
+    }
+
+    .feature-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid var(--sx-border-bright);
+        border-radius: 999px;
+        padding: 0.38rem 0.85rem;
+        font-size: 0.8rem;
+        color: var(--sx-text-2);
+        white-space: nowrap;
+        transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .feature-pill:hover {
+        background: rgba(232,57,31,0.08);
+        border-color: rgba(232,57,31,0.3);
+        color: var(--sx-text);
+    }
+    .feature-pill i { color: var(--sx-fire); font-size: 0.9rem; }
+
+    /* ── ACTIVE TOURNAMENT CARD ──────────────────────────────────── */
+    .active-tourn-card {
+        border-left: 3px solid var(--sx-fire) !important;
+        background: linear-gradient(135deg,
+            rgba(232,57,31,0.05) 0%,
+            var(--sx-surface) 40%) !important;
+    }
+
+    .next-action-box {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--sx-border);
+        border-radius: 8px;
+        padding: 0.5rem 0.8rem;
+        font-size: 0.83rem;
+        color: var(--sx-text-2);
+    }
+
+    /* ── TOURNAMENTS TABLE ───────────────────────────────────────── */
+    .section-header-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.85rem 1.15rem;
+        background: var(--sx-surface-2);
+        border-bottom: 1px solid var(--sx-border);
+        border-radius: 12px 12px 0 0;
+    }
+    .section-header-bar h5 { margin: 0; font-size: 0.95rem; color: var(--sx-text); }
+
+    .empty-state {
+        padding: 3rem 1.5rem;
+        text-align: center;
+    }
+    .empty-state-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 16px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid var(--sx-border);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.8rem;
+        color: var(--sx-text-3);
+        margin-bottom: 1rem;
+    }
+
+    /* ── QUICK LAUNCH SIDEBAR ────────────────────────────────────── */
+    .quick-launch-item {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        padding: 0.6rem 1rem;
+        color: var(--sx-text-2);
+        text-decoration: none;
+        border-bottom: 1px solid var(--sx-border);
+        font-size: 0.875rem;
+        transition: all 0.15s;
+    }
+    .quick-launch-item:last-child { border-bottom: none; }
+    .quick-launch-item:hover {
+        background: rgba(232,57,31,0.06);
+        color: var(--sx-text);
+        padding-left: 1.25rem;
+    }
+    .quick-launch-item i {
+        color: var(--sx-fire);
+        font-size: 1rem;
+        width: 20px;
+        text-align: center;
+        flex-shrink: 0;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-4">
-    <div class="row">
+
+    <!-- ── COMMAND CENTRE HERO ─────────────────────────────────── -->
+    <div class="row mb-4">
         <div class="col-12">
-            <h1 class="mb-4">
-                <i class="bi bi-tree-fill text-success"></i>
-                {{ COMPETITION.app_title }}
-            </h1>
+            <div class="cmd-hero p-4 p-lg-5">
+                <div class="cmd-hero-inner d-flex flex-wrap align-items-center justify-content-between gap-4">
+
+                    <!-- Left: logos + title -->
+                    <div>
+                        <div class="hero-logo-lockup">
+                            <div class="hero-badge">
+                                <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
+                                     alt="Missoula Pro Am"
+                                     onerror="this.parentElement.style.opacity='0';">
+                            </div>
+                            <div class="hero-lockup-separator"></div>
+                            <div class="hero-badge-strathex">
+                                <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                                     alt="STRATHEX"
+                                     onerror="this.parentElement.style.opacity='0';">
+                            </div>
+                        </div>
+
+                        <div class="hero-title">{{ COMPETITION.app_title }}</div>
+                        <p class="hero-subtitle">
+                            Operations Command Center &mdash; Friday &amp; Saturday Show Control
+                        </p>
+
+                        <div class="hero-powered-by">
+                            <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                                 alt="STRATHEX"
+                                 onerror="this.style.display='none';">
+                            <span>Flagship product by STRATHEX</span>
+                        </div>
+                    </div>
+
+                    <!-- Right: feature pills -->
+                    <div class="feature-pills">
+                        <span class="feature-pill"><i class="bi bi-calendar2-week"></i> Day 1 College Competition</span>
+                        <span class="feature-pill"><i class="bi bi-trophy"></i> Day 2 Pro Flights &amp; Payouts</span>
+                        <span class="feature-pill"><i class="bi bi-bar-chart-line"></i> Live Heat Scoring</span>
+                        <span class="feature-pill"><i class="bi bi-people"></i> Pro-Am Relay Lottery</span>
+                    </div>
+
+                </div>
+            </div>
         </div>
     </div>
 
+    <!-- ── ACTIVE TOURNAMENT + QUICK LAUNCH ────────────────────── -->
     {% if active_tournament %}
-    <!-- Active Tournament Card -->
     <div class="row mb-4">
-        <div class="col-12">
-            <div class="card border-success">
-                <div class="card-header card-header-proam">
-                    <h5 class="mb-0">
-                        <i class="bi bi-play-circle"></i>
-                        {{ ui('active_tournament') }}: {{ active_tournament.name }} {{ active_tournament.year }}
-                    </h5>
-                </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-4">
-                            <p><strong>{{ ui('status') }}:</strong>
-                                {% if active_tournament.status == 'setup' %}
-                                    <span class="badge bg-secondary">{{ ui('setup') }}</span>
-                                {% elif active_tournament.status == 'college_active' %}
-                                    <span class="badge bg-primary">{{ ui('college_competition_active') }}</span>
-                                {% elif active_tournament.status == 'pro_active' %}
-                                    <span class="badge bg-warning text-dark">{{ ui('pro_competition_active') }}</span>
-                                {% endif %}
-                            </p>
+        <div class="col-lg-8 mb-3 mb-lg-0">
+            <div class="card active-tourn-card h-100">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+                        <div>
+                            <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--sx-fire);font-family:'Orbitron',sans-serif;font-weight:700;margin-bottom:0.3rem;">
+                                Active Tournament
+                            </div>
+                            <h5 class="mb-1" style="font-family:'Orbitron',sans-serif;font-size:1rem;font-weight:800;">
+                                {{ active_tournament.name }} {{ active_tournament.year }}
+                            </h5>
+                            <div style="color:var(--sx-text-2);font-size:0.82rem;">
+                                {{ ui('active_tournament') }}
+                            </div>
                         </div>
-                        <div class="col-md-8 text-end">
-                            <a href="{{ url_for('main.tournament_detail', tournament_id=active_tournament.id) }}" class="btn btn-proam">
-                                <i class="bi bi-arrow-right-circle"></i> {{ ui('go_to_tournament') }}
-                            </a>
-                        </div>
+                        <a href="{{ url_for('main.tournament_detail', tournament_id=active_tournament.id) }}"
+                           class="btn btn-proam">
+                            <i class="bi bi-arrow-right-circle me-1"></i> {{ ui('go_to_tournament') }}
+                        </a>
                     </div>
+
+                    <hr>
+
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        {% if active_tournament.status == 'setup' %}
+                            <span class="badge bg-secondary">{{ ui('setup') }}</span>
+                            <div class="next-action-box flex-grow-1">
+                                <i class="bi bi-arrow-right-circle me-1" style="color:var(--sx-amber);"></i>
+                                Next: Configure events, then import teams and pro competitors.
+                            </div>
+                        {% elif active_tournament.status == 'college_active' %}
+                            <span class="badge bg-primary">{{ ui('college_competition_active') }}</span>
+                            <div class="next-action-box flex-grow-1">
+                                <i class="bi bi-arrow-right-circle me-1" style="color:var(--sx-info);"></i>
+                                Next: Generate heats and enter results heat-by-heat.
+                            </div>
+                        {% elif active_tournament.status == 'pro_active' %}
+                            <span class="badge bg-warning">{{ ui('pro_competition_active') }}</span>
+                            <div class="next-action-box flex-grow-1">
+                                <i class="bi bi-arrow-right-circle me-1" style="color:var(--sx-amber);"></i>
+                                Next: Build flights and keep payout reports updated.
+                            </div>
+                        {% else %}
+                            <span class="badge bg-success">{{ ui('completed') }}</span>
+                            <div class="next-action-box flex-grow-1">
+                                <i class="bi bi-check-circle me-1" style="color:var(--sx-success);"></i>
+                                Next: Export final results and archive the tournament.
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header card-header-proam">
+                    <strong><i class="bi bi-lightning-charge me-1"></i>Quick Launch</strong>
+                </div>
+                <div>
+                    <a class="quick-launch-item" href="{{ url_for('scheduling.event_list', tournament_id=active_tournament.id) }}">
+                        <i class="bi bi-list-ul"></i>
+                        <span>Event Grid &amp; Progress</span>
+                    </a>
+                    <a class="quick-launch-item" href="{{ url_for('scheduling.day_schedule', tournament_id=active_tournament.id) }}">
+                        <i class="bi bi-calendar-week"></i>
+                        <span>Day Schedule Builder</span>
+                    </a>
+                    <a class="quick-launch-item" href="{{ url_for('reporting.export_results', tournament_id=active_tournament.id) }}">
+                        <i class="bi bi-file-earmark-spreadsheet"></i>
+                        <span>Export Results</span>
+                    </a>
+                    <a class="quick-launch-item" href="{{ url_for('reporting.all_results', tournament_id=active_tournament.id) }}">
+                        <i class="bi bi-bar-chart-steps"></i>
+                        <span>View All Results</span>
+                    </a>
                 </div>
             </div>
         </div>
     </div>
     {% endif %}
 
-    <!-- Tournament List -->
+    <!-- ── TOURNAMENTS TABLE ────────────────────────────────────── -->
     <div class="row">
         <div class="col-12">
             <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="bi bi-list-ul"></i> {{ ui('tournaments') }}</h5>
+                <div class="section-header-bar">
+                    <h5>
+                        <i class="bi bi-list-ul me-2" style="color:var(--sx-fire);"></i>
+                        {{ ui('tournaments') }}
+                    </h5>
                     <a href="{{ url_for('main.new_tournament') }}" class="btn btn-proam btn-sm">
-                        <i class="bi bi-plus-circle"></i> {{ ui('new_tournament') }}
+                        <i class="bi bi-plus-circle me-1"></i> {{ ui('new_tournament') }}
                     </a>
                 </div>
-                <div class="card-body">
+
+                <div class="card-body p-0">
                     {% if tournaments %}
                     <div class="table-responsive">
-                        <table class="table table-hover">
+                        <table class="table table-hover align-middle mb-0">
                             <thead class="table-proam">
                                 <tr>
                                     <th>{{ ui('tournament') }}</th>
                                     <th>{{ ui('year') }}</th>
                                     <th>{{ ui('status') }}</th>
-                                    <th>{{ ui('teams') }}</th>
-                                    <th>{{ ui('college') }}</th>
-                                    <th>{{ ui('pro') }}</th>
-                                    <th>{{ ui('actions') }}</th>
+                                    <th class="text-center">{{ ui('teams') }}</th>
+                                    <th class="text-center">{{ ui('college') }}</th>
+                                    <th class="text-center">{{ ui('pro') }}</th>
+                                    <th class="text-end">{{ ui('actions') }}</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for t in tournaments %}
                                 <tr>
-                                    <td><strong>{{ t.name }}</strong></td>
-                                    <td>{{ t.year }}</td>
+                                    <td>
+                                        <strong style="font-size:0.9rem;">{{ t.name }}</strong>
+                                    </td>
+                                    <td style="color:var(--sx-text-2);font-size:0.85rem;">{{ t.year }}</td>
                                     <td>
                                         {% if t.status == 'setup' %}
                                             <span class="badge bg-secondary">{{ ui('setup') }}</span>
                                         {% elif t.status == 'college_active' %}
                                             <span class="badge bg-primary">{{ ui('college_active') }}</span>
                                         {% elif t.status == 'pro_active' %}
-                                            <span class="badge bg-warning text-dark">{{ ui('pro_active') }}</span>
+                                            <span class="badge bg-warning">{{ ui('pro_active') }}</span>
                                         {% elif t.status == 'completed' %}
                                             <span class="badge bg-success">{{ ui('completed') }}</span>
                                         {% endif %}
                                     </td>
-                                    <td>{{ t.college_team_count }}</td>
-                                    <td>{{ t.college_competitor_count }}</td>
-                                    <td>{{ t.pro_competitor_count }}</td>
-                                    <td>
-                                        <div class="btn-group btn-group-sm" role="group">
-                                            <a href="{{ url_for('main.tournament_detail', tournament_id=t.id) }}" class="btn btn-outline-primary">
-                                                <i class="bi bi-eye"></i> {{ ui('view') }}
+                                    <td class="text-center" style="color:var(--sx-text-2);font-size:0.85rem;">{{ t.college_team_count }}</td>
+                                    <td class="text-center" style="color:var(--sx-text-2);font-size:0.85rem;">{{ t.college_competitor_count }}</td>
+                                    <td class="text-center" style="color:var(--sx-text-2);font-size:0.85rem;">{{ t.pro_competitor_count }}</td>
+                                    <td class="text-end">
+                                        <div class="btn-group btn-group-sm">
+                                            <a href="{{ url_for('main.tournament_detail', tournament_id=t.id) }}"
+                                               class="btn btn-outline-primary btn-sm">
+                                                <i class="bi bi-eye"></i>
+                                                <span class="d-none d-md-inline"> {{ ui('view') }}</span>
                                             </a>
                                             <form method="POST"
                                                   action="{{ url_for('main.delete_tournament', tournament_id=t.id) }}"
                                                   style="display:inline;"
                                                   onsubmit="
-                                                      const typed = prompt('Type DELETE to permanently remove {{ t.name }} {{ t.year }}.');
+                                                      var typed = prompt('Type DELETE to permanently remove {{ t.name }} {{ t.year }}.');
                                                       if (typed === null) { return false; }
                                                       this.querySelector('input[name=confirm_delete]').value = typed;
                                                       return true;
                                                   ">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                                 <input type="hidden" name="confirm_delete" value="">
-                                                <button type="submit" class="btn btn-outline-danger">
-                                                    <i class="bi bi-trash"></i> Delete
+                                                <button type="submit" class="btn btn-outline-danger btn-sm">
+                                                    <i class="bi bi-trash"></i>
                                                 </button>
                                             </form>
                                         </div>
@@ -120,11 +450,15 @@
                         </table>
                     </div>
                     {% else %}
-                    <div class="text-center py-5">
-                        <i class="bi bi-folder-x display-4 text-muted"></i>
-                        <p class="mt-3 text-muted">{{ ui('no_tournaments') }}</p>
+                    <div class="empty-state">
+                        <div class="empty-state-icon mx-auto">
+                            <i class="bi bi-folder-x"></i>
+                        </div>
+                        <p style="color:var(--sx-text-2);margin-bottom:1.25rem;">
+                            {{ ui('no_tournaments') }}
+                        </p>
                         <a href="{{ url_for('main.new_tournament') }}" class="btn btn-proam">
-                            <i class="bi bi-plus-circle"></i> {{ ui('create_first_tournament') }}
+                            <i class="bi bi-plus-circle me-1"></i> {{ ui('create_first_tournament') }}
                         </a>
                     </div>
                     {% endif %}
@@ -132,5 +466,6 @@
             </div>
         </div>
     </div>
+
 </div>
 {% endblock %}

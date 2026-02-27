@@ -114,7 +114,7 @@ def _get_event_competitors(event: Event) -> list:
         else:
             comp = ProCompetitor.query.get(result.competitor_id)
 
-        if comp and comp.status == 'active':
+        if comp and comp.status == 'active' and _competitor_entered_event(event, comp.get_events_entered()):
             competitors.append({
                 'id': comp.id,
                 'name': comp.name,
@@ -136,6 +136,8 @@ def _get_event_competitors(event: Event) -> list:
                 all_comps = [c for c in all_comps if c.gender == event.gender]
 
             for comp in all_comps:
+                if not _competitor_entered_event(event, comp.get_events_entered()):
+                    continue
                 # Create result entry for tracking
                 result = EventResult(
                     event_id=event.id,
@@ -164,6 +166,8 @@ def _get_event_competitors(event: Event) -> list:
                 all_comps = [c for c in all_comps if c.gender == event.gender]
 
             for comp in all_comps:
+                if not _competitor_entered_event(event, comp.get_events_entered()):
+                    continue
                 result = EventResult(
                     event_id=event.id,
                     competitor_id=comp.id,
@@ -352,6 +356,24 @@ def _advance_snake_index(heat_idx: int, direction: int, num_heats: int):
 
 def _normalize_name(value: str) -> str:
     return ''.join(ch for ch in str(value or '').lower() if ch.isalnum())
+
+
+def _competitor_entered_event(event: Event, entered_events: list) -> bool:
+    entered = entered_events if isinstance(entered_events, list) else []
+    target_id = str(event.id)
+    target_name = _normalize_name(event.name)
+    target_display_name = _normalize_name(event.display_name)
+
+    for raw in entered:
+        value = str(raw).strip()
+        if not value:
+            continue
+        if value == target_id:
+            return True
+        normalized = _normalize_name(value)
+        if normalized in {target_name, target_display_name}:
+            return True
+    return False
 
 
 def _is_list_only_event(event: Event) -> bool:

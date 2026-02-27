@@ -6,8 +6,26 @@ from urllib.parse import urlsplit
 from database import db
 from models import Tournament, Event, Heat, HeatAssignment, Flight
 import strings as text
+try:
+    from flask_login import current_user
+except ModuleNotFoundError:  # pragma: no cover - fallback for stripped environments
+    class _AnonymousCurrentUser:
+        is_authenticated = False
+        is_judge = False
+        is_admin = False
+
+    current_user = _AnonymousCurrentUser()
 
 main_bp = Blueprint('main', __name__)
+
+
+def _can_access_arapaho_mode() -> bool:
+    endpoint = request.endpoint or ''
+    if endpoint.startswith('portal.') or endpoint == 'main.index':
+        return False
+    if not getattr(current_user, 'is_authenticated', False):
+        return False
+    return bool(getattr(current_user, 'is_judge', False) or getattr(current_user, 'is_admin', False))
 
 
 def _safe_redirect_target(target: str | None):
@@ -24,7 +42,21 @@ def _safe_redirect_target(target: str | None):
 
 @main_bp.route('/')
 def index():
-    """Main dashboard - show active tournament or tournament selection."""
+    """Public entry page where users choose judge/competitor/spectator mode."""
+    active_tournament = Tournament.query.filter(
+        Tournament.status.in_(['setup', 'college_active', 'pro_active'])
+    ).order_by(Tournament.year.desc()).first()
+    tournaments = Tournament.query.order_by(Tournament.year.desc()).all()
+    return render_template(
+        'role_entry.html',
+        active_tournament=active_tournament,
+        tournaments=tournaments,
+    )
+
+
+@main_bp.route('/judge')
+def judge_dashboard():
+    """Judge dashboard - show active tournament or tournament selection."""
     tournaments = Tournament.query.order_by(Tournament.year.desc()).all()
     active_tournament = Tournament.query.filter(
         Tournament.status.in_(['setup', 'college_active', 'pro_active'])
@@ -38,7 +70,10 @@ def index():
 @main_bp.route('/language/<lang_code>')
 def set_language(lang_code):
     """Update UI language and return user to the previous page."""
-    if text.set_language(lang_code):
+    if lang_code == 'arp' and not _can_access_arapaho_mode():
+        text.set_language('en')
+        flash(text.FLASH['arapaho_restricted'], 'warning')
+    elif text.set_language(lang_code):
         flash(
             text.FLASH['language_changed'].format(language=text.get_language_name(lang_code)),
             'success'
@@ -47,8 +82,6 @@ def set_language(lang_code):
         flash(text.FLASH['invalid_language'], 'error')
 
     next_page = _safe_redirect_target(request.args.get('next'))
-    if not next_page:
-        next_page = _safe_redirect_target(request.referrer)
     return redirect(next_page or url_for('main.index'))
 
 
@@ -84,7 +117,8 @@ def tournament_detail(tournament_id):
         'college_competitors': tournament.college_competitor_count,
         'pro_competitors': tournament.pro_competitor_count,
         'events': tournament.events.count(),
-        'completed_events': tournament.events.filter_by(status='completed').count()
+        'completed_events': tournament.events.filter_by(status='completed').count(),
+        'heats_generated': Heat.query.join(Event).filter(Event.tournament_id == tournament_id).count(),
     }
 
     return render_template('tournament_detail.html',
@@ -119,7 +153,7 @@ def delete_tournament(tournament_id):
 
     if confirmation != 'DELETE':
         flash(f'Deletion cancelled for "{tournament_name}". Type DELETE to confirm.', 'warning')
-        return redirect(url_for('main.index'))
+        return redirect(url_for('main.judge_dashboard'))
 
     try:
         # Clear heat assignments that are not ORM-linked for cascade delete.
@@ -145,7 +179,7 @@ def delete_tournament(tournament_id):
         db.session.rollback()
         flash(f'Could not delete tournament "{tournament_name}": {exc}', 'error')
 
-    return redirect(url_for('main.index'))
+    return redirect(url_for('main.judge_dashboard'))
 
 
 @main_bp.route('/tournament/<int:tournament_id>/college')
@@ -160,6 +194,18 @@ def college_dashboard(tournament_id):
     bull = tournament.get_bull_of_woods(5)
     belle = tournament.get_belle_of_woods(5)
     team_standings = tournament.get_team_standings()[:5]
+    completed_events = tournament.events.filter_by(event_type='college', status='completed').all()
+    live_event_leaders = []
+    for event in completed_events:
+        winner = event.results.filter_by(final_position=1).first()
+        if winner:
+            live_event_leaders.append({
+                'event_name': event.display_name,
+                'competitor': winner.competitor_name,
+                'result': winner.result_value,
+                'scoring_type': event.scoring_type,
+            })
+    live_event_leaders = live_event_leaders[:5]
 
     return render_template('college/dashboard.html',
                            tournament=tournament,
@@ -167,7 +213,8 @@ def college_dashboard(tournament_id):
                            events=events,
                            bull=bull,
                            belle=belle,
-                           team_standings=team_standings)
+                           team_standings=team_standings,
+                           live_event_leaders=live_event_leaders)
 
 
 @main_bp.route('/tournament/<int:tournament_id>/pro')
@@ -181,10 +228,25 @@ def pro_dashboard(tournament_id):
     # Calculate fee summary
     total_fees = sum(c.total_fees_owed for c in competitors)
     collected_fees = sum(c.total_fees_paid for c in competitors)
+    top_earners = sorted(competitors, key=lambda c: c.total_earnings, reverse=True)[:5]
+    completed_events = tournament.events.filter_by(event_type='pro', status='completed').all()
+    live_event_leaders = []
+    for event in completed_events:
+        winner = event.results.filter_by(final_position=1).first()
+        if winner:
+            live_event_leaders.append({
+                'event_name': event.display_name,
+                'competitor': winner.competitor_name,
+                'result': winner.result_value,
+                'scoring_type': event.scoring_type,
+            })
+    live_event_leaders = live_event_leaders[:5]
 
     return render_template('pro/dashboard.html',
                            tournament=tournament,
                            competitors=competitors,
                            events=events,
                            total_fees=total_fees,
-                           collected_fees=collected_fees)
+                           collected_fees=collected_fees,
+                           top_earners=top_earners,
+                           live_event_leaders=live_event_leaders)

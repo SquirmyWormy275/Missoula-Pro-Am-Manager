@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Select Access - {{ COMPETITION.app_title }}{% endblock %}
+{% block content %}
+<div class="container py-4">
+    <div class="text-center mb-4">
+        <h2 class="mb-1">{{ COMPETITION.app_title }}</h2>
+        <p class="text-muted mb-0">Choose how you want to enter the system.</p>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-lg-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header card-header-proam"><strong>Judge</strong></div>
+                <div class="card-body d-flex flex-column">
+                    <p>Full access to scheduling, registrations, scoring, and management tools.</p>
+                    <a class="btn btn-proam mt-auto" href="{{ url_for('auth.login', next=url_for('main.judge_dashboard')) }}">
+                        Judge Login
+                    </a>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header card-header-proam"><strong>Competitor</strong></div>
+                <div class="card-body d-flex flex-column">
+                    <p>Enter your full name to see your heats, flights, stand assignments, results, and payouts.</p>
+                    <a class="btn btn-proam mt-auto" href="{{ url_for('portal.competitor_access') }}">
+                        Find Competitor
+                    </a>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header card-header-proam"><strong>Spectator</strong></div>
+                <div class="card-body d-flex flex-column">
+                    <p>View standings, rankings, event results, and day-by-day college team points.</p>
+                    {% if active_tournament %}
+                    <a class="btn btn-proam mt-auto" href="{{ url_for('portal.spectator_dashboard', tournament_id=active_tournament.id) }}">
+                        Open Spectator Portal
+                    </a>
+                    {% else %}
+                    <a class="btn btn-outline-secondary mt-auto" href="{{ url_for('portal.index') }}">
+                        Select Tournament
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -2,8 +2,11 @@
 Pro-Am Relay lottery and management service.
 
 The Pro-Am Relay pairs college and professional competitors into teams.
-Each team has 6 members: 3 college competitors and 3 pro competitors.
-Teams compete in J&J sawing, Standing Butcher Block, and Underhand Butcher Block.
+Each team has 8 members:
+- 2 Professional Men
+- 2 Professional Women
+- 2 College Men
+- 2 College Women
 """
 from database import db
 from models import Tournament, Event, EventResult
@@ -14,6 +17,12 @@ import json
 
 class ProAmRelay:
     """Manages the Pro-Am Relay lottery and teams."""
+    RELAY_EVENTS = (
+        'partnered_sawing',
+        'standing_butcher_block',
+        'underhand_butcher_block',
+        'team_axe_throw',
+    )
 
     def __init__(self, tournament: Tournament):
         self.tournament = tournament
@@ -74,24 +83,42 @@ class ProAmRelay:
 
     def get_eligible_college_competitors(self) -> list:
         """
-        Get all active college competitors.
-        All college competitors are eligible for the Pro-Am relay.
+        Get active college competitors who opted into the relay lottery.
         """
-        college = CollegeCompetitor.query.filter_by(
-            tournament_id=self.tournament.id,
-            status='active'
-        ).all()
+        college = CollegeCompetitor.query.filter_by(tournament_id=self.tournament.id, status='active').all()
+        college = [c for c in college if c.pro_am_lottery_opt_in]
 
         return [{'id': c.id, 'name': c.name, 'gender': c.gender,
                  'team': c.team.team_code if c.team else 'N/A'} for c in college]
+
+    def get_lottery_capacity(self) -> dict:
+        """Return gender pool counts and max number of valid 8-person teams."""
+        eligible_pro = self.get_eligible_pro_competitors()
+        eligible_college = self.get_eligible_college_competitors()
+
+        pro_male = len([p for p in eligible_pro if p['gender'] == 'M'])
+        pro_female = len([p for p in eligible_pro if p['gender'] == 'F'])
+        college_male = len([c for c in eligible_college if c['gender'] == 'M'])
+        college_female = len([c for c in eligible_college if c['gender'] == 'F'])
+
+        max_teams = min(pro_male // 2, pro_female // 2, college_male // 2, college_female // 2)
+        return {
+            'pro_male': pro_male,
+            'pro_female': pro_female,
+            'college_male': college_male,
+            'college_female': college_female,
+            'max_teams': max_teams,
+        }
 
     def run_lottery(self, num_teams: int = 2) -> dict:
         """
         Run the Pro-Am Relay lottery to create teams.
 
         Each team needs:
-        - 3 college competitors (ideally mixed gender)
-        - 3 pro competitors (ideally mixed gender)
+        - 2 pro men
+        - 2 pro women
+        - 2 college men
+        - 2 college women
 
         Args:
             num_teams: Number of teams to create (default 2)
@@ -102,21 +129,29 @@ class ProAmRelay:
         eligible_pro = self.get_eligible_pro_competitors()
         eligible_college = self.get_eligible_college_competitors()
 
-        # Validate we have enough competitors
-        pro_needed = num_teams * 3
-        college_needed = num_teams * 3
-
-        if len(eligible_pro) < pro_needed:
-            raise ValueError(f"Not enough pro competitors opted in. Need {pro_needed}, have {len(eligible_pro)}")
-
-        if len(eligible_college) < college_needed:
-            raise ValueError(f"Not enough college competitors. Need {college_needed}, have {len(eligible_college)}")
-
         # Separate by gender for balanced teams
         pro_male = [p for p in eligible_pro if p['gender'] == 'M']
         pro_female = [p for p in eligible_pro if p['gender'] == 'F']
         college_male = [c for c in eligible_college if c['gender'] == 'M']
         college_female = [c for c in eligible_college if c['gender'] == 'F']
+
+        required_per_bucket = num_teams * 2
+        if len(pro_male) < required_per_bucket:
+            raise ValueError(
+                f"Not enough pro men opted in. Need {required_per_bucket}, have {len(pro_male)}"
+            )
+        if len(pro_female) < required_per_bucket:
+            raise ValueError(
+                f"Not enough pro women opted in. Need {required_per_bucket}, have {len(pro_female)}"
+            )
+        if len(college_male) < required_per_bucket:
+            raise ValueError(
+                f"Not enough college men opted in. Need {required_per_bucket}, have {len(college_male)}"
+            )
+        if len(college_female) < required_per_bucket:
+            raise ValueError(
+                f"Not enough college women opted in. Need {required_per_bucket}, have {len(college_female)}"
+            )
 
         # Shuffle all pools
         random.shuffle(pro_male)
@@ -133,30 +168,26 @@ class ProAmRelay:
                 'pro_members': [],
                 'college_members': [],
                 'events': {
-                    'jj_sawing': {'result': None, 'status': 'pending'},
-                    'standing_block': {'result': None, 'status': 'pending'},
-                    'underhand': {'result': None, 'status': 'pending'}
+                    'partnered_sawing': {'result': None, 'status': 'pending'},
+                    'standing_butcher_block': {'result': None, 'status': 'pending'},
+                    'underhand_butcher_block': {'result': None, 'status': 'pending'},
+                    'team_axe_throw': {'result': None, 'status': 'pending'},
                 },
                 'total_time': None
             }
 
-            # Draw pro competitors (try to get gender balance)
-            for i in range(3):
-                if i == 0 and pro_female:
-                    team['pro_members'].append(pro_female.pop(0))
-                elif pro_male:
-                    team['pro_members'].append(pro_male.pop(0))
-                elif pro_female:
-                    team['pro_members'].append(pro_female.pop(0))
+            # Exactly 2 male + 2 female from each division per team.
+            team['pro_members'].append(pro_male.pop(0))
+            team['pro_members'].append(pro_male.pop(0))
+            team['pro_members'].append(pro_female.pop(0))
+            team['pro_members'].append(pro_female.pop(0))
+            team['college_members'].append(college_male.pop(0))
+            team['college_members'].append(college_male.pop(0))
+            team['college_members'].append(college_female.pop(0))
+            team['college_members'].append(college_female.pop(0))
 
-            # Draw college competitors (try to get gender balance)
-            for i in range(3):
-                if i == 0 and college_female:
-                    team['college_members'].append(college_female.pop(0))
-                elif college_male:
-                    team['college_members'].append(college_male.pop(0))
-                elif college_female:
-                    team['college_members'].append(college_female.pop(0))
+            random.shuffle(team['pro_members'])
+            random.shuffle(team['college_members'])
 
             teams.append(team)
 
@@ -173,10 +204,10 @@ class ProAmRelay:
         return {
             'success': True,
             'teams': teams,
-            'message': f'Successfully drew {num_teams} teams!'
+            'message': f'Successfully drew {num_teams} team(s) of 8 competitors each.'
         }
 
-    def redraw_lottery(self) -> dict:
+    def redraw_lottery(self, num_teams: int = 2) -> dict:
         """Clear and redraw the lottery."""
         self.relay_data = {
             'status': 'not_drawn',
@@ -187,7 +218,7 @@ class ProAmRelay:
             'drawn_pro': []
         }
         self._save_relay_data()
-        return self.run_lottery()
+        return self.run_lottery(num_teams=num_teams)
 
     def get_teams(self) -> list:
         """Get the current teams."""
@@ -203,7 +234,7 @@ class ProAmRelay:
 
         Args:
             team_number: Team number (1 or 2)
-            event_name: 'jj_sawing', 'standing_block', or 'underhand'
+            event_name: One of the configured relay event keys
             time_seconds: Time in seconds
         """
         teams = self.relay_data.get('teams', [])
@@ -224,6 +255,7 @@ class ProAmRelay:
                             all_complete = False
 
                     team['total_time'] = total if all_complete else None
+                    self.relay_data['status'] = 'in_progress'
 
         # Check if relay is complete
         all_teams_complete = all(
@@ -276,6 +308,12 @@ class ProAmRelay:
             if team['team_number'] == team_number:
                 for i, member in enumerate(team[member_key]):
                     if member['id'] == old_competitor_id:
+                        if member.get('gender') != new_comp_data['gender']:
+                            raise ValueError("Replacement competitor must match the same gender")
+                        if competitor_type == 'pro' and not new_comp.pro_am_lottery_opt_in:
+                            raise ValueError("Replacement pro competitor must be opted into Pro-Am lottery")
+                        if competitor_type == 'college' and not new_comp.pro_am_lottery_opt_in:
+                            raise ValueError("Replacement college competitor must be opted into Pro-Am lottery")
                         team[member_key][i] = new_comp_data
                         break
 

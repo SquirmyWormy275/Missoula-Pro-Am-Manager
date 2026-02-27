@@ -8,6 +8,8 @@
         <div class="col-12">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">College</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}">Teams</a></li>
                     <li class="breadcrumb-item active">{{ team.team_code }}</li>
@@ -135,7 +137,8 @@
                                         {% if member.status == 'active' %}
                                         <form action="{{ url_for('registration.scratch_college_competitor', tournament_id=tournament.id, competitor_id=member.id) }}"
                                               method="POST" class="d-inline"
-                                              onsubmit="return confirm('Scratch {{ member.name }} and remove from unfinished heats?');">
+                                              data-confirm="Scratch {{ member.name }} and remove from unfinished heats?">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <button type="submit" class="btn btn-sm btn-outline-warning">
                                                 <i class="bi bi-slash-circle"></i> Scratch
                                             </button>
@@ -143,7 +146,8 @@
                                         {% endif %}
                                         <form action="{{ url_for('registration.delete_college_competitor', tournament_id=tournament.id, competitor_id=member.id) }}"
                                               method="POST" class="d-inline"
-                                              onsubmit="return confirm('Delete {{ member.name }} permanently? This cannot be undone.');">
+                                              data-confirm="Delete {{ member.name }} permanently? This cannot be undone.">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <button type="submit" class="btn btn-sm btn-outline-danger">
                                                 <i class="bi bi-trash"></i> Delete
                                             </button>

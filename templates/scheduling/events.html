@@ -6,6 +6,13 @@
 <div class="container-fluid py-4">
     <div class="row mb-4">
         <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item active">Events</li>
+                </ol>
+            </nav>
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <h1>
@@ -26,7 +33,6 @@
         </div>
     </div>
 
-    <!-- College Events -->
     <div class="row mb-4">
         <div class="col-12">
             <div class="card">
@@ -45,6 +51,7 @@
                                     <th>OPEN/CLOSED</th>
                                     <th>Competitors</th>
                                     <th>Heats</th>
+                                    <th>Progress</th>
                                     <th>Assignments</th>
                                     <th>Status</th>
                                     <th>Actions</th>
@@ -52,7 +59,9 @@
                             </thead>
                             <tbody>
                                 {% for e in college_events %}
-                                <tr>
+                                {% set progress = event_progress.get(e.id, {}) %}
+                                {% set detail = assignment_details.get(e.id, {}) %}
+                                <tr class="{% if e.status == 'completed' %}table-success{% elif progress.ready_to_finalize %}table-warning{% elif detail.mode != 'signup' and progress.heat_count == 0 %}table-secondary{% endif %}">
                                     <td><strong>{{ e.display_name }}</strong></td>
                                     <td>
                                         {% if e.is_partnered %}
@@ -73,7 +82,15 @@
                                     <td>{{ entrant_counts.get(e.id, 0) }}</td>
                                     <td>{{ e.heats.count() }}</td>
                                     <td>
-                                        {% set detail = assignment_details.get(e.id, {}) %}
+                                        <div class="small">
+                                            <div>Heats: {{ progress.completed_heats }}/{{ progress.heat_count }} ({{ progress.heat_pct }}%)</div>
+                                            <div>Scored: {{ progress.results_completed }}/{{ entrant_counts.get(e.id, 0) }} ({{ progress.result_pct }}%)</div>
+                                            {% if progress.ready_to_finalize %}
+                                            <span class="badge bg-success">Ready to Finalize</span>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td>
                                         {% if detail.mode == 'signup' %}
                                             <span class="badge bg-dark mb-1">Signup List (No Heats)</span>
                                             <details>
@@ -123,6 +140,12 @@
                                                class="btn btn-outline-success" title="Results">
                                                 <i class="bi bi-clipboard-data"></i>
                                             </a>
+                                            {% if progress.heat_count > 0 and e.status != 'completed' %}
+                                            <a href="{{ url_for('scoring.next_unscored_heat', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="btn btn-warning" title="Score Next Heat">
+                                                <i class="bi bi-pencil-fill"></i> Score
+                                            </a>
+                                            {% endif %}
                                         </div>
                                     </td>
                                 </tr>
@@ -144,7 +167,6 @@
         </div>
     </div>
 
-    <!-- Pro Events -->
     <div class="row">
         <div class="col-12">
             <div class="card">
@@ -162,6 +184,7 @@
                                     <th>Scoring</th>
                                     <th>Competitors</th>
                                     <th>Heats</th>
+                                    <th>Progress</th>
                                     <th>Assignments</th>
                                     <th>Payouts</th>
                                     <th>Status</th>
@@ -170,7 +193,9 @@
                             </thead>
                             <tbody>
                                 {% for e in pro_events %}
-                                <tr>
+                                {% set progress = event_progress.get(e.id, {}) %}
+                                {% set detail = assignment_details.get(e.id, {}) %}
+                                <tr class="{% if e.status == 'completed' %}table-success{% elif progress.ready_to_finalize %}table-warning{% elif detail.mode != 'signup' and progress.heat_count == 0 %}table-secondary{% endif %}">
                                     <td><strong>{{ e.display_name }}</strong></td>
                                     <td>
                                         {% if e.is_partnered %}
@@ -184,7 +209,15 @@
                                     <td>{{ entrant_counts.get(e.id, 0) }}</td>
                                     <td>{{ e.heats.count() }}</td>
                                     <td>
-                                        {% set detail = assignment_details.get(e.id, {}) %}
+                                        <div class="small">
+                                            <div>Heats: {{ progress.completed_heats }}/{{ progress.heat_count }} ({{ progress.heat_pct }}%)</div>
+                                            <div>Scored: {{ progress.results_completed }}/{{ entrant_counts.get(e.id, 0) }} ({{ progress.result_pct }}%)</div>
+                                            {% if progress.ready_to_finalize %}
+                                            <span class="badge bg-success">Ready to Finalize</span>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td>
                                         <details>
                                             <summary>{{ detail.count or 0 }} heat(s)</summary>
                                             <div class="small mt-1">
@@ -232,6 +265,12 @@
                                                class="btn btn-outline-warning" title="Configure Payouts">
                                                 <i class="bi bi-cash"></i>
                                             </a>
+                                            {% if progress.heat_count > 0 and e.status != 'completed' %}
+                                            <a href="{{ url_for('scoring.next_unscored_heat', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="btn btn-warning" title="Score Next Heat">
+                                                <i class="bi bi-pencil-fill"></i> Score
+                                            </a>
+                                            {% endif %}
                                         </div>
                                     </td>
                                 </tr>

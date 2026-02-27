@@ -9,6 +9,7 @@
         <div class="col-12">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Events</a></li>
                     <li class="breadcrumb-item active">{{ event.display_name }}</li>
@@ -36,9 +37,10 @@
                 <div>
                     {% if event.status != 'completed' %}
                         <form action="{{ url_for('scoring.finalize_event', tournament_id=tournament.id, event_id=event.id) }}"
-                              method="POST" style="display:inline;">
-                            <button type="submit" class="btn btn-success"
-                                    onclick="return confirm('Finalize this event and calculate positions?')">
+                              method="POST" style="display:inline;"
+                              data-confirm="Finalize this event and calculate positions?">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-success">
                                 <i class="bi bi-check-circle"></i> Finalize Event
                             </button>
                         </form>
@@ -103,6 +105,7 @@
                 {% if not heats and not list_only_event %}
                 <div class="card-footer">
                     <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-proam w-100">
                             <i class="bi bi-shuffle"></i> Generate Heats
                         </button>

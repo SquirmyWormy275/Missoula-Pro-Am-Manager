@@ -426,4 +426,4 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for technical documentation including:
 
 ---
 
-*Last updated: January 2026*
+*Last updated: February 2026 — V1.2.0*

@@ -63,6 +63,7 @@
                 <div class="card-body">
                     {% if stage == 'finals' and finalists %}
                     <form action="{{ url_for('partnered_axe.record_final', tournament_id=tournament.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">
                             <label class="form-label">Finalist Pair</label>
                             <select name="pair_id" class="form-select form-select-lg" required>

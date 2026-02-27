@@ -4,6 +4,33 @@
 
 {% block content %}
 <div class="container-fluid py-4">
+    <div class="row mb-2">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item active">{{ tournament.name }} {{ tournament.year }}</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <!-- Validation Warning (loaded via fetch) -->
+    <div id="validationWarning" class="row mb-2 d-none">
+        <div class="col-12">
+            <div class="alert alert-warning d-flex align-items-center justify-content-between mb-0" role="alert">
+                <span>
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    <span id="validationWarningText">Validation issues found</span>
+                </span>
+                <a href="{{ url_for('validation.validation_dashboard', tournament_id=tournament.id) }}"
+                   class="btn btn-sm btn-warning">
+                    <i class="bi bi-shield-exclamation"></i> View Details
+                </a>
+            </div>
+        </div>
+    </div>
+
     <div class="row mb-4">
         <div class="col-12">
             <h1>
@@ -56,6 +83,66 @@
                 <div class="card-body">
                     <h3 class="card-title text-success">{{ stats.completed_events }}/{{ stats.events }}</h3>
                     <p class="card-text text-muted">{{ ui('events_completed') }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Workflow Progress Stepper -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body py-3">
+                    {% set step1_done = stats.events > 0 %}
+                    {% set step2_done = (stats.college_competitors + stats.pro_competitors) > 0 %}
+                    {% set step3_done = stats.heats_generated > 0 %}
+                    {% set step4_done = stats.completed_events > 0 %}
+                    <div class="d-flex align-items-center">
+                        <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}"
+                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                            <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step1_done else 'bg-light border text-muted' }}"
+                                 style="width: 40px; height: 40px;">
+                                <i class="bi {{ 'bi-check-lg' if step1_done else 'bi-calendar-plus' }}"></i>
+                            </div>
+                            <div class="small {{ 'text-success fw-semibold' if step1_done else 'text-muted' }}" style="font-size: 0.7rem;">Configure Events</div>
+                        </a>
+                        <div class="flex-shrink-0" style="height: 2px; width: 24px; background: {{ '#198754' if step1_done else '#dee2e6' }};"></div>
+                        <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}"
+                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                            <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step2_done else 'bg-light border text-muted' }}"
+                                 style="width: 40px; height: 40px;">
+                                <i class="bi {{ 'bi-check-lg' if step2_done else 'bi-person-plus' }}"></i>
+                            </div>
+                            <div class="small {{ 'text-success fw-semibold' if step2_done else 'text-muted' }}" style="font-size: 0.7rem;">Register</div>
+                        </a>
+                        <div class="flex-shrink-0" style="height: 2px; width: 24px; background: {{ '#198754' if step2_done else '#dee2e6' }};"></div>
+                        <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                            <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step3_done else 'bg-light border text-muted' }}"
+                                 style="width: 40px; height: 40px;">
+                                <i class="bi {{ 'bi-check-lg' if step3_done else 'bi-layers' }}"></i>
+                            </div>
+                            <div class="small {{ 'text-success fw-semibold' if step3_done else 'text-muted' }}" style="font-size: 0.7rem;">Build Heats</div>
+                        </a>
+                        <div class="flex-shrink-0" style="height: 2px; width: 24px; background: {{ '#198754' if step3_done else '#dee2e6' }};"></div>
+                        <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                            <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step4_done else 'bg-light border text-muted' }}"
+                                 style="width: 40px; height: 40px;">
+                                <i class="bi {{ 'bi-check-lg' if step4_done else 'bi-pencil-square' }}"></i>
+                            </div>
+                            <div class="small {{ 'text-success fw-semibold' if step4_done else 'text-muted' }}" style="font-size: 0.7rem;">Enter Scores</div>
+                        </a>
+                        <div class="flex-shrink-0" style="height: 2px; width: 24px; background: {{ '#198754' if step4_done else '#dee2e6' }};"></div>
+                        <a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}"
+                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                            <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 bg-primary text-white"
+                                 style="width: 40px; height: 40px;">
+                                <i class="bi bi-file-text"></i>
+                            </div>
+                            <div class="small text-primary fw-semibold" style="font-size: 0.7rem;">Reports</div>
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
@@ -144,10 +231,65 @@
                                 <i class="bi bi-file-text"></i> {{ ui('view_all_results') }}
                             </a>
                         </div>
+                        <div class="col-md-4">
+                            <a href="{{ url_for('reporting.export_results', tournament_id=tournament.id) }}" class="btn btn-outline-success w-100 mb-2">
+                                <i class="bi bi-file-earmark-excel"></i> Export Results
+                            </a>
+                        </div>
+                        <div class="col-md-4">
+                            <form method="POST" action="{{ url_for('reporting.export_results_async', tournament_id=tournament.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-outline-success w-100 mb-2" type="submit">
+                                    <i class="bi bi-hourglass-split"></i> Export Results (Async)
+                                </button>
+                            </form>
+                        </div>
+                        {% if current_user.is_authenticated and current_user.is_admin %}
+                        <div class="col-md-4">
+                            <a href="{{ url_for('reporting.backup_database', tournament_id=tournament.id) }}" class="btn btn-outline-secondary w-100 mb-2">
+                                <i class="bi bi-database-down"></i> Download DB Backup
+                            </a>
+                        </div>
+                        <div class="col-md-8">
+                            <form method="POST" action="{{ url_for('reporting.restore_database', tournament_id=tournament.id) }}" enctype="multipart/form-data" class="row g-2">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="col-8">
+                                    <input class="form-control" type="file" name="backup_file" accept=".db" required>
+                                </div>
+                                <div class="col-4">
+                                    <button class="btn btn-outline-danger w-100" type="submit" data-confirm="Restoring a backup will overwrite the current database. Continue?">
+                                        <i class="bi bi-database-up"></i> Restore Backup
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+{% block extra_js %}
+<script>
+    // Load validation status and show warning banner if issues exist
+    (function () {
+        fetch('/tournament/{{ tournament.id }}/validation/api/status')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data && data.valid === false) {
+                    var banner = document.getElementById('validationWarning');
+                    var text = document.getElementById('validationWarningText');
+                    var parts = [];
+                    if (data.college_issues > 0) parts.push(data.college_issues + ' college issue' + (data.college_issues !== 1 ? 's' : ''));
+                    if (data.pro_issues > 0) parts.push(data.pro_issues + ' pro issue' + (data.pro_issues !== 1 ? 's' : ''));
+                    if (parts.length) text.textContent = 'Validation issues found — ' + parts.join(', ');
+                    banner.classList.remove('d-none');
+                }
+            })
+            .catch(function () {}); // silent fail
+    })();
+</script>
+{% endblock %}
 {% endblock %}

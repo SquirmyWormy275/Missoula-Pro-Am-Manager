@@ -4,6 +4,17 @@
 
 {% block content %}
 <div class="container-fluid py-4">
+    <div class="row mb-2">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item active">College</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
     <div class="row mb-4">
         <div class="col-12">
             <h1>
@@ -135,6 +146,49 @@
                             </div>
                             {% else %}
                             <p class="text-muted text-center">No teams registered yet</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 mb-4">
+                    <div class="card">
+                        <div class="card-header bg-dark text-white">
+                            <h6 class="mb-0"><i class="bi bi-activity"></i> Live Event Leaders (Redundant Score View)</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if live_event_leaders %}
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Event</th>
+                                            <th>Leader</th>
+                                            <th>Result</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for row in live_event_leaders %}
+                                        <tr>
+                                            <td>{{ row.event_name }}</td>
+                                            <td><strong>{{ row.competitor }}</strong></td>
+                                            <td>
+                                                {% if row.result is not none %}
+                                                    {% if row.scoring_type == 'time' %}{{ "%.2f"|format(row.result) }}s
+                                                    {% elif row.scoring_type == 'hits' %}{{ row.result|int }} hits
+                                                    {% elif row.scoring_type == 'distance' %}{{ "%.1f"|format(row.result) }} ft
+                                                    {% else %}{{ row.result }}{% endif %}
+                                                {% else %}
+                                                    -
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <p class="text-muted mb-0">No completed college events yet.</p>
                             {% endif %}
                         </div>
                     </div>

@@ -39,6 +39,7 @@
                 </div>
                 <div class="card-body">
                     <form action="{{ url_for('proam_relay.enter_results', tournament_id=tournament.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">
                             <label class="form-label">Team</label>
                             <select name="team_number" class="form-select form-select-lg" required>
@@ -51,9 +52,10 @@
                         <div class="mb-3">
                             <label class="form-label">Event</label>
                             <select name="event_name" class="form-select form-select-lg" required>
-                                <option value="jj_sawing">J&J Sawing</option>
-                                <option value="standing_block">Standing Butcher Block</option>
-                                <option value="underhand">Underhand Butcher Block</option>
+                                <option value="partnered_sawing">Partnered Sawing</option>
+                                <option value="standing_butcher_block">Standing Butcher Block</option>
+                                <option value="underhand_butcher_block">Underhand Butcher Block</option>
+                                <option value="team_axe_throw">Team Axe Throw</option>
                             </select>
                         </div>
 
@@ -86,9 +88,10 @@
                             <thead class="table-proam">
                                 <tr>
                                     <th>Team</th>
-                                    <th class="text-center">J&J Sawing</th>
+                                    <th class="text-center">Partnered Sawing</th>
                                     <th class="text-center">Standing Block</th>
                                     <th class="text-center">Underhand</th>
+                                    <th class="text-center">Team Axe Throw</th>
                                     <th class="text-end">Total</th>
                                 </tr>
                             </thead>
@@ -99,22 +102,29 @@
                                         <strong>{{ team.name }}</strong>
                                     </td>
                                     <td class="text-center">
-                                        {% if team.events.jj_sawing.result %}
-                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.jj_sawing.result) }}s</span>
+                                        {% if team.events.partnered_sawing.result %}
+                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.partnered_sawing.result) }}s</span>
                                         {% else %}
                                             <span class="badge bg-secondary">-</span>
                                         {% endif %}
                                     </td>
                                     <td class="text-center">
-                                        {% if team.events.standing_block.result %}
-                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.standing_block.result) }}s</span>
+                                        {% if team.events.standing_butcher_block.result %}
+                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.standing_butcher_block.result) }}s</span>
                                         {% else %}
                                             <span class="badge bg-secondary">-</span>
                                         {% endif %}
                                     </td>
                                     <td class="text-center">
-                                        {% if team.events.underhand.result %}
-                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.underhand.result) }}s</span>
+                                        {% if team.events.underhand_butcher_block.result %}
+                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.underhand_butcher_block.result) }}s</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if team.events.team_axe_throw.result %}
+                                            <span class="badge bg-success">{{ "%.2f"|format(team.events.team_axe_throw.result) }}s</span>
                                         {% else %}
                                             <span class="badge bg-secondary">-</span>
                                         {% endif %}
@@ -141,10 +151,10 @@
                     <div class="card">
                         <div class="card-body">
                             <h6>{{ team.name }} Progress</h6>
-                            {% set completed = [team.events.jj_sawing, team.events.standing_block, team.events.underhand]|selectattr('status', 'equalto', 'completed')|list|length %}
+                            {% set completed = [team.events.partnered_sawing, team.events.standing_butcher_block, team.events.underhand_butcher_block, team.events.team_axe_throw]|selectattr('status', 'equalto', 'completed')|list|length %}
                             <div class="progress" style="height: 25px;">
-                                <div class="progress-bar bg-success" style="width: {{ (completed / 3) * 100 }}%">
-                                    {{ completed }}/3 Events
+                                <div class="progress-bar bg-success" style="width: {{ (completed / 4) * 100 }}%">
+                                    {{ completed }}/4 Events
                                 </div>
                             </div>
                         </div>

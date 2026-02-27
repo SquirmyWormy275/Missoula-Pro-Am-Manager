@@ -24,6 +24,7 @@
                     <p class="text-muted">Set the payout amount for each placing. Leave blank for positions that don't pay out.</p>
 
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <table class="table">
                             <thead class="table-light">
                                 <tr>

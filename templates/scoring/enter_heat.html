@@ -2,24 +2,59 @@
 
 {% block title %}Enter Results - Heat {{ heat.heat_number }} - {{ event.display_name }}{% endblock %}
 
+{% block extra_css %}
+<style>
+    .tablet-mode input[type="number"],
+    .tablet-mode select {
+        font-size: 1.4rem;
+        padding: 0.6rem 0.8rem;
+        height: auto;
+    }
+
+    @media (max-width: 768px) {
+        .sticky-save {
+            position: sticky;
+            bottom: 0;
+            background: #fff;
+            padding-top: 0.75rem;
+            border-top: 1px solid #dee2e6;
+            z-index: 10;
+        }
+        input[type="number"] {
+            font-size: 1.2rem;
+            min-height: 44px;
+        }
+        select.form-select {
+            min-height: 44px;
+        }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container py-4">
     <div class="row justify-content-center">
         <div class="col-lg-8">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Events</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}">{{ event.display_name }}</a></li>
                     <li class="breadcrumb-item active">Heat {{ heat.heat_number }}{% if event.requires_dual_runs %} - Run {{ heat.run_number }}{% endif %}</li>
                 </ol>
             </nav>
 
             <div class="card">
-                <div class="card-header card-header-proam">
+                <div class="card-header card-header-proam d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">
                         <i class="bi bi-pencil-square"></i>
                         Enter Results: Heat {{ heat.heat_number }}
                         {% if event.requires_dual_runs %} - Run {{ heat.run_number }}{% endif %}
                     </h5>
+                    <button type="button" class="btn btn-sm btn-outline-light" id="tabletModeBtn" title="Toggle tablet-friendly large inputs">
+                        <i class="bi bi-tablet"></i> Tablet
+                    </button>
                 </div>
                 <div class="card-body">
                     <div class="alert alert-info mb-4">
@@ -36,7 +71,16 @@
                         {% endif %}
                     </div>
 
-                    <form method="POST">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="markAllCompleteBtn">
+                            <i class="bi bi-check-all"></i> Mark All Complete
+                        </button>
+                        <small class="text-muted">Tab between fields · Enter moves to next</small>
+                    </div>
+
+                    <form method="POST" id="heatEntryForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="heat_version" value="{{ heat_version }}">
                         <table class="table">
                             <thead class="table-light">
                                 <tr>
@@ -62,6 +106,7 @@
                                                    name="result_{{ comp.id }}"
                                                    step="0.01"
                                                    min="0"
+                                                   inputmode="decimal"
                                                    placeholder="{% if event.scoring_type == 'time' %}seconds{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}feet{% else %}score{% endif %}">
                                             <span class="input-group-text">
                                                 {% if event.scoring_type == 'time' %}s{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}ft{% else %}pts{% endif %}
@@ -82,7 +127,7 @@
 
                         <hr>
 
-                        <div class="d-grid gap-2">
+                        <div class="d-grid gap-2 sticky-save">
                             <button type="submit" class="btn btn-proam btn-lg">
                                 <i class="bi bi-check-circle"></i> Save Results
                             </button>
@@ -102,25 +147,52 @@
 {% block extra_js %}
 <script>
     // Auto-focus first empty input
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
         const inputs = document.querySelectorAll('input[type="number"]');
         for (let input of inputs) {
-            if (!input.value) {
-                input.focus();
-                break;
+            if (!input.value) { input.focus(); break; }
+        }
+
+        // Enter key moves to next input
+        inputs.forEach(function (input, index) {
+            input.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (index < inputs.length - 1) inputs[index + 1].focus();
+                }
+            });
+        });
+
+        // Mark All Complete
+        document.getElementById('markAllCompleteBtn').addEventListener('click', function () {
+            document.querySelectorAll('#heatEntryForm select').forEach(function (sel) {
+                sel.value = 'completed';
+            });
+        });
+
+        // Tablet mode toggle (persisted in localStorage)
+        var form = document.getElementById('heatEntryForm');
+        var tabletBtn = document.getElementById('tabletModeBtn');
+        var tabletKey = 'heat_entry_tablet_mode';
+
+        function setTabletMode(on) {
+            if (on) {
+                form.classList.add('tablet-mode');
+                tabletBtn.classList.remove('btn-outline-light');
+                tabletBtn.classList.add('btn-light');
+                localStorage.setItem(tabletKey, '1');
+            } else {
+                form.classList.remove('tablet-mode');
+                tabletBtn.classList.add('btn-outline-light');
+                tabletBtn.classList.remove('btn-light');
+                localStorage.removeItem(tabletKey);
             }
         }
-    });
 
-    // Enter key moves to next input
-    document.querySelectorAll('input[type="number"]').forEach((input, index, inputs) => {
-        input.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                if (index < inputs.length - 1) {
-                    inputs[index + 1].focus();
-                }
-            }
+        if (localStorage.getItem(tabletKey) === '1') setTabletMode(true);
+
+        tabletBtn.addEventListener('click', function () {
+            setTabletMode(!form.classList.contains('tablet-mode'));
         });
     });
 </script>

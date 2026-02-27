@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Pro-Am Relay Results - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h3 class="mb-0">{{ tournament.name }} {{ tournament.year }} - Pro-Am Relay Results</h3>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-secondary btn-sm"
+               href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id, view=view_mode) }}">Back to Results Selection</a>
+            <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
+               href="{{ url_for('portal.spectator_relay_results', tournament_id=tournament.id, view='desktop' if mobile_view else 'mobile') }}">
+                {{ 'Desktop View' if mobile_view else 'Mobile View' }}
+            </a>
+        </div>
+    </div>
+
+    {% if results %}
+    <div class="card shadow-sm mb-3">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0">Standings</h6>
+        </div>
+        <div class="card-body">
+            {% if mobile_view %}
+            <div class="d-grid gap-2">
+                {% for team in results %}
+                <div class="card">
+                    <div class="card-body py-2">
+                        <div class="fw-semibold">#{{ loop.index }} {{ team.name }}</div>
+                        <small class="text-muted">Total: {{ "%.2f"|format(team.total_time) }}s</small>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Place</th>
+                            <th>Team</th>
+                            <th>Partnered Sawing</th>
+                            <th>Standing Block</th>
+                            <th>Underhand</th>
+                            <th>Team Axe Throw</th>
+                            <th>Total Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for team in results %}
+                        <tr>
+                            <td>#{{ loop.index }}</td>
+                            <td>{{ team.name }}</td>
+                            <td>{{ "%.2f"|format(team.events.partnered_sawing.result) }}s</td>
+                            <td>{{ "%.2f"|format(team.events.standing_butcher_block.result) }}s</td>
+                            <td>{{ "%.2f"|format(team.events.underhand_butcher_block.result) }}s</td>
+                            <td>{{ "%.2f"|format(team.events.team_axe_throw.result) }}s</td>
+                            <td><strong>{{ "%.2f"|format(team.total_time) }}s</strong></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if teams and not results %}
+    <div class="card shadow-sm mb-3">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0">Competition In Progress</h6>
+        </div>
+        <div class="card-body">
+            <p class="mb-0">Relay teams are drawn and results are being entered.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not teams %}
+    <div class="card shadow-sm">
+        <div class="card-body text-muted">
+            Pro-Am Relay teams have not been drawn yet.
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

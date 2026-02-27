@@ -8,6 +8,8 @@
         <div class="col-12">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Events</a></li>
                     <li class="breadcrumb-item active">{{ event.display_name }}</li>
                 </ol>
@@ -31,12 +33,14 @@
                     <span class="badge bg-dark">Signup List Event (No Heats)</span>
                     {% elif not heats %}
                     <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-proam">
                             <i class="bi bi-shuffle"></i> Generate Heats
                         </button>
                     </form>
                     {% else %}
                     <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline-warning" onclick="return confirm('This will regenerate all heats. Continue?')">
                             <i class="bi bi-arrow-repeat"></i> Regenerate
                         </button>
@@ -112,6 +116,44 @@
                             <i class="bi bi-play-fill"></i> Enter Results
                         {% endif %}
                     </a>
+                    {% if not event.requires_dual_runs or heat.run_number == 1 %}
+                    <details class="mt-2">
+                        <summary class="small text-muted">Edit Heat Assignments</summary>
+                        <form action="{{ url_for('scheduling.move_competitor_between_heats', tournament_id=tournament.id, event_id=event.id) }}"
+                              method="POST" class="mt-2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="from_heat_id" value="{{ heat.id }}">
+                            <div class="mb-2">
+                                <label class="form-label small mb-1">Competitor</label>
+                                <select class="form-select form-select-sm" name="competitor_id" required>
+                                    <option value="">Select...</option>
+                                    {% for cid in competitors %}
+                                        {% if event.event_type == 'college' %}
+                                            {% set c = tournament.college_competitors.filter_by(id=cid).first() %}
+                                        {% else %}
+                                            {% set c = tournament.pro_competitors.filter_by(id=cid).first() %}
+                                        {% endif %}
+                                        {% if c %}
+                                        <option value="{{ c.id }}">{{ c.name }}</option>
+                                        {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small mb-1">Move To</label>
+                                <select class="form-select form-select-sm" name="to_heat_id" required>
+                                    <option value="">Select destination heat...</option>
+                                    {% for destination in heats %}
+                                        {% if destination.id != heat.id and destination.run_number == heat.run_number %}
+                                        <option value="{{ destination.id }}">Heat {{ destination.heat_number }}</option>
+                                        {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-sm btn-outline-primary w-100">Move Competitor</button>
+                        </form>
+                    </details>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -126,6 +168,7 @@
                     <h4 class="mt-4">No Heats Generated Yet</h4>
                     <p class="text-muted">Generate heats to distribute competitors across stands using snake draft.</p>
                     <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-proam btn-lg">
                             <i class="bi bi-shuffle"></i> Generate Heats Now
                         </button>

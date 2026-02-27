@@ -44,7 +44,7 @@
             <div class="card bg-primary text-white">
                 <div class="card-body text-center">
                     <h3 class="mb-0">{{ eligible_college|length }}</h3>
-                    <small>College Competitors</small>
+                    <small>College Competitors Opted In</small>
                 </div>
             </div>
         </div>
@@ -59,7 +59,7 @@
         <div class="col-md-3">
             <div class="card bg-success text-white">
                 <div class="card-body text-center">
-                    <h3 class="mb-0">{{ (eligible_pro|length // 3) if eligible_pro|length // 3 < eligible_college|length // 3 else eligible_college|length // 3 }}</h3>
+                    <h3 class="mb-0">{{ capacity.max_teams }}</h3>
                     <small>Max Possible Teams</small>
                 </div>
             </div>
@@ -79,22 +79,37 @@
                         Draw teams for the Pro-Am Relay. Each team will have:
                     </p>
                     <ul class="mb-3">
-                        <li>3 Professional competitors</li>
-                        <li>3 College competitors</li>
+                        <li>2 Professional Men + 2 Professional Women</li>
+                        <li>2 College Men + 2 College Women</li>
                     </ul>
                     <form action="{{ url_for('proam_relay.draw_lottery', tournament_id=tournament.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">
                             <label class="form-label">Number of Teams</label>
                             <select name="num_teams" class="form-select">
-                                <option value="2" selected>2 Teams</option>
-                                <option value="3">3 Teams</option>
-                                <option value="4">4 Teams</option>
+                                {% if capacity.max_teams > 0 %}
+                                    {% for n in range(1, capacity.max_teams + 1) %}
+                                    <option value="{{ n }}" {% if n == 1 %}selected{% endif %}>{{ n }} Team{% if n != 1 %}s{% endif %}</option>
+                                    {% endfor %}
+                                {% else %}
+                                    <option value="1" selected>1 Team</option>
+                                {% endif %}
                             </select>
+                            <div class="form-text">
+                                Available pools:
+                                Pro M {{ capacity.pro_male }}, Pro F {{ capacity.pro_female }},
+                                College M {{ capacity.college_male }}, College F {{ capacity.college_female }}
+                            </div>
                         </div>
-                        <button type="submit" class="btn btn-warning btn-lg w-100">
+                        <button type="submit" class="btn btn-warning btn-lg w-100" {% if capacity.max_teams == 0 %}disabled{% endif %}>
                             <i class="bi bi-shuffle"></i> Draw Teams
                         </button>
                     </form>
+                    {% if capacity.max_teams == 0 %}
+                    <div class="alert alert-danger mt-3 mb-0">
+                        Need at least 2 opted-in competitors in each group: Pro M/F and College M/F.
+                    </div>
+                    {% endif %}
                     {% else %}
                     <div class="alert alert-info">
                         <i class="bi bi-info-circle"></i>
@@ -113,6 +128,7 @@
                         <hr>
                         <form action="{{ url_for('proam_relay.redraw_lottery', tournament_id=tournament.id) }}" method="POST"
                               onsubmit="return confirm('This will clear all teams and results. Are you sure?')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-outline-danger w-100">
                                 <i class="bi bi-arrow-repeat"></i> Redraw Lottery
                             </button>
@@ -129,7 +145,7 @@
                 </div>
                 <ul class="list-group list-group-flush">
                     <li class="list-group-item d-flex justify-content-between">
-                        <span>J&J Sawing</span>
+                        <span>Partnered Sawing</span>
                         <span class="badge bg-secondary">Timed</span>
                     </li>
                     <li class="list-group-item d-flex justify-content-between">
@@ -138,6 +154,10 @@
                     </li>
                     <li class="list-group-item d-flex justify-content-between">
                         <span>Underhand Butcher Block</span>
+                        <span class="badge bg-secondary">Timed</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Team Axe Throw</span>
                         <span class="badge bg-secondary">Timed</span>
                     </li>
                 </ul>
@@ -198,7 +218,7 @@
                 <div class="col-md-6 mb-4">
                     <div class="card h-100">
                         <div class="card-header card-header-proam">
-                            <h6 class="mb-0"><i class="bi bi-mortarboard-fill"></i> College Competitors</h6>
+                            <h6 class="mb-0"><i class="bi bi-mortarboard-fill"></i> College Competitors (Opted In)</h6>
                         </div>
                         <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
                             {% if eligible_college %}
@@ -227,7 +247,7 @@
                             {% else %}
                             <div class="text-center py-4 text-muted">
                                 <i class="bi bi-person-x display-4"></i>
-                                <p class="mt-2">No college competitors registered</p>
+                                <p class="mt-2">No college competitors have opted into the relay lottery</p>
                             </div>
                             {% endif %}
                         </div>

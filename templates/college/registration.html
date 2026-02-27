@@ -8,6 +8,7 @@
         <div class="col-12">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">College</a></li>
                     <li class="breadcrumb-item active">Registration</li>
@@ -32,6 +33,7 @@
 
                     <form action="{{ url_for('registration.upload_college_entry', tournament_id=tournament.id) }}"
                           method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">
                             <label for="file" class="form-label">Select Entry Form</label>
                             <input type="file" class="form-control" id="file" name="file"
@@ -74,8 +76,12 @@
                 </div>
                 <div class="card-body">
                     {% if teams %}
+                    <div class="mb-3">
+                        <input type="text" class="form-control" id="teamSearch"
+                               placeholder="Search by team code or school...">
+                    </div>
                     <div class="table-responsive">
-                        <table class="table table-hover">
+                        <table class="table table-hover" id="teamsTable">
                             <thead class="table-proam">
                                 <tr>
                                     <th>Team</th>
@@ -111,7 +117,8 @@
                                         </a>
                                         <form action="{{ url_for('registration.delete_college_team', tournament_id=tournament.id, team_id=t.id) }}"
                                               method="POST" class="d-inline"
-                                              onsubmit="return confirm('Delete team {{ t.team_code }} and all competitors? This cannot be undone.');">
+                                              data-confirm="Delete team {{ t.team_code }} and all competitors? This cannot be undone.">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <button type="submit" class="btn btn-sm btn-outline-danger">
                                                 <i class="bi bi-trash"></i> Delete
                                             </button>
@@ -152,4 +159,18 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    var teamSearch = document.getElementById('teamSearch');
+    if (teamSearch) {
+        teamSearch.addEventListener('input', function () {
+            var q = this.value.toLowerCase();
+            document.querySelectorAll('#teamsTable tbody tr').forEach(function (row) {
+                row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+            });
+        });
+    }
+</script>
 {% endblock %}

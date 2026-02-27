@@ -2,12 +2,12 @@
 Registration routes for uploading and managing competitor entries.
 """
 from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app
-from werkzeug.utils import secure_filename
-import os
 import json
 from database import db
 from models import Tournament, Team, CollegeCompetitor, ProCompetitor, Event, EventResult, Heat
 import strings as text
+from services.audit import log_action
+from services.upload_security import malware_scan, save_upload, validate_excel_upload
 
 registration_bp = Blueprint('registration', __name__)
 
@@ -46,15 +46,29 @@ def upload_college_entry(tournament_id):
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
     if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        validation = validate_excel_upload(file, ALLOWED_EXTENSIONS)
+        if not validation.ok:
+            flash(validation.error, 'error')
+            return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+        filepath = save_upload(file, current_app.config['UPLOAD_FOLDER'], validation.safe_name)
 
         # Import the Excel processing service
         from services.excel_io import process_college_entry_form
 
         try:
+            malware_scan(
+                filepath,
+                enabled=bool(current_app.config.get('ENABLE_UPLOAD_MALWARE_SCAN', False)),
+                command_template=current_app.config.get('MALWARE_SCAN_COMMAND', '')
+            )
             result = process_college_entry_form(filepath, tournament)
+            log_action('college_upload_imported', 'tournament', tournament.id, {
+                'teams': result.get('teams', 0),
+                'competitors': result.get('competitors', 0),
+                'filename': validation.safe_name,
+            })
+            db.session.commit()
             flash(text.FLASH['import_success'].format(teams=result["teams"], competitors=result["competitors"]), 'success')
         except Exception as e:
             db.session.rollback()
@@ -231,16 +245,46 @@ def pro_competitor_detail(tournament_id, competitor_id):
     """View and edit professional competitor details."""
     tournament = Tournament.query.get_or_404(tournament_id)
     competitor = ProCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament.id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
+
+    pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
+    event_name_by_id = {str(event.id): event.display_name for event in pro_events}
+    event_name_lookup = {}
+    for event in pro_events:
+        event_name_lookup[event.name.strip().lower()] = event.display_name
+        event_name_lookup[event.display_name.strip().lower()] = event.display_name
+
+    event_labels = []
+    for entered_event in competitor.get_events_entered():
+        event_key = str(entered_event).strip()
+        if not event_key:
+            continue
+        if event_key in event_name_by_id:
+            event_labels.append((event_key, event_name_by_id[event_key]))
+        else:
+            event_labels.append((event_key, event_name_lookup.get(event_key.lower(), event_key)))
+
+    gear_sharing_labels = []
+    for event_key, partner in competitor.get_gear_sharing().items():
+        label = event_name_by_id.get(str(event_key), event_name_lookup.get(str(event_key).strip().lower(), str(event_key)))
+        gear_sharing_labels.append((label, partner))
 
     return render_template('pro/competitor_detail.html',
                            tournament=tournament,
-                           competitor=competitor)
+                           competitor=competitor,
+                           event_labels=event_labels,
+                           gear_sharing_labels=gear_sharing_labels)
 
 
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/scratch', methods=['POST'])
 def scratch_pro_competitor(tournament_id, competitor_id):
     """Scratch a professional competitor."""
     competitor = ProCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
     competitor.status = 'scratched'
     db.session.commit()
 

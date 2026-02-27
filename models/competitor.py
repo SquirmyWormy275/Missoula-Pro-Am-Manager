@@ -3,6 +3,7 @@ Competitor models for both college and professional competitors.
 """
 from database import db
 import json
+from werkzeug.security import check_password_hash, generate_password_hash
 
 
 class CollegeCompetitor(db.Model):
@@ -24,9 +25,13 @@ class CollegeCompetitor(db.Model):
     # Event tracking - stored as JSON
     events_entered = db.Column(db.Text, default='[]')  # List of event IDs
     partners = db.Column(db.Text, default='{}')  # Dict: event_id -> partner_name
+    gear_sharing = db.Column(db.Text, default='{}')  # Dict: event_id -> partner sharing gear
+    portal_pin_hash = db.Column(db.String(255), nullable=True)
 
     # Status
     status = db.Column(db.String(20), default='active')  # active, scratched
+
+    _PRO_AM_LOTTERY_META_KEY = '__pro_am_lottery_opt_in__'
 
     def __repr__(self):
         return f'<CollegeCompetitor {self.name} ({self.team.team_code if self.team else "no team"})>'
@@ -49,21 +54,32 @@ class CollegeCompetitor(db.Model):
         partners[str(event_id)] = partner_name
         self.partners = json.dumps(partners)
 
-    def get_gear_sharing(self):
-        """Return dict of gear-sharing constraints for this competitor."""
+    @property
+    def pro_am_lottery_opt_in(self) -> bool:
+        """Return whether this college competitor opted into the Pro-Am relay lottery."""
         partners = self.get_partners()
-        gear_sharing = partners.get('__gear_sharing__', {})
-        return gear_sharing if isinstance(gear_sharing, dict) else {}
+        value = str(partners.get(self._PRO_AM_LOTTERY_META_KEY, '')).strip().lower()
+        return value in {'true', '1', 'yes', 'y', 'x'}
 
-    def set_gear_sharing(self, event_key, partner_or_group):
-        """Set gear-sharing rule for an event key/category."""
+    @pro_am_lottery_opt_in.setter
+    def pro_am_lottery_opt_in(self, opted_in: bool):
+        """Persist Pro-Am relay lottery preference in the partners metadata payload."""
         partners = self.get_partners()
-        gear_sharing = partners.get('__gear_sharing__', {})
-        if not isinstance(gear_sharing, dict):
-            gear_sharing = {}
-        gear_sharing[str(event_key)] = partner_or_group
-        partners['__gear_sharing__'] = gear_sharing
+        if opted_in:
+            partners[self._PRO_AM_LOTTERY_META_KEY] = 'true'
+        else:
+            partners.pop(self._PRO_AM_LOTTERY_META_KEY, None)
         self.partners = json.dumps(partners)
+
+    def get_gear_sharing(self):
+        """Return dict of event_id -> partner sharing gear."""
+        return json.loads(self.gear_sharing or '{}')
+
+    def set_gear_sharing(self, event_id, partner_name):
+        """Set gear sharing partner for a specific event."""
+        sharing = self.get_gear_sharing()
+        sharing[str(event_id)] = partner_name
+        self.gear_sharing = json.dumps(sharing)
 
     def add_points(self, points):
         """Add points to individual total and update team total."""
@@ -76,6 +92,18 @@ class CollegeCompetitor(db.Model):
         """Return count of CLOSED events entered (max 6 allowed)."""
         # This would need to be calculated based on actual event types
         return len(self.get_events_entered())
+
+    @property
+    def has_portal_pin(self) -> bool:
+        return bool(self.portal_pin_hash)
+
+    def set_portal_pin(self, pin: str):
+        self.portal_pin_hash = generate_password_hash(pin)
+
+    def check_portal_pin(self, pin: str) -> bool:
+        if not self.portal_pin_hash:
+            return False
+        return check_password_hash(self.portal_pin_hash, pin)
 
 
 class ProCompetitor(db.Model):
@@ -109,12 +137,22 @@ class ProCompetitor(db.Model):
     fees_paid = db.Column(db.Text, default='{}')  # Dict: event_id -> True/False
     gear_sharing = db.Column(db.Text, default='{}')  # Dict: event_id -> partner name
     partners = db.Column(db.Text, default='{}')  # Dict: event_id -> partner_name
+    portal_pin_hash = db.Column(db.String(255), nullable=True)
 
     # Earnings
     total_earnings = db.Column(db.Float, default=0.0)
 
     # Status
     status = db.Column(db.String(20), default='active')  # active, scratched
+
+    # Import tracking (populated by Google Forms xlsx importer)
+    submission_timestamp = db.Column(db.DateTime, nullable=True)
+    gear_sharing_details = db.Column(db.Text, nullable=True)
+    waiver_accepted = db.Column(db.Boolean, default=False)
+    waiver_signature = db.Column(db.String(200), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    total_fees = db.Column(db.Integer, default=0)
+    import_timestamp = db.Column(db.DateTime, nullable=True)
 
     def __repr__(self):
         return f'<ProCompetitor {self.name}>'
@@ -187,3 +225,15 @@ class ProCompetitor(db.Model):
     def fees_balance(self):
         """Calculate remaining balance owed."""
         return self.total_fees_owed - self.total_fees_paid
+
+    @property
+    def has_portal_pin(self) -> bool:
+        return bool(self.portal_pin_hash)
+
+    def set_portal_pin(self, pin: str):
+        self.portal_pin_hash = generate_password_hash(pin)
+
+    def check_portal_pin(self, pin: str) -> bool:
+        if not self.portal_pin_hash:
+            return False
+        return check_password_hash(self.portal_pin_hash, pin)

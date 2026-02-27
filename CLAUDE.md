@@ -28,11 +28,13 @@ STRATHMARK and KYTHEREX are not integrated into this app. See Section 7 for plan
 |-----------|------------|
 | Backend | Python 3.10+ / Flask 3.0 |
 | Database | SQLite via Flask-SQLAlchemy 3.1 / SQLAlchemy 2.0 |
+| Migrations | Flask-Migrate 4.0.7 (Alembic) |
+| Forms / CSRF | Flask-WTF 1.2.2 |
 | Frontend | Jinja2 templates, Bootstrap 5 |
 | Excel I/O | pandas 2.1, openpyxl 3.1 |
 | Utilities | Werkzeug 3.0 |
 
-The database file is `instance/proam.db`, created automatically on first run via `db.create_all()` in `database.py`.
+The database file is `instance/proam.db`. Schema is managed exclusively by Flask-Migrate — run `flask db upgrade` to initialize or evolve the database. Never use `db.create_all()` for schema changes.
 
 ### Project Structure
 
@@ -47,9 +49,11 @@ models/
     __init__.py         # Re-exports all models
     tournament.py       # Tournament
     team.py             # Team (college only)
-    competitor.py       # CollegeCompetitor, ProCompetitor
-    event.py            # Event, EventResult
-    heat.py             # Heat, HeatAssignment, Flight
+    competitor.py       # CollegeCompetitor, ProCompetitor (+ portal_pin_hash)
+    event.py            # Event, EventResult (+ version_id optimistic lock)
+    heat.py             # Heat, HeatAssignment, Flight (+ version_id optimistic lock)
+    user.py             # User — role-based auth (admin/judge/competitor/spectator)
+    audit_log.py        # AuditLog — immutable audit trail for sensitive actions
 
 routes/
     __init__.py
@@ -57,10 +61,14 @@ routes/
     registration.py     # Excel upload for college; manual entry for pro
     scheduling.py       # Event setup, heat generation, flight building
     scoring.py          # Heat result entry, position calculation, payouts
-    reporting.py        # Standings, event results, payout summary (screen + print)
+    reporting.py        # Standings, event results, payout summary + async export
     proam_relay.py      # Pro-Am Relay lottery and results
     partnered_axe.py    # Partnered Axe Throw prelims/finals flow
     validation.py       # Data integrity checks (teams, competitors, heats)
+    import_routes.py    # Pro entry form Excel import (parse → review → confirm)
+    auth.py             # Login, logout, bootstrap, user management (/auth prefix)
+    portal.py           # Spectator and competitor portals (/portal prefix)
+    api.py              # Public read-only REST API (/api/public prefix)
 
 services/
     __init__.py
@@ -72,22 +80,33 @@ services/
     proam_relay.py      # ProAmRelay class — lottery logic and team management
     partnered_axe.py    # PartneredAxeThrow class — prelims/finals state machine
     validation.py       # ValidationResult, TeamValidator, CompetitorValidator, HeatValidator
+    pro_entry_importer.py  # parse_pro_entries() + compute_review_flags() for xlsx import
+    audit.py            # log_action() helper — writes AuditLog records best-effort
+    background_jobs.py  # Thread-pool executor for async tasks (Excel export)
+    report_cache.py     # In-memory TTL cache for report payloads
+    upload_security.py  # Magic-byte Excel validation, UUID safe filenames, scan hook
+    logging_setup.py    # JSON structured log formatter; optional Sentry SDK init
 
 templates/
     base.html
     dashboard.html
+    role_entry.html     # Landing page: Judge / Competitor / Spectator selection
     tournament_detail.html / tournament_new.html
+    auth/               login, bootstrap, users
+    portal/             landing, spectator_dashboard, competitor_dashboard
     college/            dashboard, registration, team_detail
-    pro/                dashboard, registration, new_competitor, competitor_detail, flights, build_flights
-    scheduling/         events, setup_events, heats
+    pro/                dashboard, registration, new_competitor, competitor_detail,
+                        flights, build_flights, import_upload, import_review
+    scheduling/         events, setup_events, heats, day_schedule (+ _print)
     scoring/            event_results, enter_heat, configure_payouts
-    reports/            all_results, college_standings, event_results, payout_summary (+ _print variants)
+    reports/            all_results, college_standings, event_results,
+                        payout_summary (+ _print variants), export_status
     proam_relay/        dashboard, teams, results, standings
     partnered_axe/      dashboard, prelims, finals, results
     validation/         dashboard, college, pro
 
-uploads/                # Uploaded Excel entry forms
-instance/proam.db       # SQLite database (auto-created)
+uploads/                # Uploaded Excel entry forms (gitignored)
+instance/proam.db       # SQLite database (auto-created; gitignored)
 ```
 
 ### Key Design Patterns
@@ -193,7 +212,7 @@ College only. Fields: `id`, `tournament_id`, `team_code` (e.g., UM-A), `school_n
 
 ### CollegeCompetitor
 
-Fields: `id`, `tournament_id`, `team_id`, `name`, `gender` (M/F), `individual_points`, `events_entered` (JSON list of event IDs), `partners` (JSON dict event_id → partner_name), `status` (active/scratched). Method `add_points()` updates individual total and triggers team recalculation.
+Fields: `id`, `tournament_id`, `team_id`, `name`, `gender` (M/F), `individual_points`, `events_entered` (JSON list of event IDs), `partners` (JSON dict event_id → partner_name), `gear_sharing` (JSON dict event_id → partner_name), `status` (active/scratched). Methods: `add_points()` updates individual total and triggers team recalculation; `get_gear_sharing()` returns the dict; `set_gear_sharing(event_id, partner_name)` updates it. Both `CollegeCompetitor` and `ProCompetitor` store gear-sharing identically as a dedicated `gear_sharing` TEXT column (JSON dict event_id → partner_name).
 
 Note: `closed_event_count` property currently counts all events entered, not just CLOSED ones. This is a known imprecision — it counts by list length rather than filtering by event classification.
 
@@ -285,7 +304,21 @@ Flight
 
 **College events on Saturday:** The requirements describe a defined list of college events that can spill to Saturday. No scheduling mechanism distinguishes these from regular college events.
 
-**Authentication:** None exists. Anyone with network access to the running server can modify all data. Intentionally deferred for the 2026 prototype deployment.
+**Authentication:** Flask-Login is active. Management blueprints (main, registration, scheduling, scoring, reporting, proam_relay, partnered_axe, validation, import_pro) require `is_judge` (admin or judge role) via `require_judge_for_management_routes` in `app.py`. Auth routes (`/auth/*`) and portal routes (`/portal/*`) are public. Bootstrap endpoint (`/auth/bootstrap`) creates the first account when DB has no users — it locks itself afterward. Four defined roles: admin, judge, competitor, spectator.
+
+**CSRF protection:** Flask-WTF `CSRFProtect` is active. All POST form templates include `{{ csrf_token() }}`. JSON API endpoints (routes/validation.py) that do not submit HTML forms are GET-only and require no exemption. If a new POST endpoint returns JSON rather than HTML, apply `@csrf.exempt` from `app.csrf`.
+
+**Portal sub-pages (spectator):** `templates/portal/spectator_dashboard.html` references `portal.spectator_college_standings` and `portal.spectator_pro_standings` routes that do not yet exist in `routes/portal.py`. These will raise a runtime error when the spectator dashboard is rendered. Implement these routes or revert the template before production use.
+
+**Portal mobile view variables:** Portal templates reference `mobile_view` and `view_mode` template variables that `routes/portal.py` does not currently pass to render_template. These will cause Jinja2 UndefinedError at runtime. The route needs to read a `?view=mobile` query param and pass both variables.
+
+**Reset PIN route missing:** `templates/auth/users.html` references `auth.reset_competitor_pin` which does not exist in `routes/auth.py`. The Reset PIN button will raise a BuildError at render time for competitor accounts.
+
+**Extra roles in users.html:** The template offers `scorer`, `registrar`, `viewer` roles that are not defined in `User` model constants and would be rejected by `auth.manage_users` role validation. Either add these roles to the model or remove them from the template.
+
+**api_bp not registered:** `routes/api.py` exists with three public endpoints but `app.py` does not register `api_bp`. The public API is completely unreachable.
+
+**Migration branch conflict:** Migrations `8b2fd0d307bb` (portal_pin_hash) and `b27d62f4f8a1` (audit_logs + indexes) both declare `down_revision = '7f8f2f600aa1'`, creating two heads. `flask db upgrade` will fail with "Multiple head revisions" until a merge migration is generated with `flask db merge heads -m "merge heads"`.
 
 **STRATHMARK integration:** Completely absent. See Section 7.
 
@@ -323,7 +356,9 @@ Database schema changes: do not use `db.create_all()` for schema modifications o
 
 HeatAssignment vs Heat.competitors: `Heat.competitors` (JSON field) is the authoritative source for heat composition and is what the heat generator reads and writes. `HeatAssignment` rows are used only by the validation service. All new code reading or writing heat composition must use `Heat.competitors`. Whenever `Heat.competitors` is modified, keep `HeatAssignment` rows in sync to avoid validation false positives.
 
-Authentication: intentionally deferred for the 2026 prototype deployment. Do not build authentication unless explicitly instructed.
+Input conversion: All `int()` and `float()` calls on POST form data must be wrapped in `try/except (TypeError, ValueError)`. Flash a descriptive error message and redirect rather than raising an unhandled exception that produces a 500 response.
+
+Authentication: Flask-Login is active. New management routes must be covered by the `require_judge_for_management_routes` before_request hook — add the blueprint name to `MANAGEMENT_BLUEPRINTS` in `app.py`. Public endpoints (static files, `main.index`, `main.set_language`, all `auth.*`, all `portal.*`) are whitelisted. The bootstrap route at `/auth/bootstrap` locks itself once any user exists — never remove that guard.
 
 Cookie Stack and Standing Block stand conflict: any code touching heat generation or flight scheduling must enforce mutual exclusivity of these two events. Cookie Stack (`stand_type: cookie_stack`) and Standing Block (`stand_type: standing_block`) share the same 5 physical stands. Never schedule heats from both events at the same time or within the same flight slot without explicit instruction.
 

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Import Pro Entries - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container py-4" style="max-width: 640px;">
+    <nav aria-label="breadcrumb" class="mb-4">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro</a></li>
+            <li class="breadcrumb-item active">Import Entries</li>
+        </ol>
+    </nav>
+
+    <h2><i class="bi bi-file-earmark-spreadsheet text-warning"></i> Import Pro Entries</h2>
+    <p class="text-muted mb-4">
+        Upload the <strong>Google Forms xlsx export</strong> for
+        <strong>{{ tournament.name }} {{ tournament.year }}</strong>.
+        The importer reads the first sheet in the workbook
+        (<em>Form Responses&nbsp;1</em>) and maps columns by header name.
+    </p>
+
+    <div class="card">
+        <div class="card-header bg-warning text-dark">
+            <h6 class="mb-0"><i class="bi bi-upload"></i> Select File</h6>
+        </div>
+        <div class="card-body">
+            <form method="POST"
+                  action="{{ url_for('import_pro.upload_pro_entries', tournament_id=tournament.id) }}"
+                  enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="mb-3">
+                    <label for="file" class="form-label fw-semibold">
+                        Google Forms spreadsheet (.xlsx)
+                    </label>
+                    <input class="form-control" type="file" id="file" name="file"
+                           accept=".xlsx,.xls" required>
+                    <div class="form-text">
+                        Export from Google Sheets: <em>File &rarr; Download &rarr;
+                        Microsoft Excel (.xlsx)</em>
+                    </div>
+                </div>
+
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-warning">
+                        <i class="bi bi-upload"></i> Upload &amp; Preview
+                    </button>
+                    <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="bi bi-info-circle"></i> What gets imported</h6>
+        </div>
+        <div class="card-body small text-muted">
+            <ul class="mb-0">
+                <li>Personal info: name, gender, email, phone, mailing address</li>
+                <li>ALA membership &amp; Pro-Am relay lottery opt-in</li>
+                <li>Event entries and calculated entry fees ($10 chopping / $5 other)</li>
+                <li>Partner names for Double Buck, Jack &amp; Jill, Partnered Axe Throw</li>
+                <li>Gear-sharing flag and details</li>
+                <li>Waiver acceptance and signature</li>
+            </ul>
+            <p class="mt-2 mb-0">
+                If a competitor with the same email already exists in this tournament,
+                their record will be <strong>updated</strong> rather than duplicated.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

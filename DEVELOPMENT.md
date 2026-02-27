@@ -17,6 +17,8 @@ The Missoula Pro Am Manager is a Flask-based web application for managing the an
 |-----------|------------|
 | Backend | Python 3.x / Flask 3.0 |
 | Database | SQLite (via SQLAlchemy 2.0) |
+| Migrations | Flask-Migrate 4.0.7 (Alembic) |
+| Forms / CSRF | Flask-WTF 1.2.2 |
 | Frontend | Jinja2 templates, Bootstrap 5 |
 | Excel I/O | pandas, openpyxl |
 
@@ -111,6 +113,7 @@ CollegeCompetitor:
     gender: String         # 'M' | 'F'
     events_entered: JSON   # List of event names
     partners: JSON         # Dict: event_name → partner_name
+    gear_sharing: JSON     # Dict: event_id → partner sharing gear
     individual_points: Integer
     status: String         # 'active' | 'scratched'
 ```
@@ -352,7 +355,17 @@ event.payouts = {"1": 500, "2": 300, "3": 200, "4": 100}
 | `/<id>/college/standings` | College standings |
 | `/<id>/pro/payouts` | Payout summary |
 | `/<id>/all-results` | All event results |
+| `/<id>/export-results/async` | Background Excel export job |
+| `/<id>/backup` | SQLite backup download (admin) |
+| `/<id>/restore` | SQLite restore upload (admin) |
 | `*/print` | Printable versions |
+
+### Public API (`/api/public`)
+| Route | Description |
+|-------|-------------|
+| `/tournaments/<id>/standings` | JSON standings payload |
+| `/tournaments/<id>/schedule` | JSON schedule/heats payload |
+| `/tournaments/<id>/results` | JSON completed event results |
 
 ---
 
@@ -381,13 +394,26 @@ Server runs at `http://localhost:5000`
 
 ### Database
 
-SQLite database is created automatically at `proam.db` on first run.
+The application uses Flask-Migrate (Alembic) for schema management.
 
-To reset:
+To initialize a fresh database:
 ```bash
-rm proam.db
-python app.py  # Creates fresh database
+flask db upgrade
 ```
+
+To apply new migrations after a model change:
+```bash
+flask db migrate -m "description of change"
+flask db upgrade
+```
+
+To reset in development:
+```bash
+rm -rf instance/proam.db
+flask db upgrade
+```
+
+The database file is created at `instance/proam.db` for SQLite (dev) or the URL from the `DATABASE_URL` environment variable (production/Railway).
 
 ---
 
@@ -413,11 +439,11 @@ python app.py  # Creates fresh database
 
 ### Technical Debt
 
-1. **Authentication** - Currently no user authentication
-2. **Input Validation** - Add comprehensive server-side validation
-3. **Error Handling** - Improve error messages and recovery
-4. **Testing** - Add unit and integration tests
-5. **API** - RESTful API for external integrations
+1. **RBAC coverage** - Authentication exists, but new roles should be regression-tested route by route.
+2. **Input Validation** - Continue hardening server-side validation and rejection messaging.
+3. **Error Handling** - Expand recovery UX for failed background jobs and restore flows.
+4. **Testing** - Add unit and integration tests for optimistic locking and transaction rollback.
+5. **API expansion** - Public read endpoints exist; authenticated write endpoints are future work.
 
 ### Performance Optimization
 
@@ -435,9 +461,12 @@ python app.py  # Creates fresh database
 ```python
 # Application
 SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
-SQLALCHEMY_DATABASE_URI = 'sqlite:///proam.db'
+SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'sqlite:///proam.db')
 UPLOAD_FOLDER = 'uploads'
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
+
+# Flask-WTF CSRF (enabled by default; uses SECRET_KEY)
+WTF_CSRF_ENABLED = True
 
 # Scoring
 PLACEMENT_POINTS = {1: 10, 2: 7, 3: 5, 4: 3, 5: 2, 6: 1}
@@ -466,6 +495,32 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-02-27 (V1.2.0)
+- Added Flask-Login authentication: User model (admin/judge/competitor/spectator), login/logout, bootstrap, user management UI
+- Added `require_judge_for_management_routes` before_request hook; portal and auth routes are public
+- Added portal blueprints (`/portal`): spectator dashboard, competitor dashboard (schedule/results/payouts), mobile/desktop view toggle
+- Added public REST API (`/api/public`): standings, schedule, results endpoints
+- Added `models/audit_log.py` + `services/audit.py` for immutable audit trail
+- Added `services/background_jobs.py`: thread-pool executor for async Excel export
+- Added `services/report_cache.py`: in-memory TTL cache for reporting routes
+- Added `services/upload_security.py`: magic-byte Excel validation, UUID filenames, optional malware scan
+- Added `services/logging_setup.py`: JSON structured logging, optional Sentry SDK init
+- Added pro entry xlsx importer (`services/pro_entry_importer.py`, `routes/import_routes.py`)
+- Added migrations: users table, portal_pin_hash on competitors, audit_logs + indexes + version_id + unique constraints
+- Added brand logo static assets
+- Added `requirements.txt` entries: Flask-Login, sentry-sdk, pinned psycopg2-binary, gunicorn
+- Created `.gitignore`; untracked `__pycache__/`, `instance/`, `uploads/` from git index
+- Added `templates/role_entry.html` landing page (judge/competitor/spectator selection)
+- **Known issues:** migration branch conflict (run `flask db merge heads` before deploying); api_bp not registered in app.py; several portal/auth routes referenced in templates not yet implemented
+
+### 2026-02-25
+- Added Flask-WTF CSRF protection; all POST form templates now include `{{ csrf_token() }}`
+- Added `gear_sharing` dedicated TEXT column to `CollegeCompetitor` (matches `ProCompetitor`); removed nested `__gear_sharing__` approach
+- Migrated database schema management to Flask-Migrate exclusively; removed `db.create_all()` from `init_db()`
+- Added `railway.toml` with `releaseCommand = "flask db upgrade"` for Railway deployments
+- Added input hardening (try/except) around all `int()`/`float()` calls on POST form data in scoring, scheduling, relay, and partnered axe routes
+- Fixed open redirect in `set_language()` by removing `request.referrer` fallback
 
 ### 2026-01-25
 - Removed Pro Birling event

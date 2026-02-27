@@ -20,6 +20,7 @@ def relay_dashboard(tournament_id):
                          relay=relay,
                          status=relay.get_status(),
                          teams=relay.get_teams(),
+                         capacity=relay.get_lottery_capacity(),
                          eligible_pro=relay.get_eligible_pro_competitors(),
                          eligible_college=relay.get_eligible_college_competitors())
 
@@ -30,7 +31,13 @@ def draw_lottery(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     relay = get_proam_relay(tournament)
 
-    num_teams = int(request.form.get('num_teams', 2))
+    try:
+        num_teams = int(request.form.get('num_teams', 2))
+        if num_teams < 1:
+            raise ValueError('num_teams must be at least 1')
+    except (TypeError, ValueError):
+        flash('Invalid number of teams.', 'error')
+        return redirect(url_for('proam_relay.relay_dashboard', tournament_id=tournament_id))
 
     try:
         result = relay.run_lottery(num_teams=num_teams)
@@ -48,7 +55,8 @@ def redraw_lottery(tournament_id):
     relay = get_proam_relay(tournament)
 
     try:
-        result = relay.redraw_lottery()
+        existing_team_count = len(relay.get_teams()) or 2
+        result = relay.redraw_lottery(num_teams=existing_team_count)
         flash('Lottery has been redrawn!', 'success')
     except ValueError as e:
         flash(str(e), 'danger')
@@ -76,7 +84,12 @@ def enter_results(tournament_id):
     relay = get_proam_relay(tournament)
 
     if request.method == 'POST':
-        team_number = int(request.form.get('team_number'))
+        try:
+            team_number = int(request.form.get('team_number'))
+        except (TypeError, ValueError):
+            flash('Invalid team number.', 'error')
+            return redirect(url_for('proam_relay.enter_results', tournament_id=tournament_id))
+
         event_name = request.form.get('event_name')
 
         # Parse time input (MM:SS.ms or just seconds)
@@ -126,9 +139,14 @@ def replace_competitor(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     relay = get_proam_relay(tournament)
 
-    team_number = int(request.form.get('team_number'))
-    old_competitor_id = int(request.form.get('old_competitor_id'))
-    new_competitor_id = int(request.form.get('new_competitor_id'))
+    try:
+        team_number = int(request.form.get('team_number'))
+        old_competitor_id = int(request.form.get('old_competitor_id'))
+        new_competitor_id = int(request.form.get('new_competitor_id'))
+    except (TypeError, ValueError):
+        flash('Invalid competitor or team ID.', 'error')
+        return redirect(url_for('proam_relay.view_teams', tournament_id=tournament_id))
+
     competitor_type = request.form.get('competitor_type')  # 'pro' or 'college'
 
     try:

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}College Spectator View - {{ COMPETITION.app_title }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h3 class="mb-0">{{ tournament.name }} {{ tournament.year }} - College Standings</h3>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-secondary btn-sm"
+               href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id, view=view_mode) }}">Back to Selection</a>
+            <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
+               href="{{ url_for('portal.spectator_college_standings', tournament_id=tournament.id, view='desktop' if mobile_view else 'mobile') }}">
+                {{ 'Desktop View' if mobile_view else 'Mobile View' }}
+            </a>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-lg-4">
+            <div class="card shadow-sm">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">Bull of the Woods (Men)</h6>
+                </div>
+                <div class="card-body">
+                    <ol class="mb-0">
+                        {% for c in bull %}
+                        <li>{{ c.name }} - {{ c.individual_points }} pts</li>
+                        {% else %}
+                        <li class="text-muted">No rankings yet.</li>
+                        {% endfor %}
+                    </ol>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card shadow-sm">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">Belle of the Woods (Women)</h6>
+                </div>
+                <div class="card-body">
+                    <ol class="mb-0">
+                        {% for c in belle %}
+                        <li>{{ c.name }} - {{ c.individual_points }} pts</li>
+                        {% else %}
+                        <li class="text-muted">No rankings yet.</li>
+                        {% endfor %}
+                    </ol>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card shadow-sm">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">College Team Standings (Overall)</h6>
+                </div>
+                <div class="card-body">
+                    <ol class="mb-0">
+                        {% for team in team_standings %}
+                        <li>{{ team.team_code }} - {{ team.total_points }} pts</li>
+                        {% else %}
+                        <li class="text-muted">No standings yet.</li>
+                        {% endfor %}
+                    </ol>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0">Completed College Event Results</h6>
+        </div>
+        <div class="card-body">
+            {% if mobile_view %}
+            <div class="d-grid gap-2">
+                {% for summary in event_summaries %}
+                <a class="card text-decoration-none text-reset"
+                   href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=summary.event.id, view=view_mode) }}">
+                    <div class="card-body py-2">
+                        <div class="fw-semibold">{{ summary.event.display_name }}</div>
+                        <small class="text-muted">{{ summary.result_count }} results posted</small>
+                    </div>
+                </a>
+                {% else %}
+                <div class="text-muted">No completed events yet.</div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Event</th>
+                            <th>Results Posted</th>
+                            <th>View</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for summary in event_summaries %}
+                        <tr>
+                            <td>{{ summary.event.display_name }}</td>
+                            <td>{{ summary.result_count }}</td>
+                            <td><a href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=summary.event.id, view=view_mode) }}">Open</a></td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="3" class="text-muted">No completed events yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

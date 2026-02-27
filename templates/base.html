@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}{{ COMPETITION.app_title }}{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Orbitron:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -11,256 +14,962 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
 
     <style>
+        /* ═══════════════════════════════════════════════════════════
+           DESIGN TOKENS
+        ═══════════════════════════════════════════════════════════ */
         :root {
-            --proam-green: #2d5a27;
-            --proam-brown: #8b4513;
-            --proam-gold: #daa520;
+            /* Surfaces */
+            --sx-base:         #0b0d11;
+            --sx-surface:      #13161d;
+            --sx-surface-2:    #1b1f2a;
+            --sx-surface-3:    #222737;
+            --sx-border:       #252a38;
+            --sx-border-bright:#363e52;
+
+            /* STRATHEX fire palette */
+            --sx-fire:         #e8391f;
+            --sx-fire-hover:   #c82d14;
+            --sx-fire-glow:    rgba(232, 57, 31, 0.30);
+            --sx-amber:        #e89012;
+            --sx-gold:         #d4a219;
+            --sx-gold-bright:  #f0bc2c;
+
+            /* Text */
+            --sx-text:         #ece8e0;
+            --sx-text-2:       #8c95aa;
+            --sx-text-3:       #555e72;
+
+            /* Status */
+            --sx-success:      #2da85e;
+            --sx-danger:       #e83535;
+            --sx-info:         #3b8ee8;
+            --sx-warning:      #e89012;
+
+            /* Legacy aliases — child templates rely on these */
+            --proam-green:      #1f4a2b;
+            --proam-green-deep: #15361f;
+            --proam-wood:       #5f4b33;
+            --proam-gold:       var(--sx-gold);
+            --proam-ink:        var(--sx-text);
+            --proam-paper:      var(--sx-surface);
+            --proam-panel:      var(--sx-surface);
+            --proam-line:       var(--sx-border);
+            --strathex-ember:   var(--sx-amber);
+            --strathex-solar:   var(--sx-gold-bright);
+            --strathex-red:     var(--sx-fire);
+            --strathex-cyan:    #68d7ff;
         }
+
+        /* ═══════════════════════════════════════════════════════════
+           BASE
+        ═══════════════════════════════════════════════════════════ */
+        *, *::before, *::after { box-sizing: border-box; }
 
         body {
             min-height: 100vh;
+            font-family: "Inter", "Segoe UI", sans-serif;
+            font-size: 0.925rem;
+            color: var(--sx-text);
+            background: var(--sx-base);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
-        .navbar-proam {
-            background-color: var(--proam-green) !important;
+        body.portal-mobile { background: #0d1015; }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: "Fraunces", Georgia, serif;
+            letter-spacing: 0.01em;
+            color: var(--sx-text);
         }
+
+        a { color: var(--sx-info); }
+        a:hover { color: #6cb6f5; }
+
+        /* ═══════════════════════════════════════════════════════════
+           BOOTSTRAP DARK-THEME OVERRIDES
+        ═══════════════════════════════════════════════════════════ */
+        /* Background utilities */
+        .bg-light    { background-color: var(--sx-surface-2) !important; }
+        .bg-dark     { background-color: var(--sx-surface-3) !important; }
+        .bg-white    { background-color: var(--sx-surface)   !important; }
+
+        .bg-primary  { background-color: rgba(59, 142, 232, 0.20)  !important; color: #6cb6f5 !important; border: 1px solid rgba(59,142,232,0.35); }
+        .bg-success  { background-color: rgba(45, 168, 94, 0.20)   !important; color: #5cd48a !important; border: 1px solid rgba(45,168,94,0.35); }
+        .bg-warning  { background-color: rgba(232,144,18, 0.20)    !important; color: #f0b84c !important; border: 1px solid rgba(232,144,18,0.35); }
+        .bg-danger   { background-color: rgba(232, 53, 53, 0.20)   !important; color: #f06060 !important; border: 1px solid rgba(232,53,53,0.35); }
+        .bg-secondary{ background-color: rgba(255,255,255, 0.07)   !important; color: var(--sx-text-2) !important; border: 1px solid var(--sx-border); }
+        .bg-info     { background-color: rgba(59, 142, 232, 0.20)  !important; color: #6cb6f5 !important; border: 1px solid rgba(59,142,232,0.35); }
+
+        /* Card header overrides used in child templates */
+        .card-header.bg-primary  { background: linear-gradient(135deg,#0e1f35,#162d4a) !important; color: #6cb6f5 !important; border-bottom: 2px solid rgba(59,142,232,0.4) !important; border-top: none; border-left: none; border-right: none; }
+        .card-header.bg-warning.text-dark { background: linear-gradient(135deg,#291800,#3a2208) !important; color: #f0b84c !important; border-bottom: 2px solid rgba(232,144,18,0.4) !important; border-top: none; border-left: none; border-right: none; }
+        .card-header.bg-dark.text-white { background: linear-gradient(135deg,#1a1d26,#20242f) !important; color: var(--sx-text) !important; border-bottom: 1px solid var(--sx-border) !important; border-top: none; border-left: none; border-right: none; }
+        .card-header.bg-success { background: linear-gradient(135deg,#0d2018,#132e22) !important; color: #5cd48a !important; border-bottom: 2px solid rgba(45,168,94,0.4) !important; border-top: none; border-left: none; border-right: none; }
+
+        /* Text utilities */
+        .text-muted    { color: var(--sx-text-2) !important; }
+        .text-primary  { color: var(--sx-info) !important; }
+        .text-success  { color: var(--sx-success) !important; }
+        .text-warning  { color: var(--sx-amber) !important; }
+        .text-danger   { color: var(--sx-danger) !important; }
+        .text-dark     { color: var(--sx-text) !important; }
+        .text-white    { color: var(--sx-text) !important; }
+
+        /* Borders */
+        .border        { border-color: var(--sx-border) !important; }
+        .border-top    { border-top-color: var(--sx-border) !important; }
+        .border-bottom { border-bottom-color: var(--sx-border) !important; }
+
+        /* Badges */
+        .badge.bg-primary   { background-color: rgba(59,142,232,0.20)  !important; color: #6cb6f5 !important; border: 1px solid rgba(59,142,232,0.40)  !important; }
+        .badge.bg-success   { background-color: rgba(45,168,94,0.20)   !important; color: #5cd48a !important; border: 1px solid rgba(45,168,94,0.40)   !important; }
+        .badge.bg-warning   { background-color: rgba(232,144,18,0.20)  !important; color: #f0b84c !important; border: 1px solid rgba(232,144,18,0.40)  !important; }
+        .badge.bg-danger    { background-color: rgba(232,53,53,0.20)   !important; color: #f06060 !important; border: 1px solid rgba(232,53,53,0.40)   !important; }
+        .badge.bg-secondary { background-color: rgba(255,255,255,0.07) !important; color: var(--sx-text-2) !important; border: 1px solid var(--sx-border-bright) !important; }
+        .badge.bg-info      { background-color: rgba(59,142,232,0.20)  !important; color: #6cb6f5 !important; border: 1px solid rgba(59,142,232,0.40)  !important; }
+        .badge.text-dark    { color: var(--sx-text) !important; }
+        .badge { font-weight: 600; letter-spacing: 0.04em; font-size: 0.72rem; }
+
+        /* Stepper / progress circles */
+        .rounded-circle.bg-light { background-color: var(--sx-surface-2) !important; border-color: var(--sx-border) !important; }
+        .rounded-circle.bg-success { background-color: rgba(45,168,94,0.25) !important; color: #5cd48a !important; border-color: rgba(45,168,94,0.5) !important; }
+        .rounded-circle.bg-primary { background-color: rgba(59,142,232,0.25) !important; color: #6cb6f5 !important; }
+        .text-success.fw-semibold  { color: #5cd48a !important; }
+        .text-primary.fw-semibold  { color: #6cb6f5 !important; }
+
+        /* Alerts */
+        .alert {
+            border-radius: 10px;
+            font-size: 0.88rem;
+        }
+        .alert-warning { background: rgba(232,144,18,0.12); border-color: rgba(232,144,18,0.4); color: #f0b84c; }
+        .alert-danger  { background: rgba(232,53,53,0.12);  border-color: rgba(232,53,53,0.4);  color: #f06060; }
+        .alert-success { background: rgba(45,168,94,0.12);  border-color: rgba(45,168,94,0.4);  color: #5cd48a; }
+        .alert-info    { background: rgba(59,142,232,0.12); border-color: rgba(59,142,232,0.4); color: #6cb6f5; }
+
+        /* ═══════════════════════════════════════════════════════════
+           BUTTONS
+        ═══════════════════════════════════════════════════════════ */
+        .btn { font-weight: 600; letter-spacing: 0.01em; font-family: "Inter", sans-serif; }
 
         .btn-proam {
-            background-color: var(--proam-green);
-            border-color: var(--proam-green);
-            color: white;
+            background: linear-gradient(135deg, #e8391f 0%, #c02010 100%);
+            border: 1px solid #e8391f;
+            color: #fff !important;
+            box-shadow: 0 2px 10px var(--sx-fire-glow);
+            transition: all 0.2s ease;
         }
-
-        .btn-proam:hover {
-            background-color: #1e3d1a;
-            border-color: #1e3d1a;
-            color: white;
+        .btn-proam:hover, .btn-proam:focus {
+            background: linear-gradient(135deg, #f04820 0%, #d02a10 100%);
+            border-color: #f04820;
+            box-shadow: 0 4px 18px rgba(232,57,31,0.50);
+            transform: translateY(-1px);
+            color: #fff !important;
         }
+        .btn-proam:active { transform: translateY(0); box-shadow: 0 2px 8px var(--sx-fire-glow); }
 
+        .btn-primary {
+            background: var(--sx-info);
+            border-color: var(--sx-info);
+            color: #fff;
+        }
+        .btn-primary:hover { background: #2a7dd4; border-color: #2a7dd4; color: #fff; }
+
+        .btn-success {
+            background: var(--sx-success);
+            border-color: var(--sx-success);
+            color: #fff;
+        }
+        .btn-success:hover { background: #228048; border-color: #228048; color: #fff; }
+
+        .btn-warning {
+            background: var(--sx-amber);
+            border-color: var(--sx-amber);
+            color: #fff !important;
+        }
+        .btn-warning:hover { background: #c87c0a; border-color: #c87c0a; color: #fff !important; }
+
+        .btn-danger {
+            background: var(--sx-danger);
+            border-color: var(--sx-danger);
+            color: #fff;
+        }
+        .btn-danger:hover { background: #c02020; border-color: #c02020; }
+
+        .btn-secondary {
+            background: var(--sx-surface-2);
+            border-color: var(--sx-border-bright);
+            color: var(--sx-text-2);
+        }
+        .btn-secondary:hover { background: var(--sx-surface-3); border-color: var(--sx-border-bright); color: var(--sx-text); }
+
+        .btn-outline-primary { color: var(--sx-info); border-color: rgba(59,142,232,0.5); }
+        .btn-outline-primary:hover { background: rgba(59,142,232,0.15); color: #6cb6f5; border-color: var(--sx-info); }
+
+        .btn-outline-success { color: var(--sx-success); border-color: rgba(45,168,94,0.5); }
+        .btn-outline-success:hover { background: rgba(45,168,94,0.15); color: #5cd48a; border-color: var(--sx-success); }
+
+        .btn-outline-warning { color: var(--sx-amber); border-color: rgba(232,144,18,0.5); }
+        .btn-outline-warning:hover { background: rgba(232,144,18,0.15); color: #f0b84c; border-color: var(--sx-amber); }
+
+        .btn-outline-danger { color: var(--sx-danger); border-color: rgba(232,53,53,0.5); }
+        .btn-outline-danger:hover { background: rgba(232,53,53,0.15); color: #f06060; border-color: var(--sx-danger); }
+
+        .btn-outline-secondary { color: var(--sx-text-2); border-color: var(--sx-border-bright); }
+        .btn-outline-secondary:hover { background: var(--sx-surface-2); color: var(--sx-text); border-color: var(--sx-border-bright); }
+
+        .btn-outline-light { color: var(--sx-text-2); border-color: var(--sx-border-bright); }
+        .btn-outline-light:hover { background: var(--sx-surface-2); color: var(--sx-text); border-color: var(--sx-border-bright); }
+
+        /* ═══════════════════════════════════════════════════════════
+           CARDS
+        ═══════════════════════════════════════════════════════════ */
+        .card {
+            background: var(--sx-surface);
+            border: 1px solid var(--sx-border);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+            color: var(--sx-text);
+            position: relative;
+            overflow: hidden;
+        }
+        .card::before {
+            content: "";
+            position: absolute;
+            left: 0; top: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+            pointer-events: none;
+        }
+        .card-header {
+            background: var(--sx-surface-2);
+            border-bottom: 1px solid var(--sx-border);
+            color: var(--sx-text);
+            padding: 0.85rem 1.15rem;
+            font-family: "Inter", sans-serif;
+            font-weight: 600;
+        }
         .card-header-proam {
-            background-color: var(--proam-green);
-            color: white;
+            background: linear-gradient(135deg, #1e0e08 0%, #2a1208 100%);
+            border-bottom: 2px solid var(--sx-fire) !important;
+            color: var(--sx-text);
         }
+        .card-body { color: var(--sx-text); }
+        .card-footer {
+            background: rgba(0,0,0,0.20);
+            border-top: 1px solid var(--sx-border);
+        }
+        .card-text { color: var(--sx-text-2); }
+
+        /* ═══════════════════════════════════════════════════════════
+           TABLES
+        ═══════════════════════════════════════════════════════════ */
+        .table {
+            color: var(--sx-text);
+            border-color: var(--sx-border);
+            --bs-table-bg: transparent;
+        }
+        .table > :not(caption) > * > * {
+            background-color: transparent;
+            border-bottom-color: var(--sx-border);
+            color: var(--sx-text);
+        }
+        .table-hover > tbody > tr:hover > * {
+            background-color: rgba(255,255,255,0.03);
+        }
+        .table-secondary > * { background-color: rgba(255,255,255,0.03) !important; opacity: 0.65; }
 
         .table-proam thead {
-            background-color: var(--proam-green);
-            color: white;
+            background: linear-gradient(135deg, #1e0e08, #2a1208);
+        }
+        .table-proam thead th {
+            color: var(--sx-text);
+            font-weight: 700;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-color: rgba(232,57,31,0.3);
+            padding: 0.75rem 0.9rem;
+            border-bottom: 2px solid var(--sx-fire) !important;
         }
 
-        .badge-gold {
-            background-color: var(--proam-gold);
-            color: black;
-        }
-
-        .badge-silver {
-            background-color: #c0c0c0;
-            color: black;
-        }
-
-        .badge-bronze {
-            background-color: #cd7f32;
-            color: white;
-        }
-
+        /* ═══════════════════════════════════════════════════════════
+           SIDEBAR
+        ═══════════════════════════════════════════════════════════ */
         .sidebar {
             min-height: calc(100vh - 56px);
-            background-color: #f8f9fa;
-            border-right: 1px solid #dee2e6;
+            background: var(--sx-surface);
+            border-right: 1px solid var(--sx-border);
         }
-
         .sidebar .nav-link {
-            color: #333;
+            color: var(--sx-text-2);
+            border-radius: 8px;
+            margin: 2px 6px;
+            padding: 0.48rem 0.8rem;
+            font-size: 0.875rem;
+            transition: all 0.15s;
         }
-
+        .sidebar .nav-link:hover { color: var(--sx-text); background: rgba(255,255,255,0.05); }
         .sidebar .nav-link.active {
-            background-color: var(--proam-green);
-            color: white;
+            background: rgba(232,57,31,0.14);
+            color: #f0735a;
+            border-left: 3px solid var(--sx-fire);
+            padding-left: calc(0.8rem - 3px);
+        }
+        .sidebar .nav-link.active:hover { background: rgba(232,57,31,0.22); }
+
+        /* ═══════════════════════════════════════════════════════════
+           FORMS
+        ═══════════════════════════════════════════════════════════ */
+        .form-control, .form-select {
+            background: var(--sx-surface-2);
+            border-color: var(--sx-border);
+            color: var(--sx-text);
+        }
+        .form-control:focus, .form-select:focus {
+            background: var(--sx-surface-2);
+            border-color: var(--sx-fire);
+            box-shadow: 0 0 0 3px var(--sx-fire-glow);
+            color: var(--sx-text);
+        }
+        .form-control::placeholder { color: var(--sx-text-3); }
+        .form-label { color: var(--sx-text-2); font-size: 0.84rem; font-weight: 500; }
+        .form-check-input { background-color: var(--sx-surface-2); border-color: var(--sx-border-bright); }
+        .form-check-input:checked { background-color: var(--sx-fire); border-color: var(--sx-fire); }
+        .form-text { color: var(--sx-text-3); }
+        .input-group-text {
+            background: var(--sx-surface-3);
+            border-color: var(--sx-border);
+            color: var(--sx-text-2);
         }
 
-        .sidebar .nav-link:hover {
-            background-color: #e9ecef;
+        /* ═══════════════════════════════════════════════════════════
+           LIST GROUP
+        ═══════════════════════════════════════════════════════════ */
+        .list-group-item {
+            background: var(--sx-surface);
+            border-color: var(--sx-border);
+            color: var(--sx-text);
+        }
+        .list-group-item-action:hover, .list-group-item-action:focus {
+            background: var(--sx-surface-2);
+            color: var(--sx-text);
+        }
+        .list-group-item.active {
+            background: var(--sx-fire);
+            border-color: var(--sx-fire);
+            color: #fff;
+        }
+        .list-group-flush .list-group-item { border-left: none; border-right: none; border-radius: 0; }
+
+        /* ═══════════════════════════════════════════════════════════
+           MODAL
+        ═══════════════════════════════════════════════════════════ */
+        .modal-content {
+            background: var(--sx-surface-2);
+            border: 1px solid var(--sx-border-bright);
+            border-radius: 14px;
+            color: var(--sx-text);
+        }
+        .modal-header { border-bottom-color: var(--sx-border); }
+        .modal-footer { border-top-color: var(--sx-border); }
+        .modal-title { color: var(--sx-text); }
+        .btn-close { filter: invert(1) grayscale(1) brightness(0.6); }
+
+        /* ═══════════════════════════════════════════════════════════
+           DROPDOWN
+        ═══════════════════════════════════════════════════════════ */
+        .dropdown-menu {
+            background: var(--sx-surface-2);
+            border: 1px solid var(--sx-border-bright);
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+        }
+        .dropdown-item {
+            color: var(--sx-text-2);
+            font-size: 0.875rem;
+            padding: 0.45rem 0.85rem;
+            border-radius: 6px;
+            margin: 1px 4px;
+        }
+        .dropdown-item:hover { background: rgba(255,255,255,0.07); color: var(--sx-text); }
+        .dropdown-item.active, .dropdown-item:active { background: rgba(232,57,31,0.15); color: var(--sx-fire); }
+        .dropdown-divider { border-color: var(--sx-border); }
+        .dropdown-header { color: var(--sx-text-3); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; }
+
+        /* ═══════════════════════════════════════════════════════════
+           BREADCRUMB
+        ═══════════════════════════════════════════════════════════ */
+        .breadcrumb { background: transparent; font-size: 0.8rem; }
+        .breadcrumb-item a { color: var(--sx-text-2); text-decoration: none; }
+        .breadcrumb-item a:hover { color: var(--sx-text); }
+        .breadcrumb-item.active { color: var(--sx-text-3); }
+        .breadcrumb-item + .breadcrumb-item::before { color: var(--sx-text-3); }
+
+        /* ═══════════════════════════════════════════════════════════
+           HR / MISC
+        ═══════════════════════════════════════════════════════════ */
+        hr { border-color: var(--sx-border); opacity: 1; }
+
+        .badge-gold   { background: linear-gradient(135deg,var(--sx-gold),var(--sx-gold-bright)); color: #1a1000; }
+        .badge-silver { background: linear-gradient(135deg,#7a8a98,#b0bcc8); color: #111; }
+        .badge-bronze { background: linear-gradient(135deg,#b06a28,#d48838); color: #fff; }
+
+        /* ═══════════════════════════════════════════════════════════
+           OWNERSHIP BAR
+        ═══════════════════════════════════════════════════════════ */
+        .ownership-bar {
+            background: #07080b;
+            border-bottom: 1px solid rgba(232,57,31,0.25);
+            color: var(--sx-text-2);
+            position: relative;
+            overflow: hidden;
+        }
+        .ownership-bar::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 1px;
+            background: linear-gradient(90deg, transparent 0%, var(--sx-fire) 30%, var(--sx-amber) 60%, transparent 100%);
+            opacity: 0.55;
+        }
+        .ownership-inner {
+            min-height: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            padding: 0.28rem 0.75rem;
+            position: relative;
+            z-index: 1;
+        }
+        .ownership-label {
+            font-family: "Orbitron", sans-serif;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            font-size: 0.55rem;
+            font-weight: 700;
+            color: var(--sx-fire);
+        }
+        .ownership-copy {
+            font-size: 0.7rem;
+            letter-spacing: 0.03em;
+            color: var(--sx-text-2);
+        }
+        .ownership-logo {
+            height: 18px;
+            width: auto;
+            max-width: 140px;
+            object-fit: contain;
+        }
+        .ownership-divider {
+            width: 1px;
+            height: 12px;
+            background: var(--sx-border-bright);
+            flex-shrink: 0;
         }
 
-        .sidebar .nav-link.active:hover {
-            background-color: #1e3d1a;
+        /* ═══════════════════════════════════════════════════════════
+           NAVBAR
+        ═══════════════════════════════════════════════════════════ */
+        .navbar-proam {
+            background: #09090d !important;
+            border-bottom: 2px solid var(--sx-fire);
+            box-shadow: 0 2px 20px rgba(0,0,0,0.6), 0 0 40px rgba(232,57,31,0.07);
+            padding-top: 0.55rem;
+            padding-bottom: 0.55rem;
         }
 
+        .navbar-brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.7rem;
+            text-decoration: none;
+            flex-shrink: 0;
+        }
+
+        .brand-logo-wrap {
+            width: 40px;
+            height: 40px;
+            border-radius: 9px;
+            background: #ffffff;
+            border: 1px solid rgba(255,255,255,0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            flex-shrink: 0;
+            padding: 3px;
+        }
+        .brand-logo-wrap img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .brand-title { line-height: 1.15; }
+        .brand-title strong {
+            display: block;
+            font-family: "Orbitron", sans-serif;
+            font-size: 0.82rem;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--sx-text);
+        }
+        .brand-title small {
+            display: block;
+            font-family: "Inter", sans-serif;
+            font-size: 0.58rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--sx-text-3);
+            margin-top: 1px;
+        }
+
+        .navbar-proam .nav-link {
+            color: var(--sx-text-2) !important;
+            font-weight: 500;
+            font-size: 0.855rem;
+            padding: 0.4rem 0.65rem !important;
+            border-radius: 7px;
+            transition: color 0.15s, background 0.15s;
+        }
+        .navbar-proam .nav-link:hover {
+            color: var(--sx-text) !important;
+            background: rgba(255,255,255,0.055);
+        }
+        .navbar-proam .nav-link.active {
+            color: #f0735a !important;
+            background: rgba(232,57,31,0.12);
+        }
+
+        .navbar-text { color: var(--sx-text-3) !important; font-size: 0.78rem; }
+
+        /* STRATHEX pill in navbar */
+        .strathex-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: rgba(232,57,31,0.09);
+            border: 1px solid rgba(232,57,31,0.28);
+            border-radius: 999px;
+            padding: 0.18rem 0.55rem 0.18rem 0.35rem;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .strathex-chip:hover {
+            background: rgba(232,57,31,0.15);
+            border-color: rgba(232,57,31,0.5);
+        }
+        .strathex-chip img {
+            height: 15px;
+            width: auto;
+            max-width: 78px;
+            object-fit: contain;
+        }
+        .strathex-chip span {
+            font-size: 0.55rem;
+            text-transform: uppercase;
+            letter-spacing: 0.11em;
+            color: var(--sx-fire);
+            font-family: "Orbitron", sans-serif;
+            font-weight: 700;
+        }
+
+        /* ═══════════════════════════════════════════════════════════
+           FOOTER
+        ═══════════════════════════════════════════════════════════ */
+        footer {
+            background: #07080b !important;
+            border-top: 1px solid var(--sx-border) !important;
+        }
+        .footer-meta { color: var(--sx-text-3); font-size: 0.76rem; }
+        .footer-logo { height: 16px; object-fit: contain; opacity: 0.4; }
+
+        /* ═══════════════════════════════════════════════════════════
+           PORTAL MOBILE MODE
+        ═══════════════════════════════════════════════════════════ */
+        body.portal-mobile .ownership-bar,
+        body.portal-mobile .strathex-chip,
+        body.portal-mobile footer { display: none !important; }
+        body.portal-mobile .navbar-proam { position: sticky; top: 0; z-index: 1030; }
+        body.portal-mobile .brand-title small { display: none; }
+        body.portal-mobile .navbar .container-fluid { padding-top: 0.3rem; padding-bottom: 0.3rem; }
+
+        /* ═══════════════════════════════════════════════════════════
+           ARAPAHO LANGUAGE MODE
+        ═══════════════════════════════════════════════════════════ */
         body.lang-arp {
-            --proam-green: #000000;
-            --proam-brown: #ff0000;
-            --proam-gold: #ffffff;
-            --bs-primary: #c40000;
-            --bs-primary-rgb: 196, 0, 0;
-            --bs-warning: #000000;
-            --bs-warning-rgb: 0, 0, 0;
-            --bs-link-color: #8d0000;
-            --bs-link-hover-color: #5a0000;
+            --sx-fire:       #c40000;
+            --sx-fire-hover: #8d0000;
+            --sx-fire-glow:  rgba(196, 0, 0, 0.35);
+            --sx-amber:      #330000;
+            --sx-gold:       #ffffff;
+            --sx-gold-bright:#ffffff;
+            --proam-gold:    #ffffff;
             background-image: url("{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}");
             background-size: cover;
-            background-position: center center;
+            background-position: center;
             background-attachment: fixed;
             background-repeat: no-repeat;
         }
-
         body.lang-arp::before {
             content: "";
             position: fixed;
             inset: 0;
-            background: rgba(255, 255, 255, 0.76);
+            background: rgba(8, 8, 10, 0.88);
             z-index: -1;
             pointer-events: none;
         }
-
-        body.lang-arp .navbar-proam,
+        body.lang-arp .navbar-proam {
+            border-bottom-color: #c40000;
+            box-shadow: 0 2px 20px rgba(0,0,0,0.6), 0 0 40px rgba(196,0,0,0.10);
+        }
+        body.lang-arp .btn-proam {
+            background: linear-gradient(135deg, #c40000, #8d0000);
+            border-color: #c40000;
+            box-shadow: 0 2px 10px rgba(196,0,0,0.40);
+        }
+        body.lang-arp .btn-proam:hover {
+            background: linear-gradient(135deg, #dd0000, #a00000);
+            border-color: #dd0000;
+            box-shadow: 0 4px 18px rgba(196,0,0,0.55);
+        }
         body.lang-arp .card-header-proam,
         body.lang-arp .table-proam thead {
-            background-color: #000000 !important;
-            color: #ffffff !important;
+            background: linear-gradient(135deg, #1a0000, #2a0000) !important;
+            border-bottom-color: #c40000 !important;
         }
-
-        body.lang-arp .btn-proam {
-            background-color: #c40000;
-            border-color: #c40000;
-            color: #ffffff;
-        }
-
-        body.lang-arp .btn-proam:hover {
-            background-color: #8d0000;
-            border-color: #8d0000;
-            color: #ffffff;
-        }
-
+        body.lang-arp .table-proam thead th { border-color: rgba(196,0,0,0.4); }
         body.lang-arp .sidebar .nav-link.active {
-            background-color: #c40000;
-            color: #ffffff;
+            background: rgba(196,0,0,0.18);
+            color: #ff4444;
+            border-left-color: #c40000;
+        }
+        body.lang-arp .ownership-bar::before {
+            background: linear-gradient(90deg, transparent, #c40000, #c40000, transparent);
+        }
+        body.lang-arp .strathex-chip {
+            background: rgba(196,0,0,0.09);
+            border-color: rgba(196,0,0,0.28);
+        }
+        body.lang-arp .strathex-chip span { color: #c40000; }
+
+        /* ═══════════════════════════════════════════════════════════
+           RESPONSIVE
+        ═══════════════════════════════════════════════════════════ */
+        @media (max-width: 991px) {
+            .brand-title small { display: none; }
+            .strathex-chip span { display: none; }
+            .ownership-copy { font-size: 0.63rem; }
+            .ownership-inner { justify-content: flex-start; }
         }
 
-        body.lang-arp .sidebar .nav-link.active:hover {
-            background-color: #8d0000;
-        }
-
-        body.lang-arp .card,
-        body.lang-arp .list-group-item,
-        body.lang-arp .table,
-        body.lang-arp .alert,
-        body.lang-arp footer {
-            background-color: rgba(255, 255, 255, 0.92) !important;
-        }
-
-        body.lang-arp footer {
-            border-top: 2px solid #000000;
-        }
-
+        /* ═══════════════════════════════════════════════════════════
+           PRINT
+        ═══════════════════════════════════════════════════════════ */
         @media print {
-            .no-print {
-                display: none !important;
+            .no-print { display: none !important; }
+            .sidebar { display: none !important; }
+            body { background: #fff !important; color: #000 !important; }
+            .card {
+                background: #fff !important;
+                border: 1px solid #ccc !important;
+                color: #000 !important;
+                box-shadow: none !important;
             }
-            .sidebar {
-                display: none !important;
-            }
+            .table { color: #000 !important; }
+            .table > :not(caption) > * > * { color: #000 !important; background-color: transparent !important; }
+            .card-header { background: #f0f0f0 !important; color: #000 !important; border-bottom: 1px solid #ccc !important; }
+            h1, h2, h3, h4, h5, h6 { color: #000 !important; }
+            .badge { border: 1px solid #ccc !important; color: #333 !important; background: #f0f0f0 !important; }
         }
     </style>
 
     {% block extra_css %}{% endblock %}
 </head>
-<body class="{% if CURRENT_LANG == 'arp' %}lang-arp{% endif %}">
-    <!-- Navigation -->
+<body class="{% if CURRENT_LANG == 'arp' %}lang-arp{% endif %}{% if mobile_view %} portal-mobile{% endif %}">
+
+    <!-- ── OWNERSHIP / ATTRIBUTION BAR ───────────────── -->
+    <div class="ownership-bar no-print">
+        <div class="container-fluid ownership-inner">
+            <span class="ownership-label">Flagship Deployment</span>
+            <div class="ownership-divider"></div>
+            <img class="ownership-logo"
+                 src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                 alt="STRATHEX"
+                 onerror="this.style.display='none';">
+            <div class="ownership-divider"></div>
+            <span class="ownership-copy">Developed &amp; operated by STRATHEX</span>
+        </div>
+    </div>
+
+    <!-- ── NAVBAR ─────────────────────────────────────── -->
     <nav class="navbar navbar-expand-lg navbar-dark navbar-proam no-print">
-        <div class="container-fluid">
+        <div class="container-fluid px-3">
             <a class="navbar-brand" href="{{ url_for('main.index') }}">
-                <i class="bi bi-tree-fill"></i> {{ NAV.brand }}
+                <span class="brand-logo-wrap">
+                    <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
+                         alt="Missoula Pro Am"
+                         onerror="this.style.opacity='0';">
+                </span>
+                <span class="brand-title">
+                    <strong>{{ NAV.brand }}</strong>
+                    <small>Tournament Operations</small>
+                </span>
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+
+            <button class="navbar-toggler border-0 shadow-none" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                    style="color:var(--sx-text-2);">
                 <span class="navbar-toggler-icon"></span>
             </button>
+
             <div class="collapse navbar-collapse" id="navbarNav">
                 {% if tournament is defined and tournament %}
-                <ul class="navbar-nav me-auto">
+                <ul class="navbar-nav me-auto ms-2 gap-1">
+                    {% if current_user.is_authenticated and current_user.is_judge %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
+                                <i class="bi bi-house-door"></i> {{ NAV.dashboard }}
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">
+                                <i class="bi bi-mortarboard"></i> {{ NAV.college }}
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">
+                                <i class="bi bi-trophy"></i> {{ NAV.pro }}
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">
+                                <i class="bi bi-calendar-event"></i> {{ NAV.events }}
+                            </a>
+                        </li>
+                    {% endif %}
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
-                            <i class="bi bi-house"></i> {{ NAV.dashboard }}
+                        <a class="nav-link" href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id) }}">
+                            <i class="bi bi-broadcast"></i> Spectator
                         </a>
                     </li>
+                    {% if current_user.is_authenticated and current_user.is_competitor %}
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">
-                            <i class="bi bi-mortarboard"></i> {{ NAV.college }}
+                        <a class="nav-link" href="{{ url_for('portal.competitor_dashboard') }}">
+                            <i class="bi bi-person-badge"></i> My Profile
                         </a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">
-                            <i class="bi bi-trophy"></i> {{ NAV.pro }}
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">
-                            <i class="bi bi-calendar-event"></i> {{ NAV.events }}
-                        </a>
-                    </li>
+                    {% endif %}
                 </ul>
-                <span class="navbar-text me-3">
+                <span class="navbar-text me-2 d-none d-xl-inline">
+                    <i class="bi bi-circle-fill me-1"
+                       style="font-size:0.4rem;color:var(--sx-success);vertical-align:middle;"></i>
                     {{ tournament.name }} {{ tournament.year }}
                 </span>
                 {% else %}
-                <ul class="navbar-nav me-auto">
+                <ul class="navbar-nav me-auto ms-2">
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('main.index') }}">
-                            <i class="bi bi-house"></i> {{ NAV.home }}
+                            <i class="bi bi-house-door"></i> {{ NAV.home }}
                         </a>
                     </li>
                 </ul>
                 {% endif %}
 
-                <div class="dropdown">
-                    <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                        <i class="bi bi-translate"></i> {{ ui('language') }}
-                    </button>
-                    <ul class="dropdown-menu dropdown-menu-end">
-                        <li>
-                            <a class="dropdown-item {% if CURRENT_LANG == 'en' %}active{% endif %}"
-                               href="{{ url_for('main.set_language', lang_code='en', next=request.full_path if request.query_string else request.path) }}">
-                                {{ ui('language_english') }}
-                            </a>
-                        </li>
-                        <li>
-                            <a class="dropdown-item {% if CURRENT_LANG == 'arp' %}active{% endif %}"
-                               href="{{ url_for('main.set_language', lang_code='arp', next=request.full_path if request.query_string else request.path) }}">
-                                {{ ui('language_arapaho') }}
-                            </a>
-                        </li>
-                    </ul>
+                <!-- Right-side controls -->
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <div class="strathex-chip no-print">
+                        <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                             alt="STRATHEX"
+                             onerror="this.parentElement.style.display='none';">
+                        <span>by STRATHEX</span>
+                    </div>
+
+                    <div class="dropdown">
+                        <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button"
+                                data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-translate"></i>
+                            <span class="d-none d-lg-inline"> {{ ui('language') }}</span>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li>
+                                <a class="dropdown-item {% if CURRENT_LANG == 'en' %}active{% endif %}"
+                                   data-lang-switch="en"
+                                   href="{{ url_for('main.set_language', lang_code='en', next=request.full_path if request.query_string else request.path) }}">
+                                    {{ ui('language_english') }}
+                                </a>
+                            </li>
+                            {% if ARAPAHO_ALLOWED %}
+                            <li>
+                                <a class="dropdown-item {% if CURRENT_LANG == 'arp' %}active{% endif %}"
+                                   data-lang-switch="arp"
+                                   href="{{ url_for('main.set_language', lang_code='arp', next=request.full_path if request.query_string else request.path) }}">
+                                    {{ ui('language_arapaho') }}
+                                </a>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </div>
+
+                    {% if current_user.is_authenticated and current_user.can_manage_users %}
+                    <a class="btn btn-outline-light btn-sm" href="{{ url_for('auth.manage_users') }}">
+                        <i class="bi bi-people"></i>
+                        <span class="d-none d-lg-inline"> Users</span>
+                    </a>
+                    {% endif %}
+
+                    {% if current_user.is_authenticated %}
+                    <form method="POST" action="{{ url_for('auth.logout') }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-outline-light btn-sm" type="submit">
+                            <i class="bi bi-box-arrow-right"></i>
+                            <span class="d-none d-lg-inline"> Logout</span>
+                        </button>
+                    </form>
+                    {% else %}
+                    <a class="btn btn-outline-light btn-sm" href="{{ url_for('auth.login') }}">
+                        <i class="bi bi-box-arrow-in-right"></i>
+                        <span class="d-none d-lg-inline"> Login</span>
+                    </a>
+                    {% endif %}
                 </div>
             </div>
         </div>
     </nav>
 
-    <!-- Flash Messages -->
-    <div class="container-fluid mt-2 no-print">
+    <!-- ── TOAST NOTIFICATIONS ────────────────────────── -->
+    <div class="position-fixed top-0 end-0 p-3 no-print" style="z-index:1100;" id="toastContainer">
         {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ 'success' if category == 'success' else 'danger' if category == 'error' else 'warning' }} alert-dismissible fade show" role="alert">
+            {% for category, message in messages %}
+            <div class="toast align-items-center text-white border-0 {{ 'bg-success' if category == 'success' else 'bg-danger' if category == 'error' else 'bg-warning' }}"
+                 role="alert" aria-live="assertive" aria-atomic="true"
+                 style="background:{% if category == 'success' %}rgba(45,168,94,0.95){% elif category == 'error' %}rgba(232,53,53,0.95){% else %}rgba(232,144,18,0.95){% endif %} !important; backdrop-filter:blur(12px); border:1px solid rgba(255,255,255,0.12) !important; border-radius:10px;">
+                <div class="d-flex">
+                    <div class="toast-body">
+                        <i class="bi {{ 'bi-check-circle-fill' if category == 'success' else 'bi-x-circle-fill' if category == 'error' else 'bi-exclamation-triangle-fill' }} me-2"></i>
                         {{ message }}
-                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>
-                {% endfor %}
-            {% endif %}
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto"
+                            data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+            </div>
+            {% endfor %}
         {% endwith %}
     </div>
 
-    <!-- Main Content -->
+    <!-- ── MAIN CONTENT ───────────────────────────────── -->
     <main>
         {% block content %}{% endblock %}
     </main>
 
-    <!-- Footer -->
-    <footer class="bg-light py-3 mt-5 no-print">
-        <div class="container text-center text-muted">
-            <small>{{ COMPETITION.app_footer }} &copy; 2026</small>
+    <!-- ── FOOTER ─────────────────────────────────────── -->
+    <footer class="py-3 mt-5 no-print">
+        <div class="container">
+            <div class="d-flex align-items-center justify-content-center gap-3 flex-wrap">
+                <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                     alt="STRATHEX" class="footer-logo"
+                     onerror="this.style.display='none';">
+                <span class="footer-meta">{{ COMPETITION.app_footer }} &copy; 2026</span>
+                <span style="color:var(--sx-border-bright);font-size:0.7rem;">|</span>
+                <small class="footer-meta" style="font-family:'Orbitron',sans-serif;font-size:0.55rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--sx-fire);opacity:0.7;">
+                    A STRATHEX Product
+                </small>
+            </div>
         </div>
     </footer>
 
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <audio id="arapahoModeAudio" src="{{ url_for('static', filename='audio/arapaho_mode_loop.mp3') }}" preload="auto" loop></audio>
+
+    <script>
+        // Arapaho audio management
+        (function () {
+            var audio = document.getElementById('arapahoModeAudio');
+            if (!audio) return;
+            var storageKey = 'arapaho_audio_enabled';
+            var isArapahoMode = document.body.classList.contains('lang-arp');
+
+            function playArapahoAudio() {
+                audio.loop = true;
+                audio.volume = 1.0;
+                var p = audio.play();
+                if (p && typeof p.catch === 'function') {
+                    p.catch(function () {
+                        var resumeOnInteract = function () {
+                            audio.play().finally(function () {
+                                document.removeEventListener('click', resumeOnInteract);
+                                document.removeEventListener('keydown', resumeOnInteract);
+                            });
+                        };
+                        document.addEventListener('click', resumeOnInteract);
+                        document.addEventListener('keydown', resumeOnInteract);
+                    });
+                }
+            }
+
+            function stopArapahoAudio() { audio.pause(); audio.currentTime = 0; }
+
+            document.querySelectorAll('[data-lang-switch]').forEach(function (link) {
+                link.addEventListener('click', function () {
+                    var lang = link.getAttribute('data-lang-switch');
+                    if (lang === 'arp') { localStorage.setItem(storageKey, '1'); }
+                    else { localStorage.removeItem(storageKey); }
+                });
+            });
+
+            if (isArapahoMode && localStorage.getItem(storageKey) === '1') { playArapahoAudio(); }
+            else { stopArapahoAudio(); }
+        })();
+    </script>
+
+    <!-- Reusable Confirmation Modal -->
+    <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header border-bottom" style="border-color:var(--sx-border)!important;">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle text-warning me-2"></i>Confirm Action
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="confirmModalBody" style="color:var(--sx-text-2);">
+                    Are you sure?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger btn-sm" id="confirmModalBtn">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize toasts
+        document.querySelectorAll('#toastContainer .toast').forEach(function (el) {
+            new bootstrap.Toast(el, { delay: 5000 }).show();
+        });
+
+        // Universal confirm modal — intercepts any form with data-confirm attribute
+        document.addEventListener('submit', function (e) {
+            var form = e.target;
+            var msg = form.getAttribute('data-confirm');
+            if (!msg) return;
+            e.preventDefault();
+            document.getElementById('confirmModalBody').textContent = msg;
+            var btn = document.getElementById('confirmModalBtn');
+            var newBtn = btn.cloneNode(true);
+            btn.parentNode.replaceChild(newBtn, btn);
+            newBtn.addEventListener('click', function () {
+                bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+                form.removeAttribute('data-confirm');
+                form.submit();
+            });
+            new bootstrap.Modal(document.getElementById('confirmModal')).show();
+        });
+    </script>
 
     {% block extra_js %}{% endblock %}
 </body>

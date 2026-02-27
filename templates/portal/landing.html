@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Portal - {{ COMPETITION.app_title }}{% endblock %}
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-end mb-2">
+        <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
+           href="{{ url_for('portal.index', view='desktop' if mobile_view else 'mobile') }}">
+            Switch to {{ 'Desktop' if mobile_view else 'Mobile' }} View
+        </a>
+    </div>
+    <div class="card shadow-sm">
+        <div class="card-header card-header-proam">
+            <h5 class="mb-0">Spectator Portal</h5>
+        </div>
+        <div class="card-body">
+            <p>Select a tournament to view standings and live results.</p>
+            <div class="list-group">
+                {% for t in tournaments %}
+                <a class="list-group-item list-group-item-action" href="{{ url_for('portal.spectator_dashboard', tournament_id=t.id, view=view_mode) }}">
+                    {{ t.name }} {{ t.year }}
+                </a>
+                {% else %}
+                <div class="text-muted">No tournaments available yet.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

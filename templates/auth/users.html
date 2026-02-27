@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}User Accounts - {{ COMPETITION.app_title }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="row g-3">
+        <div class="col-lg-4">
+            <div class="card shadow-sm">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">Create User</h6>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-2">
+                            <label class="form-label">Username</label>
+                            <input class="form-control" name="username" minlength="3" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Password</label>
+                            <input class="form-control" type="password" name="password" minlength="8" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Display Name</label>
+                            <input class="form-control" name="display_name" placeholder="Optional">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Role</label>
+                            <select class="form-select" name="role">
+                                <option value="admin">Admin</option>
+                                <option value="judge">Judge</option>
+                                <option value="scorer">Scorer</option>
+                                <option value="registrar">Registrar</option>
+                                <option value="competitor">Competitor</option>
+                                <option value="spectator">Spectator</option>
+                                <option value="viewer">Viewer</option>
+                            </select>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Tournament</label>
+                            <select class="form-select" name="tournament_id">
+                                <option value="">None</option>
+                                {% for t in tournaments %}
+                                <option value="{{ t.id }}" {% if selected_tournament_id == t.id %}selected{% endif %}>
+                                    {{ t.name }} {{ t.year }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Competitor Type</label>
+                            <select class="form-select" name="competitor_type">
+                                <option value="">None</option>
+                                <option value="college">College</option>
+                                <option value="pro">Pro</option>
+                            </select>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Competitor</label>
+                            <select class="form-select" name="competitor_id">
+                                <option value="">None</option>
+                                {% for c in college_competitors %}
+                                <option value="{{ c.id }}">College: {{ c.name }} ({{ c.team.team_code }})</option>
+                                {% endfor %}
+                                {% for c in pro_competitors %}
+                                <option value="{{ c.id }}">Pro: {{ c.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button class="btn btn-proam mt-2" type="submit">Create User</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-8">
+            <div class="card shadow-sm">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">Existing Users</h6>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Role</th>
+                                    <th>Tournament</th>
+                                    <th>Link</th>
+                                    <th>Status</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for user in users %}
+                                <tr>
+                                    <td>{{ user.username }}</td>
+                                    <td>{{ user.role }}</td>
+                                    <td>{{ user.tournament_id or '-' }}</td>
+                                    <td>
+                                        {% if user.competitor_type and user.competitor_id %}
+                                            {{ user.competitor_type }} #{{ user.competitor_id }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if user.is_active_user %}
+                                        <span class="badge bg-success">active</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">disabled</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <form method="POST" action="{{ url_for('auth.toggle_user_active', user_id=user.id) }}">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="tournament_id" value="{{ selected_tournament_id or '' }}">
+                                            <button class="btn btn-sm btn-outline-secondary" type="submit">
+                                                {% if user.is_active_user %}Disable{% else %}Enable{% endif %}
+                                            </button>
+                                        </form>
+                                        {% if user.role == 'competitor' and user.tournament_id and user.competitor_type and user.competitor_id %}
+                                        <form method="POST" action="{{ url_for('auth.reset_competitor_pin') }}" class="mt-1">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="user_id" value="{{ user.id }}">
+                                            <input type="hidden" name="tournament_id" value="{{ user.tournament_id }}">
+                                            <input type="hidden" name="competitor_type" value="{{ user.competitor_type }}">
+                                            <input type="hidden" name="competitor_id" value="{{ user.competitor_id }}">
+                                            <button class="btn btn-sm btn-outline-danger" type="submit">Reset PIN</button>
+                                        </form>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="6" class="text-muted">No users found.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

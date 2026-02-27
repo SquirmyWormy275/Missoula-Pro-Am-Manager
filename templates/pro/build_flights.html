@@ -55,6 +55,7 @@
                     </div>
 
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">
                             <label for="heats_per_flight" class="form-label">Target Heats per Flight</label>
                             <select class="form-select" id="heats_per_flight" name="heats_per_flight">
@@ -64,6 +65,12 @@
                                 <option value="12">12 heats (extended flights)</option>
                             </select>
                             <small class="text-muted">The system will distribute heats across flights for maximum event variety.</small>
+                        </div>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="run_async" name="run_async" value="1">
+                            <label class="form-check-label" for="run_async">
+                                Run in background (recommended for large tournaments)
+                            </label>
                         </div>
 
                         <hr>

@@ -6,6 +6,8 @@ from .team import Team
 from .competitor import CollegeCompetitor, ProCompetitor
 from .event import Event, EventResult
 from .heat import Heat, Flight, HeatAssignment
+from .user import User
+from .audit_log import AuditLog
 
 __all__ = [
     'Tournament',
@@ -16,5 +18,7 @@ __all__ = [
     'EventResult',
     'Heat',
     'HeatAssignment',
-    'Flight'
+    'Flight',
+    'User',
+    'AuditLog',
 ]

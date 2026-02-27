@@ -8,6 +8,8 @@
         <div class="col-md-8">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}">Registration</a></li>
                     <li class="breadcrumb-item active">New Competitor</li>
@@ -20,6 +22,7 @@
                 </div>
                 <div class="card-body">
                     <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <!-- Personal Info -->
                         <h6 class="text-muted mb-3">Personal Information</h6>
                         <div class="row mb-3">

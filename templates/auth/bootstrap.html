@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Bootstrap Account - {{ COMPETITION.app_title }}{% endblock %}
+{% block content %}
+<div class="container py-4" style="max-width: 620px;">
+    <div class="card shadow-sm">
+        <div class="card-header card-header-proam">
+            <h5 class="mb-0">Create Initial Judge Account</h5>
+        </div>
+        <div class="card-body">
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="mb-3">
+                    <label class="form-label">Username</label>
+                    <input class="form-control" name="username" minlength="3" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input class="form-control" type="password" name="password" minlength="8" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Role</label>
+                    <select class="form-select" name="role">
+                        <option value="admin">Admin</option>
+                        <option value="judge">Judge</option>
+                    </select>
+                </div>
+                <button class="btn btn-proam" type="submit">Create Account</button>
+                <a class="btn btn-outline-secondary" href="{{ url_for('auth.login') }}">Back to Login</a>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
