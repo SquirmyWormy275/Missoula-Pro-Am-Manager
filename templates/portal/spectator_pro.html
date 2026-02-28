@@ -23,9 +23,9 @@
             <div class="d-grid gap-2">
                 {% for summary in event_summaries %}
                 <a class="card text-decoration-none text-reset"
-                   href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=summary.event.id, view=view_mode) }}">
+                   href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=summary.event_id, view=view_mode) }}">
                     <div class="card-body py-2">
-                        <div class="fw-semibold">{{ summary.event.display_name }}</div>
+                        <div class="fw-semibold">{{ summary.event_display_name }}</div>
                         <small class="text-muted">{{ summary.result_count }} results posted</small>
                     </div>
                 </a>
@@ -46,9 +46,9 @@
                     <tbody>
                         {% for summary in event_summaries %}
                         <tr>
-                            <td>{{ summary.event.display_name }}</td>
+                            <td>{{ summary.event_display_name }}</td>
                             <td>{{ summary.result_count }}</td>
-                            <td><a href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=summary.event.id, view=view_mode) }}">Open</a></td>
+                            <td><a href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=summary.event_id, view=view_mode) }}">Open</a></td>
                         </tr>
                         {% else %}
                         <tr><td colspan="3" class="text-muted">No completed events yet.</td></tr>

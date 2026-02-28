@@ -4,11 +4,50 @@
 <div class="container-fluid py-3">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
         <h3 class="mb-0">{{ competitor.name }} - Competitor Portal</h3>
-        <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
-           href="{{ request.path }}?{% if tournament and competitor_type and competitor %}tournament_id={{ tournament.id }}&competitor_type={{ competitor_type }}&competitor_id={{ competitor.id }}&{% endif %}view={{ 'desktop' if mobile_view else 'mobile' }}">
-            Switch to {{ 'Desktop' if mobile_view else 'Mobile' }} View
-        </a>
+        <div class="d-flex gap-2">
+            {% if competitor_type == 'pro' %}
+            <button class="btn btn-sm btn-outline-secondary"
+                    onclick="ProAmOnboarding.reopen('pro_competitor', _proSteps)"
+                    title="How to use this page">
+                <i class="bi bi-question-circle"></i>
+            </button>
+            {% endif %}
+            <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
+               href="{{ request.path }}?{% if tournament and competitor_type and competitor %}tournament_id={{ tournament.id }}&competitor_type={{ competitor_type }}&competitor_id={{ competitor.id }}&{% endif %}view={{ 'desktop' if mobile_view else 'mobile' }}">
+                Switch to {{ 'Desktop' if mobile_view else 'Mobile' }} View
+            </a>
+        </div>
     </div>
+
+    {# SMS opt-in card (shown when competitor has a phone number stored) #}
+    {% if competitor.phone or competitor_type == 'pro' %}
+    <div class="card shadow-sm mb-3">
+        <div class="card-body py-2 d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div>
+                <i class="bi bi-bell{% if competitor.phone_opted_in %}-fill text-success{% endif %}"></i>
+                <span class="ms-1">
+                    SMS notifications:
+                    <strong>{{ 'Enabled' if competitor.phone_opted_in else 'Disabled' }}</strong>
+                </span>
+                {% if competitor.phone_opted_in %}
+                <small class="text-muted ms-1">You'll receive a heads-up text before your flight.</small>
+                {% endif %}
+            </div>
+            <form method="post"
+                  action="{{ url_for('portal.sms_opt_in_toggle') }}"
+                  class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="tournament_id" value="{{ tournament.id }}">
+                <input type="hidden" name="competitor_type" value="{{ competitor_type }}">
+                <input type="hidden" name="competitor_id" value="{{ competitor.id }}">
+                <button type="submit"
+                        class="btn btn-sm {% if competitor.phone_opted_in %}btn-outline-danger{% else %}btn-outline-success{% endif %}">
+                    {{ 'Turn Off' if competitor.phone_opted_in else 'Turn On' }}
+                </button>
+            </form>
+        </div>
+    </div>
+    {% endif %}
 
     {% if mobile_view %}
     <div class="row g-3">
@@ -145,4 +184,39 @@
     </div>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{% if competitor_type == 'pro' %}
+<script>
+var _proSteps = [
+    {
+        icon: '<i class="bi bi-person-badge-fill"></i>',
+        title: 'Your Competitor Portal',
+        body: 'This page is your personal competition record for the Missoula Pro-Am. It\'s protected by your PIN — only you can access it.'
+    },
+    {
+        icon: '<i class="bi bi-calendar3"></i>',
+        title: 'Your Schedule',
+        body: 'The schedule table lists every event you\'re entered in with your heat number, run number, stand assignment, and flight. Check back as flights are posted throughout the day.'
+    },
+    {
+        icon: '<i class="bi bi-bar-chart-fill"></i>',
+        title: 'Your Results',
+        body: 'Results appear here as events are scored — including your placement, recorded result, and points or payout. Your running total payout is shown at the bottom.'
+    },
+    {
+        icon: '<i class="bi bi-phone-fill"></i>',
+        title: 'SMS Flight Alerts',
+        body: 'If you provided a phone number at registration, you can toggle SMS notifications on. You\'ll receive a text a few minutes before each of your flights begins.'
+    },
+    {
+        icon: '<i class="bi bi-shield-lock-fill"></i>',
+        title: 'Keep your PIN safe',
+        body: 'Your PIN protects this page. If you forget it, a judge can reset it from the registration desk. Tap the <strong>?</strong> button anytime to reopen this guide.'
+    }
+];
+ProAmOnboarding.show('pro_competitor', _proSteps);
+</script>
+{% endif %}
 {% endblock %}

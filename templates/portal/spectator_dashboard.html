@@ -4,10 +4,17 @@
 <div class="container py-4">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
         <h3 class="mb-0">{{ tournament.name }} {{ tournament.year }} - Spectator Portal</h3>
-        <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
-           href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id, view='desktop' if mobile_view else 'mobile') }}">
-            Switch to {{ 'Desktop' if mobile_view else 'Mobile' }} View
-        </a>
+        <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline-secondary"
+                    onclick="ProAmOnboarding.reopen('spectator', _spectatorSteps)"
+                    title="How to use this page">
+                <i class="bi bi-question-circle"></i>
+            </button>
+            <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
+               href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id, view='desktop' if mobile_view else 'mobile') }}">
+                Switch to {{ 'Desktop' if mobile_view else 'Mobile' }} View
+            </a>
+        </div>
     </div>
 
     <div class="row g-3">
@@ -37,4 +44,37 @@
         </div>
     </div>
 </div>
+
+{% block extra_js %}
+<script>
+var _spectatorSteps = [
+    {
+        icon: '<i class="bi bi-broadcast-pin"></i>',
+        title: 'Welcome to the Spectator Portal',
+        body: 'Follow along with live results from the Missoula Pro-Am. No login needed — everything here is public.'
+    },
+    {
+        icon: '<i class="bi bi-mortarboard-fill"></i>',
+        title: 'College Results',
+        body: 'Open <strong>College Results</strong> to see team standings, Bull of the Woods, Belle of the Woods, and completed event results — updated live throughout the day.'
+    },
+    {
+        icon: '<i class="bi bi-trophy-fill"></i>',
+        title: 'Pro Results',
+        body: 'Open <strong>Pro Results</strong> to browse completed pro event results. Click any event to see full placements, heat breakdowns, and the Birling bracket.'
+    },
+    {
+        icon: '<i class="bi bi-arrow-repeat"></i>',
+        title: 'Live Updates',
+        body: 'College standings refresh automatically every 30 seconds — no need to reload. A live indicator shows when the page is connected.'
+    },
+    {
+        icon: '<i class="bi bi-question-circle-fill"></i>',
+        title: 'Need to revisit this guide?',
+        body: 'Hit the <strong>?</strong> button in the top right of this page at any time to reopen this guide.'
+    }
+];
+ProAmOnboarding.show('spectator', _spectatorSteps);
+</script>
+{% endblock %}
 {% endblock %}

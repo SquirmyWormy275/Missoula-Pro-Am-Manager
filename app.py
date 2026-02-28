@@ -2,7 +2,7 @@
 Flask application entry point for the Missoula Pro Am Tournament Manager.
 """
 import os
-from flask import Flask, Response, request, abort
+from flask import Flask, Response, request, abort, send_from_directory
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import event as sa_event
 from sqlalchemy.engine import Engine
@@ -151,6 +151,12 @@ def create_app():
             cursor = dbapi_connection.cursor()
             cursor.execute('PRAGMA foreign_keys=ON')
             cursor.close()
+
+    # Service worker must be served from root scope, not /static/
+    @app.route('/sw.js')
+    def service_worker():
+        return send_from_directory(app.static_folder, 'sw.js',
+                                   mimetype='application/javascript')
 
     @app.before_request
     def require_judge_for_management_routes():

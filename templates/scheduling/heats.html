@@ -49,6 +49,13 @@
                     <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}" class="btn btn-outline-success">
                         <i class="bi bi-clipboard-data"></i> View Results
                     </a>
+                    <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}" class="btn btn-outline-secondary" target="_blank">
+                        <i class="bi bi-printer"></i> Print Heat Sheets
+                    </a>
+                    <button type="button" class="btn btn-outline-info btn-sm"
+                            onclick="checkHeatSync({{ tournament.id }}, {{ event.id }})">
+                        <i class="bi bi-arrow-repeat"></i> Sync Check
+                    </button>
                 </div>
             </div>
         </div>
@@ -178,5 +185,60 @@
         </div>
     </div>
     {% endif %}
+
+    <!-- Hidden sync-fix form (submitted by JS) -->
+    <form id="syncFixForm"
+          action="{{ url_for('scheduling.heat_sync_fix', tournament_id=tournament.id, event_id=event.id) }}"
+          method="POST" style="display:none;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    </form>
+
+    <!-- Sync check modal -->
+    <div class="modal fade" id="syncModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">HeatAssignment Sync Check</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="syncModalBody">Checking…</div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-warning" id="syncFixBtn" style="display:none;"
+                            onclick="document.getElementById('syncFixForm').submit()">
+                        Fix Mismatches
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function checkHeatSync(tournamentId, eventId) {
+    const url = `/scheduling/${tournamentId}/event/${eventId}/heats/sync-check`;
+    fetch(url).then(r => r.json()).then(data => {
+        const body = document.getElementById('syncModalBody');
+        const fixBtn = document.getElementById('syncFixBtn');
+        if (data.ok) {
+            body.innerHTML = '<div class="alert alert-success mb-0">All heats in sync — no mismatches found.</div>';
+            fixBtn.style.display = 'none';
+        } else {
+            let html = `<p class="text-danger fw-semibold">${data.mismatches.length} mismatch(es) found:</p><ul>`;
+            data.mismatches.forEach(m => {
+                html += `<li>Heat ${m.heat_number} Run ${m.run_number}: JSON-only IDs: [${m.json_only}] | Table-only IDs: [${m.table_only}]</li>`;
+            });
+            html += '</ul><p class="text-muted small">Click "Fix Mismatches" to overwrite the table from the authoritative JSON.</p>';
+            body.innerHTML = html;
+            fixBtn.style.display = '';
+        }
+        const modal = new bootstrap.Modal(document.getElementById('syncModal'));
+        modal.show();
+    }).catch(() => {
+        alert('Sync check failed. Check the console for errors.');
+    });
+}
+</script>
 {% endblock %}

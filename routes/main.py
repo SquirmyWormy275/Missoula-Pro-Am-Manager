@@ -5,6 +5,7 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request
 from urllib.parse import urlsplit
 from database import db
 from models import Tournament, Event, Heat, HeatAssignment, Flight
+from models.competitor import CollegeCompetitor, ProCompetitor
 import strings as text
 try:
     from flask_login import current_user
@@ -250,3 +251,105 @@ def pro_dashboard(tournament_id):
                            collected_fees=collected_fees,
                            top_earners=top_earners,
                            live_event_leaders=live_event_leaders)
+
+
+# ---------------------------------------------------------------------------
+# #10 — Tournament clone
+# ---------------------------------------------------------------------------
+
+@main_bp.route('/tournament/<int:tournament_id>/clone', methods=['POST'])
+def clone_tournament(tournament_id):
+    """Clone a tournament: copy events (no heats/results) and all competitor/team records."""
+    source = Tournament.query.get_or_404(tournament_id)
+
+    # Create new tournament
+    new_tournament = Tournament(
+        name=f'Copy of {source.name}',
+        year=source.year,
+        status='setup',
+    )
+    db.session.add(new_tournament)
+    db.session.flush()
+
+    # Copy teams
+    from models.team import Team
+    team_id_map = {}
+    for team in source.teams.all():
+        new_team = Team(
+            tournament_id=new_tournament.id,
+            school_name=team.school_name,
+            team_code=team.team_code,
+            total_points=0,
+        )
+        db.session.add(new_team)
+        db.session.flush()
+        team_id_map[team.id] = new_team.id
+
+    # Copy college competitors (reset earned data)
+    for comp in source.college_competitors.all():
+        new_comp = CollegeCompetitor(
+            tournament_id=new_tournament.id,
+            team_id=team_id_map.get(comp.team_id),
+            name=comp.name,
+            gender=comp.gender,
+            individual_points=0,
+            events_entered='[]',
+            partners='{}',
+            gear_sharing='{}',
+            portal_pin_hash=None,
+            status='active',
+        )
+        db.session.add(new_comp)
+
+    # Copy pro competitors (reset earned data)
+    for comp in source.pro_competitors.all():
+        new_comp = ProCompetitor(
+            tournament_id=new_tournament.id,
+            name=comp.name,
+            gender=comp.gender,
+            address=comp.address,
+            phone=comp.phone,
+            email=comp.email,
+            shirt_size=comp.shirt_size,
+            is_ala_member=comp.is_ala_member,
+            is_left_handed_springboard=comp.is_left_handed_springboard,
+            events_entered='[]',
+            entry_fees='{}',
+            fees_paid='{}',
+            gear_sharing='{}',
+            partners='{}',
+            total_earnings=0.0,
+            portal_pin_hash=None,
+            status='active',
+        )
+        db.session.add(new_comp)
+
+    # Copy events (no heats or results)
+    for event in source.events.all():
+        new_event = Event(
+            tournament_id=new_tournament.id,
+            name=event.name,
+            event_type=event.event_type,
+            gender=event.gender,
+            scoring_type=event.scoring_type,
+            scoring_order=event.scoring_order,
+            is_open=event.is_open,
+            is_partnered=event.is_partnered,
+            partner_gender_requirement=event.partner_gender_requirement,
+            requires_dual_runs=event.requires_dual_runs,
+            stand_type=event.stand_type,
+            max_stands=event.max_stands,
+            has_prelims=event.has_prelims,
+            payouts=event.payouts,
+            status='pending',
+        )
+        db.session.add(new_event)
+
+    db.session.commit()
+    from services.audit import log_action
+    log_action('tournament_cloned', 'tournament', new_tournament.id, {
+        'source_id': source.id,
+        'source_name': source.name,
+    })
+    flash(f'Tournament cloned as "{new_tournament.name}". Update the name and dates before use.', 'success')
+    return redirect(url_for('main.tournament_detail', tournament_id=new_tournament.id))

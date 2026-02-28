@@ -10,6 +10,7 @@ env/
 
 # Flask instance folder (local SQLite DB)
 instance/
+proam.db
 
 # Uploaded files
 uploads/

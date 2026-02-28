@@ -57,6 +57,8 @@
                     </button>
                 </div>
                 <div class="card-body">
+                    <div id="offlineStatusBox" class="alert alert-secondary mb-3 d-none"></div>
+
                     <div class="alert alert-info mb-4">
                         <i class="bi bi-info-circle"></i>
                         <strong>{{ event.display_name }}</strong> -
@@ -72,10 +74,21 @@
                     </div>
 
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="markAllCompleteBtn">
-                            <i class="bi bi-check-all"></i> Mark All Complete
-                        </button>
-                        <small class="text-muted">Tab between fields · Enter moves to next</small>
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="markAllCompleteBtn">
+                                <i class="bi bi-check-all"></i> Mark All Complete
+                            </button>
+                            <a href="{{ url_for('scoring.offline_ops', tournament_id=tournament.id) }}"
+                               class="btn btn-sm btn-outline-info">
+                                <i class="bi bi-wifi-off"></i> Offline Ops
+                            </a>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-info" id="syncPendingBtn">
+                                <i class="bi bi-arrow-repeat"></i> Sync Pending
+                            </button>
+                            <small class="text-muted" id="netStatusLabel">Checking connection...</small>
+                        </div>
                     </div>
 
                     <form method="POST" id="heatEntryForm">
@@ -146,14 +159,186 @@
 
 {% block extra_js %}
 <script>
-    // Auto-focus first empty input
     document.addEventListener('DOMContentLoaded', function () {
-        const inputs = document.querySelectorAll('input[type="number"]');
-        for (let input of inputs) {
-            if (!input.value) { input.focus(); break; }
+        const QUEUE_KEY = 'proam_heat_score_queue_v1';
+        const form = document.getElementById('heatEntryForm');
+        const saveBtn = form.querySelector('button[type="submit"]');
+        const syncBtn = document.getElementById('syncPendingBtn');
+        const statusBox = document.getElementById('offlineStatusBox');
+        const netStatusLabel = document.getElementById('netStatusLabel');
+        const postUrl = "{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}";
+        const redirectUrl = "{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}";
+        const heatId = {{ heat.id }};
+        const eventId = {{ event.id }};
+        const scoringOrder = "{{ event.scoring_order }}";
+        const requiresDualRuns = {{ 'true' if event.requires_dual_runs else 'false' }};
+        const runNumber = {{ heat.run_number }};
+        const competitorNames = {
+            {% for comp in competitors %}
+            "{{ comp.id }}": {{ comp.name|tojson }}{% if not loop.last %},{% endif %}
+            {% endfor %}
+        };
+
+        function readQueue() {
+            try {
+                const parsed = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (err) {
+                return [];
+            }
         }
 
-        // Enter key moves to next input
+        function writeQueue(queue) {
+            localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+            refreshStatusBanner();
+        }
+
+        function setStatus(message, type) {
+            statusBox.classList.remove('d-none', 'alert-secondary', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger');
+            statusBox.classList.add(type || 'alert-secondary');
+            statusBox.innerHTML = message;
+        }
+
+        function clearStatus() {
+            statusBox.classList.add('d-none');
+        }
+
+        function refreshNetworkStatus() {
+            if (navigator.onLine) {
+                netStatusLabel.textContent = 'Online';
+                netStatusLabel.classList.remove('text-warning');
+                netStatusLabel.classList.add('text-success');
+            } else {
+                netStatusLabel.textContent = 'Offline';
+                netStatusLabel.classList.remove('text-success');
+                netStatusLabel.classList.add('text-warning');
+            }
+        }
+
+        function buildSnapshot() {
+            const payload = {};
+            form.querySelectorAll('input, select').forEach(function (field) {
+                if (!field.name) return;
+                payload[field.name] = field.value;
+            });
+            return payload;
+        }
+
+        function removeEntry(entry) {
+            writeQueue(readQueue().filter(function (item) {
+                return !(item.heat_id === entry.heat_id && item.url === entry.url);
+            }));
+        }
+
+        function upsertEntry(entry) {
+            const filtered = readQueue().filter(function (item) {
+                return !(item.heat_id === entry.heat_id && item.url === entry.url);
+            });
+            filtered.push(entry);
+            writeQueue(filtered);
+        }
+
+        function prefillFromQueue() {
+            const pending = readQueue().find(function (item) {
+                return item.heat_id === heatId && item.url === postUrl;
+            });
+            if (!pending || !pending.payload) return;
+            Object.keys(pending.payload).forEach(function (name) {
+                const field = form.querySelector('[name="' + name + '"]');
+                if (field) field.value = pending.payload[name];
+            });
+        }
+
+        function setSavingState(saving) {
+            saveBtn.disabled = saving;
+            syncBtn.disabled = saving;
+            if (saving) {
+                saveBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Saving...';
+            } else {
+                saveBtn.innerHTML = '<i class="bi bi-check-circle"></i> Save Results';
+            }
+        }
+
+        async function postEntry(entry) {
+            const body = new FormData();
+            Object.keys(entry.payload).forEach(function (key) {
+                body.append(key, entry.payload[key]);
+            });
+            const response = await fetch(entry.url, {
+                method: 'POST',
+                body: body,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin'
+            });
+
+            const data = await response.json().catch(function () { return {}; });
+            if (!response.ok || !data.ok) {
+                const err = new Error(data.message || 'Unable to save heat');
+                err.httpStatus = response.status;
+                throw err;
+            }
+            return data;
+        }
+
+        async function syncPending() {
+            if (!navigator.onLine) {
+                setStatus('<i class="bi bi-wifi-off"></i> Offline: pending scores remain safely saved on this device.', 'alert-warning');
+                return false;
+            }
+
+            const queue = readQueue();
+            if (!queue.length) {
+                setStatus('<i class="bi bi-cloud-check"></i> No pending scores to sync.', 'alert-success');
+                return true;
+            }
+
+            let synced = 0;
+            for (let i = 0; i < queue.length; i += 1) {
+                const entry = queue[i];
+                try {
+                    await postEntry(entry);
+                    removeEntry(entry);
+                    synced += 1;
+                } catch (err) {
+                    if (err.httpStatus === 409) {
+                        setStatus('<i class="bi bi-exclamation-circle"></i> A queued heat is out of date. Open that heat and save again.', 'alert-danger');
+                        return false;
+                    }
+                    setStatus('<i class="bi bi-cloud-slash"></i> Connection interrupted. Remaining scores stay queued on this device.', 'alert-warning');
+                    return false;
+                }
+            }
+
+            if (synced > 0) {
+                setStatus('<i class="bi bi-cloud-check"></i> Synced ' + synced + ' pending heat(s).', 'alert-success');
+            }
+            return true;
+        }
+
+        function refreshStatusBanner() {
+            const queue = readQueue();
+            const pendingForThisHeat = queue.some(function (item) {
+                return item.heat_id === heatId && item.url === postUrl;
+            });
+            if (pendingForThisHeat) {
+                setStatus('<i class="bi bi-cloud-slash"></i> This heat is queued locally and will sync automatically when online.', 'alert-warning');
+                return;
+            }
+            if (queue.length > 0) {
+                setStatus('<i class="bi bi-info-circle"></i> ' + queue.length + ' heat(s) are pending sync from this device.', 'alert-info');
+                return;
+            }
+            clearStatus();
+        }
+
+        const inputs = document.querySelectorAll('input[type="number"]');
+        for (let i = 0; i < inputs.length; i += 1) {
+            if (!inputs[i].value) {
+                inputs[i].focus();
+                break;
+            }
+        }
+
         inputs.forEach(function (input, index) {
             input.addEventListener('keypress', function (e) {
                 if (e.key === 'Enter') {
@@ -163,17 +348,14 @@
             });
         });
 
-        // Mark All Complete
         document.getElementById('markAllCompleteBtn').addEventListener('click', function () {
             document.querySelectorAll('#heatEntryForm select').forEach(function (sel) {
                 sel.value = 'completed';
             });
         });
 
-        // Tablet mode toggle (persisted in localStorage)
-        var form = document.getElementById('heatEntryForm');
-        var tabletBtn = document.getElementById('tabletModeBtn');
-        var tabletKey = 'heat_entry_tablet_mode';
+        const tabletBtn = document.getElementById('tabletModeBtn');
+        const tabletKey = 'heat_entry_tablet_mode';
 
         function setTabletMode(on) {
             if (on) {
@@ -194,6 +376,59 @@
         tabletBtn.addEventListener('click', function () {
             setTabletMode(!form.classList.contains('tablet-mode'));
         });
+
+        syncBtn.addEventListener('click', async function () {
+            setSavingState(true);
+            try {
+                await syncPending();
+            } finally {
+                setSavingState(false);
+            }
+        });
+
+        form.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const entry = {
+                url: postUrl,
+                event_id: eventId,
+                heat_id: heatId,
+                scoring_order: scoringOrder,
+                requires_dual_runs: requiresDualRuns,
+                run_number: runNumber,
+                competitor_names: competitorNames,
+                queued_at: new Date().toISOString(),
+                payload: buildSnapshot()
+            };
+
+            setSavingState(true);
+            try {
+                const response = await postEntry(entry);
+                removeEntry(entry);
+                window.location.href = response.redirect_url || redirectUrl;
+            } catch (err) {
+                if (err.httpStatus === 409) {
+                    setStatus('<i class="bi bi-exclamation-circle"></i> This heat changed elsewhere. Reload and save again.', 'alert-danger');
+                } else {
+                    upsertEntry(entry);
+                    setStatus('<i class="bi bi-cloud-slash"></i> Connection issue. Scores were saved locally and will sync when online.', 'alert-warning');
+                }
+            } finally {
+                setSavingState(false);
+            }
+        });
+
+        window.addEventListener('online', function () {
+            refreshNetworkStatus();
+            syncPending();
+        });
+        window.addEventListener('offline', refreshNetworkStatus);
+
+        refreshNetworkStatus();
+        prefillFromQueue();
+        refreshStatusBanner();
+        if (navigator.onLine) {
+            syncPending();
+        }
     });
 </script>
 {% endblock %}

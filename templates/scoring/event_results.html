@@ -51,9 +51,19 @@
                             <i class="bi bi-cash"></i> Configure Payouts
                         </a>
                     {% endif %}
+                    {% if event.scoring_type == 'bracket' %}
+                        <a href="{{ url_for('scoring.birling_bracket', tournament_id=tournament.id, event_id=event.id) }}"
+                           class="btn btn-outline-info">
+                            <i class="bi bi-diagram-3"></i> Bracket View
+                        </a>
+                    {% endif %}
                     <a href="{{ url_for('reporting.event_results_print', tournament_id=tournament.id, event_id=event.id) }}"
                        class="btn btn-outline-secondary" target="_blank">
                         <i class="bi bi-printer"></i> Print
+                    </a>
+                    <a href="{{ url_for('scoring.offline_ops', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-info">
+                        <i class="bi bi-wifi-off"></i> Offline Ops
                     </a>
                 </div>
             </div>
@@ -125,6 +135,15 @@
                     </span>
                 </div>
                 <div class="card-body">
+                    <div id="offlinePlacingsCard" class="alert alert-warning d-none mb-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <strong><i class="bi bi-wifi-off"></i> Provisional Placings (Device Local)</strong>
+                            <span id="offlinePendingCount" class="badge bg-warning text-dark">0 pending heats</span>
+                        </div>
+                        <div class="small mt-1 mb-2">These rankings include locally queued heat scores from this device that have not synced yet.</div>
+                        <div id="offlinePlacingsBody" class="small"></div>
+                    </div>
+
                     {% if results %}
                     <div class="table-responsive">
                         <table class="table table-hover">
@@ -150,7 +169,7 @@
                                     <th>Status</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody id="resultsTableBody">
                                 {% for r in results %}
                                 <tr>
                                     <td>
@@ -185,6 +204,10 @@
                                                     {{ "%.1f"|format(r.result_value) }} ft
                                                 {% else %}
                                                     {{ r.result_value }}
+                                                {% endif %}
+                                                {% if r.is_flagged %}
+                                                <span class="badge bg-warning text-dark ms-1"
+                                                      title="Score is an outlier (>2σ from event mean)">⚠</span>
                                                 {% endif %}
                                             {% else %}
                                                 -
@@ -236,4 +259,131 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const QUEUE_KEY = 'proam_heat_score_queue_v1';
+    const currentEventId = {{ event.id }};
+    const scoringOrder = "{{ event.scoring_order }}";
+    const requiresDualRuns = {{ 'true' if event.requires_dual_runs else 'false' }};
+    const offlineCard = document.getElementById('offlinePlacingsCard');
+    const offlineBody = document.getElementById('offlinePlacingsBody');
+    const pendingBadge = document.getElementById('offlinePendingCount');
+
+    function readQueue() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (err) {
+            return [];
+        }
+    }
+
+    const seededResults = [
+        {% for r in results %}
+        {
+            competitor_id: {{ r.competitor_id }},
+            competitor_name: {{ r.competitor_name|tojson }},
+            status: {{ r.status|tojson }},
+            result_value: {{ 'null' if r.result_value is none else r.result_value }},
+            run1_value: {{ 'null' if r.run1_value is none else r.run1_value }},
+            run2_value: {{ 'null' if r.run2_value is none else r.run2_value }},
+            best_run: {{ 'null' if r.best_run is none else r.best_run }}
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+    ];
+
+    function applyQueuedHeat(resultMap, queuedHeat) {
+        const names = queuedHeat.competitor_names || {};
+        const payload = queuedHeat.payload || {};
+        const runNumber = Number(queuedHeat.run_number || 1);
+
+        Object.keys(payload).forEach(function (key) {
+            if (!key.startsWith('result_')) return;
+            const competitorId = Number(key.replace('result_', ''));
+            const value = payload[key];
+            if (value === null || value === undefined || value === '') return;
+
+            const parsed = Number(value);
+            if (Number.isNaN(parsed)) return;
+
+            if (!resultMap[competitorId]) {
+                resultMap[competitorId] = {
+                    competitor_id: competitorId,
+                    competitor_name: names[String(competitorId)] || ('Competitor #' + competitorId),
+                    status: 'completed',
+                    result_value: null,
+                    run1_value: null,
+                    run2_value: null,
+                    best_run: null
+                };
+            }
+
+            const row = resultMap[competitorId];
+            row.status = payload['status_' + competitorId] || 'completed';
+
+            if (requiresDualRuns) {
+                if (runNumber === 1) row.run1_value = parsed;
+                else row.run2_value = parsed;
+
+                const runValues = [];
+                if (row.run1_value !== null) runValues.push(Number(row.run1_value));
+                if (row.run2_value !== null) runValues.push(Number(row.run2_value));
+                if (runValues.length) {
+                    row.best_run = scoringOrder === 'lowest_wins' ? Math.min.apply(null, runValues) : Math.max.apply(null, runValues);
+                    row.result_value = row.best_run;
+                }
+            } else {
+                row.result_value = parsed;
+            }
+        });
+    }
+
+    function renderOfflinePlacings() {
+        const queue = readQueue().filter(function (entry) {
+            return Number(entry.event_id) === currentEventId;
+        });
+
+        if (!queue.length) {
+            offlineCard.classList.add('d-none');
+            return;
+        }
+
+        const map = {};
+        seededResults.forEach(function (result) {
+            map[result.competitor_id] = Object.assign({}, result);
+        });
+        queue.forEach(function (entry) {
+            applyQueuedHeat(map, entry);
+        });
+
+        const ranking = Object.values(map).filter(function (row) {
+            return row.status === 'completed' && row.result_value !== null;
+        });
+
+        ranking.sort(function (a, b) {
+            const av = Number(a.result_value);
+            const bv = Number(b.result_value);
+            return scoringOrder === 'lowest_wins' ? av - bv : bv - av;
+        });
+
+        const lines = ranking.slice(0, 12).map(function (row, index) {
+            const label = (index + 1) + '. ' + row.competitor_name + ' - ' + Number(row.result_value).toFixed(2);
+            return '<div>' + label + '</div>';
+        });
+
+        offlineBody.innerHTML = lines.length ? lines.join('') : '<div>No complete provisional results yet.</div>';
+        pendingBadge.textContent = queue.length + ' pending heat(s)';
+        offlineCard.classList.remove('d-none');
+    }
+
+    window.addEventListener('storage', function (event) {
+        if (event.key === QUEUE_KEY) renderOfflinePlacings();
+    });
+
+    renderOfflinePlacings();
+});
+</script>
 {% endblock %}

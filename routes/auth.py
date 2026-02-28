@@ -8,6 +8,7 @@ from database import db
 from models import Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.user import User
+from models.audit_log import AuditLog
 from services.audit import log_action
 
 auth_bp = Blueprint('auth', __name__)
@@ -298,3 +299,75 @@ def _load_competitor(tournament_id: int, competitor_type: str, competitor_id: in
             tournament_id=tournament_id
         ).first()
     return None
+
+
+# ---------------------------------------------------------------------------
+# #9 — Audit log viewer
+# ---------------------------------------------------------------------------
+
+@auth_bp.route('/audit')
+@login_required
+def audit_log():
+    """View audit log entries (admin only)."""
+    if not current_user.is_admin:
+        abort(403)
+
+    action_filter = request.args.get('action', '').strip()
+    entity_type_filter = request.args.get('entity_type', '').strip()
+    user_id_filter = request.args.get('user_id', '').strip()
+    from_filter = request.args.get('from', '').strip()
+    to_filter = request.args.get('to', '').strip()
+    page = max(1, int(request.args.get('page', 1) or 1))
+    per_page = 50
+
+    query = AuditLog.query.order_by(AuditLog.created_at.desc())
+
+    if action_filter:
+        query = query.filter(AuditLog.action.ilike(f'%{action_filter}%'))
+    if entity_type_filter:
+        query = query.filter(AuditLog.entity_type == entity_type_filter)
+    if user_id_filter:
+        try:
+            query = query.filter(AuditLog.actor_user_id == int(user_id_filter))
+        except ValueError:
+            pass
+    if from_filter:
+        try:
+            from datetime import datetime
+            query = query.filter(AuditLog.created_at >= datetime.fromisoformat(from_filter))
+        except ValueError:
+            pass
+    if to_filter:
+        try:
+            from datetime import datetime
+            query = query.filter(AuditLog.created_at <= datetime.fromisoformat(to_filter))
+        except ValueError:
+            pass
+
+    total = query.count()
+    entries = query.offset((page - 1) * per_page).limit(per_page).all()
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    # Distinct actions and entity types for filter dropdowns
+    distinct_actions = [
+        r[0] for r in db.session.query(AuditLog.action).distinct().order_by(AuditLog.action).all()
+    ]
+    distinct_entity_types = [
+        r[0] for r in db.session.query(AuditLog.entity_type).distinct().order_by(AuditLog.entity_type).all()
+        if r[0]
+    ]
+
+    return render_template(
+        'auth/audit_log.html',
+        entries=entries,
+        page=page,
+        total_pages=total_pages,
+        total=total,
+        action_filter=action_filter,
+        entity_type_filter=entity_type_filter,
+        user_id_filter=user_id_filter,
+        from_filter=from_filter,
+        to_filter=to_filter,
+        distinct_actions=distinct_actions,
+        distinct_entity_types=distinct_entity_types,
+    )

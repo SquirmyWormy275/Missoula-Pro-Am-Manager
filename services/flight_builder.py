@@ -101,6 +101,8 @@ def _optimize_heat_order(all_heats: list) -> list:
 
     # Track when each competitor was last scheduled (heat index in ordered list)
     competitor_last_heat = {}
+    # Track last position at which each stand_type was used (for stand conflict enforcement)
+    stand_type_last_position: dict[str, int] = {}
 
     while remaining:
         best_heat = None
@@ -112,7 +114,8 @@ def _optimize_heat_order(all_heats: list) -> list:
                 heat_data['competitors'],
                 competitor_last_heat,
                 len(ordered),
-                heat_data['event']
+                heat_data['event'],
+                stand_type_last_position,
             )
 
             if score > best_score:
@@ -124,35 +127,56 @@ def _optimize_heat_order(all_heats: list) -> list:
         if best_heat:
             ordered.append(best_heat)
 
-            # Update competitor tracking
+            # Update competitor and stand type tracking
             current_position = len(ordered) - 1
             for comp_id in best_heat['competitors']:
                 competitor_last_heat[comp_id] = current_position
+            stand_type = getattr(best_heat['event'], 'stand_type', None)
+            if stand_type:
+                stand_type_last_position[stand_type] = current_position
 
             remaining.pop(best_index)
 
     return ordered
 
 
+_CONFLICTING_STANDS: dict[str, str] = {
+    'standing_block': 'cookie_stack',
+    'cookie_stack': 'standing_block',
+}
+# Minimum gap between conflicting stand types (approximately one flight)
+_STAND_CONFLICT_GAP = 8
+
+
 def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
-                          current_position: int, event: Event) -> float:
+                          current_position: int, event: Event,
+                          stand_type_last_position: dict | None = None) -> float:
     """
     Calculate a score for placing a heat at the current position.
 
     Higher score = better placement. Score is based on:
     - Minimum spacing for all competitors (must be >= MIN_HEAT_SPACING or first appearance)
     - Average spacing across all competitors
-    - Event variety bonus (prefer different events than recent heats)
+    - Stand conflict enforcement (cookie_stack / standing_block mutual exclusion)
 
     Args:
         competitors: Set of competitor IDs in this heat
         competitor_last_heat: Dict of competitor_id -> last heat index
         current_position: Current position in the ordered list
         event: The event this heat belongs to
+        stand_type_last_position: Dict of stand_type -> last position (for conflict checks)
 
     Returns:
         Score (higher is better), or -1 if invalid placement
     """
+    # Enforce stand type conflict: cookie_stack and standing_block share physical stands
+    stand_type = getattr(event, 'stand_type', None)
+    if stand_type and stand_type in _CONFLICTING_STANDS and stand_type_last_position is not None:
+        conflict_type = _CONFLICTING_STANDS[stand_type]
+        last_conflict = stand_type_last_position.get(conflict_type)
+        if last_conflict is not None and (current_position - last_conflict) < _STAND_CONFLICT_GAP:
+            return -1.0
+
     if not competitors:
         return 100.0  # Empty heats can go anywhere
 

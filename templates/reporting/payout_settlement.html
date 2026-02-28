@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Payout Settlement — {{ tournament.name }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0"><i class="bi bi-cash-coin"></i> Pro Payout Settlement</h4>
+        <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}" class="btn btn-outline-secondary btn-sm">Back to Pro Dashboard</a>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-4">
+            <div class="card text-center border-primary shadow-sm">
+                <div class="card-body py-2">
+                    <div class="fs-4 fw-bold text-primary">${{ "%.2f"|format(total_owed) }}</div>
+                    <div class="small text-muted">Total Owed</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center border-success shadow-sm">
+                <div class="card-body py-2">
+                    <div class="fs-4 fw-bold text-success">${{ "%.2f"|format(total_settled) }}</div>
+                    <div class="small text-muted">Settled</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center border-danger shadow-sm">
+                <div class="card-body py-2">
+                    <div class="fs-4 fw-bold text-danger">${{ "%.2f"|format(total_outstanding) }}</div>
+                    <div class="small text-muted">Outstanding</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if competitors %}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th>Competitor</th>
+                    <th>Gender</th>
+                    <th class="text-end">Earnings</th>
+                    <th class="text-center">Settled?</th>
+                    <th class="text-center">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for c in competitors %}
+            <tr class="{% if c.payout_settled %}table-success{% endif %}">
+                <td>{{ c.name }}</td>
+                <td>{{ c.gender }}</td>
+                <td class="text-end fw-semibold">${{ "%.2f"|format(c.total_earnings) }}</td>
+                <td class="text-center">
+                    {% if c.payout_settled %}
+                    <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> Paid</span>
+                    {% else %}
+                    <span class="badge bg-warning text-dark">Pending</span>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    <form method="POST" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="competitor_id" value="{{ c.id }}">
+                        <button type="submit" class="btn btn-sm {% if c.payout_settled %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+                            {% if c.payout_settled %}Unmark{% else %}Mark Paid{% endif %}
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-info">No pro competitors with earnings found. Finalize events first.</div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -35,32 +35,54 @@ Missoula-Pro-Am-Manager/
 │   ├── team.py            # Team model (college)
 │   ├── competitor.py      # CollegeCompetitor & ProCompetitor models
 │   ├── event.py           # Event & EventResult models
-│   └── heat.py            # Heat & Flight models
+│   ├── heat.py            # Heat & Flight models
+│   ├── user.py            # User — 7-role auth model
+│   ├── audit_log.py       # AuditLog — immutable audit trail
+│   └── school_captain.py  # SchoolCaptain — one PIN account per school per tournament
 ├── routes/                # Flask blueprints
 │   ├── main.py            # Dashboard & navigation
-│   ├── registration.py    # Competitor/team registration
-│   ├── scheduling.py      # Heat & flight generation
-│   ├── scoring.py         # Result entry & calculation
-│   ├── reporting.py       # Standings & reports
+│   ├── registration.py    # Competitor/team registration; headshot upload
+│   ├── scheduling.py      # Heat & flight generation; heat swap; heat sheets print; Friday feature
+│   ├── scoring.py         # Result entry & calculation; outlier flagging
+│   ├── reporting.py       # Standings, reports, payout settlement, cloud backup
 │   ├── proam_relay.py     # Pro-Am Relay lottery system
 │   ├── partnered_axe.py   # Partnered Axe Throw prelims/finals
-│   └── validation.py      # Data validation endpoints
+│   ├── validation.py      # Data validation endpoints
+│   ├── import_routes.py   # Pro entry xlsx importer (parse → review → confirm)
+│   ├── auth.py            # Login, logout, bootstrap, user management, audit log viewer
+│   ├── portal.py          # Spectator, competitor, school captain portals; user guide
+│   └── api.py             # Public read-only REST API (/api/public)
 ├── services/              # Business logic
 │   ├── excel_io.py        # Excel import/export
 │   ├── heat_generator.py  # Heat generation algorithm
-│   ├── flight_builder.py  # Flight scheduling with competitor spacing
-│   ├── birling_bracket.py # Double-elimination bracket generator
+│   ├── flight_builder.py  # Flight scheduling with competitor spacing & stand conflict enforcement
+│   ├── birling_bracket.py # Double-elimination bracket generator (fully functional)
 │   ├── point_calculator.py# Point calculation utilities
 │   ├── proam_relay.py     # Pro-Am Relay team building
-│   └── partnered_axe.py   # Axe throw scoring logic
+│   ├── partnered_axe.py   # Axe throw scoring logic
+│   ├── pro_entry_importer.py  # Google Forms xlsx import with duplicate detection
+│   ├── audit.py           # log_action() helper
+│   ├── background_jobs.py # Thread-pool executor for async Excel export
+│   ├── report_cache.py    # In-memory TTL cache for report payloads
+│   ├── upload_security.py # Magic-byte validation, UUID filenames, scan hook
+│   ├── logging_setup.py   # JSON structured logging; optional Sentry SDK
+│   ├── sms_notify.py      # Twilio SMS; graceful no-op if not configured
+│   └── backup.py          # S3 or local SQLite backup
+├── static/                # Static assets
+│   ├── js/onboarding.js   # First-time onboarding modal engine
+│   ├── sw.js              # Service worker (offline cache + Background Sync)
+│   └── offline_queue.js   # Offline queue UI (banner + manual replay)
 └── templates/             # Jinja2 HTML templates
-    ├── base.html          # Base layout
+    ├── base.html          # Base layout (includes onboarding.js, Help nav button)
     ├── dashboard.html     # Main dashboard
+    ├── role_entry.html    # Landing: Judge / Competitor / Spectator
+    ├── auth/              # login, bootstrap, users, audit_log
+    ├── portal/            # spectator, competitor, school_captain, user_guide
     ├── college/           # College competition templates
-    ├── pro/               # Pro competition templates
+    ├── pro/               # Pro competition templates (+ import flow)
     ├── scoring/           # Score entry templates
-    ├── scheduling/        # Heat/flight management templates
-    ├── reports/           # Report templates (screen & print)
+    ├── scheduling/        # Heat/flight management; heat sheets print; friday feature
+    ├── reports/           # Report templates (screen & print); payout settlement
     ├── proam_relay/       # Pro-Am Relay templates
     └── partnered_axe/     # Partnered Axe templates
 ```
@@ -439,11 +461,14 @@ The database file is created at `instance/proam.db` for SQLite (dev) or the URL 
 
 ### Technical Debt
 
-1. **RBAC coverage** - Authentication exists, but new roles should be regression-tested route by route.
-2. **Input Validation** - Continue hardening server-side validation and rejection messaging.
-3. **Error Handling** - Expand recovery UX for failed background jobs and restore flows.
-4. **Testing** - Add unit and integration tests for optimistic locking and transaction rollback.
-5. **API expansion** - Public read endpoints exist; authenticated write endpoints are future work.
+1. **Input Validation** - Continue hardening server-side validation and rejection messaging.
+2. **Error Handling** - Expand recovery UX for failed background jobs and restore flows.
+3. **Testing** - Add unit and integration tests for optimistic locking and transaction rollback (none exist).
+4. **API expansion** - Public GET endpoints exist; authenticated write endpoints are future work.
+5. **Friday Night Feature** - Route and config UI exist; heat generation and flight integration do not.
+6. **Saturday overflow integration** - Priority flagging exists; pro flight integration does not.
+7. **Pro event fee configuration UI** - No route/template for setting per-event fee amounts.
+8. **Auto-partner assignment** - No logic to auto-match unpartnered pro competitors.
 
 ### Performance Optimization
 
@@ -495,6 +520,36 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-02-28 (V1.4.0)
+- Added school captain portal: one PIN-protected account per school covers all teams; `models/school_captain.py`, migration `f3a4b5c6d7e8`
+- Added school captain dashboard: 4-tab Bootstrap UI (overview, teams/members, schedule, Bull & Belle); browser PDF export via `@media print`
+- Added school captain claim/access flow: school name search → PIN creation/verification → session auth
+- Updated `templates/portal/competitor_access.html` to surface school captain login alongside pro competitor lookup
+- Added in-app user guide (`/portal/guide`): 6-role guide with sticky sidebar and mobile nav pills
+- Added `static/js/onboarding.js`: `ProAmOnboarding.show/reopen` engine; localStorage-tracked first-time modal; Bootstrap 5 multi-step with dots, skip, and "Got it!"
+- Added first-time onboarding popups to spectator dashboard, pro competitor dashboard, and school captain dashboard
+- Added Help `?` nav button to `base.html` linking to user guide
+
+### 2026-02-27 (V1.3.0)
+- Fixed `CollegeCompetitor.closed_event_count` to compare against `COLLEGE_CLOSED_EVENTS` names (#20)
+- Added heat sync check (GET JSON) + sync fix (POST reconcile) in scheduling.py; modal + JS in heats.html (#19)
+- Added heat sheets print page (`/scheduling/<tid>/heat-sheets` + `heat_sheets_print.html`) (#7)
+- Added Saturday priority route (`POST /scheduling/<tid>/college/saturday-priority`) (#15)
+- Added audit log viewer (`/auth/audit`, admin-only, paginated, filterable) + `audit_log.html` (#9)
+- Added payout settlement checklist (`/reporting/<tid>/pro/payout-settlement`) + `payout_settlement.html`; migration `d1e2f3a4b5c6` adds `payout_settled BOOLEAN` to pro_competitors (#21)
+- Added score outlier flagging `_flag_score_outliers()` in scoring.py; ⚠ badge in event_results.html; migration adds `is_flagged BOOLEAN` to event_results (#8)
+- Added birling bracket route + `birling_bracket.html` (flex bracket tree); completed `_advance_winner`, `_drop_to_losers`, `_advance_loser_winner` advance logic (#13)
+- Added kiosk TV display (`/portal/kiosk/<tid>`): standalone HTML, 4-panel 15s rotation (#12)
+- Added tournament clone route (`POST /tournament/<tid>/clone`) — copies teams, competitors, events (no heats/results) (#10)
+- Added difflib duplicate detection (cutoff 0.85) and `existing_names` param to `compute_review_flags()` in pro_entry_importer.py (#18)
+- Expanded `_EVENT_MAP` in pro_entry_importer.py with 15+ aliases (#6)
+- Added `standings_poll` endpoint in api.py; live 30s polling JS in spectator_college.html (#11)
+- Added headshot upload routes in registration.py; magic-byte JPEG/PNG/WebP validation; migration `e2f3a4b5c6d7` adds `headshot_filename` + `phone_opted_in` to both competitor tables (#14)
+- Added `services/sms_notify.py` (conditional Twilio, graceful no-op); `start_flight`/`complete_flight` routes; SMS opt-in toggle in portal.py; Start/Complete buttons in flights.html (#2)
+- Added `static/sw.js` (service worker: cache + IDB queue + Background Sync); `static/offline_queue.js` (banner, manual replay); registered in base.html; `/sw.js` route in app.py (#24)
+- Added `services/backup.py` (S3 via boto3 + local fallback); cloud backup route in reporting.py; Cloud Backup button in tournament_detail.html (#25)
+- Added `_CONFLICTING_STANDS` + `_STAND_CONFLICT_GAP` constants to flight_builder.py; enforces Cookie Stack / Standing Block mutual exclusion
 
 ### 2026-02-27 (V1.2.0)
 - Added Flask-Login authentication: User model (admin/judge/competitor/spectator), login/logout, bootstrap, user management UI

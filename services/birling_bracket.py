@@ -256,18 +256,96 @@ class BirlingBracket:
         return None
 
     def _advance_winner(self, match: dict):
-        """Advance winner to next winners bracket round."""
-        # Find next round match and slot winner in
-        pass  # Implementation depends on bracket structure
+        """Advance winner to next winners bracket round or to grand finals."""
+        match_id = match['match_id']  # e.g. 'W1_1'
+        rest = match_id[1:]
+        try:
+            r, m = (int(x) for x in rest.split('_'))
+        except (ValueError, AttributeError):
+            return
+
+        winner_id = match['winner']
+        winners = self.bracket_data['bracket']['winners']
+
+        # Next round is at index r (0-indexed W{r+1})
+        if r >= len(winners):
+            # Final winners round — champion goes to grand finals slot 1
+            self.bracket_data['bracket']['finals']['competitor1'] = winner_id
+            return
+
+        next_round = winners[r]
+        next_match_idx = (m - 1) // 2
+        if next_match_idx >= len(next_round):
+            next_match_idx = len(next_round) - 1
+        target = next_round[next_match_idx]
+
+        # Odd-numbered match → competitor1; even → competitor2
+        if m % 2 == 1:
+            target['competitor1'] = winner_id
+        else:
+            target['competitor2'] = winner_id
 
     def _drop_to_losers(self, match: dict):
-        """Drop loser to losers bracket."""
-        # Find appropriate losers bracket match
-        pass  # Implementation depends on bracket structure
+        """Drop winners bracket loser to the appropriate losers bracket round."""
+        match_id = match['match_id']  # e.g. 'W1_1'
+        rest = match_id[1:]
+        try:
+            r, m = (int(x) for x in rest.split('_'))
+        except (ValueError, AttributeError):
+            return
+
+        loser_id = match['loser']
+        losers = self.bracket_data['bracket']['losers']
+
+        # W{r} losers drop to losers round at index r-1
+        target_round_idx = r - 1
+        if not losers or target_round_idx >= len(losers):
+            self._record_elimination(loser_id)
+            return
+
+        target_round = losers[target_round_idx]
+        if not target_round:
+            self._record_elimination(loser_id)
+            return
+
+        target_match_idx = (m - 1) // 2
+        if target_match_idx >= len(target_round):
+            target_match_idx = len(target_round) - 1
+        target = target_round[target_match_idx]
+
+        if target['competitor1'] is None:
+            target['competitor1'] = loser_id
+        elif target['competitor2'] is None:
+            target['competitor2'] = loser_id
 
     def _advance_loser_winner(self, match: dict):
-        """Advance winner in losers bracket."""
-        pass  # Implementation depends on bracket structure
+        """Advance losers bracket winner to the next losers round or to grand finals."""
+        match_id = match['match_id']  # e.g. 'L1_1'
+        rest = match_id[1:]
+        try:
+            r, m = (int(x) for x in rest.split('_'))
+        except (ValueError, AttributeError):
+            return
+
+        winner_id = match['winner']
+        losers = self.bracket_data['bracket']['losers']
+
+        # Next losers round is at index r (0-indexed L{r+1})
+        if r >= len(losers):
+            # Final losers round — winner goes to grand finals slot 2
+            self.bracket_data['bracket']['finals']['competitor2'] = winner_id
+            return
+
+        next_round = losers[r]
+        next_match_idx = (m - 1) // 2
+        if next_match_idx >= len(next_round):
+            next_match_idx = len(next_round) - 1
+        target = next_round[next_match_idx]
+
+        if target['competitor1'] is None:
+            target['competitor1'] = winner_id
+        elif target['competitor2'] is None:
+            target['competitor2'] = winner_id
 
     def _record_elimination(self, competitor_id: int):
         """Record a competitor's elimination and final placement."""

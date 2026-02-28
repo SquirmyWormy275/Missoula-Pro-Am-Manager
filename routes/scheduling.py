@@ -5,7 +5,7 @@ import re
 import json
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort
 from database import db
-from models import Tournament, Event, Heat, Flight
+from models import Tournament, Event, Heat, HeatAssignment, Flight
 from models.competitor import CollegeCompetitor, ProCompetitor
 import config
 import strings as text
@@ -764,3 +764,361 @@ def build_flights(tournament_id):
     return render_template('pro/build_flights.html',
                            tournament=tournament,
                            events=pro_events)
+
+
+# ---------------------------------------------------------------------------
+# Friday Night Feature scheduling
+# ---------------------------------------------------------------------------
+
+def _fnf_config_path(tournament_id: int) -> str:
+    """Return path to the per-tournament Friday Night Feature JSON config."""
+    import os
+    instance_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'instance')
+    os.makedirs(instance_dir, exist_ok=True)
+    return os.path.join(instance_dir, f'friday_feature_{tournament_id}.json')
+
+
+def _load_fnf_config(tournament_id: int) -> dict:
+    """Load persisted Friday Night Feature selections for a tournament."""
+    import os
+    path = _fnf_config_path(tournament_id)
+    if not os.path.exists(path):
+        return {'event_ids': [], 'notes': ''}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {'event_ids': [], 'notes': ''}
+
+
+def _save_fnf_config(tournament_id: int, data: dict) -> None:
+    """Persist Friday Night Feature selections."""
+    path = _fnf_config_path(tournament_id)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+
+
+@scheduling_bp.route('/<int:tournament_id>/friday-night', methods=['GET', 'POST'])
+def friday_feature(tournament_id):
+    """Configure and view Friday Night Feature events."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    # Eligible events: pro events whose name matches FRIDAY_NIGHT_EVENTS candidates
+    eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
+    pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
+    eligible_events = [e for e in pro_events if e.name in eligible_names]
+
+    fnf_config = _load_fnf_config(tournament_id)
+
+    if request.method == 'POST':
+        selected_ids = [int(x) for x in request.form.getlist('event_ids') if x.isdigit()]
+        notes = (request.form.get('notes') or '').strip()
+
+        # Update tournament Friday Night Feature date if provided
+        date_str = (request.form.get('friday_feature_date') or '').strip()
+        if date_str:
+            from datetime import date as date_type
+            try:
+                yr, mo, dy = (int(p) for p in date_str.split('-'))
+                tournament.friday_feature_date = date_type(yr, mo, dy)
+                db.session.commit()
+            except (TypeError, ValueError):
+                flash('Invalid date format. Use YYYY-MM-DD.', 'error')
+
+        _save_fnf_config(tournament_id, {'event_ids': selected_ids, 'notes': notes})
+        log_action('friday_feature_configured', 'tournament', tournament_id, {
+            'event_count': len(selected_ids),
+        })
+        db.session.commit()
+        flash('Friday Night Feature schedule saved.', 'success')
+        return redirect(url_for('scheduling.friday_feature', tournament_id=tournament_id))
+
+    return render_template(
+        'scheduling/friday_feature.html',
+        tournament=tournament,
+        eligible_events=eligible_events,
+        selected_ids=set(fnf_config.get('event_ids', [])),
+        notes=fnf_config.get('notes', ''),
+    )
+
+
+# ---------------------------------------------------------------------------
+# #19 — HeatAssignment sync check / fix
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/heats/sync-check')
+def heat_sync_check(tournament_id, event_id):
+    """Return JSON showing mismatches between Heat.competitors JSON and HeatAssignment rows."""
+    event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id:
+        abort(404)
+
+    mismatches = []
+    for heat in event.heats.order_by(Heat.heat_number, Heat.run_number).all():
+        json_ids = set(heat.get_competitors())
+        table_ids = set(
+            a.competitor_id
+            for a in HeatAssignment.query.filter_by(heat_id=heat.id).all()
+        )
+        if json_ids != table_ids:
+            mismatches.append({
+                'heat_id': heat.id,
+                'heat_number': heat.heat_number,
+                'run_number': heat.run_number,
+                'json_only': sorted(json_ids - table_ids),
+                'table_only': sorted(table_ids - json_ids),
+            })
+
+    from flask import jsonify
+    return jsonify({'event_id': event_id, 'mismatches': mismatches, 'ok': len(mismatches) == 0})
+
+
+@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/heats/sync-fix', methods=['POST'])
+def heat_sync_fix(tournament_id, event_id):
+    """Reconcile HeatAssignment rows to match authoritative Heat.competitors JSON."""
+    event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id:
+        abort(404)
+
+    fixed = 0
+    for heat in event.heats.all():
+        json_ids = heat.get_competitors()
+        HeatAssignment.query.filter_by(heat_id=heat.id).delete()
+        comp_type = event.event_type  # 'pro' or 'college'
+        assignments = heat.get_stand_assignments()
+        for comp_id in json_ids:
+            ha = HeatAssignment(
+                heat_id=heat.id,
+                competitor_id=comp_id,
+                competitor_type=comp_type,
+                stand_number=assignments.get(str(comp_id)),
+            )
+            db.session.add(ha)
+        fixed += 1
+
+    db.session.commit()
+    log_action('heat_assignments_synced', 'event', event_id, {'heats_fixed': fixed})
+    flash(f'HeatAssignment table synced for {fixed} heats.', 'success')
+    return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+
+# ---------------------------------------------------------------------------
+# #7 — Heat sheet print page
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/heat-sheets')
+def heat_sheets(tournament_id):
+    """Print-ready heat sheets for all flights and events."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    # Build ordered heat data: flights first, then ungrouped events
+    flights = Flight.query.filter_by(tournament_id=tournament_id).order_by(Flight.flight_number).all()
+
+    flight_data = []
+    for flight in flights:
+        heats_in_flight = flight.heats.order_by(Heat.id).all()
+        heat_rows = []
+        for heat in heats_in_flight:
+            comp_ids = heat.get_competitors()
+            assignments = heat.get_stand_assignments()
+            event = Event.query.get(heat.event_id)
+            if not event:
+                continue
+            if event.event_type == 'college':
+                from models.competitor import CollegeCompetitor
+                comps = {c.id: c for c in CollegeCompetitor.query.filter(
+                    CollegeCompetitor.id.in_(comp_ids)).all()} if comp_ids else {}
+            else:
+                from models.competitor import ProCompetitor
+                comps = {c.id: c for c in ProCompetitor.query.filter(
+                    ProCompetitor.id.in_(comp_ids)).all()} if comp_ids else {}
+            heat_rows.append({
+                'heat': heat,
+                'event': event,
+                'competitors': [
+                    {'name': comps[cid].name if cid in comps else f'ID:{cid}',
+                     'stand': assignments.get(str(cid), '?')}
+                    for cid in comp_ids
+                ],
+            })
+        if heat_rows:
+            flight_data.append({'flight': flight, 'heats': heat_rows})
+
+    # Also gather heats with no flight (college events, standalone)
+    no_flight_heats = []
+    for event in tournament.events.order_by(Event.event_type, Event.name).all():
+        event_heats = event.heats.filter_by(flight_id=None).order_by(
+            Heat.heat_number, Heat.run_number).all()
+        if not event_heats:
+            continue
+        heat_rows = []
+        for heat in event_heats:
+            comp_ids = heat.get_competitors()
+            assignments = heat.get_stand_assignments()
+            if event.event_type == 'college':
+                from models.competitor import CollegeCompetitor
+                comps = {c.id: c for c in CollegeCompetitor.query.filter(
+                    CollegeCompetitor.id.in_(comp_ids)).all()} if comp_ids else {}
+            else:
+                from models.competitor import ProCompetitor
+                comps = {c.id: c for c in ProCompetitor.query.filter(
+                    ProCompetitor.id.in_(comp_ids)).all()} if comp_ids else {}
+            heat_rows.append({
+                'heat': heat,
+                'event': event,
+                'competitors': [
+                    {'name': comps[cid].name if cid in comps else f'ID:{cid}',
+                     'stand': assignments.get(str(cid), '?')}
+                    for cid in comp_ids
+                ],
+            })
+        no_flight_heats.append({'event': event, 'heats': heat_rows})
+
+    return render_template(
+        'scheduling/heat_sheets_print.html',
+        tournament=tournament,
+        flight_data=flight_data,
+        no_flight_heats=no_flight_heats,
+    )
+
+
+# ---------------------------------------------------------------------------
+# #15 — College Saturday priority ordering
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/college/saturday-priority', methods=['POST'])
+def apply_saturday_priority(tournament_id):
+    """Re-number college event heats so COLLEGE_SATURDAY_PRIORITY_DEFAULT events run first."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    # Load override file if present, else use default
+    import os as _os
+    order_path = _os.path.join('instance', f'saturday_priority_{tournament_id}.json')
+    if _os.path.exists(order_path):
+        try:
+            with open(order_path) as f:
+                priority_tuples = [tuple(pair) for pair in json.load(f)]
+        except Exception:
+            priority_tuples = list(config.COLLEGE_SATURDAY_PRIORITY_DEFAULT)
+    else:
+        priority_tuples = list(config.COLLEGE_SATURDAY_PRIORITY_DEFAULT)
+
+    reordered = 0
+    for event_name, gender in priority_tuples:
+        matching = tournament.events.filter_by(
+            event_type='college',
+            name=event_name,
+            gender=gender,
+        ).all()
+        for event in matching:
+            # Assign heat_number starting from 1 in existing order
+            heats = event.heats.order_by(Heat.heat_number, Heat.run_number).all()
+            for i, heat in enumerate(heats, start=1):
+                heat.heat_number = i
+            reordered += len(heats)
+
+    db.session.commit()
+    log_action('saturday_priority_applied', 'tournament', tournament_id, {
+        'priority_count': len(priority_tuples),
+    })
+    flash(f'Saturday priority applied to {reordered} heats across {len(priority_tuples)} event(s).', 'success')
+    return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+
+
+# ---------------------------------------------------------------------------
+# #2 — Flight start + SMS notification trigger
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/flights/<int:flight_id>/start', methods=['POST'])
+def start_flight(tournament_id, flight_id):
+    """Mark a flight as in_progress and send SMS to competitors in upcoming flights."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    flight = Flight.query.filter_by(id=flight_id, tournament_id=tournament_id).first_or_404()
+
+    if flight.status == 'in_progress':
+        flash(f'Flight {flight.flight_number} is already in progress.', 'warning')
+        return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
+
+    flight.status = 'in_progress'
+
+    # Notify competitors in flights SMS_NOTIFY_FLIGHTS_AHEAD ahead
+    _send_upcoming_heat_sms(tournament_id, flight.flight_number)
+
+    log_action('flight_started', 'flight', flight_id, {
+        'tournament_id': tournament_id,
+        'flight_number': flight.flight_number,
+    })
+    db.session.commit()
+    flash(f'Flight {flight.flight_number} marked as in progress.', 'success')
+    return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
+
+
+@scheduling_bp.route('/<int:tournament_id>/flights/<int:flight_id>/complete', methods=['POST'])
+def complete_flight(tournament_id, flight_id):
+    """Mark a flight as completed."""
+    flight = Flight.query.filter_by(id=flight_id, tournament_id=tournament_id).first_or_404()
+    flight.status = 'completed'
+    log_action('flight_completed', 'flight', flight_id, {'tournament_id': tournament_id})
+    db.session.commit()
+    flash(f'Flight {flight.flight_number} marked as completed.', 'success')
+    return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
+
+
+def _send_upcoming_heat_sms(tournament_id: int, current_flight_number: int) -> None:
+    """Notify opted-in competitors whose flight is SMS_NOTIFY_FLIGHTS_AHEAD ahead."""
+    from flask import current_app
+    from services.sms_notify import send_sms, is_configured
+    from services.background_jobs import submit as submit_job
+
+    if not is_configured():
+        return
+
+    notify_ahead = current_app.config.get('SMS_NOTIFY_FLIGHTS_AHEAD', 3)
+    target_flight_number = current_flight_number + notify_ahead
+
+    target_flight = Flight.query.filter_by(
+        tournament_id=tournament_id,
+        flight_number=target_flight_number,
+    ).first()
+    if not target_flight:
+        return
+
+    competitor_ids_in_flight = set()
+    competitor_type_map: dict[int, str] = {}
+    for heat in target_flight.heats.all():
+        event = Event.query.get(heat.event_id)
+        if not event:
+            continue
+        for cid in heat.get_competitors():
+            competitor_ids_in_flight.add(int(cid))
+            competitor_type_map[int(cid)] = event.event_type
+
+    pro_ids = [cid for cid, t in competitor_type_map.items() if t == 'pro']
+    col_ids = [cid for cid, t in competitor_type_map.items() if t == 'college']
+
+    sms_targets: list[tuple[str, str]] = []  # (phone, name)
+
+    if pro_ids:
+        pros = ProCompetitor.query.filter(
+            ProCompetitor.id.in_(pro_ids),
+            ProCompetitor.phone_opted_in == True,  # noqa: E712
+        ).all()
+        for comp in pros:
+            if comp.phone:
+                sms_targets.append((comp.phone, comp.name))
+
+    if col_ids:
+        colleges = CollegeCompetitor.query.filter(
+            CollegeCompetitor.id.in_(col_ids),
+            CollegeCompetitor.phone_opted_in == True,  # noqa: E712
+        ).all()
+        for comp in colleges:
+            # CollegeCompetitor has no phone column — skip silently
+            pass
+
+    msg = (
+        f'Heads up! Flight {target_flight_number} at the Missoula Pro-Am is '
+        f'{notify_ahead} flights away. Get ready for your events!'
+    )
+    for phone, name in sms_targets:
+        submit_job(f'sms:{name}', send_sms, phone, msg)

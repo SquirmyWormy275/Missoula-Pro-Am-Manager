@@ -1,0 +1,543 @@
+{% extends "base.html" %}
+{% block title %}User Guide — {{ COMPETITION.app_title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Guide layout ──────────────────────────────────────────────── */
+.guide-sidebar {
+    position: sticky;
+    top: 80px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+}
+.guide-sidebar .nav-link {
+    color: var(--sx-text-2);
+    border-radius: 8px;
+    padding: .4rem .85rem;
+    font-size: .85rem;
+}
+.guide-sidebar .nav-link:hover,
+.guide-sidebar .nav-link.active {
+    background: var(--sx-surface-2);
+    color: var(--sx-text);
+}
+.guide-sidebar .nav-link .bi { width: 1.2em; }
+
+/* ── Role badge headers ─────────────────────────────────────────── */
+.role-header {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+    margin-bottom: 1rem;
+    padding-bottom: .6rem;
+    border-bottom: 2px solid var(--sx-border-bright);
+}
+.role-icon {
+    font-size: 1.6rem;
+    color: var(--sx-fire);
+    line-height: 1;
+}
+.role-title { font-size: 1.25rem; font-weight: 700; margin: 0; }
+.role-subtitle { font-size: .82rem; color: var(--sx-text-2); margin: 0; }
+
+/* ── Step list ─────────────────────────────────────────────────── */
+.step-list { list-style: none; padding: 0; margin: 0; }
+.step-list li {
+    display: flex;
+    gap: .75rem;
+    margin-bottom: 1rem;
+    align-items: flex-start;
+}
+.step-num {
+    flex-shrink: 0;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--sx-fire);
+    color: #fff;
+    font-size: .75rem;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    margin-top: 2px;
+}
+.step-body strong { display: block; margin-bottom: 2px; font-size: .9rem; }
+.step-body p { margin: 0; font-size: .85rem; color: var(--sx-text-2); line-height: 1.55; }
+
+/* ── Feature cards ─────────────────────────────────────────────── */
+.feat-card {
+    background: var(--sx-surface-2);
+    border: 1px solid var(--sx-border);
+    border-radius: 10px;
+    padding: .85rem 1rem;
+    margin-bottom: .6rem;
+}
+.feat-card .bi { color: var(--sx-fire); margin-right: .4rem; }
+.feat-card strong { font-size: .88rem; }
+.feat-card p { margin: .2rem 0 0; font-size: .82rem; color: var(--sx-text-2); }
+
+/* ── Tip callout ────────────────────────────────────────────────── */
+.tip-box {
+    background: rgba(232,144,18,.1);
+    border-left: 3px solid var(--sx-amber);
+    border-radius: 0 8px 8px 0;
+    padding: .65rem 1rem;
+    margin-top: .8rem;
+    font-size: .83rem;
+    color: var(--sx-text-2);
+}
+.tip-box .bi { color: var(--sx-amber); }
+
+/* ── Section anchor spacing ─────────────────────────────────────── */
+.guide-section { scroll-margin-top: 90px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4" style="max-width:1140px;">
+
+    <div class="mb-4">
+        <h2 class="mb-1"><i class="bi bi-book me-2" style="color:var(--sx-fire);"></i>User Guide</h2>
+        <p class="text-muted mb-0">Everything you need to know, organized by your role. Use the sidebar to jump to your section.</p>
+    </div>
+
+    <div class="row g-4">
+
+        {# ── Sidebar navigation ─────────────────────────────────── #}
+        <div class="col-lg-3 d-none d-lg-block">
+            <div class="guide-sidebar">
+                <div class="small text-muted mb-2 px-2" style="text-transform:uppercase;letter-spacing:.08em;font-size:.7rem;">Jump to role</div>
+                <nav class="nav flex-column gap-1">
+                    <a class="nav-link" href="#judge"><i class="bi bi-shield-check"></i> Judge / Admin</a>
+                    <a class="nav-link" href="#scorer"><i class="bi bi-pencil-square"></i> Scorer</a>
+                    <a class="nav-link" href="#registrar"><i class="bi bi-clipboard-check"></i> Registrar</a>
+                    <a class="nav-link" href="#spectator"><i class="bi bi-broadcast"></i> Spectator</a>
+                    <a class="nav-link" href="#pro"><i class="bi bi-trophy"></i> Pro Competitor</a>
+                    <a class="nav-link" href="#captain"><i class="bi bi-mortarboard"></i> School Captain</a>
+                </nav>
+                <hr style="border-color:var(--sx-border);">
+                <div class="px-2">
+                    <small class="text-muted">Need more help? Contact a tournament judge at the registration table.</small>
+                </div>
+            </div>
+        </div>
+
+        {# ── Mobile role picker ─────────────────────────────────── #}
+        <div class="col-12 d-lg-none">
+            <div class="d-flex flex-wrap gap-2">
+                <a href="#judge"    class="btn btn-sm btn-outline-secondary"><i class="bi bi-shield-check me-1"></i>Judge</a>
+                <a href="#scorer"   class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil-square me-1"></i>Scorer</a>
+                <a href="#registrar"class="btn btn-sm btn-outline-secondary"><i class="bi bi-clipboard-check me-1"></i>Registrar</a>
+                <a href="#spectator"class="btn btn-sm btn-outline-secondary"><i class="bi bi-broadcast me-1"></i>Spectator</a>
+                <a href="#pro"      class="btn btn-sm btn-outline-secondary"><i class="bi bi-trophy me-1"></i>Pro</a>
+                <a href="#captain"  class="btn btn-sm btn-outline-secondary"><i class="bi bi-mortarboard me-1"></i>Captain</a>
+            </div>
+        </div>
+
+        {# ── Main guide content ─────────────────────────────────── #}
+        <div class="col-lg-9">
+
+            {# ═══════════════════════════════════════════ JUDGE ══ #}
+            <section id="judge" class="guide-section mb-5">
+                <div class="role-header">
+                    <div class="role-icon"><i class="bi bi-shield-check"></i></div>
+                    <div>
+                        <div class="role-title">Judge &amp; Admin</div>
+                        <div class="role-subtitle">Full system access — setup, registration, scheduling, scoring, and reporting</div>
+                    </div>
+                </div>
+
+                <h6 class="text-muted mb-2" style="text-transform:uppercase;font-size:.72rem;letter-spacing:.1em;">Tournament Setup</h6>
+                <ul class="step-list mb-3">
+                    <li>
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>Create a tournament</strong>
+                            <p>From the home page, click <em>New Tournament</em>. Enter the name, year, and optionally set college and pro dates. The tournament starts in <em>Setup</em> status.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>Activate College or Pro day</strong>
+                            <p>From the Tournament detail page, click <em>Activate College Day</em> or <em>Activate Pro Day</em> when the respective competition begins. This unlocks the relevant scoring and results pages.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <strong>Clone a previous tournament</strong>
+                            <p>Use the <em>Clone Tournament</em> action to copy teams, competitors, and events from a prior year — heats and results are not carried over.</p>
+                        </div>
+                    </li>
+                </ul>
+
+                <h6 class="text-muted mb-2" style="text-transform:uppercase;font-size:.72rem;letter-spacing:.1em;">College Registration</h6>
+                <ul class="step-list mb-3">
+                    <li>
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>Upload team roster</strong>
+                            <p>Go to <em>College → Registration</em> and upload the Excel roster. Each row becomes a competitor linked to the team code in the file (e.g., UM-A, CSU-B).</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>Verify team validity</strong>
+                            <p>Each team needs at least 2 men and 2 women (max 8 total) to be marked valid. View team details to add or scratch individual competitors.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <strong>Manage event enrollment</strong>
+                            <p>Open a competitor's detail page to update which events they're entered in, set gear-sharing partners, and track closed-event limits (max 6 per competitor).</p>
+                        </div>
+                    </li>
+                </ul>
+
+                <h6 class="text-muted mb-2" style="text-transform:uppercase;font-size:.72rem;letter-spacing:.1em;">Pro Registration</h6>
+                <ul class="step-list mb-3">
+                    <li>
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>Import from Google Forms</strong>
+                            <p>Download the Google Forms response spreadsheet as .xlsx and upload it via <em>Pro → Import Entries</em>. The importer parses names, events, fees, and contact info automatically.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>Review flagged entries</strong>
+                            <p>After import, a review screen flags potential duplicates (using name similarity matching) and missing data. Approve, skip, or edit each flagged entry before confirming.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <strong>Edit competitor details</strong>
+                            <p>Open any pro competitor to update events, fees, paid status, gear-sharing, and springboard hand preference.</p>
+                        </div>
+                    </li>
+                </ul>
+
+                <h6 class="text-muted mb-2" style="text-transform:uppercase;font-size:.72rem;letter-spacing:.1em;">Scheduling</h6>
+                <ul class="step-list mb-3">
+                    <li>
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>Configure events</strong>
+                            <p>Go to <em>Events</em> and set up each event's scoring type, stand type, number of runs, and payout structure. Partner events need a gender pairing requirement.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>Generate heats</strong>
+                            <p>Select an event and click <em>Generate Heats</em>. The system assigns competitors to stands, balancing school mixing for college events. Adjust heat sizes and stand counts as needed.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <strong>Build and manage flights</strong>
+                            <p>Flights group heats across events that run at the same time. Use the <em>Build Flights</em> tool to auto-generate flights, then adjust manually. Use heat swap to reorder within a flight.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">4</div>
+                        <div class="step-body">
+                            <strong>Friday Night Feature</strong>
+                            <p>Configure the Friday evening showcase event under <em>Scheduling → Friday Night Feature</em>. Select the event, set the date, and add any display notes.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">5</div>
+                        <div class="step-body">
+                            <strong>Print heat sheets</strong>
+                            <p>Go to <em>Scheduling → Heat Sheets</em> to get a printer-friendly layout of all heats. Use your browser's print dialog to print or save as PDF.</p>
+                        </div>
+                    </li>
+                </ul>
+
+                <h6 class="text-muted mb-2" style="text-transform:uppercase;font-size:.72rem;letter-spacing:.1em;">Reporting &amp; Administration</h6>
+                <div class="row g-2 mb-3">
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-bar-chart-fill"></i><strong>Payout Settlement</strong>
+                        <p>Mark pro competitors as paid out via the Payout Settlement checklist. Track outstanding balances per competitor.</p></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-cloud-arrow-up"></i><strong>Cloud Backup</strong>
+                        <p>Back up tournament data to S3 (or local folder) from the Tournament detail page. Set <code>BACKUP_S3_BUCKET</code> in your environment for cloud storage.</p></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-list-check"></i><strong>Audit Log</strong>
+                        <p>View a paginated, filterable log of all system actions under <em>Auth → Audit Log</em> (admin only).</p></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-people-fill"></i><strong>User Management</strong>
+                        <p>Create and manage accounts for scorers, registrars, spectators, and competitors from the Users page. Reset passwords as needed.</p></div>
+                    </div>
+                </div>
+            </section>
+
+            <hr style="border-color:var(--sx-border); margin: 2.5rem 0;">
+
+            {# ═══════════════════════════════════════════ SCORER ══ #}
+            <section id="scorer" class="guide-section mb-5">
+                <div class="role-header">
+                    <div class="role-icon"><i class="bi bi-pencil-square"></i></div>
+                    <div>
+                        <div class="role-title">Scorer</div>
+                        <div class="role-subtitle">Enter and finalize results for assigned events</div>
+                    </div>
+                </div>
+
+                <ul class="step-list">
+                    <li>
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>Access the scoring screen</strong>
+                            <p>Log in, then navigate to an event from the Events list and click <em>Score Event</em>. You'll see each heat with its competitors and stands.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>Enter results by heat</strong>
+                            <p>For each competitor in a heat, enter the result value (time, distance, score, or hit count). For dual-run events (Chokerman, Obstacle, Pole Climb), enter Run 1 and Run 2 separately — the best run is calculated automatically.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <strong>Finalize the event</strong>
+                            <p>When all heats are complete, click <em>Finalize Event</em>. Final positions and points are calculated and the event is marked complete. Flagged outlier scores are highlighted with a ⚠ badge for review before finalizing.</p>
+                        </div>
+                    </li>
+                </ul>
+
+                <div class="tip-box"><i class="bi bi-lightbulb-fill me-1"></i>
+                    If the app is offline (e.g., poor field connectivity), scores entered will queue locally and sync automatically once the connection is restored.
+                </div>
+            </section>
+
+            <hr style="border-color:var(--sx-border); margin: 2.5rem 0;">
+
+            {# ═══════════════════════════════════════ REGISTRAR ══ #}
+            <section id="registrar" class="guide-section mb-5">
+                <div class="role-header">
+                    <div class="role-icon"><i class="bi bi-clipboard-check"></i></div>
+                    <div>
+                        <div class="role-title">Registrar</div>
+                        <div class="role-subtitle">Manage competitor registrations for college and pro divisions</div>
+                    </div>
+                </div>
+
+                <ul class="step-list">
+                    <li>
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>College teams — upload or edit</strong>
+                            <p>Upload an Excel roster from <em>College → Registration</em>. To edit a specific team, click the team row and use the detail page to add members, update event selections, or scratch a competitor.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>Pro competitors — import &amp; edit</strong>
+                            <p>Import entries from the Google Forms export via <em>Pro → Import Entries</em>. To edit an existing pro competitor, find them in the Pro Competitors list and open their detail page.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <strong>Headshot uploads</strong>
+                            <p>Upload a headshot (JPEG, PNG, or WebP) from a competitor's detail page. Headshots are validated for correct file type and stored securely.</p>
+                        </div>
+                    </li>
+                </ul>
+            </section>
+
+            <hr style="border-color:var(--sx-border); margin: 2.5rem 0;">
+
+            {# ══════════════════════════════════════ SPECTATOR ══ #}
+            <section id="spectator" class="guide-section mb-5">
+                <div class="role-header">
+                    <div class="role-icon"><i class="bi bi-broadcast"></i></div>
+                    <div>
+                        <div class="role-title">Spectator</div>
+                        <div class="role-subtitle">Live standings, results, and event leaderboards — no login required</div>
+                    </div>
+                </div>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-table"></i><strong>Team Standings</strong>
+                        <p>See all college teams ranked by total points, updated live as events are finalized.</p></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-award-fill"></i><strong>Bull &amp; Belle of the Woods</strong>
+                        <p>Top individual male and female competitors ranked by personal points across all college events.</p></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-list-ol"></i><strong>Event Results</strong>
+                        <p>Click any completed event to see full results, sortable by ranking or by heat/run order.</p></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-arrow-repeat"></i><strong>Pro-Am Relay</strong>
+                        <p>View the Pro-Am relay team pairings and results from the Spectator portal's relay tab.</p></div>
+                    </div>
+                </div>
+
+                <div class="tip-box"><i class="bi bi-wifi me-1"></i>
+                    College standings refresh automatically every 30 seconds. You don't need to reload the page to see the latest results.
+                </div>
+
+                <ul class="step-list mt-3">
+                    <li>
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>Getting started</strong>
+                            <p>From the main page, click <em>Open Spectator Portal</em>. Choose <em>College Results</em> or <em>Pro Results</em> depending on which day's competition you want to follow.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>Kiosk / TV mode</strong>
+                            <p>For display on a large screen, ask a judge to enable kiosk mode. It shows a rotating 4-panel view of standings, results, and active heats, refreshing every 15 seconds.</p>
+                        </div>
+                    </li>
+                </ul>
+            </section>
+
+            <hr style="border-color:var(--sx-border); margin: 2.5rem 0;">
+
+            {# ══════════════════════════════════ PRO COMPETITOR ══ #}
+            <section id="pro" class="guide-section mb-5">
+                <div class="role-header">
+                    <div class="role-icon"><i class="bi bi-trophy"></i></div>
+                    <div>
+                        <div class="role-title">Pro Competitor</div>
+                        <div class="role-subtitle">Your personal dashboard — schedule, results, and payout</div>
+                    </div>
+                </div>
+
+                <ul class="step-list">
+                    <li>
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>Find your profile</strong>
+                            <p>From the main page, click <em>Competitor</em>, then enter your full name in the search box. Select the correct result if multiple names match.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>Create your PIN</strong>
+                            <p>The first time you access your profile, you'll be asked to set a 4–8 digit PIN. This PIN protects your page — only someone with the PIN can view your results. Keep it private or share it only with your team.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <strong>Read your schedule</strong>
+                            <p>The schedule table lists every event you're entered in, with heat number, run number, stand assignment, and flight. Check back as new flights are posted throughout the day.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">4</div>
+                        <div class="step-body">
+                            <strong>Track your results</strong>
+                            <p>Results appear as events are scored. Each row shows your placement, recorded score, and payout amount. The total payout is summed at the bottom.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">5</div>
+                        <div class="step-body">
+                            <strong>SMS flight notifications</strong>
+                            <p>If you provided a phone number during registration, toggle SMS notifications on your dashboard to receive a text message before each of your flights starts.</p>
+                        </div>
+                    </li>
+                </ul>
+
+                <div class="tip-box"><i class="bi bi-lock-fill me-1"></i>
+                    Forgot your PIN? A judge can reset it from the competitor management screen.
+                </div>
+            </section>
+
+            <hr style="border-color:var(--sx-border); margin: 2.5rem 0;">
+
+            {# ══════════════════════════════════ SCHOOL CAPTAIN ══ #}
+            <section id="captain" class="guide-section mb-5">
+                <div class="role-header">
+                    <div class="role-icon"><i class="bi bi-mortarboard"></i></div>
+                    <div>
+                        <div class="role-title">School Captain (College)</div>
+                        <div class="role-subtitle">One account covers all of your school's teams — results, schedule, standings, and PDF export</div>
+                    </div>
+                </div>
+
+                <ul class="step-list">
+                    <li>
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>Create your captain account</strong>
+                            <p>From the main page, click <em>Competitor → School Captain Login</em>. Type your school name (e.g., "University of Montana") and select it from the results. You'll be prompted to create a 4–8 digit PIN on your first visit.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>One account, all teams</strong>
+                            <p>Your account automatically includes every team registered under your school name — UM-A, UM-B, UM-C, and so on. You don't need a separate login per team.</p>
+                        </div>
+                    </li>
+                </ul>
+
+                <h6 class="text-muted mb-2 mt-3" style="text-transform:uppercase;font-size:.72rem;letter-spacing:.1em;">Dashboard Tabs</h6>
+                <div class="row g-2 mb-3">
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-grid-1x2"></i><strong>Overview</strong>
+                        <p>Event results grouped by event (auto-expanded for completed events) and the full tournament team standings, with your teams highlighted in amber.</p></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-people-fill"></i><strong>Teams &amp; Members</strong>
+                        <p>Click any member row to expand their full event-by-event score breakdown, including placements, result values, and points awarded.</p></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-calendar3"></i><strong>Schedule</strong>
+                        <p>A single table of every heat, flight, and stand assignment across all your school's members and teams.</p></div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="feat-card"><i class="bi bi-award-fill"></i><strong>Bull &amp; Belle of the Woods</strong>
+                        <p>Tournament-wide individual standings with your school's athletes highlighted, so you can track where your competitors rank overall.</p></div>
+                    </div>
+                </div>
+
+                <ul class="step-list">
+                    <li>
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <strong>Export to PDF</strong>
+                            <p>At any point, click <em>Save to PDF / Print</em> in the top-right corner. Your browser's print dialog will open — choose <em>Save as PDF</em> to download a formatted record of all results, standings, and scores. All panels expand automatically in the printed version.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div class="step-num">4</div>
+                        <div class="step-body">
+                            <strong>Returning to your dashboard</strong>
+                            <p>Your session stays active for the duration of your browser session. If you close the browser and return, you'll be prompted for your PIN again. Share the PIN only with your designated school captain.</p>
+                        </div>
+                    </li>
+                </ul>
+
+                <div class="tip-box"><i class="bi bi-lightbulb-fill me-1"></i>
+                    Bookmark the school captain login page for quick access throughout the weekend. The dashboard updates in real time — just reload to see the latest results.
+                </div>
+            </section>
+
+        </div>{# /col-lg-9 #}
+    </div>{# /row #}
+</div>
+{% endblock %}

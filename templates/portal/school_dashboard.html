@@ -1,0 +1,549 @@
+{% extends "base.html" %}
+{% block title %}{{ school_name }} — Captain Dashboard — {{ COMPETITION.app_title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Print / PDF styles ────────────────────────────────────────── */
+@media print {
+    .no-print { display: none !important; }
+    .nav-tabs  { display: none !important; }
+    .tab-pane  { display: block !important; opacity: 1 !important; }
+    .accordion-collapse { display: block !important; }
+    .collapse  { display: block !important; }
+    .print-break { page-break-before: always; }
+    body { font-size: 11pt; }
+    .card { border: 1px solid #ccc !important; box-shadow: none !important; }
+    .badge-school { background-color: #333 !important; color: #fff !important; }
+}
+
+/* ── Member row expand cursor ──────────────────────────────────── */
+.member-toggle-row { cursor: pointer; }
+.member-toggle-row:hover td { background-color: #f8f9fa; }
+
+/* ── School highlight in standings / Bull-Belle ────────────────── */
+.row-school-highlight { background-color: #fff3cd; font-weight: 600; }
+.badge-school {
+    background-color: #0d6efd;
+    color: #fff;
+    font-size: .7em;
+    padding: 2px 5px;
+    border-radius: 4px;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+
+    {# ── Page header ──────────────────────────────────────────────── #}
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <div>
+            <h3 class="mb-0">
+                <i class="bi bi-mortarboard me-2"></i>{{ school_name }}
+            </h3>
+            <small class="text-muted">
+                {{ tournament.name }} {{ tournament.year }} &mdash;
+                Teams:
+                {% for team in school_teams %}
+                <span class="badge bg-secondary">{{ team.team_code }}</span>
+                {% endfor %}
+            </small>
+        </div>
+        <div class="d-flex gap-2 no-print">
+            <button onclick="window.print()" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-printer me-1"></i>Save to PDF / Print
+            </button>
+            <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
+               href="{{ url_for('portal.school_dashboard', tournament_id=tournament.id, school_name=school_name, view='desktop' if mobile_view else 'mobile') }}">
+                {{ 'Desktop' if mobile_view else 'Mobile' }} View
+            </a>
+        </div>
+    </div>
+
+    {# ── Nav tabs ─────────────────────────────────────────────────── #}
+    <ul class="nav nav-tabs mb-3 no-print" id="captainTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button">
+                <i class="bi bi-grid-1x2 me-1"></i>Overview
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-teams" type="button">
+                <i class="bi bi-people me-1"></i>Teams &amp; Members
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-schedule" type="button">
+                <i class="bi bi-calendar3 me-1"></i>Schedule
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-awards" type="button">
+                <i class="bi bi-trophy me-1"></i>Bull &amp; Belle
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content">
+
+        {# ══════════════════════════════════════════════════════════ #}
+        {# TAB 1 — OVERVIEW                                          #}
+        {# ══════════════════════════════════════════════════════════ #}
+        <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
+
+            {# School summary row #}
+            <div class="row g-3 mb-4">
+                {% for td in teams_data %}
+                <div class="col-sm-6 col-lg-4">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header card-header-proam py-2">
+                            <strong>{{ td.team.team_code }}</strong>
+                            <span class="float-end">{{ td.team.total_points }} pts</span>
+                        </div>
+                        <div class="card-body py-2 small">
+                            <div>Members: {{ td.members|length }}</div>
+                            <div>
+                                Men: {{ td.team.male_count }} &nbsp;|&nbsp;
+                                Women: {{ td.team.female_count }}
+                            </div>
+                            {% if td.team.is_valid %}
+                            <span class="badge bg-success">Valid</span>
+                            {% else %}
+                            <span class="badge bg-warning text-dark">Incomplete</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            {# ── Event results accordion ──────────────────────────── #}
+            <h5 class="mb-2">Event Results</h5>
+            {% if school_event_data %}
+            <div class="accordion mb-4" id="eventsAccordion">
+                {% for ed in school_event_data %}
+                {% set acc_id = 'evt-' ~ ed.event.id %}
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button {% if not ed.is_completed %}collapsed{% endif %}"
+                                type="button" data-bs-toggle="collapse"
+                                data-bs-target="#{{ acc_id }}">
+                            {% if ed.is_completed %}
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            {% else %}
+                            <i class="bi bi-hourglass-split text-warning me-2"></i>
+                            {% endif %}
+                            {{ ed.event.display_name }}
+                            <span class="ms-2 badge
+                                {% if ed.event.status == 'completed' %}bg-success
+                                {% elif ed.event.status == 'in_progress' %}bg-warning text-dark
+                                {% else %}bg-secondary{% endif %}">
+                                {{ ed.event.status|replace('_', ' ')|title }}
+                            </span>
+                        </button>
+                    </h2>
+                    <div id="{{ acc_id }}" class="accordion-collapse collapse {% if ed.is_completed %}show{% endif %}">
+                        <div class="accordion-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Place</th>
+                                            <th>Competitor</th>
+                                            {% if ed.event.requires_dual_runs %}<th>Run 1</th><th>Run 2</th>{% endif %}
+                                            <th>Result</th>
+                                            <th>Points</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for r in ed.results %}
+                                        <tr>
+                                            <td>{{ r.final_position or '—' }}</td>
+                                            <td>{{ r.competitor_name }}</td>
+                                            {% if ed.event.requires_dual_runs %}
+                                            <td>{{ r.run1_value if r.run1_value is not none else '—' }}</td>
+                                            <td>{{ r.run2_value if r.run2_value is not none else '—' }}</td>
+                                            {% endif %}
+                                            <td>
+                                                {% if r.result_value is not none %}
+                                                    {{ r.result_value }}{% if r.result_unit %} {{ r.result_unit }}{% endif %}
+                                                {% else %}—{% endif %}
+                                            </td>
+                                            <td>{{ r.points_awarded or '—' }}</td>
+                                        </tr>
+                                        {% else %}
+                                        <tr><td colspan="6" class="text-muted">No results recorded yet.</td></tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted">No event results recorded for your school yet.</p>
+            {% endif %}
+
+            {# ── Tournament standings ─────────────────────────────── #}
+            <h5 class="mb-2">Overall Team Standings</h5>
+            <div class="card shadow-sm mb-4">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>#</th>
+                                <th>Team</th>
+                                <th>School</th>
+                                <th>Points</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for t in all_standings %}
+                            <tr class="{% if t.id in school_team_ids %}row-school-highlight{% endif %}">
+                                <td>{{ loop.index }}</td>
+                                <td>
+                                    {{ t.team_code }}
+                                    {% if t.id in school_team_ids %}
+                                    <span class="badge-school">Your Team</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ t.school_name }}</td>
+                                <td>{{ t.total_points }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="4" class="text-muted">No teams registered yet.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {# ══════════════════════════════════════════════════════════ #}
+        {# TAB 2 — TEAMS & MEMBERS                                   #}
+        {# ══════════════════════════════════════════════════════════ #}
+        <div class="tab-pane fade" id="tab-teams" role="tabpanel">
+            <p class="text-muted small no-print mb-3">
+                Click a member row to expand their individual score breakdown.
+            </p>
+
+            {% for td in teams_data %}
+            <div class="card shadow-sm mb-4 {% if not loop.first %}print-break{% endif %}">
+                <div class="card-header card-header-proam d-flex justify-content-between align-items-center">
+                    <span><strong>{{ td.team.team_code }}</strong> — {{ td.team.school_name }}</span>
+                    <span class="badge bg-light text-dark">{{ td.team.total_points }} pts</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width:32px;"></th>
+                                    <th>Name</th>
+                                    <th>Gender</th>
+                                    <th>Events</th>
+                                    <th>Points</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for md in td.members %}
+                                {% set member_row_id = 'member-' ~ md.competitor.id %}
+                                <tr class="member-toggle-row no-print"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#{{ member_row_id }}">
+                                    <td><i class="bi bi-chevron-down small"></i></td>
+                                    <td>{{ md.competitor.name }}</td>
+                                    <td>
+                                        {% if md.competitor.gender == 'M' %}
+                                        <span class="badge bg-primary">M</span>
+                                        {% else %}
+                                        <span class="badge bg-danger">F</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ md.results_rows|length }}</td>
+                                    <td>{{ md.competitor.individual_points }}</td>
+                                    <td>
+                                        {% if md.competitor.status == 'active' %}
+                                        <span class="badge bg-success">Active</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">Scratched</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {# Print-visible static row (always shown in print) #}
+                                <tr class="d-none d-print-table-row">
+                                    <td></td>
+                                    <td>{{ md.competitor.name }}</td>
+                                    <td>{{ md.competitor.gender }}</td>
+                                    <td>{{ md.results_rows|length }}</td>
+                                    <td>{{ md.competitor.individual_points }}</td>
+                                    <td>{{ md.competitor.status|title }}</td>
+                                </tr>
+                                {# Collapsible score detail #}
+                                <tr class="no-print">
+                                    <td colspan="6" class="p-0">
+                                        <div class="collapse" id="{{ member_row_id }}">
+                                            <div class="p-3 bg-light border-top">
+                                                <strong class="d-block mb-2">{{ md.competitor.name }} — Score Breakdown</strong>
+                                                {% if md.results_rows %}
+                                                <div class="table-responsive">
+                                                    <table class="table table-sm table-bordered bg-white mb-0">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Event</th>
+                                                                <th>Place</th>
+                                                                <th>Result</th>
+                                                                <th>Points</th>
+                                                                <th>Status</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {% for r in md.results_rows %}
+                                                            <tr>
+                                                                <td>{{ r.event_name }}</td>
+                                                                <td>{{ r.position or '—' }}</td>
+                                                                <td>
+                                                                    {% if r.result_value is not none %}
+                                                                        {{ r.result_value }}{% if r.result_unit %} {{ r.result_unit }}{% endif %}
+                                                                    {% else %}—{% endif %}
+                                                                </td>
+                                                                <td>{{ r.points_awarded or '—' }}</td>
+                                                                <td>{{ r.status|title }}</td>
+                                                            </tr>
+                                                            {% endfor %}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                {% else %}
+                                                <span class="text-muted small">No results recorded yet.</span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {# Print-always score detail #}
+                                {% if md.results_rows %}
+                                <tr class="d-none d-print-table-row">
+                                    <td colspan="6" style="padding-left: 2em;">
+                                        <em>Results:</em>
+                                        {% for r in md.results_rows %}
+                                        {{ r.event_name }}: place {{ r.position or '—' }},
+                                        {{ r.result_value if r.result_value is not none else '—' }}{% if r.result_unit %} {{ r.result_unit }}{% endif %},
+                                        {{ r.points_awarded or 0 }} pts{% if not loop.last %}; {% endif %}
+                                        {% endfor %}
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% else %}
+                                <tr><td colspan="6" class="text-muted">No active members.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {# ══════════════════════════════════════════════════════════ #}
+        {# TAB 3 — SCHEDULE                                          #}
+        {# ══════════════════════════════════════════════════════════ #}
+        <div class="tab-pane fade" id="tab-schedule" role="tabpanel">
+            <div class="card shadow-sm">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0">Full Schedule — All {{ school_name }} Members</h6>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Member</th>
+                                    <th>Team</th>
+                                    <th>Event</th>
+                                    <th>Heat</th>
+                                    <th>Run</th>
+                                    <th>Stand</th>
+                                    <th>Flight</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% set ns = namespace(found=false) %}
+                                {% for td in teams_data %}
+                                {% for md in td.members %}
+                                {% for row in md.schedule_rows %}
+                                {% set ns.found = true %}
+                                <tr>
+                                    <td>{{ md.competitor.name }}</td>
+                                    <td><span class="badge bg-secondary">{{ td.team.team_code }}</span></td>
+                                    <td>{{ row.event_name }}</td>
+                                    <td>{{ row.heat_number }}</td>
+                                    <td>{{ row.run_number or '—' }}</td>
+                                    <td>{{ row.stand_number or '—' }}</td>
+                                    <td>{{ row.flight_number or '—' }}</td>
+                                    <td>
+                                        <span class="badge
+                                            {% if row.status == 'completed' %}bg-success
+                                            {% elif row.status == 'in_progress' %}bg-warning text-dark
+                                            {% else %}bg-light text-dark border{% endif %}">
+                                            {{ row.status|replace('_', ' ')|title }}
+                                        </span>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                                {% endfor %}
+                                {% endfor %}
+                                {% if not ns.found %}
+                                <tr>
+                                    <td colspan="8" class="text-muted">No heats scheduled yet for any {{ school_name }} members.</td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# ══════════════════════════════════════════════════════════ #}
+        {# TAB 4 — BULL OF THE WOODS & BELLE OF THE WOODS           #}
+        {# ══════════════════════════════════════════════════════════ #}
+        <div class="tab-pane fade" id="tab-awards" role="tabpanel">
+            <p class="text-muted small mb-3">
+                Competitors from {{ school_name }} are highlighted.
+                Rankings reflect all competitors in the tournament.
+            </p>
+            <div class="row g-4">
+
+                {# ── Bull of the Woods ────────────────────────────── #}
+                <div class="col-md-6">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header card-header-proam">
+                            <h6 class="mb-0"><i class="bi bi-award me-1"></i>Bull of the Woods — Men's</h6>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Name</th>
+                                        <th>School</th>
+                                        <th>Points</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for c in bull %}
+                                    <tr class="{% if c.id in school_member_ids %}row-school-highlight{% endif %}">
+                                        <td>{{ loop.index }}</td>
+                                        <td>
+                                            {{ c.name }}
+                                            {% if c.id in school_member_ids %}
+                                            <span class="badge-school">Yours</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ c.team.school_abbreviation if c.team else '—' }}</td>
+                                        <td>{{ c.individual_points }}</td>
+                                    </tr>
+                                    {% else %}
+                                    <tr><td colspan="4" class="text-muted">No competitors yet.</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                {# ── Belle of the Woods ───────────────────────────── #}
+                <div class="col-md-6">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header card-header-proam">
+                            <h6 class="mb-0"><i class="bi bi-award me-1"></i>Belle of the Woods — Women's</h6>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Name</th>
+                                        <th>School</th>
+                                        <th>Points</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for c in belle %}
+                                    <tr class="{% if c.id in school_member_ids %}row-school-highlight{% endif %}">
+                                        <td>{{ loop.index }}</td>
+                                        <td>
+                                            {{ c.name }}
+                                            {% if c.id in school_member_ids %}
+                                            <span class="badge-school">Yours</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ c.team.school_abbreviation if c.team else '—' }}</td>
+                                        <td>{{ c.individual_points }}</td>
+                                    </tr>
+                                    {% else %}
+                                    <tr><td colspan="4" class="text-muted">No competitors yet.</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>{# /tab-content #}
+
+    {# ── Print footer ─────────────────────────────────────────────── #}
+    <div class="d-none d-print-block mt-4 text-muted small text-center">
+        Generated from {{ COMPETITION.app_title }} &mdash;
+        {{ tournament.name }} {{ tournament.year }} &mdash; {{ school_name }}
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var _captainSteps = [
+    {
+        icon: '<i class="bi bi-mortarboard-fill"></i>',
+        title: 'Welcome, School Captain!',
+        body: 'This dashboard gives you a complete view of every team from <strong>{{ school_name|e }}</strong> — results, schedules, standings, and individual scores, all in one place.'
+    },
+    {
+        icon: '<i class="bi bi-grid-1x2-fill"></i>',
+        title: 'Overview Tab',
+        body: 'See event results organized by event (completed events open automatically) and the full tournament team standings — your teams are highlighted in amber so they\'re easy to spot.'
+    },
+    {
+        icon: '<i class="bi bi-people-fill"></i>',
+        title: 'Teams &amp; Members Tab',
+        body: 'Each of your teams has its own section. <strong>Click any member\'s row</strong> to expand a full breakdown of their scores, placements, and points by event.'
+    },
+    {
+        icon: '<i class="bi bi-calendar3"></i>',
+        title: 'Schedule Tab',
+        body: 'A unified schedule showing every heat, flight, and stand assignment for all members across all your school\'s teams.'
+    },
+    {
+        icon: '<i class="bi bi-award-fill"></i>',
+        title: 'Bull &amp; Belle of the Woods',
+        body: 'Track where your athletes rank in the individual standings. Your school\'s competitors are highlighted so you can find them instantly.'
+    },
+    {
+        icon: '<i class="bi bi-printer-fill"></i>',
+        title: 'Save to PDF',
+        body: 'Hit <strong>Save to PDF / Print</strong> in the top-right corner at any time. All sections expand automatically in the printed version — perfect for a post-weekend keepsake. Tap <strong>?</strong> to reopen this guide anytime.'
+    }
+];
+ProAmOnboarding.show('school_captain', _captainSteps);
+</script>
+{% endblock %}

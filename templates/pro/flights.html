@@ -77,8 +77,28 @@
                         {% endfor %}
                     </ul>
                 </div>
-                <div class="card-footer text-muted text-center">
-                    <small>{{ flight.heat_count }} heats | {{ flight.event_variety }} events</small>
+                <div class="card-footer d-flex justify-content-between align-items-center">
+                    <small class="text-muted">{{ flight.heat_count }} heats | {{ flight.event_variety }} events</small>
+                    {% if flight.status == 'pending' %}
+                    <form method="post"
+                          action="{{ url_for('scheduling.start_flight', tournament_id=tournament.id, flight_id=flight.id) }}"
+                          class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-warning"
+                                onclick="return confirm('Start Flight {{ flight.flight_number }}? This will send SMS notifications to opted-in competitors in upcoming flights.')">
+                            <i class="bi bi-play-fill"></i> Start
+                        </button>
+                    </form>
+                    {% elif flight.status == 'in_progress' %}
+                    <form method="post"
+                          action="{{ url_for('scheduling.complete_flight', tournament_id=tournament.id, flight_id=flight.id) }}"
+                          class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-success">
+                            <i class="bi bi-check-lg"></i> Complete
+                        </button>
+                    </form>
+                    {% endif %}
                 </div>
             </div>
         </div>

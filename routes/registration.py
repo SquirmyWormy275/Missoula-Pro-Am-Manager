@@ -7,6 +7,7 @@ from database import db
 from models import Tournament, Team, CollegeCompetitor, ProCompetitor, Event, EventResult, Heat
 import strings as text
 from services.audit import log_action
+from services.cache_invalidation import invalidate_tournament_caches
 from services.upload_security import malware_scan, save_upload, validate_excel_upload
 
 registration_bp = Blueprint('registration', __name__)
@@ -69,6 +70,7 @@ def upload_college_entry(tournament_id):
                 'filename': validation.safe_name,
             })
             db.session.commit()
+            invalidate_tournament_caches(tournament_id)
             flash(text.FLASH['import_success'].format(teams=result["teams"], competitors=result["competitors"]), 'success')
         except Exception as e:
             db.session.rollback()
@@ -141,6 +143,7 @@ def scratch_college_competitor(tournament_id, competitor_id):
         ).update({EventResult.status: 'scratched'}, synchronize_session=False)
 
     db.session.commit()
+    invalidate_tournament_caches(tournament_id)
     flash(text.FLASH['competitor_scratched'].format(name=competitor.name), 'warning')
     return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
 
@@ -167,6 +170,7 @@ def delete_college_competitor(tournament_id, competitor_id):
 
     db.session.delete(competitor)
     db.session.commit()
+    invalidate_tournament_caches(tournament_id)
 
     flash(f'Competitor "{comp_name}" deleted.', 'warning')
     return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
@@ -196,6 +200,7 @@ def delete_college_team(tournament_id, team_id):
 
     db.session.delete(team)
     db.session.commit()
+    invalidate_tournament_caches(tournament_id)
 
     flash(f'Team "{team_code}" and {len(members)} competitor(s) deleted.', 'warning')
     return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -233,6 +238,7 @@ def new_pro_competitor(tournament_id):
 
         db.session.add(competitor)
         db.session.commit()
+        invalidate_tournament_caches(tournament_id)
 
         flash(text.FLASH['competitor_added'].format(name=competitor.name), 'success')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
@@ -249,7 +255,7 @@ def pro_competitor_detail(tournament_id, competitor_id):
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
 
-    pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
+    pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').order_by(Event.name, Event.gender).all()
     event_name_by_id = {str(event.id): event.display_name for event in pro_events}
     event_name_lookup = {}
     for event in pro_events:
@@ -274,8 +280,56 @@ def pro_competitor_detail(tournament_id, competitor_id):
     return render_template('pro/competitor_detail.html',
                            tournament=tournament,
                            competitor=competitor,
+                           pro_events=pro_events,
                            event_labels=event_labels,
                            gear_sharing_labels=gear_sharing_labels)
+
+
+@registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/update-events', methods=['POST'])
+def update_pro_events(tournament_id, competitor_id):
+    """Update pro competitor event enrollment, fees, and gear sharing."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament.id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
+
+    pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
+    selected_ids = set(request.form.getlist('event_ids'))
+    competitor.set_events_entered(list(selected_ids))
+
+    new_fees = {}
+    new_paid = {}
+    new_gear_sharing = {}
+
+    for event in pro_events:
+        eid = str(event.id)
+        fee_raw = (request.form.get(f'fee_{eid}') or '').strip()
+        try:
+            fee = float(fee_raw) if fee_raw else 0.0
+        except (TypeError, ValueError):
+            fee = 0.0
+        paid = request.form.get(f'paid_{eid}') == 'on'
+        gear = (request.form.get(f'gear_{eid}') or '').strip()
+
+        if eid in selected_ids or fee > 0:
+            new_fees[eid] = fee
+            new_paid[eid] = paid
+        if gear:
+            new_gear_sharing[eid] = gear
+
+    competitor.entry_fees = json.dumps(new_fees)
+    competitor.fees_paid = json.dumps(new_paid)
+    competitor.gear_sharing = json.dumps(new_gear_sharing)
+
+    log_action('pro_events_updated', 'pro_competitor', competitor.id, {
+        'tournament_id': tournament_id,
+        'events': list(selected_ids),
+    })
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    flash(f'Events updated for {competitor.name}.', 'success')
+    return redirect(url_for('registration.pro_competitor_detail', tournament_id=tournament_id, competitor_id=competitor_id))
 
 
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/scratch', methods=['POST'])
@@ -287,6 +341,7 @@ def scratch_pro_competitor(tournament_id, competitor_id):
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
     competitor.status = 'scratched'
     db.session.commit()
+    invalidate_tournament_caches(tournament_id)
 
     flash(text.FLASH['competitor_scratched'].format(name=competitor.name), 'warning')
     return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
@@ -309,3 +364,85 @@ def _remove_college_competitor_from_unfinished_heats(competitor_id: int, tournam
             if str(competitor_id) in assignments:
                 del assignments[str(competitor_id)]
                 heat.stand_assignments = json.dumps(assignments)
+
+
+# ---------------------------------------------------------------------------
+# #14 — Competitor headshot upload
+# ---------------------------------------------------------------------------
+
+_ALLOWED_IMAGE_EXTS = {'jpg', 'jpeg', 'png', 'webp'}
+_ALLOWED_IMAGE_MAGIC = {
+    b'\xff\xd8\xff',           # JPEG
+    b'\x89PNG',                # PNG
+    b'RIFF',                   # WebP (RIFF....WEBP)
+}
+
+
+def _validate_image(file_storage) -> bool:
+    """Return True if the file has an allowed extension and image magic bytes."""
+    name = file_storage.filename or ''
+    if '.' not in name:
+        return False
+    ext = name.rsplit('.', 1)[1].lower()
+    if ext not in _ALLOWED_IMAGE_EXTS:
+        return False
+    header = file_storage.stream.read(8)
+    file_storage.stream.seek(0)
+    return any(header.startswith(magic) for magic in _ALLOWED_IMAGE_MAGIC)
+
+
+@registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/upload-headshot', methods=['POST'])
+def upload_pro_headshot(tournament_id, competitor_id):
+    """Upload a headshot image for a pro competitor."""
+    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
+
+    f = request.files.get('headshot')
+    if not f or not f.filename:
+        flash('No image file selected.', 'error')
+        return redirect(url_for('registration.pro_competitor_detail',
+                                tournament_id=tournament_id, competitor_id=competitor_id))
+
+    if not _validate_image(f):
+        flash('Invalid image. Use JPG, PNG, or WebP.', 'error')
+        return redirect(url_for('registration.pro_competitor_detail',
+                                tournament_id=tournament_id, competitor_id=competitor_id))
+
+    import uuid as _uuid
+    import os
+    ext = f.filename.rsplit('.', 1)[1].lower()
+    filename = f'headshot_{_uuid.uuid4().hex}.{ext}'
+    headshots_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], 'headshots')
+    os.makedirs(headshots_dir, exist_ok=True)
+    save_path = os.path.join(headshots_dir, filename)
+    f.save(save_path)
+
+    # Delete old headshot file if present
+    if competitor.headshot_filename:
+        old_path = os.path.join(headshots_dir, competitor.headshot_filename)
+        try:
+            os.remove(old_path)
+        except OSError:
+            pass
+
+    competitor.headshot_filename = filename
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    log_action('headshot_uploaded', 'pro_competitor', competitor_id, {'filename': filename})
+    flash(f'Headshot uploaded for {competitor.name}.', 'success')
+    return redirect(url_for('registration.pro_competitor_detail',
+                            tournament_id=tournament_id, competitor_id=competitor_id))
+
+
+@registration_bp.route('/headshots/<path:filename>')
+def serve_headshot(filename):
+    """Serve uploaded headshot images."""
+    import os
+    from flask import send_from_directory, abort as flask_abort
+    headshots_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], 'headshots')
+    # Security: disallow path traversal
+    if '..' in filename or filename.startswith('/'):
+        flask_abort(400)
+    return send_from_directory(headshots_dir, filename)

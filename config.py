@@ -20,9 +20,24 @@ class BaseConfig:
     SENTRY_DSN = os.environ.get('SENTRY_DSN', '').strip()
     JOB_MAX_WORKERS = int(os.environ.get('JOB_MAX_WORKERS', '2'))
     REPORT_CACHE_TTL_SECONDS = int(os.environ.get('REPORT_CACHE_TTL_SECONDS', '60'))
+    PUBLIC_CACHE_TTL_SECONDS = int(os.environ.get('PUBLIC_CACHE_TTL_SECONDS', '5'))
     ENABLE_UPLOAD_MALWARE_SCAN = os.environ.get('ENABLE_UPLOAD_MALWARE_SCAN', '0') == '1'
     MALWARE_SCAN_COMMAND = os.environ.get('MALWARE_SCAN_COMMAND', '').strip()
     EVENT_ORDER_CONFIG_PATH = os.environ.get('EVENT_ORDER_CONFIG_PATH', 'instance/event_order.json')
+    # S3 Cloud Backup (optional — all keys required to enable)
+    BACKUP_S3_BUCKET = os.environ.get('BACKUP_S3_BUCKET', '').strip()
+    BACKUP_S3_PREFIX = os.environ.get('BACKUP_S3_PREFIX', 'proam-backups').strip()
+    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '').strip()
+    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '').strip()
+    AWS_DEFAULT_REGION = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1').strip()
+    # Local backup directory (used as fallback when S3 is not configured)
+    LOCAL_BACKUP_DIR = os.environ.get('LOCAL_BACKUP_DIR', 'instance/backups').strip()
+    # Twilio SMS (optional — all keys required to enable)
+    TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '').strip()
+    TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '').strip()
+    TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '').strip()
+    # How many flights ahead to notify competitors (default 3)
+    SMS_NOTIFY_FLIGHTS_AHEAD = int(os.environ.get('SMS_NOTIFY_FLIGHTS_AHEAD', '3'))
 
 
 class DevelopmentConfig(BaseConfig):
@@ -183,6 +198,18 @@ MAX_CLOSED_EVENTS_PER_ATHLETE = 6
 
 # Shirt sizes
 SHIRT_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
+
+# Friday Night Feature — crowd-pleasing pro events eligible for the Friday evening showcase.
+# Selections are persisted per-tournament in instance/friday_feature_<id>.json
+FRIDAY_NIGHT_EVENTS = [
+    'Hot Saw',
+    'Birling',
+    'Pole Climb',
+    'Obstacle Pole',
+    'Springboard',
+    '3-Board Jigger',
+    'Cookie Stack',
+]
 
 # Saturday priority ordering defaults (override via EVENT_ORDER_CONFIG_PATH if needed).
 COLLEGE_SATURDAY_PRIORITY_DEFAULT = [

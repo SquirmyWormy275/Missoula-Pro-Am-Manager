@@ -48,6 +48,9 @@
                     <a href="{{ url_for('reporting.pro_payout_summary', tournament_id=tournament.id) }}" class="list-group-item list-group-item-action">
                         <i class="bi bi-cash-stack"></i> View Payouts
                     </a>
+                    <a href="{{ url_for('reporting.payout_settlement', tournament_id=tournament.id) }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-cash-coin"></i> Payout Settlement
+                    </a>
                 </div>
             </div>
 

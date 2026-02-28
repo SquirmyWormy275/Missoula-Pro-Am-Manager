@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Heat Sheets — {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block head_extra %}
+<style>
+@media print {
+    .no-print { display: none !important; }
+    .heat-card { page-break-inside: avoid; border: 1px solid #333 !important; }
+    .flight-header { page-break-before: auto; }
+    body { font-size: 11pt; }
+    .container-fluid { padding: 0; }
+}
+.heat-card {
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+}
+.heat-card .heat-title {
+    font-weight: 700;
+    font-size: 1rem;
+    border-bottom: 1px solid #dee2e6;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
+}
+.heat-card table { width: 100%; font-size: 0.9rem; }
+.heat-card td { padding: 2px 6px; }
+.flight-header {
+    background: #1a3a5c;
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 4px;
+    margin: 16px 0 8px;
+    font-weight: 700;
+}
+.section-header {
+    background: #495057;
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 4px;
+    margin: 16px 0 8px;
+    font-weight: 700;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3 no-print">
+        <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Heat Sheets</h4>
+        <div>
+            <a href="javascript:window.print()" class="btn btn-proam me-2">
+                <i class="bi bi-printer"></i> Print
+            </a>
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="btn btn-outline-secondary">
+                Back to Events
+            </a>
+        </div>
+    </div>
+
+    <div class="text-center mb-3 d-none d-print-block">
+        <h3>{{ tournament.name }} {{ tournament.year }} — Heat Sheets</h3>
+        <small>Printed {{ now.strftime('%B %d, %Y') if now else '' }}</small>
+    </div>
+
+    {% if flight_data %}
+    <h5 class="mt-3 no-print">Pro Flights</h5>
+    {% for fd in flight_data %}
+    <div class="flight-header">Flight {{ fd.flight.flight_number }}{% if fd.flight.name %} — {{ fd.flight.name }}{% endif %}</div>
+    <div class="row">
+        {% for row in fd.heats %}
+        <div class="col-md-4 col-lg-3">
+            <div class="heat-card">
+                <div class="heat-title">
+                    {{ row.event.display_name }}
+                    — Heat {{ row.heat.heat_number }}
+                    {% if row.heat.run_number > 1 %} (Run {{ row.heat.run_number }}){% endif %}
+                </div>
+                <table>
+                    <thead><tr><th>Stand</th><th>Competitor</th></tr></thead>
+                    <tbody>
+                    {% for comp in row.competitors %}
+                        <tr><td>{{ comp.stand }}</td><td>{{ comp.name }}</td></tr>
+                    {% else %}
+                        <tr><td colspan="2" class="text-muted">No competitors</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if no_flight_heats %}
+    <h5 class="mt-3 no-print">College / Unscheduled Events</h5>
+    {% for ed in no_flight_heats %}
+    <div class="section-header">{{ ed.event.display_name }}</div>
+    <div class="row">
+        {% for row in ed.heats %}
+        <div class="col-md-4 col-lg-3">
+            <div class="heat-card">
+                <div class="heat-title">
+                    Heat {{ row.heat.heat_number }}
+                    {% if row.heat.run_number > 1 %} (Run {{ row.heat.run_number }}){% endif %}
+                </div>
+                <table>
+                    <thead><tr><th>Stand</th><th>Competitor</th></tr></thead>
+                    <tbody>
+                    {% for comp in row.competitors %}
+                        <tr><td>{{ comp.stand }}</td><td>{{ comp.name }}</td></tr>
+                    {% else %}
+                        <tr><td colspan="2" class="text-muted">No competitors</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if not flight_data and not no_flight_heats %}
+    <div class="alert alert-info mt-3">No heats have been generated yet for this tournament.</div>
+    {% endif %}
+</div>
+{% endblock %}

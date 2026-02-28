@@ -6,6 +6,7 @@ from database import db
 from models import Tournament
 from models.competitor import ProCompetitor
 from services.partnered_axe import get_partnered_axe_throw
+from services.cache_invalidation import invalidate_tournament_caches
 
 bp = Blueprint('partnered_axe', __name__, url_prefix='/tournament/<int:tournament_id>/partnered-axe')
 
@@ -49,6 +50,7 @@ def register_pair(tournament_id):
 
     try:
         pair = pat.register_pair(competitor1_id, competitor2_id)
+        invalidate_tournament_caches(tournament_id)
         flash(f'Pair registered: {pair["competitor1"]["name"]} & {pair["competitor2"]["name"]}', 'success')
     except ValueError as e:
         flash(str(e), 'danger')
@@ -85,6 +87,7 @@ def record_prelim(tournament_id):
         return redirect(url_for('partnered_axe.prelims', tournament_id=tournament_id))
 
     pat.record_prelim_result(pair_id, hits)
+    invalidate_tournament_caches(tournament_id)
     flash(f'Prelim result recorded for Pair {pair_id}', 'success')
 
     return redirect(url_for('partnered_axe.prelims', tournament_id=tournament_id))
@@ -98,6 +101,7 @@ def advance_to_finals(tournament_id):
 
     try:
         finalists = pat.advance_to_finals()
+        invalidate_tournament_caches(tournament_id)
         flash(f'Top 4 pairs advanced to finals!', 'success')
     except ValueError as e:
         flash(str(e), 'danger')
@@ -133,6 +137,7 @@ def record_final(tournament_id):
         return redirect(url_for('partnered_axe.finals', tournament_id=tournament_id))
 
     pat.record_final_result(pair_id, hits)
+    invalidate_tournament_caches(tournament_id)
 
     if pat.get_stage() == 'completed':
         flash('Finals complete! Final standings are now available.', 'success')
@@ -163,6 +168,7 @@ def reset(tournament_id):
     pat = get_partnered_axe_throw(tournament_id)
 
     pat.reset()
+    invalidate_tournament_caches(tournament_id)
     flash('Partnered Axe Throw has been reset', 'warning')
 
     return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))

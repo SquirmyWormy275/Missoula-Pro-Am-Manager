@@ -28,6 +28,10 @@ class CollegeCompetitor(db.Model):
     gear_sharing = db.Column(db.Text, default='{}')  # Dict: event_id -> partner sharing gear
     portal_pin_hash = db.Column(db.String(255), nullable=True)
 
+    # Headshot and SMS (#14, #2)
+    headshot_filename = db.Column(db.Text, nullable=True)
+    phone_opted_in = db.Column(db.Boolean, default=False)
+
     # Status
     status = db.Column(db.String(20), default='active')  # active, scratched
 
@@ -90,8 +94,9 @@ class CollegeCompetitor(db.Model):
     @property
     def closed_event_count(self):
         """Return count of CLOSED events entered (max 6 allowed)."""
-        # This would need to be calculated based on actual event types
-        return len(self.get_events_entered())
+        import config
+        closed_names = {e['name'] for e in config.COLLEGE_CLOSED_EVENTS}
+        return sum(1 for e in self.get_events_entered() if e in closed_names)
 
     @property
     def has_portal_pin(self) -> bool:
@@ -141,6 +146,11 @@ class ProCompetitor(db.Model):
 
     # Earnings
     total_earnings = db.Column(db.Float, default=0.0)
+    payout_settled = db.Column(db.Boolean, default=False)  # #21 payout settlement checklist
+
+    # Headshot and SMS (#14, #2)
+    headshot_filename = db.Column(db.Text, nullable=True)
+    phone_opted_in = db.Column(db.Boolean, default=False)
 
     # Status
     status = db.Column(db.String(20), default='active')  # active, scratched

@@ -232,6 +232,11 @@
                             </a>
                         </div>
                         <div class="col-md-4">
+                            <a href="{{ url_for('scoring.offline_ops', tournament_id=tournament.id) }}" class="btn btn-outline-info w-100 mb-2">
+                                <i class="bi bi-wifi-off"></i> Offline Ops
+                            </a>
+                        </div>
+                        <div class="col-md-4">
                             <a href="{{ url_for('reporting.export_results', tournament_id=tournament.id) }}" class="btn btn-outline-success w-100 mb-2">
                                 <i class="bi bi-file-earmark-excel"></i> Export Results
                             </a>
@@ -244,11 +249,36 @@
                                 </button>
                             </form>
                         </div>
+                        <div class="col-md-4">
+                            <a href="{{ url_for('portal.kiosk', tournament_id=tournament.id) }}"
+                               class="btn btn-outline-dark w-100 mb-2" target="_blank">
+                                <i class="bi bi-display"></i> Kiosk Display
+                            </a>
+                        </div>
+                        <div class="col-md-4">
+                            <form method="POST" action="{{ url_for('main.clone_tournament', tournament_id=tournament.id) }}"
+                                  onsubmit="return confirm('Clone this tournament? A copy will be created with all events, teams, and competitor names (no results).')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-outline-secondary w-100 mb-2">
+                                    <i class="bi bi-copy"></i> Clone Tournament
+                                </button>
+                            </form>
+                        </div>
                         {% if current_user.is_authenticated and current_user.is_admin %}
                         <div class="col-md-4">
                             <a href="{{ url_for('reporting.backup_database', tournament_id=tournament.id) }}" class="btn btn-outline-secondary w-100 mb-2">
                                 <i class="bi bi-database-down"></i> Download DB Backup
                             </a>
+                            <form method="post"
+                                  action="{{ url_for('reporting.cloud_backup', tournament_id=tournament.id) }}"
+                                  id="cloud-backup-form">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-outline-info w-100"
+                                        id="cloud-backup-btn"
+                                        title="S3 backup if configured, otherwise local file backup">
+                                    <i class="bi bi-cloud-arrow-up"></i> Cloud Backup
+                                </button>
+                            </form>
                         </div>
                         <div class="col-md-8">
                             <form method="POST" action="{{ url_for('reporting.restore_database', tournament_id=tournament.id) }}" enctype="multipart/form-data" class="row g-2">

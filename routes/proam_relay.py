@@ -5,6 +5,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from database import db
 from models import Tournament
 from services.proam_relay import get_proam_relay, create_proam_relay_event
+from services.cache_invalidation import invalidate_tournament_caches
 
 bp = Blueprint('proam_relay', __name__, url_prefix='/tournament/<int:tournament_id>/proam-relay')
 
@@ -41,6 +42,7 @@ def draw_lottery(tournament_id):
 
     try:
         result = relay.run_lottery(num_teams=num_teams)
+        invalidate_tournament_caches(tournament_id)
         flash(result['message'], 'success')
     except ValueError as e:
         flash(str(e), 'danger')
@@ -57,6 +59,7 @@ def redraw_lottery(tournament_id):
     try:
         existing_team_count = len(relay.get_teams()) or 2
         result = relay.redraw_lottery(num_teams=existing_team_count)
+        invalidate_tournament_caches(tournament_id)
         flash('Lottery has been redrawn!', 'success')
     except ValueError as e:
         flash(str(e), 'danger')
@@ -106,6 +109,7 @@ def enter_results(tournament_id):
                 time_seconds = float(time_input)
 
             relay.record_event_result(team_number, event_name, time_seconds)
+            invalidate_tournament_caches(tournament_id)
             flash(f'Result recorded for Team {team_number} - {event_name}', 'success')
         except ValueError:
             flash('Invalid time format. Use seconds or MM:SS.ms', 'danger')
@@ -151,6 +155,7 @@ def replace_competitor(tournament_id):
 
     try:
         relay.replace_competitor(team_number, old_competitor_id, new_competitor_id, competitor_type)
+        invalidate_tournament_caches(tournament_id)
         flash('Competitor replaced successfully', 'success')
     except ValueError as e:
         flash(str(e), 'danger')

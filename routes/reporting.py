@@ -320,3 +320,90 @@ def _build_payout_payload(tournament: Tournament) -> dict:
     competitors = sorted(competitors, key=lambda c: c.total_earnings, reverse=True)
     total_paid = sum(c.total_earnings for c in competitors)
     return {'competitors': competitors, 'total_paid': total_paid}
+
+
+# ---------------------------------------------------------------------------
+# #21 — Pro payout settlement checklist
+# ---------------------------------------------------------------------------
+
+@reporting_bp.route('/<int:tournament_id>/pro/payout-settlement', methods=['GET', 'POST'])
+def payout_settlement(tournament_id):
+    """Checklist for tracking which pro competitors have been paid out."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from models.competitor import ProCompetitor
+
+    if request.method == 'POST':
+        # Toggle payout_settled for a competitor
+        try:
+            comp_id = int(request.form.get('competitor_id', ''))
+        except (TypeError, ValueError):
+            flash('Invalid request.', 'error')
+            return redirect(url_for('reporting.payout_settlement', tournament_id=tournament_id))
+
+        competitor = ProCompetitor.query.filter_by(id=comp_id, tournament_id=tournament_id).first_or_404()
+        competitor.payout_settled = not competitor.payout_settled
+        db.session.commit()
+        log_action('payout_settlement_toggled', 'pro_competitor', comp_id, {
+            'settled': competitor.payout_settled,
+            'name': competitor.name,
+        })
+        return redirect(url_for('reporting.payout_settlement', tournament_id=tournament_id))
+
+    competitors = tournament.pro_competitors.filter_by(status='active').all()
+    competitors = [c for c in competitors if c.total_earnings and c.total_earnings > 0]
+    competitors.sort(key=lambda c: c.total_earnings, reverse=True)
+
+    total_owed = sum(c.total_earnings for c in competitors)
+    total_settled = sum(c.total_earnings for c in competitors if c.payout_settled)
+    total_outstanding = total_owed - total_settled
+
+    return render_template(
+        'reporting/payout_settlement.html',
+        tournament=tournament,
+        competitors=competitors,
+        total_owed=total_owed,
+        total_settled=total_settled,
+        total_outstanding=total_outstanding,
+    )
+
+
+# ---------------------------------------------------------------------------
+# #25 — Cloud / local backup
+# ---------------------------------------------------------------------------
+
+@reporting_bp.route('/<int:tournament_id>/backup/cloud', methods=['POST'])
+def cloud_backup(tournament_id):
+    """Trigger an S3 cloud backup (or local fallback) and return JSON status."""
+    from flask import jsonify
+    Tournament.query.get_or_404(tournament_id)
+    if not current_user.is_authenticated or not current_user.is_admin:
+        abort(403)
+
+    uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    from services.backup import backup_to_s3, backup_to_local, is_s3_configured, _db_path_from_uri
+    db_path = _db_path_from_uri(uri, current_app.instance_path)
+
+    if not db_path:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({'ok': False, 'error': 'Cloud backup requires a SQLite database.'}), 400
+        flash('Cloud backup requires a SQLite database.', 'error')
+        return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
+
+    def _run_backup():
+        if is_s3_configured():
+            return backup_to_s3(db_path, tournament_id)
+        else:
+            dest_dir = current_app.config.get('LOCAL_BACKUP_DIR', 'instance/backups')
+            return backup_to_local(db_path, dest_dir, tournament_id)
+
+    job_id = submit_job(f'backup:t{tournament_id}', _run_backup)
+
+    log_action('cloud_backup_triggered', 'tournament', tournament_id, {'job_id': job_id})
+    db.session.commit()
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({'ok': True, 'job_id': job_id,
+                        'message': 'Backup started in background.'}), 202
+
+    flash('Database backup started in background.', 'success')
+    return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))

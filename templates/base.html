@@ -780,6 +780,10 @@
 
                 <!-- Right-side controls -->
                 <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <a class="btn btn-outline-light btn-sm" href="{{ url_for('portal.user_guide') }}" title="User Guide">
+                        <i class="bi bi-question-circle"></i>
+                        <span class="d-none d-lg-inline"> Help</span>
+                    </a>
                     <div class="strathex-chip no-print">
                         <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
                              alt="STRATHEX"
@@ -972,5 +976,9 @@
     </script>
 
     {% block extra_js %}{% endblock %}
+    <!-- #24 Service worker + offline score queue -->
+    <script src="{{ url_for('static', filename='offline_queue.js') }}" defer></script>
+    <!-- Onboarding guide engine -->
+    <script src="{{ url_for('static', filename='js/onboarding.js') }}" defer></script>
 </body>
 </html>

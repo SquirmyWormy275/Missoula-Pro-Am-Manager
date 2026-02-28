@@ -52,8 +52,9 @@ models/
     competitor.py       # CollegeCompetitor, ProCompetitor (+ portal_pin_hash)
     event.py            # Event, EventResult (+ version_id optimistic lock)
     heat.py             # Heat, HeatAssignment, Flight (+ version_id optimistic lock)
-    user.py             # User — role-based auth (admin/judge/competitor/spectator)
+    user.py             # User — role-based auth (7 roles: admin/judge/scorer/registrar/competitor/spectator/viewer)
     audit_log.py        # AuditLog — immutable audit trail for sensitive actions
+    school_captain.py   # SchoolCaptain — one PIN account per school per tournament
 
 routes/
     __init__.py
@@ -86,24 +87,37 @@ services/
     report_cache.py     # In-memory TTL cache for report payloads
     upload_security.py  # Magic-byte Excel validation, UUID safe filenames, scan hook
     logging_setup.py    # JSON structured log formatter; optional Sentry SDK init
+    sms_notify.py       # Twilio SMS for flight start/complete; graceful no-op if not configured
+    backup.py           # S3 or local SQLite backup; triggered from reporting route
 
 templates/
     base.html
     dashboard.html
     role_entry.html     # Landing page: Judge / Competitor / Spectator selection
     tournament_detail.html / tournament_new.html
-    auth/               login, bootstrap, users
-    portal/             landing, spectator_dashboard, competitor_dashboard
+    auth/               login, bootstrap, users, audit_log
+    portal/             landing, spectator_dashboard, spectator_college_standings,
+                        spectator_pro_standings, spectator_event_results,
+                        spectator_relay_results, competitor_access, competitor_dashboard,
+                        school_access, school_claim, school_dashboard, user_guide
     college/            dashboard, registration, team_detail
     pro/                dashboard, registration, new_competitor, competitor_detail,
                         flights, build_flights, import_upload, import_review
-    scheduling/         events, setup_events, heats, day_schedule (+ _print)
+    scheduling/         events, setup_events, heats, day_schedule (+ _print),
+                        heat_sheets_print, friday_feature
     scoring/            event_results, enter_heat, configure_payouts
     reports/            all_results, college_standings, event_results,
-                        payout_summary (+ _print variants), export_status
+                        payout_summary (+ _print variants), export_status,
+                        payout_settlement
     proam_relay/        dashboard, teams, results, standings
     partnered_axe/      dashboard, prelims, finals, results
     validation/         dashboard, college, pro
+
+static/
+    js/onboarding.js    # First-time onboarding modal engine (ProAmOnboarding.show/reopen)
+    sw.js               # Service worker: offline cache + IDB queue + Background Sync
+    offline_queue.js    # Offline queue UI: banner + manual replay
+    img/                # Brand logos (STRATHEX, Pro-Am)
 
 uploads/                # Uploaded Excel entry forms (gitignored)
 instance/proam.db       # SQLite database (auto-created; gitignored)
@@ -242,6 +256,10 @@ Separate table for heat assignments: `id`, `heat_id`, `competitor_id`, `competit
 
 Fields: `id`, `tournament_id`, `flight_number`, `name`, `status`, `notes`. Relationship: heats (via `Heat.flight_id`). Properties: `heat_count`, `event_variety`. The flight builder works by setting `heat.flight_id` directly.
 
+### SchoolCaptain
+
+One PIN-protected account per school per tournament. Fields: `id`, `tournament_id`, `school_name`, `pin_hash`, `created_at`. Unique constraint on `(tournament_id, school_name)`. Methods: `has_pin` (property), `set_pin(pin)`, `check_pin(pin)`. One SchoolCaptain account covers all teams from that school (e.g., UM-A, UM-B, UM-C) automatically by matching `Team.school_name`. Session auth stored in `session['school_portal_auth']` keyed as `'{tournament_id}:school:{school_name.lower()}'`.
+
 ### Key Relationships Summary
 
 ```
@@ -250,6 +268,7 @@ Tournament
   │     └── CollegeCompetitor (1:many, via team_id)
   ├── CollegeCompetitor (1:many, cascade delete)
   ├── ProCompetitor (1:many, cascade delete)
+  ├── SchoolCaptain (1:many, cascade delete via tournament_id)
   └── Event (1:many, cascade delete)
         ├── Heat (1:many, cascade delete)
         │     └── HeatAssignment (1:many)
@@ -270,71 +289,62 @@ Flight
 
 ### Features Functionally Complete
 
-- Tournament creation and lifecycle management (setup → college_active → pro_active)
+- Tournament creation and lifecycle management (setup → college_active → pro_active); tournament clone route
 - College team import from Excel (flexible column detection)
-- Pro competitor manual registration with all required fields
+- Pro competitor manual registration; pro entry xlsx importer (Google Forms round-trip, duplicate detection, alias map)
 - Event configuration from `config.py` event lists, with OPEN/CLOSED designation choice
-- Heat generation using snake-draft distribution, with stand capacity enforcement, springboard left-hand grouping, and dual-run heat creation
-- Flight builder with greedy competitor-spacing algorithm (min 4 heats between appearances, target 5)
-- Score entry for standard events (single-value and dual-run)
+- Heat generation: snake-draft distribution, stand capacity, springboard left-hand grouping, dual-run heat creation
+- Heat swap/edit: move competitors between heats (`/scheduling/<tid>/heats/swap`)
+- Heat sync check (GET JSON) + sync fix (POST reconcile) to keep `Heat.competitors` and `HeatAssignment` rows consistent
+- Heat sheets print page (`/scheduling/<tid>/heat-sheets`)
+- Flight builder: greedy competitor-spacing (min 4 heats between appearances, target 5); Cookie Stack / Standing Block mutual exclusion enforced via `_CONFLICTING_STANDS` in `flight_builder.py`
+- Score entry: standard events (single-value and dual-run); score outlier flagging (`_flag_score_outliers()` in scoring.py, ⚠ badge in results)
 - Position calculation and point/payout award on finalization
-- College standings: Bull/Belle of the Woods, team standings
-- Pro payout summary
-- All-results report (screen and printable)
-- Event-level result reports (screen and printable)
+- College standings: Bull/Belle of the Woods, team standings; live 30s polling in spectator portal
+- Pro payout summary; payout settlement checklist (`/reporting/<tid>/pro/payout-settlement`)
+- All-results report (screen and printable); event-level result reports (screen and printable)
 - Pro-Am Relay lottery (opt-in, gender-balanced draw, result entry, standings)
 - Partnered Axe Throw state machine (prelim registration, prelim scoring, top-4 advance, finals, full standings)
-- Validation service for teams, college competitors, pro competitors, heat constraints
-- Validation API endpoints (JSON) for full, college-only, and pro-only checks
-- Excel results export (`export_results_to_excel` in `excel_io.py`) — function exists but no route triggers it from the UI
+- Birling bracket: full double-elimination bracket generation with advance logic (`_advance_winner`, `_drop_to_losers`, `_advance_loser_winner`); bracket viewer route + `birling_bracket.html`
+- Validation service for teams, college competitors, pro competitors, heat constraints; validation API (JSON) endpoints
+- Saturday priority route (`/scheduling/<tid>/college/saturday-priority`) for college overflow event flagging
+- Friday Night Feature: route, config (JSON in `instance/`), and template (`/scheduling/<tid>/friday-feature`) — UI exists, no heat generation or flight integration
+- Flask-Login authentication: 7 roles (admin, judge, scorer, registrar, competitor, spectator, viewer); login/logout/bootstrap/user-management; audit log viewer (`/auth/audit`, admin-only, paginated, filterable)
+- `require_judge_for_management_routes` before_request hook; portal and auth routes are public
+- Portal — spectator: college standings (live), pro standings, event results, relay results; mobile/desktop view toggle; kiosk TV display (`/portal/kiosk/<tid>`, 4-panel 15s rotation)
+- Portal — pro competitor: individual access via name search + PIN; dashboard with schedule, results, and SMS opt-in
+- Portal — school captain: one account per school covers all teams; 4-tab dashboard (overview, teams/members, schedule, Bull & Belle); PDF export via browser print
+- In-app user guide (`/portal/guide`): 6-role guide with sticky sidebar; first-time onboarding popups for spectators, pro competitors, and school captains (localStorage-tracked, skippable)
+- Public REST API (`/api/public`): standings, schedule, results, standings-poll endpoints
+- AuditLog model + `services/audit.py` for immutable audit trail
+- Headshot upload: JPEG/PNG/WebP magic-byte validation; stored with UUID filename
+- SMS notifications (`services/sms_notify.py`): Twilio flight start/complete alerts; graceful no-op if not configured
+- Service worker (`static/sw.js`): offline cache + IDB queue + Background Sync; offline queue UI (`static/offline_queue.js`)
+- Cloud backup (`services/backup.py`): S3 if env vars set, local `instance/backups/` fallback; triggered from tournament detail
 
 ### Known Gaps and Incomplete Features
 
-**Birling bracket (`services/birling_bracket.py`):** The `BirlingBracket` class has full bracket generation (double-elimination structure, seeding, byes) and match recording, but three critical methods are stubs with `pass`: `_advance_winner()`, `_drop_to_losers()`, and `_advance_loser_winner()`. The bracket structure is built but winners cannot be advanced between rounds automatically. There is also no route in `routes/` for the birling bracket UI. The bracket is non-functional end-to-end.
+**Excel results export route (direct download):** `export_results_to_excel()` exists in `services/excel_io.py`. An async background export job route exists at `/reporting/<tid>/export-results/async`, but no route triggers a direct synchronous Excel download. The async job approach is the recommended path forward — completing the status/download endpoint would close this gap.
 
-**Partner assignment for pro events without explicit partner:** The requirements note "if a partner is not explicitly listed on the form, I want a way for the system to auto-assign a partner." No auto-assignment logic exists. Partners must be manually assigned.
+**Friday Night Feature heat generation and flight integration:** The Friday Night Feature has a route, config storage, and UI template. However, no heat generation logic or flight integration exists for it. Heats and flights for Friday Night Feature events must be managed manually or via the standard event/heat flow.
 
-**Heat editing:** The USER_GUIDE describes an "Edit Heat" flow for moving competitors between heats, but no `/scheduling/.../heat/<id>/edit` route exists. Heat composition can only be reset by regenerating all heats for an event.
+**College Saturday overflow flight integration:** A `saturday_priority` route flags which college events are Saturday candidates. However, no mechanism integrates these flagged events into the Saturday pro flight schedule, and no automated Saturday scheduling exists for the second run of Chokerman's Race (which is mandatory Saturday).
 
-**Pro competitor event sign-up UI:** The UI flow for checking events and entering gear-sharing/partner info on a pro competitor detail page is referenced in the USER_GUIDE but the `templates/pro/competitor_detail.html` template exists without a corresponding POST route to save event entries. Event sign-ups are stored on `ProCompetitor.events_entered` (JSON) but no route processes that form submission.
+**Tournament model missing `providing_shirts` boolean:** The show decides before entry forms go out whether it provides shirts. `ProCompetitor.shirt_size` is always collected regardless. Adding this field requires a schema migration.
 
-**Excel results export route:** `export_results_to_excel()` exists in `services/excel_io.py` and the USER_GUIDE describes clicking "Export Results," but no route in `routes/reporting.py` or elsewhere wires this to an HTTP response.
-
-**Friday Night Feature scheduling:** The `Tournament.friday_feature_date` field exists and the requirements document describes the feature, but there is no dedicated UI or scheduling logic for it.
-
-**College events on Saturday:** The requirements describe a defined list of college events that can spill to Saturday. No scheduling mechanism distinguishes these from regular college events.
-
-**Authentication:** Flask-Login is active. Management blueprints (main, registration, scheduling, scoring, reporting, proam_relay, partnered_axe, validation, import_pro) require `is_judge` (admin or judge role) via `require_judge_for_management_routes` in `app.py`. Auth routes (`/auth/*`) and portal routes (`/portal/*`) are public. Bootstrap endpoint (`/auth/bootstrap`) creates the first account when DB has no users — it locks itself afterward. Four defined roles: admin, judge, competitor, spectator.
-
-**CSRF protection:** Flask-WTF `CSRFProtect` is active. All POST form templates include `{{ csrf_token() }}`. JSON API endpoints (routes/validation.py) that do not submit HTML forms are GET-only and require no exemption. If a new POST endpoint returns JSON rather than HTML, apply `@csrf.exempt` from `app.csrf`.
-
-**Portal sub-pages (spectator):** `templates/portal/spectator_dashboard.html` references `portal.spectator_college_standings` and `portal.spectator_pro_standings` routes that do not yet exist in `routes/portal.py`. These will raise a runtime error when the spectator dashboard is rendered. Implement these routes or revert the template before production use.
-
-**Portal mobile view variables:** Portal templates reference `mobile_view` and `view_mode` template variables that `routes/portal.py` does not currently pass to render_template. These will cause Jinja2 UndefinedError at runtime. The route needs to read a `?view=mobile` query param and pass both variables.
-
-**Reset PIN route missing:** `templates/auth/users.html` references `auth.reset_competitor_pin` which does not exist in `routes/auth.py`. The Reset PIN button will raise a BuildError at render time for competitor accounts.
-
-**Extra roles in users.html:** The template offers `scorer`, `registrar`, `viewer` roles that are not defined in `User` model constants and would be rejected by `auth.manage_users` role validation. Either add these roles to the model or remove them from the template.
-
-**api_bp not registered:** `routes/api.py` exists with three public endpoints but `app.py` does not register `api_bp`. The public API is completely unreachable.
-
-**Migration branch conflict:** Migrations `8b2fd0d307bb` (portal_pin_hash) and `b27d62f4f8a1` (audit_logs + indexes) both declare `down_revision = '7f8f2f600aa1'`, creating two heads. `flask db upgrade` will fail with "Multiple head revisions" until a merge migration is generated with `flask db merge heads -m "merge heads"`.
-
-**STRATHMARK integration:** Completely absent. See Section 7.
-
-**EntryFormReqs.md:** Contains only a stub note ("Entry forms need to be redone for the pros"). Pro entry form redesign is pending.
-
-**Cookie Stack / Standing Block stand conflict:** No enforcement exists in `heat_generator.py` or `flight_builder.py` preventing these two events from being scheduled simultaneously. They share 5 stands and must be treated as mutually exclusive — heats from these two events cannot overlap in the same flight slot. The `shared_with` key is present in `config.STAND_CONFIGS` for both event types but nothing reads it during scheduling.
-
-**Saturday overflow scheduling:** No mechanism exists to designate college events as Saturday overflow or integrate them into the pro flight schedule. The second run of Chokerman's Race is a mandatory Saturday event and must be accounted for when building flights. No current code handles this distinction.
-
-**Tournament model missing `providing_shirts` boolean:** The show decides before entry forms go out whether it is providing shirts. `ProCompetitor.shirt_size` is always collected regardless. Adding this field requires a schema migration — see Development Rules for the Flask-Migrate requirement.
-
-**Pro event fee configuration:** No route or template exists for setting fee amounts per event per tournament. `entry_fees` and `fees_paid` fields exist on `ProCompetitor` but there is no UI to set or update them. Fees must currently be set directly in the database.
+**Pro event fee configuration UI:** No route or template exists for setting fee amounts per event per tournament. `entry_fees` and `fees_paid` fields exist on `ProCompetitor` but fees must currently be set directly in the database or via the edit competitor form.
 
 **Auto-partner assignment for pro events:** When a pro competitor registers for a partnered event without naming a partner, no auto-assignment logic exists. Desired behavior: match with another unpartnered registrant in the same event.
 
-**Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no existing templates, database records, or service code contain hardcoded references to a pro birling event that would create phantom data.
+**Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
+
+**STRATHMARK integration:** Completely absent. See Section 7.
+
+**EntryFormReqs.md:** Contains only a stub note. Pro entry form redesign is pending.
+
+**Authentication:** Flask-Login is active. Management blueprints (main, registration, scheduling, scoring, reporting, proam_relay, partnered_axe, validation, import_pro) require `is_judge` (admin or judge role) via `require_judge_for_management_routes` in `app.py`. Auth routes (`/auth/*`) and portal routes (`/portal/*`) are public. Bootstrap endpoint (`/auth/bootstrap`) creates the first account when DB has no users — it locks itself afterward. Seven defined roles: admin, judge, scorer, registrar, competitor, spectator, viewer.
+
+**CSRF protection:** Flask-WTF `CSRFProtect` is active. All POST form templates include `{{ csrf_token() }}`. JSON API endpoints (routes/validation.py) that do not submit HTML forms are GET-only and require no exemption. If a new POST endpoint returns JSON rather than HTML, apply `@csrf.exempt` from `app.csrf`.
 
 ---
 
@@ -358,7 +368,7 @@ HeatAssignment vs Heat.competitors: `Heat.competitors` (JSON field) is the autho
 
 Input conversion: All `int()` and `float()` calls on POST form data must be wrapped in `try/except (TypeError, ValueError)`. Flash a descriptive error message and redirect rather than raising an unhandled exception that produces a 500 response.
 
-Authentication: Flask-Login is active. New management routes must be covered by the `require_judge_for_management_routes` before_request hook — add the blueprint name to `MANAGEMENT_BLUEPRINTS` in `app.py`. Public endpoints (static files, `main.index`, `main.set_language`, all `auth.*`, all `portal.*`) are whitelisted. The bootstrap route at `/auth/bootstrap` locks itself once any user exists — never remove that guard.
+Authentication: Flask-Login is active. New management routes must be covered by the `require_judge_for_management_routes` before_request hook — add the blueprint name to `MANAGEMENT_BLUEPRINTS` in `app.py`. Public endpoints (static files, `main.index`, `main.set_language`, all `auth.*`, all `portal.*`, the `/sw.js` service-worker route) are whitelisted. The bootstrap route at `/auth/bootstrap` locks itself once any user exists — never remove that guard. Seven valid User roles: admin, judge, scorer, registrar, competitor, spectator, viewer.
 
 Cookie Stack and Standing Block stand conflict: any code touching heat generation or flight scheduling must enforce mutual exclusivity of these two events. Cookie Stack (`stand_type: cookie_stack`) and Standing Block (`stand_type: standing_block`) share the same 5 physical stands. Never schedule heats from both events at the same time or within the same flight slot without explicit instruction.
 
@@ -390,28 +400,27 @@ The broader vision: STRATHMARK calculates start marks and predicted times from h
 
 ## 8. FUTURE DEVELOPMENT NOTES
 
-The following features are documented as planned or implied by the codebase and requirements:
+The following features remain as planned or implied by the codebase and requirements:
 
-**From DEVELOPMENT.md "Planned Features":**
-- Live results display via WebSocket for spectators
-- Mobile score entry with offline sync capability
-- Multi-year competitor tracking and performance history
-- Blank entry form generator (Excel)
-
-**From DEVELOPMENT.md "Technical Debt":**
-- Authentication system (currently none)
-- Comprehensive server-side input validation
-- Unit and integration tests (none exist)
-- RESTful API for external integrations
-
-**From requirements and code gaps:**
-- Birling bracket completion (advance logic stubs need implementation)
-- Pro competitor event sign-up POST route
-- Excel results export route
-- Friday Night Feature scheduling
-- College Saturday overflow scheduling
+**Remaining gaps (from Section 5):**
+- Friday Night Feature heat generation and flight integration
+- College Saturday overflow flight integration
+- Excel results export direct download route
 - Auto-partner assignment for pro events
-- Heat editing UI
+- Pro event fee configuration UI
+- Tournament `providing_shirts` boolean field
 - Pro entry form redesign (noted in EntryFormReqs.md)
+
+**Technical debt:**
+- Comprehensive server-side input validation (continue hardening)
+- Unit and integration tests (none exist — optimistic locking and transaction rollback especially need coverage)
+- Authenticated write endpoints on the public API (currently GET-only)
+- Multi-year competitor tracking and performance history
+
+**STRATHMARK integration (see Section 7 for integration points):**
+- `optimize_flight_for_ability()` stub in `flight_builder.py` is the designed hook for predicted times
+- `_generate_event_heats()` in `heat_generator.py` needs ability-weighting input
+- `ProCompetitor` needs `handicap` / `predicted_time` fields
+- `Event` needs `start_mark` field for springboard
 
 **Generalization vision:** The current app is hardcoded to the Missoula Pro Am's specific event list and format. The event list lives in `config.py` (`COLLEGE_OPEN_EVENTS`, `COLLEGE_CLOSED_EVENTS`, `PRO_EVENTS`) and the UI strings in `strings.py`. The long-term STRATHEX platform vision is to make these event lists configurable per-tournament rather than hardcoded, enabling this application to serve any timbersports event, not just Missoula. The `is_open` flag on Event, the configurable payouts system, and the per-tournament event setup flow are all steps in this direction.

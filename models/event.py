@@ -124,6 +124,9 @@ class EventResult(db.Model):
     # Payout (pro only)
     payout_amount = db.Column(db.Float, default=0.0)
 
+    # Score discrepancy flag (#8)
+    is_flagged = db.Column(db.Boolean, default=False)
+
     # Status
     status = db.Column(db.String(20), default='pending')  # pending, completed, scratched, dnf
     version_id = db.Column(db.Integer, nullable=False, default=1)

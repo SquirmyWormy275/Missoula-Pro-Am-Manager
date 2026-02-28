@@ -102,8 +102,11 @@ def upload_pro_entries(tournament_id):
         flash('No competitor entries found in the file.', 'warning')
         return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
 
-    # Compute review flags
-    compute_review_flags(entries)
+    # Compute review flags (#18: pass existing competitor names for duplicate detection)
+    existing_names = [
+        c.name for c in tournament.pro_competitors.filter_by(status='active').all()
+    ]
+    compute_review_flags(entries, existing_names=existing_names)
 
     # Persist parsed data to a temp JSON file (avoids cookie-size limits)
     temp_name = f'pro_import_{tournament_id}_{uuid.uuid4().hex}.json'

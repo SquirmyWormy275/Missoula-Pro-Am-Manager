@@ -52,15 +52,32 @@ class Tournament(db.Model):
 
     def get_team_standings(self):
         """Return teams sorted by total points (descending)."""
-        teams = self.teams.all()
-        return sorted(teams, key=lambda t: t.total_points, reverse=True)
+        from .team import Team
+        return (
+            Team.query
+            .filter_by(tournament_id=self.id, status='active')
+            .order_by(Team.total_points.desc(), Team.team_code)
+            .all()
+        )
 
     def get_bull_of_woods(self, limit=5):
         """Return top male college competitors by individual points."""
-        males = self.college_competitors.filter_by(gender='M', status='active').all()
-        return sorted(males, key=lambda c: c.individual_points, reverse=True)[:limit]
+        from .competitor import CollegeCompetitor
+        return (
+            CollegeCompetitor.query
+            .filter_by(tournament_id=self.id, gender='M', status='active')
+            .order_by(CollegeCompetitor.individual_points.desc(), CollegeCompetitor.name)
+            .limit(limit)
+            .all()
+        )
 
     def get_belle_of_woods(self, limit=5):
         """Return top female college competitors by individual points."""
-        females = self.college_competitors.filter_by(gender='F', status='active').all()
-        return sorted(females, key=lambda c: c.individual_points, reverse=True)[:limit]
+        from .competitor import CollegeCompetitor
+        return (
+            CollegeCompetitor.query
+            .filter_by(tournament_id=self.id, gender='F', status='active')
+            .order_by(CollegeCompetitor.individual_points.desc(), CollegeCompetitor.name)
+            .limit(limit)
+            .all()
+        )

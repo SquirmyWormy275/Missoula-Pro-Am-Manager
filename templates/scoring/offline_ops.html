@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+
+{% block title %}Offline Ops - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row mb-3">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Events</a></li>
+                    <li class="breadcrumb-item active">Offline Ops</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-12 d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-1"><i class="bi bi-wifi-off text-warning"></i> Offline Ops</h1>
+                <p class="text-muted mb-0">Judge tools for queued score sync and emergency local backup.</p>
+            </div>
+            <div class="text-end">
+                <div id="networkStatus" class="badge bg-secondary">Checking connection...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-12">
+            <div id="opsStatus" class="alert alert-secondary mb-0 d-none"></div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-3 mb-2">
+            <button class="btn btn-outline-info w-100" id="syncAllBtn">
+                <i class="bi bi-arrow-repeat"></i> Sync All
+            </button>
+        </div>
+        <div class="col-md-3 mb-2">
+            <button class="btn btn-outline-success w-100" id="exportBtn">
+                <i class="bi bi-download"></i> Export Queue
+            </button>
+        </div>
+        <div class="col-md-3 mb-2">
+            <label class="btn btn-outline-primary w-100 mb-0" for="importFile">
+                <i class="bi bi-upload"></i> Import Queue
+            </label>
+            <input type="file" id="importFile" class="d-none" accept=".json,application/json">
+        </div>
+        <div class="col-md-3 mb-2">
+            <button class="btn btn-outline-danger w-100" id="clearBtn">
+                <i class="bi bi-trash"></i> Clear Tournament Queue
+            </button>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-list-task"></i> Pending Heats</h6>
+                    <span class="badge bg-warning text-dark" id="queueCount">0</span>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-proam">
+                                <tr>
+                                    <th>Queued</th>
+                                    <th>Event</th>
+                                    <th>Heat</th>
+                                    <th>Entries</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="queueBody">
+                                <tr>
+                                    <td colspan="6" class="text-muted text-center py-4">No queued heats.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const QUEUE_KEY = 'proam_heat_score_queue_v1';
+    const TOURNAMENT_ID = {{ tournament.id }};
+    const EVENT_DIRECTORY = {{ event_directory|tojson }};
+    const queueBody = document.getElementById('queueBody');
+    const queueCount = document.getElementById('queueCount');
+    const statusBox = document.getElementById('opsStatus');
+    const networkStatus = document.getElementById('networkStatus');
+    const syncAllBtn = document.getElementById('syncAllBtn');
+
+    function readQueue() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (err) {
+            return [];
+        }
+    }
+
+    function writeQueue(queue) {
+        localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+    }
+
+    function isForTournament(entry) {
+        const url = String(entry.url || '');
+        return url.indexOf('/scoring/' + TOURNAMENT_ID + '/') !== -1;
+    }
+
+    function setStatus(message, type) {
+        statusBox.classList.remove('d-none', 'alert-secondary', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger');
+        statusBox.classList.add(type || 'alert-secondary');
+        statusBox.innerHTML = message;
+    }
+
+    function updateNetwork() {
+        if (navigator.onLine) {
+            networkStatus.textContent = 'Online';
+            networkStatus.className = 'badge bg-success';
+        } else {
+            networkStatus.textContent = 'Offline';
+            networkStatus.className = 'badge bg-warning text-dark';
+        }
+    }
+
+    function resultFieldCount(payload) {
+        return Object.keys(payload || {}).filter(function (k) {
+            return k.startsWith('result_') && payload[k] !== '';
+        }).length;
+    }
+
+    function eventLabel(entry) {
+        const eventId = Number(entry.event_id || 0);
+        const eventInfo = EVENT_DIRECTORY[String(eventId)];
+        if (eventInfo) return eventInfo.name;
+        return eventId ? ('Event #' + eventId) : 'Unknown Event';
+    }
+
+    function renderQueue() {
+        const queue = readQueue().filter(isForTournament);
+        queueCount.textContent = String(queue.length);
+
+        if (!queue.length) {
+            queueBody.innerHTML = '<tr><td colspan="6" class="text-muted text-center py-4">No queued heats.</td></tr>';
+            return;
+        }
+
+        queueBody.innerHTML = queue.map(function (entry) {
+            const queuedAt = entry.queued_at || entry.saved_at || '';
+            const timeLabel = queuedAt ? new Date(queuedAt).toLocaleString() : '-';
+            const heatLabel = entry.heat_id ? ('Heat ' + entry.heat_id) : '-';
+            const entries = resultFieldCount(entry.payload || {});
+            const key = encodeURIComponent((entry.url || '') + '|' + (entry.heat_id || ''));
+            return '' +
+                '<tr>' +
+                    '<td>' + timeLabel + '</td>' +
+                    '<td>' + eventLabel(entry) + '</td>' +
+                    '<td>' + heatLabel + '</td>' +
+                    '<td>' + entries + '</td>' +
+                    '<td><span class="badge bg-warning text-dark">Pending</span></td>' +
+                    '<td class="d-flex gap-2">' +
+                        '<button class="btn btn-sm btn-outline-info sync-one" data-key="' + key + '"><i class="bi bi-arrow-repeat"></i> Sync</button>' +
+                        '<button class="btn btn-sm btn-outline-danger drop-one" data-key="' + key + '"><i class="bi bi-x-circle"></i> Remove</button>' +
+                    '</td>' +
+                '</tr>';
+        }).join('');
+    }
+
+    function parseKey(key) {
+        const decoded = decodeURIComponent(key);
+        const sep = decoded.lastIndexOf('|');
+        return {
+            url: decoded.substring(0, sep),
+            heatId: Number(decoded.substring(sep + 1)),
+        };
+    }
+
+    function removeEntry(url, heatId) {
+        const updated = readQueue().filter(function (entry) {
+            return !(String(entry.url || '') === url && Number(entry.heat_id || 0) === Number(heatId || 0));
+        });
+        writeQueue(updated);
+        renderQueue();
+    }
+
+    async function postEntry(entry) {
+        const body = new FormData();
+        Object.keys(entry.payload || {}).forEach(function (k) {
+            body.append(k, entry.payload[k]);
+        });
+        const response = await fetch(entry.url, {
+            method: 'POST',
+            body: body,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json().catch(function () { return {}; });
+        if (!response.ok || !data.ok) {
+            const err = new Error(data.message || 'Sync failed');
+            err.httpStatus = response.status;
+            throw err;
+        }
+        return data;
+    }
+
+    async function syncOne(url, heatId) {
+        const queue = readQueue();
+        const entry = queue.find(function (row) {
+            return String(row.url || '') === String(url || '') && Number(row.heat_id || 0) === Number(heatId || 0);
+        });
+        if (!entry) return true;
+        await postEntry(entry);
+        removeEntry(url, heatId);
+        return true;
+    }
+
+    async function syncAll() {
+        if (!navigator.onLine) {
+            setStatus('<i class="bi bi-wifi-off"></i> Offline. Queue remains safe on this device.', 'alert-warning');
+            return;
+        }
+        const queue = readQueue().filter(isForTournament);
+        if (!queue.length) {
+            setStatus('<i class="bi bi-cloud-check"></i> Nothing to sync.', 'alert-success');
+            return;
+        }
+
+        let synced = 0;
+        for (let i = 0; i < queue.length; i += 1) {
+            try {
+                await syncOne(queue[i].url, queue[i].heat_id);
+                synced += 1;
+            } catch (err) {
+                if (err.httpStatus === 409) {
+                    setStatus('<i class="bi bi-exclamation-circle"></i> Conflict syncing one heat. Open that heat and re-save.', 'alert-danger');
+                } else {
+                    setStatus('<i class="bi bi-cloud-slash"></i> Sync interrupted. Remaining heats are still queued.', 'alert-warning');
+                }
+                renderQueue();
+                return;
+            }
+        }
+
+        setStatus('<i class="bi bi-cloud-check"></i> Synced ' + synced + ' queued heat(s).', 'alert-success');
+        renderQueue();
+    }
+
+    document.getElementById('syncAllBtn').addEventListener('click', async function () {
+        syncAllBtn.disabled = true;
+        try {
+            await syncAll();
+        } finally {
+            syncAllBtn.disabled = false;
+        }
+    });
+
+    document.getElementById('exportBtn').addEventListener('click', function () {
+        const queue = readQueue().filter(isForTournament);
+        const blob = new Blob([JSON.stringify(queue, null, 2)], { type: 'application/json' });
+        const name = 'offline-queue-tournament-' + TOURNAMENT_ID + '-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setStatus('<i class="bi bi-download"></i> Exported ' + queue.length + ' queued heat(s).', 'alert-info');
+    });
+
+    document.getElementById('importFile').addEventListener('change', function (e) {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function () {
+            try {
+                const imported = JSON.parse(String(reader.result || '[]'));
+                if (!Array.isArray(imported)) throw new Error('Invalid file format');
+
+                const current = readQueue();
+                const merged = current.slice();
+                imported.forEach(function (entry) {
+                    if (!isForTournament(entry)) return;
+                    const exists = merged.some(function (row) {
+                        return String(row.url || '') === String(entry.url || '') &&
+                               Number(row.heat_id || 0) === Number(entry.heat_id || 0);
+                    });
+                    if (!exists) merged.push(entry);
+                });
+                writeQueue(merged);
+                renderQueue();
+                setStatus('<i class="bi bi-upload"></i> Imported queue file.', 'alert-success');
+            } catch (err) {
+                setStatus('<i class="bi bi-exclamation-triangle"></i> Import failed: invalid JSON file.', 'alert-danger');
+            } finally {
+                e.target.value = '';
+            }
+        };
+        reader.readAsText(file);
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', function () {
+        const queue = readQueue();
+        const keep = queue.filter(function (entry) { return !isForTournament(entry); });
+        const removed = queue.length - keep.length;
+        if (!removed) {
+            setStatus('<i class="bi bi-info-circle"></i> No queued heats to clear for this tournament.', 'alert-info');
+            return;
+        }
+        if (!window.confirm('Clear all queued heats for this tournament on this device?')) return;
+        writeQueue(keep);
+        renderQueue();
+        setStatus('<i class="bi bi-trash"></i> Cleared ' + removed + ' queued heat(s).', 'alert-warning');
+    });
+
+    queueBody.addEventListener('click', async function (e) {
+        const syncBtn = e.target.closest('.sync-one');
+        const dropBtn = e.target.closest('.drop-one');
+
+        if (syncBtn) {
+            const parsed = parseKey(syncBtn.getAttribute('data-key'));
+            syncBtn.disabled = true;
+            try {
+                await syncOne(parsed.url, parsed.heatId);
+                setStatus('<i class="bi bi-cloud-check"></i> Heat synced.', 'alert-success');
+            } catch (err) {
+                if (err.httpStatus === 409) {
+                    setStatus('<i class="bi bi-exclamation-circle"></i> Conflict syncing heat. Reopen and save again.', 'alert-danger');
+                } else {
+                    setStatus('<i class="bi bi-cloud-slash"></i> Could not sync heat right now.', 'alert-warning');
+                }
+            } finally {
+                syncBtn.disabled = false;
+                renderQueue();
+            }
+            return;
+        }
+
+        if (dropBtn) {
+            const parsed = parseKey(dropBtn.getAttribute('data-key'));
+            if (!window.confirm('Remove this queued heat from local storage?')) return;
+            removeEntry(parsed.url, parsed.heatId);
+            setStatus('<i class="bi bi-trash"></i> Queued heat removed.', 'alert-warning');
+        }
+    });
+
+    window.addEventListener('online', function () {
+        updateNetwork();
+        syncAll();
+    });
+    window.addEventListener('offline', updateNetwork);
+    window.addEventListener('storage', function (event) {
+        if (event.key === QUEUE_KEY) renderQueue();
+    });
+
+    updateNetwork();
+    renderQueue();
+});
+</script>
+{% endblock %}

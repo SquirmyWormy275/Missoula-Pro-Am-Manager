@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ tournament.name }} {{ tournament.year }} — Live Display</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+<style>
+body {
+    background: #0a1628;
+    color: #f8f9fa;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+    height: 100vh;
+}
+.kiosk-header {
+    background: linear-gradient(90deg, #1a3a5c, #2d6a4f);
+    padding: 12px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.kiosk-header h2 { font-size: 1.6rem; margin: 0; font-weight: 700; letter-spacing: 1px; }
+.panel {
+    display: none;
+    height: calc(100vh - 70px);
+    padding: 20px 32px;
+    overflow: hidden;
+}
+.panel.active { display: block; }
+.panel-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    border-bottom: 2px solid #2d6a4f;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    color: #a8d5ba;
+}
+.standing-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #1e3a52;
+    font-size: 1.3rem;
+}
+.standing-row .rank { width: 50px; color: #aaa; font-weight: 700; }
+.standing-row .name { flex: 1; }
+.standing-row .score { color: #ffd700; font-weight: 700; font-size: 1.4rem; }
+.event-block { margin-bottom: 18px; }
+.event-block .event-name { font-size: 1.1rem; color: #a8d5ba; font-weight: 600; margin-bottom: 6px; }
+.result-row { padding: 4px 0; font-size: 1.15rem; }
+.medal-1 { color: #ffd700; font-size: 1.3rem; }
+.medal-2 { color: #c0c0c0; font-size: 1.3rem; }
+.medal-3 { color: #cd7f32; font-size: 1.3rem; }
+.active-heat-card {
+    background: #1a3a5c;
+    border: 1px solid #2d6a4f;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+}
+.ticker {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #1a3a5c;
+    padding: 6px 20px;
+    font-size: 0.9rem;
+    color: #aaa;
+    display: flex;
+    justify-content: space-between;
+}
+.progress-dots { display: flex; gap: 6px; align-items: center; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
+.dot.active { background: #2d6a4f; }
+</style>
+</head>
+<body>
+
+<div class="kiosk-header">
+    <h2>{{ tournament.name }} {{ tournament.year }}</h2>
+    <div id="clockDisplay" class="fs-4"></div>
+</div>
+
+<!-- Panel 1: College Standings -->
+<div class="panel active" id="panel-college">
+    <div class="panel-title">College Team Standings</div>
+    {% if college_teams %}
+    {% for team in college_teams %}
+    <div class="standing-row">
+        <span class="rank">{{ loop.index }}.</span>
+        <span class="name">{{ team.school_name }} ({{ team.team_code }})</span>
+        <span class="score">{{ team.total_points }} pts</span>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-muted">No college standings yet.</div>
+    {% endif %}
+</div>
+
+<!-- Panel 2: Pro Earnings -->
+<div class="panel" id="panel-pro">
+    <div class="panel-title">Pro Top Earners</div>
+    {% if pro_top %}
+    {% for comp in pro_top %}
+    <div class="standing-row">
+        <span class="rank">{{ loop.index }}.</span>
+        <span class="name">{{ comp.name }}</span>
+        <span class="score">${{ "%.0f"|format(comp.total_earnings) }}</span>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-muted">No pro results yet.</div>
+    {% endif %}
+</div>
+
+<!-- Panel 3: Recent Results -->
+<div class="panel" id="panel-results">
+    <div class="panel-title">Recent Event Results</div>
+    {% if recent_results %}
+    {% for er in recent_results %}
+    <div class="event-block">
+        <div class="event-name">{{ er.event.display_name }}</div>
+        {% for r in er.results %}
+        <div class="result-row">
+            {% if r.final_position == 1 %}<span class="medal-1">🥇</span>
+            {% elif r.final_position == 2 %}<span class="medal-2">🥈</span>
+            {% elif r.final_position == 3 %}<span class="medal-3">🥉</span>
+            {% else %}<span style="display:inline-block;width:1.5rem;">{{ r.final_position }}.</span>{% endif %}
+            {{ r.competitor_name }}
+            {% if r.result_value %}<span class="text-muted ms-2 small">
+                {{ "%.2f"|format(r.result_value) if er.event.scoring_type == 'time' else r.result_value }}
+            </span>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-muted">No completed events yet.</div>
+    {% endif %}
+</div>
+
+<!-- Panel 4: Active Heats -->
+<div class="panel" id="panel-heats">
+    <div class="panel-title">Now Running</div>
+    {% if active_heats %}
+    {% for ah in active_heats %}
+    <div class="active-heat-card">
+        <div class="fw-bold mb-1">{{ ah.event.display_name }} — Heat {{ ah.heat.heat_number }}</div>
+        {% for comp in ah.competitors %}
+        <div class="ms-3 fs-5">{{ comp.name }}</div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-muted">No heats currently in progress.</div>
+    {% endif %}
+</div>
+
+<div class="ticker">
+    <span>{{ tournament.name }} {{ tournament.year }} — Live Display</span>
+    <div class="progress-dots">
+        <div class="dot active" id="dot-0"></div>
+        <div class="dot" id="dot-1"></div>
+        <div class="dot" id="dot-2"></div>
+        <div class="dot" id="dot-3"></div>
+    </div>
+</div>
+
+<script>
+const panels = ['panel-college', 'panel-pro', 'panel-results', 'panel-heats'];
+let current = 0;
+const INTERVAL = 15000;
+
+function showPanel(idx) {
+    panels.forEach((id, i) => {
+        const el = document.getElementById(id);
+        const dot = document.getElementById('dot-' + i);
+        el.classList.toggle('active', i === idx);
+        dot.classList.toggle('active', i === idx);
+    });
+    current = idx;
+}
+
+setInterval(() => showPanel((current + 1) % panels.length), INTERVAL);
+
+// Clock
+function updateClock() {
+    const now = new Date();
+    document.getElementById('clockDisplay').textContent =
+        now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+}
+setInterval(updateClock, 1000);
+updateClock();
+</script>
+</body>
+</html>

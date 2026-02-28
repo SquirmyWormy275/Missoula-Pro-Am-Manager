@@ -181,6 +181,62 @@
                 </ul>
             </div>
             {% endif %}
+
+            <!-- Edit Event Enrollment -->
+            {% if pro_events %}
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-pencil-square"></i> Edit Event Enrollment</h6>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('registration.update_pro_events', tournament_id=tournament.id, competitor_id=competitor.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        {% set entered_ids = competitor.get_events_entered() | map('string') | list %}
+                        {% set fees = competitor.get_entry_fees() %}
+                        {% set paid_map = competitor.get_fees_paid() %}
+                        {% set gear_map = competitor.get_gear_sharing() %}
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Enter</th>
+                                        <th>Event</th>
+                                        <th>Fee ($)</th>
+                                        <th>Paid</th>
+                                        <th>Gear Sharing Partner</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for event in pro_events %}
+                                    {% set eid = event.id | string %}
+                                    <tr>
+                                        <td>
+                                            <input type="checkbox" class="form-check-input" name="event_ids" value="{{ eid }}"
+                                                {% if eid in entered_ids %}checked{% endif %}>
+                                        </td>
+                                        <td>{{ event.display_name }}</td>
+                                        <td style="width:90px;">
+                                            <input type="number" class="form-control form-control-sm" name="fee_{{ eid }}"
+                                                   value="{{ '%.2f'|format(fees.get(eid, 0)) }}" min="0" step="0.01">
+                                        </td>
+                                        <td>
+                                            <input type="checkbox" class="form-check-input" name="paid_{{ eid }}"
+                                                {% if paid_map.get(eid) %}checked{% endif %}>
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm" name="gear_{{ eid }}"
+                                                   value="{{ gear_map.get(eid, '') }}" placeholder="Partner name">
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        <button type="submit" class="btn btn-proam btn-sm">Save Changes</button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>

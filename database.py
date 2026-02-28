@@ -14,4 +14,5 @@ def init_db(app):
     migrate.init_app(app, db)
     # Import all models to register them with SQLAlchemy
     from models import (Tournament, Team, CollegeCompetitor, ProCompetitor,
-                        Event, EventResult, Heat, HeatAssignment, Flight, User, AuditLog)
+                        Event, EventResult, Heat, HeatAssignment, Flight, User, AuditLog,
+                        SchoolCaptain)

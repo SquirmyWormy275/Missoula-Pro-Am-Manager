@@ -415,6 +415,10 @@ If you run into problems not covered here:
 
 ---
 
+## In-App User Guide
+
+A comprehensive user guide is available inside the app at `/portal/guide`. It covers all six roles (Judge/Admin, Scorer, Registrar, Spectator, Pro Competitor, School Captain) with step-by-step instructions. First-time visitors to the spectator portal, pro competitor portal, and school captain portal will also see a brief onboarding walkthrough automatically.
+
 ## For Developers
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for technical documentation including:
@@ -422,8 +426,8 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for technical documentation including:
 - Data models
 - API routes
 - Configuration reference
-- Future development considerations
+- Changelog and future development considerations
 
 ---
 
-*Last updated: February 2026 — V1.2.0*
+*Last updated: February 2026 — V1.4.0*

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Birling Bracket — {{ event.display_name }}{% endblock %}
+
+{% block head_extra %}
+<style>
+.bracket-round { display: flex; flex-direction: column; justify-content: space-around; min-width: 160px; }
+.bracket-match {
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 4px 8px;
+    margin: 6px 4px;
+    background: #fff;
+    font-size: 0.85rem;
+}
+.bracket-match .slot {
+    padding: 2px 4px;
+    border-radius: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+}
+.bracket-match .slot.winner { background: #d1e7dd; font-weight: 700; }
+.bracket-match .slot.bye { color: #aaa; font-style: italic; }
+.bracket-match .match-id { font-size: 0.7rem; color: #888; margin-bottom: 2px; }
+.bracket-section { margin-bottom: 20px; }
+.bracket-section h6 { background: #1a3a5c; color: #fff; padding: 4px 10px; border-radius: 4px; }
+.bracket-row { display: flex; flex-direction: row; align-items: flex-start; overflow-x: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0"><i class="bi bi-diagram-3"></i> {{ event.display_name }} — Double Elimination Bracket</h4>
+        <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
+           class="btn btn-outline-secondary btn-sm">Back to Results</a>
+    </div>
+
+    {% macro render_slot(comp_id, winner_id) %}
+        {% set name = comp_lookup.get(comp_id|string, '—') if comp_id else 'TBD' %}
+        <div class="slot {% if comp_id and comp_id == winner_id %}winner{% elif not comp_id %}bye{% endif %}"
+             title="{{ name }}">
+            {% if comp_id %}{{ name }}{% else %}TBD{% endif %}
+        </div>
+    {% endmacro %}
+
+    {% macro render_match(match) %}
+    <div class="bracket-match">
+        <div class="match-id">{{ match.match_id }}</div>
+        {{ render_slot(match.competitor1, match.winner) }}
+        <hr class="my-1">
+        {{ render_slot(match.competitor2, match.winner) }}
+    </div>
+    {% endmacro %}
+
+    {% if bracket.winners %}
+    <div class="bracket-section">
+        <h6>Winners Bracket</h6>
+        <div class="bracket-row">
+            {% for round_matches in bracket.winners %}
+            <div class="bracket-round">
+                <div class="small text-muted text-center mb-1">Round {{ loop.index }}</div>
+                {% for match in round_matches %}{{ render_match(match) }}{% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if bracket.losers %}
+    <div class="bracket-section">
+        <h6>Losers Bracket</h6>
+        <div class="bracket-row">
+            {% for round_matches in bracket.losers %}
+            <div class="bracket-round">
+                <div class="small text-muted text-center mb-1">L Round {{ loop.index }}</div>
+                {% for match in round_matches %}{{ render_match(match) }}{% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if bracket.finals %}
+    <div class="bracket-section">
+        <h6>Grand Finals</h6>
+        <div class="bracket-row">
+            <div class="bracket-round">{{ render_match(bracket.finals) }}</div>
+            {% if bracket.true_finals and bracket.true_finals.needed %}
+            <div class="bracket-round">
+                <div class="small text-muted text-center mb-1">True Finals</div>
+                {{ render_match(bracket.true_finals) }}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if placements %}
+    <div class="card shadow-sm mt-3">
+        <div class="card-header card-header-proam"><h6 class="mb-0">Final Placements</h6></div>
+        <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Place</th><th>Competitor</th></tr></thead>
+                <tbody>
+                {% for comp_id, pos in placements.items()|sort(attribute='1') %}
+                <tr>
+                    <td>{{ pos }}</td>
+                    <td>{{ comp_lookup.get(comp_id, comp_id) }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not bracket.winners %}
+    <div class="alert alert-info mt-3">
+        No bracket data yet. Generate a bracket from the event management page.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

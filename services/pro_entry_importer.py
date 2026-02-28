@@ -15,18 +15,32 @@ _EVENT_MAP = {
     'Springboard (L)':                  ('Springboard (L)',          10),
     'Springboard (R)':                  ('Springboard (R)',          10),
     'Intermediate 1-Board Springboard': ('1-Board Springboard',      10),
+    '1-Board Springboard':              ('1-Board Springboard',      10),
+    'Pro 1-Board':                      ('1-Board Springboard',      10),
     "Men's Underhand":                  ("Men's Underhand",          10),
     "Women's Underhand":                ("Women's Underhand",        10),
     "Women's Standing Block":           ("Women's Standing Block",   10),
+    "Men's Standing Block":             ("Men's Standing Block",     10),
     "Men's Single Buck":                ("Men's Single Buck",         5),
     "Women's Single Buck":              ("Women's Single Buck",       5),
     "Men's Double Buck":                ("Men's Double Buck",         5),
+    "Women's Double Buck":              ("Women's Double Buck",       5),
+    'Double Buck':                      ("Men's Double Buck",         5),
     'Jack & Jill':                      ('Jack & Jill',               5),
+    'Jack & Jill Sawing':               ('Jack & Jill',               5),
+    'Jack Jill':                        ('Jack & Jill',               5),
     'Hot Saw':                          ('Hot Saw',                   5),
     'Obstacle Pole':                    ('Obstacle Pole',             5),
     'Speed Climb':                      ('Speed Climb',               5),
+    'Pole Climb':                       ('Speed Climb',               5),
     'Cookie Stack':                     ('Cookie Stack',              5),
+    '3-Board Jigger':                   ('3-Board Jigger',            5),
+    '3 Board Jigger':                   ('3-Board Jigger',            5),
     'Partnered Axe Throw':              ('Partnered Axe Throw',       5),
+    'Axe Throw':                        ('Partnered Axe Throw',       5),
+    "Men's Stock Saw":                  ("Men's Stock Saw",           5),
+    "Women's Stock Saw":                ("Women's Stock Saw",         5),
+    'Stock Saw':                        ("Men's Stock Saw",           5),
 }
 
 # Maps lowercased stripped partner-column header -> canonical event name
@@ -185,7 +199,7 @@ def parse_pro_entries(filepath: str) -> list:
     return entries
 
 
-def compute_review_flags(entries: list) -> list:
+def compute_review_flags(entries: list, existing_names: list = None) -> list:
     """
     Add 'flags' (list of warning strings) and 'flag_class' (Bootstrap row class)
     to each entry dict in-place.  Returns the same list for convenience.
@@ -197,8 +211,14 @@ def compute_review_flags(entries: list) -> list:
                               -> 'PARTNER NOT FOUND: <name>'
     - Yellow (table-warning): gear_sharing True but gear_sharing_details blank
                               -> 'GEAR SHARING DETAILS MISSING'
+    - Yellow (table-warning): name closely matches existing DB competitor (#18)
+                              -> 'POSSIBLE DUPLICATE OF: <name>'
     """
+    import difflib
     all_names = {e['name'].strip().lower() for e in entries}
+
+    # Build lookup of names to check for duplicates against
+    check_against = list(existing_names or [])
 
     for entry in entries:
         flags      = []
@@ -218,6 +238,24 @@ def compute_review_flags(entries: list) -> list:
             flags.append('GEAR SHARING DETAILS MISSING')
             if not flag_class:
                 flag_class = 'table-warning'
+
+        # #18 — Duplicate detection
+        if check_against:
+            entry_name_lower = entry['name'].strip().lower()
+            matches = difflib.get_close_matches(
+                entry_name_lower,
+                [n.strip().lower() for n in check_against],
+                n=1,
+                cutoff=0.85,
+            )
+            if matches:
+                original = next(
+                    (n for n in check_against if n.strip().lower() == matches[0]),
+                    matches[0]
+                )
+                flags.append(f'POSSIBLE DUPLICATE OF: {original}')
+                if not flag_class:
+                    flag_class = 'table-warning'
 
         entry['flags']      = flags
         entry['flag_class'] = flag_class

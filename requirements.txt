@@ -23,3 +23,9 @@ gunicorn==21.2.0
 
 # Monitoring
 sentry-sdk==2.22.0
+
+# Optional: SMS notifications (install to enable Twilio SMS features)
+# twilio>=8.0.0
+
+# Optional: S3 cloud backup (install to enable cloud backup features)
+# boto3>=1.34.0
