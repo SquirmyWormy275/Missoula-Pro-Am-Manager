@@ -148,157 +148,209 @@
         </div>
     </div>
 
-    <!-- Competition Cards -->
-    <div class="row">
-        <!-- College Competition -->
-        <div class="col-md-6 mb-4">
-            <div class="card h-100">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-mortarboard"></i> {{ COMPETITION.college_title }} ({{ COMPETITION.college_day }})</h5>
-                </div>
-                <div class="card-body">
-                    <p>Team-based competition with individual point scoring.</p>
-                    <ul class="list-unstyled">
-                        <li><i class="bi bi-check-circle text-success"></i> Team & Individual Scoring</li>
-                        <li><i class="bi bi-check-circle text-success"></i> Bull/Belle of the Woods</li>
-                        <li><i class="bi bi-check-circle text-success"></i> OPEN & CLOSED Events</li>
-                        <li><i class="bi bi-check-circle text-success"></i> Double-Elimination Birling</li>
-                    </ul>
-                </div>
-                <div class="card-footer">
-                    <div class="d-grid gap-2">
-                        <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}" class="btn btn-outline-primary">
-                            <i class="bi bi-upload"></i> {{ ui('import_teams') }}
-                        </a>
-                        <a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}" class="btn btn-primary">
-                            <i class="bi bi-arrow-right-circle"></i> {{ ui('go_to_college_dashboard') }}
-                        </a>
+    <!-- Tab Navigation -->
+    {% set active_tab = 'overview' %}
+    {% include '_tournament_tabs.html' %}
+
+    <!-- Day Status Strip (replaces old competition cards) -->
+    <div class="row mb-4">
+        <div class="col-md-6 mb-3 mb-md-0">
+            <div class="card h-100" style="border-color: rgba(59,142,232,0.35);">
+                <div class="card-body d-flex align-items-center justify-content-between gap-3">
+                    <div>
+                        <div class="fw-bold" style="color: #3b8ee8; font-family: 'Fraunces', serif;">
+                            <i class="bi bi-mortarboard me-2"></i>{{ COMPETITION.college_title }}
+                        </div>
+                        <div class="small text-muted mt-1">
+                            {{ stats.college_teams }} team{{ 's' if stats.college_teams != 1 else '' }}
+                            &middot;
+                            {{ stats.college_competitors }} competitor{{ 's' if stats.college_competitors != 1 else '' }}
+                        </div>
                     </div>
+                    <a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-primary btn-sm flex-shrink-0">
+                        Open <i class="bi bi-arrow-right ms-1"></i>
+                    </a>
                 </div>
             </div>
         </div>
-
-        <!-- Pro Competition -->
-        <div class="col-md-6 mb-4">
-            <div class="card h-100">
-                <div class="card-header bg-warning text-dark">
-                    <h5 class="mb-0"><i class="bi bi-trophy"></i> {{ COMPETITION.pro_title }} ({{ COMPETITION.pro_day }})</h5>
-                </div>
-                <div class="card-body">
-                    <p>Flight-based professional show with payouts.</p>
-                    <ul class="list-unstyled">
-                        <li><i class="bi bi-check-circle text-success"></i> Flight-Based Scheduling</li>
-                        <li><i class="bi bi-check-circle text-success"></i> Entry Fee Tracking</li>
-                        <li><i class="bi bi-check-circle text-success"></i> Payout Management</li>
-                        <li><i class="bi bi-check-circle text-success"></i> Pro-Am Relay Lottery</li>
-                    </ul>
-                </div>
-                <div class="card-footer">
-                    <div class="d-grid gap-2">
-                        <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}" class="btn btn-outline-warning">
-                            <i class="bi bi-person-plus"></i> {{ ui('register_competitors') }}
-                        </a>
-                        <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}" class="btn btn-warning">
-                            <i class="bi bi-arrow-right-circle"></i> {{ ui('go_to_pro_dashboard') }}
-                        </a>
+        <div class="col-md-6">
+            <div class="card h-100" style="border-color: rgba(232,144,18,0.35);">
+                <div class="card-body d-flex align-items-center justify-content-between gap-3">
+                    <div>
+                        <div class="fw-bold" style="color: var(--sx-amber); font-family: 'Fraunces', serif;">
+                            <i class="bi bi-trophy me-2"></i>{{ COMPETITION.pro_title }}
+                        </div>
+                        <div class="small text-muted mt-1">
+                            {{ stats.pro_competitors }} competitor{{ 's' if stats.pro_competitors != 1 else '' }}
+                        </div>
                     </div>
+                    <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-warning btn-sm flex-shrink-0">
+                        Open <i class="bi bi-arrow-right ms-1"></i>
+                    </a>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Quick Actions -->
-    <div class="row">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0"><i class="bi bi-lightning"></i> {{ ui('quick_actions') }}</h5>
+    <!-- Quick Actions (grouped) -->
+    <div class="card">
+        <div class="card-body">
+
+            <!-- SETUP -->
+            <div class="small fw-bold text-muted text-uppercase mb-2"
+                 style="letter-spacing: 0.07em; font-size: 0.7rem;">Setup</div>
+            <div class="row g-2 mb-4">
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-primary w-100">
+                        <i class="bi bi-calendar-plus"></i> Configure Events
+                    </a>
                 </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-4">
-                            <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}" class="btn btn-outline-primary w-100 mb-2">
-                                <i class="bi bi-calendar-plus"></i> {{ ui('configure_events') }}
-                            </a>
-                        </div>
-                        <div class="col-md-4">
-                            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="btn btn-outline-primary w-100 mb-2">
-                                <i class="bi bi-list-ul"></i> {{ ui('view_all_events') }}
-                            </a>
-                        </div>
-                        <div class="col-md-4">
-                            <a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}" class="btn btn-outline-primary w-100 mb-2">
-                                <i class="bi bi-file-text"></i> {{ ui('view_all_results') }}
-                            </a>
-                        </div>
-                        <div class="col-md-4">
-                            <a href="{{ url_for('scoring.offline_ops', tournament_id=tournament.id) }}" class="btn btn-outline-info w-100 mb-2">
-                                <i class="bi bi-wifi-off"></i> Offline Ops
-                            </a>
-                        </div>
-                        <div class="col-md-4">
-                            <a href="{{ url_for('reporting.export_results', tournament_id=tournament.id) }}" class="btn btn-outline-success w-100 mb-2">
-                                <i class="bi bi-file-earmark-excel"></i> Export Results
-                            </a>
-                        </div>
-                        <div class="col-md-4">
-                            <form method="POST" action="{{ url_for('reporting.export_results_async', tournament_id=tournament.id) }}">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button class="btn btn-outline-success w-100 mb-2" type="submit">
-                                    <i class="bi bi-hourglass-split"></i> Export Results (Async)
-                                </button>
-                            </form>
-                        </div>
-                        <div class="col-md-4">
-                            <a href="{{ url_for('portal.kiosk', tournament_id=tournament.id) }}"
-                               class="btn btn-outline-dark w-100 mb-2" target="_blank">
-                                <i class="bi bi-display"></i> Kiosk Display
-                            </a>
-                        </div>
-                        <div class="col-md-4">
-                            <form method="POST" action="{{ url_for('main.clone_tournament', tournament_id=tournament.id) }}"
-                                  onsubmit="return confirm('Clone this tournament? A copy will be created with all events, teams, and competitor names (no results).')">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-outline-secondary w-100 mb-2">
-                                    <i class="bi bi-copy"></i> Clone Tournament
-                                </button>
-                            </form>
-                        </div>
-                        {% if current_user.is_authenticated and current_user.is_admin %}
-                        <div class="col-md-4">
-                            <a href="{{ url_for('reporting.backup_database', tournament_id=tournament.id) }}" class="btn btn-outline-secondary w-100 mb-2">
-                                <i class="bi bi-database-down"></i> Download DB Backup
-                            </a>
-                            <form method="post"
-                                  action="{{ url_for('reporting.cloud_backup', tournament_id=tournament.id) }}"
-                                  id="cloud-backup-form">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-outline-info w-100"
-                                        id="cloud-backup-btn"
-                                        title="S3 backup if configured, otherwise local file backup">
-                                    <i class="bi bi-cloud-arrow-up"></i> Cloud Backup
-                                </button>
-                            </form>
-                        </div>
-                        <div class="col-md-8">
-                            <form method="POST" action="{{ url_for('reporting.restore_database', tournament_id=tournament.id) }}" enctype="multipart/form-data" class="row g-2">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <div class="col-8">
-                                    <input class="form-control" type="file" name="backup_file" accept=".db" required>
-                                </div>
-                                <div class="col-4">
-                                    <button class="btn btn-outline-danger w-100" type="submit" data-confirm="Restoring a backup will overwrite the current database. Continue?">
-                                        <i class="bi bi-database-up"></i> Restore Backup
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                        {% endif %}
-                    </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('woodboss.dashboard', tid=tournament.id) }}"
+                       class="btn btn-outline-warning w-100">
+                        <i class="bi bi-stack"></i> Virtual Woodboss
+                    </a>
                 </div>
             </div>
+
+            <!-- COMPETITION DAY -->
+            <div class="small fw-bold text-muted text-uppercase mb-2"
+                 style="letter-spacing: 0.07em; font-size: 0.7rem;">Competition Day</div>
+            <div class="row g-2 mb-4">
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-primary w-100">
+                        <i class="bi bi-list-ul"></i> Events Grid
+                    </a>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-primary w-100">
+                        <i class="bi bi-printer"></i> Heat Sheets
+                    </a>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('scheduling.day_schedule', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-primary w-100">
+                        <i class="bi bi-calendar-week"></i> Day Schedule
+                    </a>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-warning w-100">
+                        <i class="bi bi-shield-check"></i> Preflight Check
+                    </a>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('portal.kiosk', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-dark w-100" target="_blank">
+                        <i class="bi bi-display"></i> Kiosk Display &#8599;
+                    </a>
+                </div>
+            </div>
+
+            <!-- REPORTS & EXPORT -->
+            <div class="small fw-bold text-muted text-uppercase mb-2"
+                 style="letter-spacing: 0.07em; font-size: 0.7rem;">Reports &amp; Export</div>
+            <div class="row g-2 mb-4">
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-primary w-100">
+                        <i class="bi bi-file-text"></i> All Results
+                    </a>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('reporting.college_standings', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-primary w-100">
+                        <i class="bi bi-bar-chart"></i> College Standings
+                    </a>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('reporting.pro_payout_summary', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-primary w-100">
+                        <i class="bi bi-cash-stack"></i> Payout Summary
+                    </a>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('reporting.export_results', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-success w-100">
+                        <i class="bi bi-file-earmark-excel"></i> Export Excel
+                    </a>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('reporting.export_chopping_results', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-success w-100">
+                        <i class="bi bi-hammer"></i> Export Chopping
+                    </a>
+                </div>
+            </div>
+
+            <!-- ADMIN (admin-only) -->
+            {% if current_user.is_authenticated and current_user.is_admin %}
+            <div class="small fw-bold text-muted text-uppercase mb-2"
+                 style="letter-spacing: 0.07em; font-size: 0.7rem;">Admin</div>
+            <div class="row g-2">
+                <div class="col-md-3 col-sm-6">
+                    <form method="POST"
+                          action="{{ url_for('main.clone_tournament', tournament_id=tournament.id) }}"
+                          onsubmit="return confirm('Clone this tournament? A copy will be created with all events, teams, and competitor names (no results).')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-secondary w-100">
+                            <i class="bi bi-copy"></i> Clone Tournament
+                        </button>
+                    </form>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('reporting.backup_database', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary w-100">
+                        <i class="bi bi-database-down"></i> Download Backup
+                    </a>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <form method="post"
+                          action="{{ url_for('reporting.cloud_backup', tournament_id=tournament.id) }}"
+                          id="cloud-backup-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-info w-100"
+                                id="cloud-backup-btn"
+                                title="S3 backup if configured, otherwise local file backup">
+                            <i class="bi bi-cloud-arrow-up"></i> Cloud Backup
+                        </button>
+                    </form>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <a href="{{ url_for('scoring.offline_ops', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary w-100">
+                        <i class="bi bi-wifi-off"></i> Sync Recovery
+                    </a>
+                </div>
+                <div class="col-12 mt-2">
+                    <form method="POST"
+                          action="{{ url_for('reporting.restore_database', tournament_id=tournament.id) }}"
+                          enctype="multipart/form-data"
+                          class="row g-2">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="col-10">
+                            <input class="form-control form-control-sm" type="file"
+                                   name="backup_file" accept=".db" required>
+                        </div>
+                        <div class="col-2">
+                            <button class="btn btn-outline-danger btn-sm w-100" type="submit"
+                                    data-confirm="Restoring a backup will overwrite the current database. Continue?">
+                                <i class="bi bi-database-up"></i> Restore
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
+
         </div>
     </div>
+
 </div>
 
 {% block extra_js %}

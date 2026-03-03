@@ -38,7 +38,8 @@ Missoula-Pro-Am-Manager/
 │   ├── heat.py            # Heat & Flight models
 │   ├── user.py            # User — 7-role auth model
 │   ├── audit_log.py       # AuditLog — immutable audit trail
-│   └── school_captain.py  # SchoolCaptain — one PIN account per school per tournament
+│   ├── school_captain.py  # SchoolCaptain — one PIN account per school per tournament
+│   └── wood_config.py     # WoodConfig — Virtual Woodboss per-tournament species/size config
 ├── routes/                # Flask blueprints
 │   ├── main.py            # Dashboard & navigation
 │   ├── registration.py    # Competitor/team registration; headshot upload
@@ -51,9 +52,10 @@ Missoula-Pro-Am-Manager/
 │   ├── import_routes.py   # Pro entry xlsx importer (parse → review → confirm)
 │   ├── auth.py            # Login, logout, bootstrap, user management, audit log viewer
 │   ├── portal.py          # Spectator, competitor, school captain portals; user guide
-│   └── api.py             # Public read-only REST API (/api/public)
+│   ├── api.py             # Public read-only REST API (/api/public)
+│   └── woodboss.py        # Virtual Woodboss — material planning (/woodboss); dual-blueprint (protected + public share)
 ├── services/              # Business logic
-│   ├── excel_io.py        # Excel import/export
+│   ├── excel_io.py        # Excel import/export; structured team validation errors
 │   ├── heat_generator.py  # Heat generation algorithm
 │   ├── flight_builder.py  # Flight scheduling with competitor spacing & stand conflict enforcement
 │   ├── birling_bracket.py # Double-elimination bracket generator (fully functional)
@@ -67,7 +69,11 @@ Missoula-Pro-Am-Manager/
 │   ├── upload_security.py # Magic-byte validation, UUID filenames, scan hook
 │   ├── logging_setup.py   # JSON structured logging; optional Sentry SDK
 │   ├── sms_notify.py      # Twilio SMS; graceful no-op if not configured
-│   └── backup.py          # S3 or local SQLite backup
+│   ├── backup.py          # S3 or local SQLite backup
+│   ├── woodboss.py        # Block/saw calculations, lottery view, history, HMAC share token
+│   ├── handicap_export.py # Chopping-event Excel export helpers
+│   ├── partner_matching.py# Auto-partner matching for pro partnered events
+│   └── preflight.py       # Pre-scheduling validation checks
 ├── static/                # Static assets
 │   ├── js/onboarding.js   # First-time onboarding modal engine
 │   ├── sw.js              # Service worker (offline cache + Background Sync)
@@ -81,10 +87,11 @@ Missoula-Pro-Am-Manager/
     ├── college/           # College competition templates
     ├── pro/               # Pro competition templates (+ import flow)
     ├── scoring/           # Score entry templates
-    ├── scheduling/        # Heat/flight management; heat sheets print; friday feature
+    ├── scheduling/        # Heat/flight management; heat sheets print; friday feature; preflight
     ├── reports/           # Report templates (screen & print); payout settlement
     ├── proam_relay/       # Pro-Am Relay templates
-    └── partnered_axe/     # Partnered Axe templates
+    ├── partnered_axe/     # Partnered Axe templates
+    └── woodboss/          # Virtual Woodboss (dashboard, config, report, report_print, lottery, history)
 ```
 
 ---
@@ -520,6 +527,35 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-03-02 (V1.5.0)
+
+**Virtual Woodboss — complete material planning system for block prep days:**
+- Added `models/wood_config.py` (`WoodConfig`): per-tournament species/size config; UniqueConstraint on (tournament_id, config_key); `count_override` for relay/manual entries; `display_size()` helper
+- Migrations: `a4b5c6d7e8f9` (team validation_errors), `b5c6d7e8f9a0` (wood_configs table), `c6d7e8f9a0b1` (count_override column)
+- Added `services/woodboss.py`: BLOCK_EVENT_GROUPS enrollment matching, relay block handling, SAW_EVENTS formulas (crosscut 2"/cut, stocksaw 5", hotsaw 6.5", OP formula, cookie logs), relay double buck fix (log_relay_doublebuck key), lottery view, ordering summary, history report, HMAC share token
+- Added `routes/woodboss.py`: dual blueprint — `woodboss_bp` (judge/admin protected) + `woodboss_public_bp` (HMAC-token share link, no auth); routes: dashboard, config_form, save_config, copy_from, report, report_print, lottery, history, share
+- Added 6 templates in `templates/woodboss/`: dashboard, config (with relay rows + relay double buck row), report (3-tab: by event/by species/ordering), report_print (standalone HTML), lottery, history
+- Added `woodboss` to `MANAGEMENT_BLUEPRINTS` + `BLUEPRINT_PERMISSIONS['woodboss'] = 'is_judge'` in app.py
+- Added `wood_configs` relationship to `Tournament` model (cascade delete-orphan)
+- Added Virtual Woodboss card to tournament_detail.html Tools section
+- **Pro-Am Relay double buck fix:** relay participants are not enrolled in a standard "Double Buck" event — added `log_relay_doublebuck` config key so judge enters team count manually; service appends relay double buck to saw_wood output (teams × 2" per cut)
+
+**Team Validation Framework:**
+- Added `validation_errors` TEXT column to `Team` model (JSON list of structured error dicts); `get_validation_errors()` / `set_validation_errors()` methods; status now supports 'invalid'
+- Refactored `services/excel_io.py` `_validate_college_entry_constraints()` to return `dict[team_id, list[dict]]` with 8 typed error types instead of raising; partial success import — valid teams commit, invalid teams tracked
+- Updated `routes/registration.py` to split `valid_teams` / `invalid_teams` and display warning flash
+- Updated `templates/college/registration.html` to show Invalid Teams count; `team_detail.html` to show error accordion with targeted fix forms per error type
+
+**New services (not yet wired to UI routes):**
+- `services/partner_matching.py`: auto-partner assignment for pro events; bidirectional validation; gender/mixed-gender matching
+- `services/preflight.py`: pre-scheduling checks (heat/table sync, odd partner pools, Saturday overflow); generates severity-ranked issue list with autofixable flags; `templates/scheduling/preflight.html` template added
+- `services/handicap_export.py`: chopping-event Excel export helpers (underhand, springboard, standing)
+
+**Infrastructure:**
+- Added `templates/_tournament_tabs.html` shared 3-tab nav component
+- `.gitignore` updated to exclude `static/video/` (large local media files)
+- All `__pycache__/` and `.pyc` bytecode artifacts scrubbed from repo
 
 ### 2026-02-28 (V1.4.0)
 - Added school captain portal: one PIN-protected account per school covers all teams; `models/school_captain.py`, migration `f3a4b5c6d7e8`

@@ -16,6 +16,7 @@ except ModuleNotFoundError:
 from database import db
 from models import Tournament, Event
 from services.excel_io import export_results_to_excel
+from services.handicap_export import build_chopping_rows, export_chopping_results_to_excel
 from services.audit import log_action
 from services.background_jobs import get as get_job, submit as submit_job
 from services.report_cache import get as cache_get, set as cache_set
@@ -182,6 +183,35 @@ def export_results(tournament_id):
         return response
 
     download_name = f'{tournament.name}_{tournament.year}_results.xlsx'.replace(' ', '_')
+    return send_file(path, as_attachment=True, download_name=download_name)
+
+
+@reporting_bp.route('/<int:tournament_id>/export-chopping')
+def export_chopping_results(tournament_id):
+    """Export only chopping event scores/results for external handicap tools."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    fmt = (request.args.get('format') or 'xlsx').strip().lower()
+
+    if fmt == 'json':
+        payload = {
+            'tournament': {'id': tournament.id, 'name': tournament.name, 'year': tournament.year},
+            'rows': build_chopping_rows(tournament),
+        }
+        return Response(json.dumps(payload), mimetype='application/json')
+
+    fd, path = tempfile.mkstemp(prefix=f'proam_{tournament_id}_chopping_', suffix='.xlsx')
+    os.close(fd)
+    export_chopping_results_to_excel(tournament, path)
+
+    @after_this_request
+    def cleanup_file(response):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return response
+
+    download_name = f'{tournament.name}_{tournament.year}_chopping_results.xlsx'.replace(' ', '_')
     return send_file(path, as_attachment=True, download_name=download_name)
 
 

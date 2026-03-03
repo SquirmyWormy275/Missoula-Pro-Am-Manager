@@ -15,6 +15,9 @@ proam.db
 # Uploaded files
 uploads/
 
+# Large media files (too big for GitHub; keep locally only)
+static/video/
+
 # Environment secrets
 .env
 .env.*

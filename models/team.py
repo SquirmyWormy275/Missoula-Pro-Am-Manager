@@ -21,7 +21,10 @@ class Team(db.Model):
     total_points = db.Column(db.Integer, default=0)
 
     # Status
-    status = db.Column(db.String(20), default='active')  # active, scratched
+    status = db.Column(db.String(20), default='active')  # active, scratched, invalid
+
+    # Validation error tracking (JSON list of structured error dicts; None = no errors recorded)
+    validation_errors = db.Column(db.Text, nullable=True)
 
     # Relationships
     members = db.relationship('CollegeCompetitor', backref='team', lazy='dynamic')
@@ -67,3 +70,17 @@ class Team(db.Model):
         """Return members sorted by individual points (descending)."""
         members = self.members.filter_by(status='active').all()
         return sorted(members, key=lambda m: m.individual_points, reverse=True)
+
+    def get_validation_errors(self):
+        """Return list of structured validation error dicts (empty list if none)."""
+        import json
+        try:
+            return json.loads(self.validation_errors or '[]')
+        except Exception:
+            return []
+
+    def set_validation_errors(self, errors: list):
+        """Store structured errors and update team status accordingly."""
+        import json
+        self.validation_errors = json.dumps(errors)
+        self.status = 'invalid' if errors else 'active'

@@ -24,11 +24,14 @@ def allowed_file(filename):
 def college_registration(tournament_id):
     """College team registration page."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    teams = tournament.teams.all()
+    all_teams = tournament.teams.all()
+    valid_teams = [t for t in all_teams if t.status != 'invalid']
+    invalid_teams = [t for t in all_teams if t.status == 'invalid']
 
     return render_template('college/registration.html',
                            tournament=tournament,
-                           teams=teams)
+                           teams=valid_teams,
+                           invalid_teams=invalid_teams)
 
 
 @registration_bp.route('/<int:tournament_id>/college/upload', methods=['POST'])
@@ -64,14 +67,23 @@ def upload_college_entry(tournament_id):
                 command_template=current_app.config.get('MALWARE_SCAN_COMMAND', '')
             )
             result = process_college_entry_form(filepath, tournament)
+            valid_teams = result.get('teams', 0)
+            invalid_teams = result.get('invalid_teams', 0)
             log_action('college_upload_imported', 'tournament', tournament.id, {
-                'teams': result.get('teams', 0),
+                'teams': valid_teams,
+                'invalid_teams': invalid_teams,
                 'competitors': result.get('competitors', 0),
                 'filename': validation.safe_name,
             })
-            db.session.commit()
             invalidate_tournament_caches(tournament_id)
-            flash(text.FLASH['import_success'].format(teams=result["teams"], competitors=result["competitors"]), 'success')
+            if invalid_teams:
+                flash(
+                    text.FLASH['import_success'].format(teams=valid_teams, competitors=result['competitors'])
+                    + f' {invalid_teams} team(s) had errors and were saved as invalid — see below.',
+                    'warning'
+                )
+            else:
+                flash(text.FLASH['import_success'].format(teams=valid_teams, competitors=result['competitors']), 'success')
         except Exception as e:
             db.session.rollback()
             flash(text.FLASH['import_error'].format(error=str(e)), 'error')
@@ -206,6 +218,106 @@ def delete_college_team(tournament_id, team_id):
     return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
 
+# ---------------------------------------------------------------------------
+# Invalid-team fix routes
+# ---------------------------------------------------------------------------
+
+@registration_bp.route('/<int:tournament_id>/college/team/<int:team_id>/revalidate', methods=['POST'])
+def revalidate_team(tournament_id, team_id):
+    """Re-run constraint validation for a team and promote to active if clean."""
+    from services.excel_io import _validate_college_entry_constraints
+    team = Team.query.get_or_404(team_id)
+    if team.tournament_id != tournament_id:
+        flash('Team not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    errors_by_team = _validate_college_entry_constraints({team_id})
+    team_errors = errors_by_team.get(team_id, [])
+    team.set_validation_errors(team_errors)
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+
+    if not team_errors:
+        flash(f'Team {team.team_code} passed validation and is now active.', 'success')
+    else:
+        flash(f'Team {team.team_code} still has {len(team_errors)} error(s). Fix them and re-validate.', 'warning')
+    return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
+
+
+@registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/remove-event', methods=['POST'])
+def remove_competitor_event(tournament_id, competitor_id):
+    """Remove a single event from a competitor's entry and re-validate the team."""
+    from services.excel_io import _validate_college_entry_constraints
+    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    event_name = (request.form.get('event_name') or '').strip()
+    if not event_name:
+        flash('No event specified.', 'error')
+        return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
+
+    current_events = competitor.get_events_entered()
+    updated_events = [e for e in current_events if str(e).strip() != event_name]
+    competitor.set_events_entered(updated_events)
+
+    # Also remove the partner entry for the removed event
+    partners = competitor.get_partners()
+    if event_name in partners:
+        del partners[event_name]
+        competitor.partners = json.dumps(partners)
+
+    db.session.flush()
+
+    # Re-validate team
+    errors_by_team = _validate_college_entry_constraints({competitor.team_id})
+    team = Team.query.get(competitor.team_id)
+    if team:
+        team_errors = errors_by_team.get(competitor.team_id, [])
+        team.set_validation_errors(team_errors)
+
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    flash(f'Event "{event_name}" removed from {competitor.name}.', 'info')
+    return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
+
+
+@registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/set-partner', methods=['POST'])
+def set_competitor_partner(tournament_id, competitor_id):
+    """Set or clear a competitor's partner for a specific event, then re-validate the team."""
+    from services.excel_io import _validate_college_entry_constraints
+    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    event_name = (request.form.get('event_name') or '').strip()
+    partner_name = (request.form.get('partner_name') or '').strip()
+
+    if not event_name:
+        flash('No event specified.', 'error')
+        return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
+
+    competitor.set_partner(event_name, partner_name)
+    db.session.flush()
+
+    # Re-validate team
+    errors_by_team = _validate_college_entry_constraints({competitor.team_id})
+    team = Team.query.get(competitor.team_id)
+    if team:
+        team_errors = errors_by_team.get(competitor.team_id, [])
+        team.set_validation_errors(team_errors)
+
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    if partner_name:
+        flash(f'Partner updated for {competitor.name} in "{event_name}".', 'info')
+    else:
+        flash(f'Partner removed for {competitor.name} in "{event_name}".', 'info')
+    return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
+
+
 @registration_bp.route('/<int:tournament_id>/pro')
 def pro_registration(tournament_id):
     """Professional competitor registration page."""
@@ -282,7 +394,8 @@ def pro_competitor_detail(tournament_id, competitor_id):
                            competitor=competitor,
                            pro_events=pro_events,
                            event_labels=event_labels,
-                           gear_sharing_labels=gear_sharing_labels)
+                           gear_sharing_labels=gear_sharing_labels,
+                           partner_map=competitor.get_partners())
 
 
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/update-events', methods=['POST'])
@@ -301,6 +414,7 @@ def update_pro_events(tournament_id, competitor_id):
     new_fees = {}
     new_paid = {}
     new_gear_sharing = {}
+    new_partners = {}
 
     for event in pro_events:
         eid = str(event.id)
@@ -311,16 +425,20 @@ def update_pro_events(tournament_id, competitor_id):
             fee = 0.0
         paid = request.form.get(f'paid_{eid}') == 'on'
         gear = (request.form.get(f'gear_{eid}') or '').strip()
+        partner = (request.form.get(f'partner_{eid}') or '').strip()
 
         if eid in selected_ids or fee > 0:
             new_fees[eid] = fee
             new_paid[eid] = paid
         if gear:
             new_gear_sharing[eid] = gear
+        if partner:
+            new_partners[eid] = partner
 
     competitor.entry_fees = json.dumps(new_fees)
     competitor.fees_paid = json.dumps(new_paid)
     competitor.gear_sharing = json.dumps(new_gear_sharing)
+    competitor.partners = json.dumps(new_partners)
 
     log_action('pro_events_updated', 'pro_competitor', competitor.id, {
         'tournament_id': tournament_id,
@@ -330,6 +448,24 @@ def update_pro_events(tournament_id, competitor_id):
     invalidate_tournament_caches(tournament_id)
     flash(f'Events updated for {competitor.name}.', 'success')
     return redirect(url_for('registration.pro_competitor_detail', tournament_id=tournament_id, competitor_id=competitor_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/auto-assign-partners', methods=['POST'])
+def auto_assign_pro_partners_route(tournament_id):
+    """Auto assign partners for pro partnered events."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.partner_matching import auto_assign_pro_partners
+
+    summary = auto_assign_pro_partners(tournament)
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    log_action('pro_partners_auto_assigned', 'tournament', tournament_id, summary)
+    flash(
+        f"Auto-assigned {summary['assigned_pairs']} partner pair(s) across {summary['event_count']} event(s). "
+        f"Unmatched competitors: {summary['unmatched']}.",
+        'success'
+    )
+    return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
 
 
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/scratch', methods=['POST'])

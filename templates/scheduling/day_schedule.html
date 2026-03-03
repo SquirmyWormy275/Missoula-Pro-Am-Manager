@@ -27,6 +27,10 @@
                     <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
                 </div>
                 <div class="d-flex gap-2">
+                    <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-warning">
+                        <i class="bi bi-shield-check"></i> Preflight Check
+                    </a>
                     <a href="{{ url_for('scheduling.day_schedule_print', tournament_id=tournament.id) }}"
                        class="btn btn-outline-dark" target="_blank">
                         <i class="bi bi-printer"></i> Print Day Schedule
@@ -99,8 +103,70 @@
                                     onclick="return confirm('Generate heats for all events and rebuild pro flights?');">
                                 <i class="bi bi-lightning-charge"></i> Generate All Heats + Build Flights
                             </button>
+                            <button type="submit" name="action" value="integrate_spillover" class="btn btn-outline-primary"
+                                    onclick="return confirm('Integrate selected college spillover heats into existing Saturday flights?');">
+                                <i class="bi bi-link-45deg"></i> Integrate Spillover to Flights
+                            </button>
+                        </div>
+                        <div class="alert alert-info mt-3 mb-0">
+                            <i class="bi bi-info-circle"></i>
+                            Before you choose Friday Night Feature or Saturday spillover, this page uses <strong>College</strong> and <strong>Pro</strong> grouping only.
+                            Day labels appear after you make those selections and regenerate.
                         </div>
                     </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="mb-0"><i class="bi bi-signpost-split"></i> Next Step</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-lg-4">
+                            <div class="border rounded p-3 h-100">
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <span class="badge bg-warning text-dark">Step 1</span>
+                                    <strong>Friday Night Feature</strong>
+                                </div>
+                                <p class="text-muted small mb-3">Choose which pro events move into the Friday night showcase.</p>
+                                <a href="{{ url_for('scheduling.friday_feature', tournament_id=tournament.id) }}"
+                                   class="btn {% if not has_schedule_overrides %}btn-proam{% else %}btn-outline-warning{% endif %} w-100">
+                                    <i class="bi bi-stars"></i> Configure Friday Night Feature
+                                </a>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="border rounded p-3 h-100">
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <span class="badge bg-primary">Step 2</span>
+                                    <strong>Heats Setup</strong>
+                                </div>
+                                <p class="text-muted small mb-3">Generate and review heats for each event before scoring starts.</p>
+                                <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                                   class="btn {% if has_schedule_overrides %}btn-proam{% else %}btn-outline-primary{% endif %} w-100">
+                                    <i class="bi bi-list-check"></i> Generate / Manage Heats
+                                </a>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="border rounded p-3 h-100">
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <span class="badge bg-success">Step 3</span>
+                                    <strong>Build Pro Flights</strong>
+                                </div>
+                                <p class="text-muted small mb-3">After pro heats are ready, build Saturday flight groupings.</p>
+                                <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
+                                   class="btn {% if has_schedule_overrides and schedule.saturday_source != 'flights' %}btn-proam{% else %}btn-outline-success{% endif %} w-100">
+                                    <i class="bi bi-shuffle"></i> Build Pro Flights
+                                </a>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -110,7 +176,7 @@
         <div class="col-lg-4 mb-4">
             <div class="card h-100">
                 <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0">Friday Day Show</h5>
+                    <h5 class="mb-0">{{ 'Friday Day Show' if has_schedule_overrides else 'College Events' }}</h5>
                 </div>
                 <ul class="list-group list-group-flush">
                     {% for item in detailed_schedule.friday_day %}
@@ -145,7 +211,7 @@
         <div class="col-lg-4 mb-4">
             <div class="card h-100">
                 <div class="card-header bg-secondary text-white">
-                    <h5 class="mb-0">Friday Night Feature</h5>
+                    <h5 class="mb-0">{{ 'Friday Night Feature' if has_schedule_overrides else 'Pro Events' }}</h5>
                 </div>
                 <ul class="list-group list-group-flush">
                     {% for item in detailed_schedule.friday_feature %}
@@ -180,7 +246,7 @@
         <div class="col-lg-4 mb-4">
             <div class="card h-100">
                 <div class="card-header bg-warning text-dark">
-                    <h5 class="mb-0">Saturday Show</h5>
+                    <h5 class="mb-0">{{ 'Saturday Show' if has_schedule_overrides else 'Pro + College Queue' }}</h5>
                 </div>
                 <div class="card-body py-2 border-bottom">
                     {% if schedule.saturday_source == 'flights' %}

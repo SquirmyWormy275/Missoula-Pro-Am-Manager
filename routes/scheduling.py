@@ -57,26 +57,31 @@ def setup_events(tournament_id):
     pro_events = [_with_field_key(e) for e in config.PRO_EVENTS]
 
     if request.method == 'POST':
-        event_type = request.form.get('event_type')  # 'college' or 'pro'
+        action_scope = request.form.get('action_scope', 'both')  # 'college', 'pro', or 'both'
 
-        if event_type == 'college':
-            skipped = _create_college_events(tournament, request.form, college_open_events, college_closed_events)
-            if skipped:
+        if action_scope in {'college', 'both'}:
+            skipped_college = _create_college_events(tournament, request.form, college_open_events, college_closed_events)
+            if skipped_college:
                 flash(
-                    f'Skipped removing {skipped} college event(s) because heats/results already exist.',
+                    f'Skipped removing {skipped_college} college event(s) because heats/results already exist.',
                     'warning'
                 )
-        elif event_type == 'pro':
-            skipped = _create_pro_events(tournament, request.form, pro_events)
-            if skipped:
+        if action_scope in {'pro', 'both'}:
+            skipped_pro = _create_pro_events(tournament, request.form, pro_events)
+            if skipped_pro:
                 flash(
-                    f'Skipped removing {skipped} pro event(s) because heats/results already exist.',
+                    f'Skipped removing {skipped_pro} pro event(s) because heats/results already exist.',
                     'warning'
                 )
 
         db.session.commit()
-        flash(text.FLASH['events_configured'], 'success')
-        return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+        if action_scope == 'college':
+            flash('College event configuration saved.', 'success')
+        elif action_scope == 'pro':
+            flash('Pro event configuration saved.', 'success')
+        else:
+            flash('College and pro event configurations saved.', 'success')
+        return redirect(url_for('scheduling.setup_events', tournament_id=tournament_id))
 
     existing_config = _get_existing_event_config(tournament)
 
@@ -407,10 +412,14 @@ def day_schedule(tournament_id):
     """Generate a Friday/Saturday schedule using Missoula Pro Am rules."""
     from services.schedule_builder import build_day_schedule, COLLEGE_SATURDAY_PRIORITY
     from services.heat_generator import generate_event_heats
-    from services.flight_builder import build_pro_flights
+    from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
 
     tournament = Tournament.query.get_or_404(tournament_id)
-    pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
+    friday_feature_names = set(config.FRIDAY_NIGHT_EVENTS)
+    pro_events = [
+        event for event in tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
+        if event.name in friday_feature_names
+    ]
 
     priority_index = {priority: idx for idx, priority in enumerate(COLLEGE_SATURDAY_PRIORITY)}
     college_events = tournament.events.filter_by(event_type='college').all()
@@ -438,15 +447,43 @@ def day_schedule(tournament_id):
         }
         session[session_key] = saved
         session.modified = True
-        if action == 'generate_all':
+        if action == 'generate_schedule':
+            integration = integrate_college_spillover_into_flights(tournament, saved['saturday_college_event_ids'])
+            if integration['integrated_heats'] > 0:
+                db.session.commit()
+                flash(
+                    f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.",
+                    'success'
+                )
+        elif action == 'generate_all':
             _generate_all_heats(tournament, generate_event_heats)
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
                 flash(f'Built {flights} pro flight(s).', 'success')
+                integration = integrate_college_spillover_into_flights(tournament, saved['saturday_college_event_ids'])
+                if integration['integrated_heats'] > 0:
+                    db.session.commit()
+                    flash(
+                        f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.",
+                        'success'
+                    )
         elif action == 'rebuild_flights':
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
                 flash(f'Rebuilt {flights} pro flight(s).', 'success')
+                integration = integrate_college_spillover_into_flights(tournament, saved['saturday_college_event_ids'])
+                if integration['integrated_heats'] > 0:
+                    db.session.commit()
+                    flash(
+                        f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.",
+                        'success'
+                    )
+        elif action == 'integrate_spillover':
+            integration = integrate_college_spillover_into_flights(tournament, saved['saturday_college_event_ids'])
+            db.session.commit()
+            flash(integration['message'], 'info')
+            if integration['integrated_heats'] > 0:
+                flash(f"Integrated {integration['integrated_heats']} heat(s) into flights.", 'success')
     else:
         saved = {
             'friday_pro_event_ids': [int(eid) for eid in saved.get('friday_pro_event_ids', [])],
@@ -458,6 +495,7 @@ def day_schedule(tournament_id):
         friday_pro_event_ids=saved['friday_pro_event_ids'],
         saturday_college_event_ids=saved['saturday_college_event_ids']
     )
+    has_schedule_overrides = bool(saved['friday_pro_event_ids'] or saved['saturday_college_event_ids'])
     detailed_schedule = _hydrate_schedule_for_display(tournament, schedule)
 
     return render_template(
@@ -467,8 +505,68 @@ def day_schedule(tournament_id):
         college_sat_options=college_sat_options,
         selected_friday_pro_event_ids=saved['friday_pro_event_ids'],
         selected_saturday_college_event_ids=saved['saturday_college_event_ids'],
+        has_schedule_overrides=has_schedule_overrides,
         schedule=schedule,
         detailed_schedule=detailed_schedule
+    )
+
+
+@scheduling_bp.route('/<int:tournament_id>/preflight', methods=['GET', 'POST'])
+def preflight_check(tournament_id):
+    """Run preflight checks and offer one-click auto-fix actions."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.preflight import build_preflight_report
+    from services.partner_matching import auto_assign_pro_partners
+    from services.flight_builder import integrate_college_spillover_into_flights
+
+    session_key = f'schedule_options_{tournament_id}'
+    saved = session.get(session_key, {})
+    saturday_ids = [int(eid) for eid in saved.get('saturday_college_event_ids', [])]
+
+    if request.method == 'POST':
+        action = request.form.get('action', 'autofix')
+        if action == 'autofix':
+            # 1) Heat assignment sync for all events
+            heats_fixed = 0
+            for event in tournament.events.all():
+                for heat in event.heats.all():
+                    json_ids = heat.get_competitors()
+                    HeatAssignment.query.filter_by(heat_id=heat.id).delete()
+                    assignments = heat.get_stand_assignments()
+                    for comp_id in json_ids:
+                        db.session.add(HeatAssignment(
+                            heat_id=heat.id,
+                            competitor_id=comp_id,
+                            competitor_type=event.event_type,
+                            stand_number=assignments.get(str(comp_id)),
+                        ))
+                    heats_fixed += 1
+
+            # 2) Auto-partner assignments
+            partner_summary = auto_assign_pro_partners(tournament)
+
+            # 3) Saturday spillover integration
+            integration = integrate_college_spillover_into_flights(tournament, saturday_ids)
+
+            db.session.commit()
+            log_action('preflight_autofix_applied', 'tournament', tournament_id, {
+                'heats_fixed': heats_fixed,
+                'partner_summary': partner_summary,
+                'spillover': integration,
+            })
+            flash(
+                f"Auto-fix complete: synced {heats_fixed} heats, assigned {partner_summary['assigned_pairs']} pairs, "
+                f"integrated {integration['integrated_heats']} spillover heats.",
+                'success'
+            )
+            return redirect(url_for('scheduling.preflight_check', tournament_id=tournament_id))
+
+    report = build_preflight_report(tournament, saturday_ids)
+    return render_template(
+        'scheduling/preflight.html',
+        tournament=tournament,
+        report=report,
+        saturday_college_event_ids=saturday_ids,
     )
 
 

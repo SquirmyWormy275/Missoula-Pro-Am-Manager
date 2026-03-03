@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+
+{% block title %}Wood Report — {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-table th {
+        font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em;
+        text-transform: uppercase; color: var(--sx-text-2);
+        border-bottom: 1px solid var(--sx-border-bright);
+        padding: 0.55rem 0.75rem;
+    }
+    .report-table td {
+        padding: 0.5rem 0.75rem; vertical-align: middle;
+        border-color: var(--sx-border); font-size: 0.9rem;
+    }
+    .report-table tfoot td {
+        font-weight: 700; border-top: 2px solid var(--sx-border-bright);
+        background: var(--sx-surface-2);
+    }
+    .section-card { margin-bottom: 1.5rem; }
+    .species-pill {
+        display: inline-block;
+        background: rgba(59,142,232,0.15); border: 1px solid rgba(59,142,232,0.3);
+        color: #6cb6f5; border-radius: 20px;
+        padding: 0.15rem 0.55rem; font-size: 0.8rem; font-weight: 600;
+    }
+    .formula-code { font-family: monospace; font-size: 0.82rem; color: var(--sx-text-2); }
+    .total-highlight { font-size: 1.05rem; font-weight: 700; color: var(--sx-gold); }
+    .order-item-block { border-left: 3px solid var(--sx-amber); }
+    .order-item-log   { border-left: 3px solid var(--sx-info); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+            <li class="breadcrumb-item">
+                <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
+                    {{ tournament.name }} {{ tournament.year }}
+                </a>
+            </li>
+            <li class="breadcrumb-item">
+                <a href="{{ url_for('woodboss.dashboard', tid=tournament.id) }}">Virtual Woodboss</a>
+            </li>
+            <li class="breadcrumb-item active">Wood Count Report</li>
+        </ol>
+    </nav>
+
+    <!-- Header -->
+    <div class="row align-items-center mb-4">
+        <div class="col">
+            <h1><i class="bi bi-clipboard-data text-success"></i> Wood Count Report</h1>
+            <p class="text-muted mb-0">{{ tournament.name }} {{ tournament.year }}</p>
+        </div>
+        <div class="col-auto d-flex gap-2">
+            <!-- Share link -->
+            <button class="btn btn-outline-info btn-sm" onclick="copyShareLink()" title="Copy shareable link for block prep crew">
+                <i class="bi bi-link-45deg"></i> Copy Share Link
+            </button>
+            <a href="{{ url_for('woodboss.config_form', tid=tournament.id) }}"
+               class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-sliders"></i> Edit Config
+            </a>
+            <a href="{{ url_for('woodboss.report_print', tid=tournament.id) }}"
+               class="btn btn-outline-success btn-sm" target="_blank">
+                <i class="bi bi-printer"></i> Print
+            </a>
+        </div>
+    </div>
+
+    {% if not report.is_configured %}
+    <div class="alert alert-warning mb-4">
+        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+        <strong>Wood specs not fully configured.</strong>
+        <a href="{{ url_for('woodboss.config_form', tid=tournament.id) }}" class="alert-link">Configure now &rarr;</a>
+    </div>
+    {% endif %}
+
+    <!-- View tabs -->
+    <ul class="nav nav-pills mb-4">
+        <li class="nav-item">
+            <a class="nav-link {{ 'active' if view == 'event' }}"
+               href="{{ url_for('woodboss.report', tid=tournament.id, view='event') }}">
+                <i class="bi bi-list-ul"></i> By Event
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {{ 'active' if view == 'species' }}"
+               href="{{ url_for('woodboss.report', tid=tournament.id, view='species') }}">
+                <i class="bi bi-collection"></i> By Species / Size
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {{ 'active' if view == 'order' }}"
+               href="{{ url_for('woodboss.report', tid=tournament.id, view='order') }}">
+                <i class="bi bi-cart3"></i> Ordering Summary
+            </a>
+        </li>
+    </ul>
+
+    {% if view == 'event' %}
+    <!-- ═══ BY EVENT ════════════════════════════════════════════════ -->
+
+    <div class="card section-card">
+        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-stack"></i> Chopping Blocks</h5>
+            <span class="badge bg-warning fs-6">{{ report.total_blocks }} total</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table report-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Event Group</th>
+                            <th>Species</th>
+                            <th>Size</th>
+                            <th class="text-end">Count</th>
+                            <th class="text-end">Blocks</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set block_total = namespace(n=0) %}
+                        {% for b in report.blocks %}
+                        {% if b.competitor_count > 0 %}
+                        {% set block_total.n = block_total.n + b.competitor_count %}
+                        <tr>
+                            <td>
+                                {{ b.label }}
+                                {% if b.is_manual %}
+                                <span class="badge bg-warning ms-1" title="Manual count override" style="font-size:0.65rem;">manual</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if b.species %}<span class="species-pill">{{ b.species }}</span>
+                                {% else %}<span class="text-muted fst-italic">not set</span>{% endif %}
+                            </td>
+                            <td>{{ b.size_display or '—' }}</td>
+                            <td class="text-end">{{ b.competitor_count }}</td>
+                            <td class="text-end fw-bold">{{ b.competitor_count }}</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                        {% if block_total.n == 0 %}
+                        <tr><td colspan="5" class="text-center text-muted fst-italic py-3">No competitors enrolled in chopping events.</td></tr>
+                        {% endif %}
+                    </tbody>
+                    {% if block_total.n > 0 %}
+                    <tfoot>
+                        <tr>
+                            <td colspan="4" class="text-end">Total Blocks:</td>
+                            <td class="text-end total-highlight">{{ block_total.n }}</td>
+                        </tr>
+                    </tfoot>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card section-card">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-bar-chart-steps"></i> Saw Log Material</h5>
+            <div class="d-flex gap-2">
+                <span class="badge bg-primary fs-6">{{ '%.1f'|format(report.total_saw_inches) }}"</span>
+                {% if report.total_cookie_logs > 0 %}
+                <span class="badge bg-success fs-6">{{ report.total_cookie_logs }} cookie logs</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table report-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Event</th>
+                            <th>Competitors</th>
+                            <th>Calculation</th>
+                            <th>Species</th>
+                            <th>Size</th>
+                            <th class="text-end">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set saw_in = namespace(n=0.0) %}
+                        {% set saw_logs = namespace(n=0) %}
+                        {% for s in report.saw_wood %}
+                        {% if s.competitor_count > 0 %}
+                        {% if s.total_inches is not none %}{% set saw_in.n = saw_in.n + s.total_inches %}{% endif %}
+                        {% if s.log_count is not none %}{% set saw_logs.n = saw_logs.n + s.log_count %}{% endif %}
+                        <tr>
+                            <td>{{ s.event_label }}</td>
+                            <td>{{ s.competitor_count }}</td>
+                            <td class="formula-code">{{ s.formula_desc }}</td>
+                            <td>{% if s.species %}<span class="species-pill">{{ s.species }}</span>
+                                {% else %}<span class="text-muted fst-italic">not set</span>{% endif %}</td>
+                            <td>{{ s.size_display or '—' }}</td>
+                            <td class="text-end fw-bold">
+                                {% if s.total_inches is not none %}{{ '%.1f'|format(s.total_inches) }}"
+                                {% elif s.log_count is not none %}{{ s.log_count }} log{{ 's' if s.log_count != 1 }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                        {% if saw_in.n == 0 and saw_logs.n == 0 %}
+                        <tr><td colspan="6" class="text-center text-muted fst-italic py-3">No competitors enrolled in saw events.</td></tr>
+                        {% endif %}
+                    </tbody>
+                    {% if saw_in.n > 0 or saw_logs.n > 0 %}
+                    <tfoot>
+                        {% if saw_in.n > 0 %}
+                        <tr>
+                            <td colspan="5" class="text-end">Total Saw Log Linear:</td>
+                            <td class="text-end total-highlight">{{ '%.1f'|format(saw_in.n) }}"</td>
+                        </tr>
+                        {% endif %}
+                        {% if saw_logs.n > 0 %}
+                        <tr>
+                            <td colspan="5" class="text-end">Total Cookie Stack Logs:</td>
+                            <td class="text-end total-highlight">{{ saw_logs.n }}</td>
+                        </tr>
+                        {% endif %}
+                    </tfoot>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {% elif view == 'species' %}
+    <!-- ═══ BY SPECIES ══════════════════════════════════════════════ -->
+
+    <div class="card section-card">
+        <div class="card-header bg-warning text-dark">
+            <h5 class="mb-0"><i class="bi bi-stack"></i> Blocks — By Species</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table report-table mb-0">
+                    <thead>
+                        <tr><th>Species</th><th>Size</th><th>Event Groups</th><th class="text-end">Total Blocks</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for grp in report.by_species.blocks %}
+                        <tr>
+                            <td><span class="species-pill">{{ grp.species }}</span></td>
+                            <td>{{ grp.size_display }}</td>
+                            <td><small class="text-muted">{{ grp.events | join(', ') }}</small></td>
+                            <td class="text-end total-highlight">{{ grp.total_count }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="text-center text-muted fst-italic py-3">No block data — configure species/size first.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card section-card">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-bar-chart-steps"></i> Logs — By Species</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table report-table mb-0">
+                    <thead>
+                        <tr><th>Species</th><th>Size</th><th>Events</th><th class="text-end">Total Linear</th><th class="text-end">Cookie Logs</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for grp in report.by_species.logs %}
+                        <tr>
+                            <td><span class="species-pill">{{ grp.species }}</span></td>
+                            <td>{{ grp.size_display }}</td>
+                            <td><small class="text-muted">{{ grp.events | join(', ') }}</small></td>
+                            <td class="text-end fw-bold">{% if grp.total_inches > 0 %}{{ '%.1f'|format(grp.total_inches) }}"{% else %}—{% endif %}</td>
+                            <td class="text-end fw-bold">{% if grp.total_log_count > 0 %}{{ grp.total_log_count }}{% else %}—{% endif %}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" class="text-center text-muted fst-italic py-3">No log data — configure species/size first.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {% elif view == 'order' %}
+    <!-- ═══ ORDERING SUMMARY ════════════════════════════════════════ -->
+
+    <div class="alert alert-info mb-4">
+        <i class="bi bi-info-circle-fill me-2"></i>
+        A flat purchase/prep list combining all blocks and logs by species and size.
+        Hand this to your sawyer, supplier, or block prep crew.
+    </div>
+
+    {% if report.ordering %}
+    <div class="row g-3">
+        {% for item in report.ordering %}
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 {{ 'order-item-block' if item.category == 'block' else 'order-item-log' }}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <span class="species-pill">{{ item.species }}</span>
+                        <span class="badge {{ 'bg-warning' if item.category == 'block' else 'bg-primary' }}">
+                            {{ 'Blocks' if item.category == 'block' else 'Saw Log' }}
+                        </span>
+                    </div>
+                    <div class="fw-bold" style="font-size:1rem; color:var(--sx-text);">
+                        {{ item.size_display }}
+                        {% if item.category == 'block' %}diameter{% else %}diameter log{% endif %}
+                    </div>
+
+                    {% if item.category == 'block' %}
+                    <div class="mt-2" style="font-size:2rem; font-weight:800; color:var(--sx-gold); line-height:1;">
+                        {{ item.quantity }}
+                        <span style="font-size:1rem; font-weight:400; color:var(--sx-text-2);">blocks</span>
+                    </div>
+                    {% else %}
+                    <div class="mt-2" style="font-size:1.8rem; font-weight:800; color:var(--sx-info); line-height:1;">
+                        {% if item.total_inches and item.total_inches > 0 %}
+                            {{ '%.1f'|format(item.total_inches) }}"
+                            <span style="font-size:0.9rem; font-weight:400; color:var(--sx-text-2);">linear</span>
+                        {% endif %}
+                    </div>
+                    {% if item.total_log_count and item.total_log_count > 0 %}
+                    <div style="color:var(--sx-success); font-weight:700;">
+                        + {{ item.total_log_count }} cookie log{{ 's' if item.total_log_count != 1 }}
+                    </div>
+                    {% endif %}
+                    {% endif %}
+
+                    <hr style="border-color:var(--sx-border);">
+                    <div class="text-muted" style="font-size:0.78rem;">
+                        {% for ev in item.events %}
+                        <div>· {{ ev }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center text-muted fst-italic py-5">
+        No wood configured yet — set species/size in the configuration page.
+    </div>
+    {% endif %}
+
+    {% endif %}
+
+</div>
+
+<!-- Hidden share URL for clipboard copy -->
+<span id="shareUrl" style="display:none;">{{ share_url }}</span>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function copyShareLink() {
+    var url = document.getElementById('shareUrl').textContent.trim();
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(url).then(function() {
+            alert('Share link copied! Send this to your block prep crew — no login required.\n\n' + url);
+        });
+    } else {
+        prompt('Share link (copy this):', url);
+    }
+}
+</script>
+{% endblock %}

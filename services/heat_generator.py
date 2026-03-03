@@ -275,6 +275,7 @@ def _get_partner_name_for_event(competitor, event: Event) -> str:
         return ''
 
     candidates = [
+        str(event.id),
         event.name,
         event.display_name,
         event.name.lower(),

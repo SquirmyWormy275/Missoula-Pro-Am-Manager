@@ -4,6 +4,7 @@ from flask import Blueprint, current_app, jsonify
 from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import ProCompetitor
 from services.report_cache import get as cache_get, set as cache_set
+from services.handicap_export import build_chopping_rows
 
 api_bp = Blueprint('api', __name__)
 
@@ -153,3 +154,20 @@ def standings_poll(tournament_id):
     }
     cache_set(cache_key, payload, ttl_seconds)
     return jsonify(payload)
+
+
+@api_bp.route('/public/tournaments/<int:tournament_id>/handicap-input')
+def handicap_input(tournament_id):
+    """
+    Public payload intended for handicap portal integrations.
+    Includes chopping-only historical rows for model ingestion.
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    return jsonify({
+        'tournament': {
+            'id': tournament.id,
+            'name': tournament.name,
+            'year': tournament.year,
+        },
+        'chopping_results': build_chopping_rows(tournament),
+    })

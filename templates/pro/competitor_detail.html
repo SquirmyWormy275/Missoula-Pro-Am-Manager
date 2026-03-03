@@ -201,6 +201,7 @@
                                     <tr>
                                         <th>Enter</th>
                                         <th>Event</th>
+                                        <th>Partner</th>
                                         <th>Fee ($)</th>
                                         <th>Paid</th>
                                         <th>Gear Sharing Partner</th>
@@ -215,6 +216,10 @@
                                                 {% if eid in entered_ids %}checked{% endif %}>
                                         </td>
                                         <td>{{ event.display_name }}</td>
+                                        <td style="min-width:180px;">
+                                            <input type="text" class="form-control form-control-sm" name="partner_{{ eid }}"
+                                                   value="{{ partner_map.get(eid, '') }}" placeholder="Partner name">
+                                        </td>
                                         <td style="width:90px;">
                                             <input type="number" class="form-control form-control-sm" name="fee_{{ eid }}"
                                                    value="{{ '%.2f'|format(fees.get(eid, 0)) }}" min="0" step="0.01">

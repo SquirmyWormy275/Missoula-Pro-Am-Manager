@@ -31,6 +31,7 @@ class Tournament(db.Model):
     college_competitors = db.relationship('CollegeCompetitor', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
     pro_competitors = db.relationship('ProCompetitor', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
     events = db.relationship('Event', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
+    wood_configs = db.relationship('WoodConfig', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
 
     def __repr__(self):
         return f'<Tournament {self.name} {self.year}>'

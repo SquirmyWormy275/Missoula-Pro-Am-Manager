@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+
+{% block title %}Virtual Woodboss — {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+            <li class="breadcrumb-item">
+                <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
+                    {{ tournament.name }} {{ tournament.year }}
+                </a>
+            </li>
+            <li class="breadcrumb-item active">Virtual Woodboss</li>
+        </ol>
+    </nav>
+
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1>
+                <i class="bi bi-tools text-warning"></i>
+                Virtual Woodboss
+            </h1>
+            <p class="text-muted mb-0">
+                Material planning for {{ tournament.name }} {{ tournament.year }}.
+                Calculate chopping blocks and saw log requirements based on enrolled competitors.
+            </p>
+        </div>
+    </div>
+
+    <!-- Config status banner -->
+    {% if not report.is_configured %}
+    <div class="alert alert-warning d-flex align-items-center mb-4">
+        <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+        <span>
+            <strong>Wood specs not yet configured.</strong>
+            Set the species and size for each event group before generating the report.
+        </span>
+        <a href="{{ url_for('woodboss.config_form', tid=tournament.id) }}"
+           class="btn btn-sm btn-warning ms-auto">
+            <i class="bi bi-pencil-square"></i> Configure Now
+        </a>
+    </div>
+    {% else %}
+    <div class="alert alert-success d-flex align-items-center mb-4">
+        <i class="bi bi-check-circle-fill me-2 fs-5"></i>
+        <span>Wood specs configured. Report ready.</span>
+    </div>
+    {% endif %}
+
+    <!-- Quick stats (only if there are enrolled competitors) -->
+    {% if report.total_blocks > 0 or report.total_saw_inches > 0 %}
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h2 class="card-title text-warning mb-0">{{ report.total_blocks }}</h2>
+                    <p class="card-text text-muted mt-1">Chopping Blocks</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h2 class="card-title text-info mb-0">{{ '%.1f'|format(report.total_saw_inches) }}"</h2>
+                    <p class="card-text text-muted mt-1">Saw Log Material</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h2 class="card-title text-success mb-0">{{ report.total_cookie_logs }}</h2>
+                    <p class="card-text text-muted mt-1">Cookie Stack Logs</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Action cards -->
+    <div class="row g-3 mb-4">
+        <!-- Configure -->
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-sliders"></i> Configure Wood Specs</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Set species and diameter for each chopping event group and saw log category.
+                        Can be done before or after registration.
+                    </p>
+                </div>
+                <div class="card-footer">
+                    <a href="{{ url_for('woodboss.config_form', tid=tournament.id) }}"
+                       class="btn btn-primary w-100">
+                        <i class="bi bi-pencil-square"></i> Edit Configuration
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report -->
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-clipboard-data"></i> Wood Count Report</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        View the full material breakdown by event or by species/size.
+                        Includes a printable sheet for block prep day.
+                    </p>
+                </div>
+                <div class="card-footer">
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('woodboss.report', tid=tournament.id) }}"
+                           class="btn btn-success">
+                            <i class="bi bi-eye"></i> View Report
+                        </a>
+                        <a href="{{ url_for('woodboss.report_print', tid=tournament.id) }}"
+                           class="btn btn-outline-success" target="_blank">
+                            <i class="bi bi-printer"></i> Print Report
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lottery -->
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-shuffle"></i> Block Lottery</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Day-of view for note card prep. Lists every competitor per event,
+                        grouped by block species and size. Printable.
+                    </p>
+                </div>
+                <div class="card-footer">
+                    <a href="{{ url_for('woodboss.lottery', tid=tournament.id) }}"
+                       class="btn btn-warning w-100">
+                        <i class="bi bi-shuffle"></i> Open Block Lottery
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- History -->
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="mb-0"><i class="bi bi-clock-history"></i> Historical Forecast</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Compare wood usage across past tournaments to forecast future needs.
+                    </p>
+                </div>
+                <div class="card-footer">
+                    <a href="{{ url_for('woodboss.history') }}"
+                       class="btn btn-outline-secondary w-100">
+                        <i class="bi bi-bar-chart-line"></i> View History
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick block preview (if configured) -->
+    {% if report.is_configured and report.blocks %}
+    <div class="card mb-4">
+        <div class="card-header bg-warning text-dark">
+            <h5 class="mb-0"><i class="bi bi-stack"></i> Block Preview</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th>Event Group</th>
+                            <th>Species</th>
+                            <th>Size</th>
+                            <th class="text-end">Blocks</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set shown = namespace(count=0) %}
+                        {% for b in report.blocks %}
+                        {% if b.competitor_count > 0 %}
+                        {% set shown.count = shown.count + 1 %}
+                        <tr>
+                            <td>{{ b.label }}</td>
+                            <td>{{ b.species or '<span class="text-muted fst-italic">not set</span>'|safe }}</td>
+                            <td>{{ b.size_display or '—' }}</td>
+                            <td class="text-end fw-bold">{{ b.competitor_count }}</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                        {% if shown.count == 0 %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted fst-italic py-3">
+                                No competitors enrolled in chopping events yet.
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

@@ -55,6 +55,7 @@ models/
     user.py             # User — role-based auth (7 roles: admin/judge/scorer/registrar/competitor/spectator/viewer)
     audit_log.py        # AuditLog — immutable audit trail for sensitive actions
     school_captain.py   # SchoolCaptain — one PIN account per school per tournament
+    wood_config.py      # WoodConfig — per-tournament wood species/size config for block prep
 
 routes/
     __init__.py
@@ -70,6 +71,8 @@ routes/
     auth.py             # Login, logout, bootstrap, user management (/auth prefix)
     portal.py           # Spectator and competitor portals (/portal prefix)
     api.py              # Public read-only REST API (/api/public prefix)
+    woodboss.py         # Virtual Woodboss — material planning (/woodboss prefix)
+                        #   woodboss_bp (protected) + woodboss_public_bp (HMAC share link)
 
 services/
     __init__.py
@@ -89,9 +92,14 @@ services/
     logging_setup.py    # JSON structured log formatter; optional Sentry SDK init
     sms_notify.py       # Twilio SMS for flight start/complete; graceful no-op if not configured
     backup.py           # S3 or local SQLite backup; triggered from reporting route
+    woodboss.py         # Virtual Woodboss: block/saw calculations, lottery view, history, share token
+    handicap_export.py  # Chopping-event Excel export helpers (underhand, springboard, standing)
+    partner_matching.py # Auto-partner matching for pro partnered events (bidirectional validation)
+    preflight.py        # Pre-scheduling validation: heat/table sync, odd partner pools, Saturday overflow
 
 templates/
     base.html
+    _tournament_tabs.html  # Shared 3-tab nav (Overview / College Day / Pro Day)
     dashboard.html
     role_entry.html     # Landing page: Judge / Competitor / Spectator selection
     tournament_detail.html / tournament_new.html
@@ -104,7 +112,7 @@ templates/
     pro/                dashboard, registration, new_competitor, competitor_detail,
                         flights, build_flights, import_upload, import_review
     scheduling/         events, setup_events, heats, day_schedule (+ _print),
-                        heat_sheets_print, friday_feature
+                        heat_sheets_print, friday_feature, preflight
     scoring/            event_results, enter_heat, configure_payouts
     reports/            all_results, college_standings, event_results,
                         payout_summary (+ _print variants), export_status,
@@ -112,6 +120,7 @@ templates/
     proam_relay/        dashboard, teams, results, standings
     partnered_axe/      dashboard, prelims, finals, results
     validation/         dashboard, college, pro
+    woodboss/           dashboard, config, report, report_print (standalone), lottery, history
 
 static/
     js/onboarding.js    # First-time onboarding modal engine (ProAmOnboarding.show/reopen)
@@ -222,7 +231,7 @@ Missing field: the Tournament model has no `providing_shirts` boolean. Whether t
 
 ### Team
 
-College only. Fields: `id`, `tournament_id`, `team_code` (e.g., UM-A), `school_name`, `school_abbreviation`, `total_points`, `status`. Unique constraint on `(tournament_id, team_code)`. Methods: `recalculate_points()` sums member individual points. Properties: `member_count`, `male_count`, `female_count`, `is_valid` (checks min 2 per gender, max 8 total).
+College only. Fields: `id`, `tournament_id`, `team_code` (e.g., UM-A), `school_name`, `school_abbreviation`, `total_points`, `status` (active/invalid), `validation_errors` (JSON TEXT). Unique constraint on `(tournament_id, team_code)`. Methods: `recalculate_points()` sums member individual points; `get_validation_errors()` returns list of structured error dicts; `set_validation_errors(errors)` stores JSON and sets status to 'invalid'. Properties: `member_count`, `male_count`, `female_count`, `is_valid` (checks min 2 per gender, max 8 total).
 
 ### CollegeCompetitor
 
@@ -260,6 +269,18 @@ Fields: `id`, `tournament_id`, `flight_number`, `name`, `status`, `notes`. Relat
 
 One PIN-protected account per school per tournament. Fields: `id`, `tournament_id`, `school_name`, `pin_hash`, `created_at`. Unique constraint on `(tournament_id, school_name)`. Methods: `has_pin` (property), `set_pin(pin)`, `check_pin(pin)`. One SchoolCaptain account covers all teams from that school (e.g., UM-A, UM-B, UM-C) automatically by matching `Team.school_name`. Session auth stored in `session['school_portal_auth']` keyed as `'{tournament_id}:school:{school_name.lower()}'`.
 
+### WoodConfig
+
+Per-tournament wood species and size configuration for Virtual Woodboss. Fields: `id`, `tournament_id` (FK), `config_key` (TEXT), `species` (TEXT), `size_value` (FLOAT), `size_unit` ('in'|'mm', default 'in'), `notes` (TEXT), `count_override` (INTEGER, nullable). UniqueConstraint on `(tournament_id, config_key)` named `uq_wood_config_tournament_key`. Methods: `display_size()` returns formatted string (e.g., "12 in" or "300 mm").
+
+Config key conventions:
+- Block events: `block_{category}_{type}_{gender}` — e.g. `block_underhand_college_M`
+- Relay blocks (manual count): `block_relay_underhand`, `block_relay_standing`
+- Saw logs: `log_general`, `log_stock`, `log_relay_doublebuck`
+- `count_override` on relay keys = judge-entered team/cut count (lottery-determined)
+- Stock Saw falls back to general log species/size if `log_stock` is not configured
+- `log_relay_doublebuck` falls back to `log_general` species/size if not set explicitly
+
 ### Key Relationships Summary
 
 ```
@@ -269,6 +290,7 @@ Tournament
   ├── CollegeCompetitor (1:many, cascade delete)
   ├── ProCompetitor (1:many, cascade delete)
   ├── SchoolCaptain (1:many, cascade delete via tournament_id)
+  ├── WoodConfig (1:many, cascade delete-orphan via wood_configs relationship)
   └── Event (1:many, cascade delete)
         ├── Heat (1:many, cascade delete)
         │     └── HeatAssignment (1:many)
@@ -321,6 +343,11 @@ Flight
 - SMS notifications (`services/sms_notify.py`): Twilio flight start/complete alerts; graceful no-op if not configured
 - Service worker (`static/sw.js`): offline cache + IDB queue + Background Sync; offline queue UI (`static/offline_queue.js`)
 - Cloud backup (`services/backup.py`): S3 if env vars set, local `instance/backups/` fallback; triggered from tournament detail
+- Team validation framework: `Team.validation_errors` JSON column; `_validate_college_entry_constraints()` in excel_io returns structured errors; partial success import (valid teams commit, invalid teams tracked); fix forms in `team_detail.html` per error type
+- Virtual Woodboss (`routes/woodboss.py`, `services/woodboss.py`, `models/wood_config.py`): complete material planning — block counts, saw log linear footage, Pro-Am Relay blocks + double buck, lottery view, cross-tournament history, HMAC share link
+- Preflight checks service (`services/preflight.py`, `templates/scheduling/preflight.html`): pre-scheduling validation — heat/table sync, odd partner pools, Saturday overflow
+- Partner matching service (`services/partner_matching.py`): auto-partner assignment logic for pro partnered events; bidirectional validation and gender matching (service exists; no UI route yet)
+- Handicap export helpers (`services/handicap_export.py`): chopping-event Excel export utilities
 
 ### Known Gaps and Incomplete Features
 
@@ -334,7 +361,7 @@ Flight
 
 **Pro event fee configuration UI:** No route or template exists for setting fee amounts per event per tournament. `entry_fees` and `fees_paid` fields exist on `ProCompetitor` but fees must currently be set directly in the database or via the edit competitor form.
 
-**Auto-partner assignment for pro events:** When a pro competitor registers for a partnered event without naming a partner, no auto-assignment logic exists. Desired behavior: match with another unpartnered registrant in the same event.
+**Auto-partner assignment UI:** `services/partner_matching.py` contains auto-partner assignment logic with bidirectional validation. However, no route or template exposes this to the judge. To activate, wire `match_partners(tournament_id, event_id)` into a registration or scheduling route.
 
 **Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
 

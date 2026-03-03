@@ -67,14 +67,17 @@
         width: 80px;
         height: 80px;
         border-radius: 14px;
-        background: #000;
-        border: 1px solid rgba(232,57,31,0.35);
+        background: linear-gradient(180deg, #07090e 0%, #030407 100%);
+        border: 1px solid rgba(239,43,22,0.42);
+        box-shadow:
+            inset 0 0 0 1px rgba(255,255,255,0.06),
+            0 0 24px rgba(239,43,22,0.18);
         display: flex;
         align-items: center;
         justify-content: center;
         overflow: hidden;
         flex-shrink: 0;
-        padding: 10px;
+        padding: 11px;
     }
     .hero-badge-strathex img {
         width: 100%;
@@ -111,15 +114,16 @@
         align-items: center;
         gap: 0.45rem;
         margin-top: 1rem;
-        background: rgba(232,57,31,0.08);
-        border: 1px solid rgba(232,57,31,0.25);
+        background: linear-gradient(180deg, rgba(12,14,20,0.96), rgba(7,8,13,0.96));
+        border: 1px solid rgba(239,43,22,0.35);
         border-radius: 999px;
-        padding: 0.22rem 0.7rem 0.22rem 0.45rem;
+        padding: 0.24rem 0.72rem 0.24rem 0.45rem;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
     }
     .hero-powered-by img {
-        height: 15px;
+        height: 16px;
         width: auto;
-        max-width: 72px;
+        max-width: 110px;
         object-fit: contain;
     }
     .hero-powered-by span {
@@ -127,7 +131,7 @@
         font-size: 0.52rem;
         letter-spacing: 0.12em;
         text-transform: uppercase;
-        color: var(--sx-fire);
+        color: #ffd8bf;
         font-weight: 700;
     }
 
@@ -230,6 +234,22 @@
         width: 20px;
         text-align: center;
         flex-shrink: 0;
+    }
+
+    @media (max-width: 991px) {
+        .hero-logo-lockup { gap: 0.75rem; margin-bottom: 1rem; }
+        .hero-badge, .hero-badge-strathex { width: 68px; height: 68px; }
+        .hero-lockup-separator { height: 44px; }
+        .feature-pills { align-items: flex-start; width: 100%; }
+    }
+
+    @media (max-width: 575px) {
+        .cmd-hero { border-left-width: 2px; }
+        .hero-badge, .hero-badge-strathex { width: 58px; height: 58px; border-radius: 11px; }
+        .hero-badge-strathex { padding: 8px; }
+        .hero-title { font-size: 1.25rem; }
+        .hero-subtitle { font-size: 0.8rem; }
+        .hero-powered-by img { height: 14px; max-width: 92px; }
     }
 </style>
 {% endblock %}

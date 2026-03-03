@@ -1,7 +1,8 @@
 """
 Main routes for dashboard and navigation.
 """
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+import time
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from urllib.parse import urlsplit
 from database import db
 from models import Tournament, Event, Heat, HeatAssignment, Flight
@@ -71,10 +72,31 @@ def judge_dashboard():
 @main_bp.route('/language/<lang_code>')
 def set_language(lang_code):
     """Update UI language and return user to the previous page."""
+    current_lang = text.get_language()
+    now_ts = time.time()
+    lock_until = session.get('arapaho_language_lock_until')
+    if isinstance(lock_until, (int, float)) and now_ts >= lock_until:
+        session.pop('arapaho_language_lock_until', None)
+        lock_until = None
+
+    if (
+        current_lang == 'arp'
+        and lang_code != 'arp'
+        and isinstance(lock_until, (int, float))
+        and now_ts < lock_until
+    ):
+        remaining = int(lock_until - now_ts)
+        flash(f"Northern Arapaho mode is locked for {remaining} more seconds.", 'warning')
+        text.set_language('arp')
+        next_page = _safe_redirect_target(request.args.get('next'))
+        return redirect(next_page or url_for('main.index'))
+
     if lang_code == 'arp' and not _can_access_arapaho_mode():
         text.set_language('en')
         flash(text.FLASH['arapaho_restricted'], 'warning')
     elif text.set_language(lang_code):
+        if current_lang == 'en' and lang_code == 'arp':
+            session['arapaho_language_lock_until'] = now_ts + 410
         flash(
             text.FLASH['language_changed'].format(language=text.get_language_name(lang_code)),
             'success'

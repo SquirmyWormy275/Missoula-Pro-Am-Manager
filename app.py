@@ -2,7 +2,8 @@
 Flask application entry point for the Missoula Pro Am Tournament Manager.
 """
 import os
-from flask import Flask, Response, request, abort, send_from_directory
+import time
+from flask import Flask, Response, request, abort, send_from_directory, session
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import event as sa_event
 from sqlalchemy.engine import Engine
@@ -44,7 +45,7 @@ login_manager.login_view = 'auth.login'
 login_manager.login_message = 'Please log in to continue.'
 login_manager.login_message_category = 'warning'
 
-MANAGEMENT_BLUEPRINTS = {'main', 'registration', 'scheduling', 'scoring', 'reporting', 'proam_relay', 'partnered_axe', 'validation', 'import_pro'}
+MANAGEMENT_BLUEPRINTS = {'main', 'registration', 'scheduling', 'scoring', 'reporting', 'proam_relay', 'partnered_axe', 'validation', 'import_pro', 'woodboss'}
 BLUEPRINT_PERMISSIONS = {
     'main': 'is_judge',
     'registration': 'can_register',
@@ -55,6 +56,7 @@ BLUEPRINT_PERMISSIONS = {
     'partnered_axe': 'can_score',
     'validation': 'can_report',
     'import_pro': 'can_register',
+    'woodboss': 'is_judge',
     'auth': 'can_manage_users',
 }
 
@@ -107,12 +109,17 @@ def create_app():
     def inject_strings():
         endpoint = request.endpoint or ''
         arapaho_allowed = _can_access_arapaho_mode(endpoint)
+        lock_until = session.get('arapaho_language_lock_until')
+        remaining = 0
+        if isinstance(lock_until, (int, float)):
+            remaining = max(0, int(lock_until - time.time()))
         return {
             'NAV': text.section('NAV'),
             'COMPETITION': text.section('COMPETITION'),
             'LANGUAGES': text.SUPPORTED_LANGUAGES if arapaho_allowed else {'en': text.SUPPORTED_LANGUAGES['en']},
             'CURRENT_LANG': text.get_language(),
             'ARAPAHO_ALLOWED': arapaho_allowed,
+            'ARAPAHO_LOCK_REMAINING': remaining,
             'ui': text.ui,
         }
 
@@ -126,6 +133,7 @@ def create_app():
     from routes.partnered_axe import bp as partnered_axe_bp
     from routes.validation import bp as validation_bp
     from routes.import_routes import import_pro_bp
+    from routes.woodboss import woodboss_bp, woodboss_public_bp
     if HAS_FLASK_LOGIN:
         from routes.auth import auth_bp
         from routes.portal import portal_bp
@@ -140,6 +148,8 @@ def create_app():
     app.register_blueprint(partnered_axe_bp)
     app.register_blueprint(validation_bp)
     app.register_blueprint(import_pro_bp, url_prefix='/import')
+    app.register_blueprint(woodboss_bp, url_prefix='/woodboss')
+    app.register_blueprint(woodboss_public_bp, url_prefix='/woodboss')
     if HAS_FLASK_LOGIN:
         app.register_blueprint(auth_bp, url_prefix='/auth')
         app.register_blueprint(portal_bp, url_prefix='/portal')

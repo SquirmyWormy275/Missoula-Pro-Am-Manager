@@ -91,8 +91,39 @@ def _build_friday_feature_block(college_events: list[Event], pro_events: list[Ev
     ordered_pro = sorted(pro_events, key=_pro_sort_key)
     hot_saw_first = [e for e in ordered_pro if _normalize_name(e.name) == _normalize_name('Hot Saw')]
     other_pro = [e for e in ordered_pro if _normalize_name(e.name) != _normalize_name('Hot Saw')]
-    ordered = hot_saw_first + ordered_college + other_pro
+    ordered = _apply_friday_springboard_ordering(hot_saw_first + ordered_college + other_pro)
     return _to_schedule_entries(ordered, start_slot=1)
+
+
+def _apply_friday_springboard_ordering(events: list[Event]) -> list[Event]:
+    """Apply Missoula springboard sequencing rules for Friday blocks."""
+    if not events:
+        return events
+
+    springboard = _normalize_name('Springboard')
+    intermediate = _normalize_name('Pro 1-Board')
+    college_one_board = _normalize_name('1-Board Springboard')
+    jigger = _normalize_name('3-Board Jigger')
+
+    normalized = {_normalize_name(event.name) for event in events}
+    if not normalized.intersection({springboard, intermediate, jigger}):
+        return events
+
+    sequence = ['1-Board Springboard', 'Pro 1-Board']
+    if springboard in normalized:
+        sequence = ['Springboard', 'Pro 1-Board', '1-Board Springboard']
+
+    remaining = list(events)
+    ordered_sequence = []
+    for target_name in sequence:
+        target_norm = _normalize_name(target_name)
+        for idx, event in enumerate(remaining):
+            if _normalize_name(event.name) == target_norm:
+                ordered_sequence.append(event)
+                remaining.pop(idx)
+                break
+
+    return remaining + ordered_sequence
 
 
 def _build_saturday_show_block(
@@ -101,8 +132,13 @@ def _build_saturday_show_block(
     college_spillover: list[Event]
 ) -> tuple[list[dict], str]:
     """Build Saturday show from pro flights when available; fallback to event order."""
-    allowed_pro_event_ids = {event.id for event in pro_events}
-    flight_entries = _build_saturday_from_flights(tournament, allowed_pro_event_ids)
+    allowed_event_ids = {event.id for event in pro_events}
+    allowed_event_ids.update(event.id for event in college_spillover)
+    chokerman = tournament.events.filter_by(event_type='college', name="Chokerman's Race").first()
+    if chokerman:
+        allowed_event_ids.add(chokerman.id)
+
+    flight_entries = _build_saturday_from_flights(tournament, allowed_event_ids)
     if flight_entries:
         return _append_college_spillover(flight_entries, college_spillover), 'flights'
 
@@ -144,8 +180,11 @@ def _build_saturday_from_flights(tournament: Tournament, allowed_event_ids: set[
 def _append_college_spillover(existing_entries: list[dict], college_spillover: list[Event]) -> list[dict]:
     """Append selected college spillover events after flight-based schedule."""
     entries = list(existing_entries)
+    existing_ids = {entry.get('event_id') for entry in entries}
     slot = len(entries) + 1
     for event in sorted(college_spillover, key=_spillover_sort_key):
+        if event.id in existing_ids:
+            continue
         entries.append({
             'slot': slot,
             'event_id': event.id,
@@ -209,6 +248,7 @@ def _spillover_sort_key(event: Event):
         ('Standing Block Speed', 'F'): 3,
         ('Standing Block Hard Hit', 'F'): 4,
         ('Obstacle Pole', 'M'): 5,
+        ('Obstacle Pole', 'F'): 6,
     }
     return (priority_lookup.get((event.name, event.gender), 999), _gender_rank(event.gender))
 

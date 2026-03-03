@@ -27,12 +27,12 @@
             --sx-border-bright:#363e52;
 
             /* STRATHEX fire palette */
-            --sx-fire:         #e8391f;
-            --sx-fire-hover:   #c82d14;
-            --sx-fire-glow:    rgba(232, 57, 31, 0.30);
-            --sx-amber:        #e89012;
-            --sx-gold:         #d4a219;
-            --sx-gold-bright:  #f0bc2c;
+            --sx-fire:         #ef2b16;
+            --sx-fire-hover:   #d51f10;
+            --sx-fire-glow:    rgba(239, 43, 22, 0.34);
+            --sx-amber:        #ff7a1a;
+            --sx-gold:         #f39f1b;
+            --sx-gold-bright:  #ffd94a;
 
             /* Text */
             --sx-text:         #ece8e0;
@@ -461,6 +461,12 @@
             width: auto;
             max-width: 140px;
             object-fit: contain;
+            padding: 1px 6px;
+            border-radius: 6px;
+            background: #020307;
+            border: 1px solid rgba(239,43,22,0.28);
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05), 0 0 14px rgba(239,43,22,0.18);
+            opacity: 0.96;
         }
         .ownership-divider {
             width: 1px;
@@ -551,27 +557,28 @@
             display: inline-flex;
             align-items: center;
             gap: 0.4rem;
-            background: rgba(232,57,31,0.09);
-            border: 1px solid rgba(232,57,31,0.28);
+            background: linear-gradient(180deg, rgba(12,14,20,0.96), rgba(7,8,13,0.96));
+            border: 1px solid rgba(239,43,22,0.34);
             border-radius: 999px;
             padding: 0.18rem 0.55rem 0.18rem 0.35rem;
-            transition: background 0.2s, border-color 0.2s;
+            transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s;
         }
         .strathex-chip:hover {
-            background: rgba(232,57,31,0.15);
-            border-color: rgba(232,57,31,0.5);
+            border-color: rgba(255,122,26,0.55);
+            box-shadow: 0 0 18px rgba(239,43,22,0.24);
+            transform: translateY(-1px);
         }
         .strathex-chip img {
-            height: 15px;
+            height: 16px;
             width: auto;
-            max-width: 78px;
+            max-width: 108px;
             object-fit: contain;
         }
         .strathex-chip span {
             font-size: 0.55rem;
             text-transform: uppercase;
-            letter-spacing: 0.11em;
-            color: var(--sx-fire);
+            letter-spacing: 0.12em;
+            color: #ffd8bf;
             font-family: "Orbitron", sans-serif;
             font-weight: 700;
         }
@@ -584,7 +591,16 @@
             border-top: 1px solid var(--sx-border) !important;
         }
         .footer-meta { color: var(--sx-text-3); font-size: 0.76rem; }
-        .footer-logo { height: 16px; object-fit: contain; opacity: 0.4; }
+        .footer-logo {
+            height: 19px;
+            object-fit: contain;
+            padding: 2px 8px;
+            border-radius: 8px;
+            background: #020307;
+            border: 1px solid rgba(239,43,22,0.28);
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+            opacity: 0.9;
+        }
 
         /* ═══════════════════════════════════════════════════════════
            PORTAL MOBILE MODE
@@ -654,6 +670,164 @@
             border-color: rgba(196,0,0,0.28);
         }
         body.lang-arp .strathex-chip span { color: #c40000; }
+        body.lang-arp.brainrot-active {
+            overflow: hidden;
+        }
+        #brainrotLayer {
+            position: fixed;
+            inset: 0;
+            z-index: 2500;
+            pointer-events: none;
+            overflow: hidden;
+            display: none;
+        }
+        #brainrotLayer.active {
+            display: block;
+        }
+        .brainrot-video {
+            position: absolute;
+            width: clamp(220px, 36vw, 640px);
+            height: auto;
+            border: 3px solid rgba(255, 255, 255, 0.55);
+            box-shadow: 0 0 34px rgba(196, 0, 0, 0.85), 0 0 14px rgba(0, 0, 0, 0.85);
+            transform-origin: center center;
+            will-change: transform, left, top;
+            mix-blend-mode: screen;
+            filter: saturate(1.9) contrast(1.5) hue-rotate(20deg);
+            pointer-events: none;
+        }
+        .brainrot-video.brainrot-video-crystal {
+            width: clamp(260px, 40vw, 700px);
+            mix-blend-mode: normal;
+            filter: none;
+            opacity: 1;
+            border: 3px solid rgba(255, 255, 255, 0.92);
+            box-shadow: 0 0 26px rgba(255, 255, 255, 0.35), 0 0 36px rgba(196, 0, 0, 0.78);
+        }
+        #brainrotUnlock {
+            position: fixed;
+            top: 20%;
+            left: 20%;
+            z-index: 2600;
+            width: min(92vw, 420px);
+            background: rgba(14, 14, 14, 0.95);
+            border: 2px solid rgba(255, 255, 255, 0.75);
+            box-shadow: 0 0 40px rgba(196, 0, 0, 0.95);
+            border-radius: 14px;
+            display: none;
+            pointer-events: auto;
+            transform-origin: center center;
+        }
+        #brainrotUnlock.active {
+            display: block;
+        }
+        #brainrotUnlock .flag {
+            width: 100%;
+            height: 72px;
+            object-fit: cover;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.65);
+            margin-bottom: 10px;
+        }
+        #brainrotUnlock .inner {
+            padding: 12px;
+        }
+        #brainrotUnlock label {
+            font-size: 0.74rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #ffe4e4;
+            margin-bottom: 8px;
+            display: block;
+        }
+        #brainrotUnlock input {
+            width: 100%;
+            border: 1px solid rgba(255, 255, 255, 0.45);
+            background: rgba(0, 0, 0, 0.68);
+            color: #fff;
+            border-radius: 8px;
+            padding: 10px 12px;
+            outline: none;
+        }
+        #brainrotUnlock button {
+            margin-top: 10px;
+            width: 100%;
+            border: 1px solid #ff6666;
+            background: linear-gradient(135deg, #6d0000, #b10000);
+            color: #fff;
+            border-radius: 8px;
+            padding: 9px 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+        #brainrotUnlock .error {
+            margin-top: 8px;
+            font-size: 0.78rem;
+            color: #ff9a9a;
+            min-height: 1rem;
+        }
+        #brainrotPromptReadout {
+            position: fixed;
+            left: 50%;
+            bottom: 14px;
+            transform: translateX(-50%);
+            z-index: 2700;
+            width: min(94vw, 760px);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.45);
+            background: rgba(0, 0, 0, 0.78);
+            color: #ffffff;
+            text-align: center;
+            padding: 10px 14px;
+            font-size: 0.9rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            box-shadow: 0 0 22px rgba(196, 0, 0, 0.65);
+            display: none;
+            pointer-events: none;
+        }
+        #brainrotPromptReadout.active {
+            display: block;
+        }
+        .brainrot-flag-trail {
+            position: absolute;
+            width: clamp(64px, 11vw, 190px);
+            height: auto;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.78);
+            box-shadow: 0 0 16px rgba(0, 0, 0, 0.85), 0 0 22px rgba(196, 0, 0, 0.7);
+            pointer-events: none;
+            will-change: transform, opacity;
+            opacity: 0.9;
+        }
+        .arapaho-lock-banner {
+            position: fixed;
+            top: 64px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 2100;
+            width: min(92vw, 620px);
+            background: rgba(45, 168, 94, 0.97);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+            padding: 10px 14px;
+            font-weight: 600;
+        }
+        .arapaho-lock-banner .time {
+            font-family: "Orbitron", sans-serif;
+            font-size: 0.86rem;
+            margin-left: 6px;
+            letter-spacing: 0.06em;
+            color: #f4ffe7;
+        }
+        .language-locked {
+            pointer-events: none !important;
+            opacity: 0.45 !important;
+        }
 
         /* ═══════════════════════════════════════════════════════════
            RESPONSIVE
@@ -663,6 +837,17 @@
             .strathex-chip span { display: none; }
             .ownership-copy { font-size: 0.63rem; }
             .ownership-inner { justify-content: flex-start; }
+            .ownership-logo { height: 16px; max-width: 110px; padding: 1px 5px; }
+            .strathex-chip { padding: 0.17rem 0.45rem 0.17rem 0.32rem; }
+            .strathex-chip img { height: 14px; max-width: 94px; }
+            .footer-logo { height: 17px; padding: 1px 6px; }
+        }
+        @media (max-width: 575px) {
+            .ownership-inner { gap: 0.5rem; padding-inline: 0.5rem; }
+            .ownership-label { font-size: 0.5rem; letter-spacing: 0.1em; }
+            .ownership-logo { height: 14px; max-width: 92px; padding: 1px 4px; }
+            .brand-logo-wrap { width: 34px; height: 34px; }
+            .brand-title strong { font-size: 0.75rem; letter-spacing: 0.05em; }
         }
 
         /* ═══════════════════════════════════════════════════════════
@@ -844,6 +1029,12 @@
     </nav>
 
     <!-- ── TOAST NOTIFICATIONS ────────────────────────── -->
+    {% if CURRENT_LANG == 'arp' and ARAPAHO_LOCK_REMAINING > 0 %}
+    <div id="arapahoLockBanner" class="arapaho-lock-banner no-print" data-seconds="{{ ARAPAHO_LOCK_REMAINING }}">
+        Northern Arapaho mode is locked. Language changes disabled for
+        <span id="arapahoLockCountdown" class="time"></span>
+    </div>
+    {% endif %}
     <div class="position-fixed top-0 end-0 p-3 no-print" style="z-index:1100;" id="toastContainer">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
@@ -877,7 +1068,7 @@
                      onerror="this.style.display='none';">
                 <span class="footer-meta">{{ COMPETITION.app_footer }} &copy; 2026</span>
                 <span style="color:var(--sx-border-bright);font-size:0.7rem;">|</span>
-                <small class="footer-meta" style="font-family:'Orbitron',sans-serif;font-size:0.55rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--sx-fire);opacity:0.7;">
+                <small class="footer-meta" style="font-family:'Orbitron',sans-serif;font-size:0.55rem;letter-spacing:0.12em;text-transform:uppercase;color:#ffd8bf;opacity:0.9;">
                     A STRATHEX Product
                 </small>
             </div>
@@ -887,13 +1078,23 @@
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <audio id="arapahoModeAudio" src="{{ url_for('static', filename='audio/arapaho_mode_loop.mp3') }}" preload="auto" loop></audio>
+    <div id="brainrotLayer" aria-hidden="true"></div>
+    <div id="brainrotUnlock" aria-live="polite" aria-hidden="true">
+        <div class="inner">
+            <img class="flag" src="{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}" alt="Arapaho Nation Flag">
+            <label for="brainrotPassword">Emergency Brainrot Shutdown</label>
+            <input id="brainrotPassword" type="password" autocomplete="off" spellcheck="false">
+            <button type="button" id="brainrotSubmit">Revert To Arapaho Mode</button>
+            <div class="error" id="brainrotError"></div>
+        </div>
+    </div>
+    <div id="brainrotPromptReadout">Emergency Brainrot Shutdown. Enter password: neyooxetgreymorning</div>
 
     <script>
         // Arapaho audio management
         (function () {
             var audio = document.getElementById('arapahoModeAudio');
             if (!audio) return;
-            var storageKey = 'arapaho_audio_enabled';
             var isArapahoMode = document.body.classList.contains('lang-arp');
 
             function playArapahoAudio() {
@@ -919,13 +1120,439 @@
             document.querySelectorAll('[data-lang-switch]').forEach(function (link) {
                 link.addEventListener('click', function () {
                     var lang = link.getAttribute('data-lang-switch');
-                    if (lang === 'arp') { localStorage.setItem(storageKey, '1'); }
-                    else { localStorage.removeItem(storageKey); }
+                    if (lang !== 'arp') { stopArapahoAudio(); }
                 });
             });
 
-            if (isArapahoMode && localStorage.getItem(storageKey) === '1') { playArapahoAudio(); }
+            if (isArapahoMode) { playArapahoAudio(); }
             else { stopArapahoAudio(); }
+
+            document.addEventListener('visibilitychange', function () {
+                if (!document.body.classList.contains('lang-arp')) return;
+                audio.volume = 1.0;
+                if (audio.paused) { playArapahoAudio(); }
+            });
+        })();
+
+        // Arapaho brainrot easter egg
+        (function () {
+            if (!document.body.classList.contains('lang-arp')) return;
+
+            var BRAINROT_PASSWORD = 'neyooxetgreymorning';
+            var spawnMinMs = 7000;
+            var spawnMaxMs = 60000;
+            var overlay = document.getElementById('brainrotLayer');
+            var unlockBox = document.getElementById('brainrotUnlock');
+            var passwordInput = document.getElementById('brainrotPassword');
+            var submitBtn = document.getElementById('brainrotSubmit');
+            var errorEl = document.getElementById('brainrotError');
+            var promptReadout = document.getElementById('brainrotPromptReadout');
+            if (!overlay || !unlockBox || !passwordInput || !submitBtn || !errorEl || !promptReadout) return;
+
+            var videoSources = [
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/A Rainy Day - Neyooxet Greymorning (720p, h264).mp4') }}",
+                    audio: false,
+                    crystal: false
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/An Arapaho on Fire - Neyooxet Greymorning (720p, h264).mp4') }}",
+                    audio: false,
+                    crystal: false
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/Community 061- Dr. Neyooxet Greymorning - Cheyenne and Arapaho Productions (720p, h264).mp4') }}",
+                    audio: false,
+                    crystal: false
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/Elder Story - Dr. Neyooxet Greymorning - Cheyenne and Arapaho Productions (720p, h264).mp4') }}",
+                    audio: true,
+                    crystal: false
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/Gathering of Minds Dr. Neyooxet Greymorning - NETOLNEW (1080p, h264).mp4') }}",
+                    audio: false,
+                    crystal: false
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/HEENETIINEYOO3EIHIIHO Language Healers Trailer - THE PEOPLES FILM FESTIVAL (720p, h264).mp4') }}",
+                    audio: false,
+                    crystal: false
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/Law Lost Riders - Neyooxet Greymorning (480p, h264).mp4') }}",
+                    audio: false,
+                    crystal: false
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/Spirit Trailer in Arapaho Language - Neyooxet Greymorning (1080p, h264).mp4') }}",
+                    audio: false,
+                    crystal: false
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/1st place 1 meter, 2014 Pan Pacific Games, Queensland Australia, 301A - Neyooxet Sports Channel (480p, h264).mp4') }}",
+                    audio: false,
+                    crystal: true
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/1st place 2025 World Masters Games Taipei - Neyooxet Sports Channel (720p, h264).mp4') }}",
+                    audio: false,
+                    crystal: true
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/2019, August, Gwangju, South Korea, FINA World Masters Games. 1st place 1m competition - Neyooxet Sports Channel (720p, h264).mp4') }}",
+                    audio: false,
+                    crystal: true
+                },
+                {
+                    src: "{{ url_for('static', filename='video/brainrot/2024 Masters National Championships Columbus, Ohio. First place 1 meter Springboard - Neyooxet Sports Channel (720p, h264).mp4') }}",
+                    audio: false,
+                    crystal: true
+                }
+            ];
+
+            var started = false;
+            var active = false;
+            var chaosObjects = [];
+            var spawnTimers = [];
+            var unlockTimer = null;
+            var rafId = null;
+            var unlockState = null;
+            var trailNodes = [];
+            var maxTrailNodes = 480;
+            var lastPointerX = null;
+            var lastPointerY = null;
+
+            function rand(min, max) {
+                return min + Math.random() * (max - min);
+            }
+
+            function randInt(min, max) {
+                return Math.floor(rand(min, max + 1));
+            }
+
+            function makeChaosVideo(videoSpec) {
+                var video = document.createElement('video');
+                video.className = 'brainrot-video';
+                video.src = videoSpec.src;
+                video.autoplay = true;
+                video.loop = true;
+                video.muted = !videoSpec.audio;
+                video.preload = 'auto';
+                video.playsInline = true;
+                video.controls = false;
+                if (videoSpec.audio) {
+                    video.volume = 1.0;
+                } else {
+                    video.volume = 0.0;
+                }
+                if (videoSpec.crystal) {
+                    video.classList.add('brainrot-video-crystal');
+                }
+                video.style.left = randInt(0, Math.max(0, window.innerWidth - 260)) + 'px';
+                video.style.top = randInt(0, Math.max(0, window.innerHeight - 190)) + 'px';
+                overlay.appendChild(video);
+
+                var playTry = video.play();
+                if (playTry && typeof playTry.catch === 'function') {
+                    playTry.catch(function () {});
+                }
+
+                chaosObjects.push({
+                    node: video,
+                    x: parseFloat(video.style.left),
+                    y: parseFloat(video.style.top),
+                    vx: rand(-9, 9),
+                    vy: rand(-8, 8),
+                    rot: rand(-180, 180),
+                    vrot: rand(-12, 12),
+                    sx: rand(0.7, 1.45),
+                    sy: rand(0.7, 1.45),
+                    jitterFrames: randInt(10, 32),
+                    flipEvery: randInt(14, 40),
+                    frame: 0,
+                    crystal: !!videoSpec.crystal
+                });
+            }
+
+            function scheduleSource(videoSpec) {
+                var delay = randInt(spawnMinMs, spawnMaxMs);
+                var timer = window.setTimeout(function () {
+                    if (!active) return;
+                    makeChaosVideo(videoSpec);
+                }, delay);
+                spawnTimers.push(timer);
+            }
+
+            function tickChaos() {
+                if (!active) return;
+                var ww = window.innerWidth;
+                var wh = window.innerHeight;
+                for (var i = 0; i < chaosObjects.length; i++) {
+                    var item = chaosObjects[i];
+                    if (!item.node.isConnected) continue;
+
+                    var w = item.node.offsetWidth || 300;
+                    var h = item.node.offsetHeight || 170;
+                    item.frame++;
+                    if (item.frame % item.flipEvery === 0) {
+                        item.vx *= -1;
+                        item.vy *= -1;
+                        item.vrot = rand(-18, 18);
+                        item.sx = rand(0.55, 1.65);
+                        item.sy = rand(0.55, 1.65);
+                    }
+
+                    if (item.jitterFrames > 0) {
+                        item.x += rand(-22, 22);
+                        item.y += rand(-18, 18);
+                        item.jitterFrames--;
+                    } else if (Math.random() < 0.02) {
+                        item.jitterFrames = randInt(6, 24);
+                    }
+
+                    item.x += item.vx;
+                    item.y += item.vy;
+                    item.rot += item.vrot;
+                    if (Math.random() < 0.035) {
+                        item.rot += rand(-75, 75);
+                        item.vx += rand(-1.9, 1.9);
+                        item.vy += rand(-1.9, 1.9);
+                    }
+
+                    if (item.x < 0 || item.x + w > ww) {
+                        item.vx *= -1;
+                        item.x = Math.max(0, Math.min(item.x, ww - w));
+                        item.rot += rand(-90, 90);
+                    }
+                    if (item.y < 0 || item.y + h > wh) {
+                        item.vy *= -1;
+                        item.y = Math.max(0, Math.min(item.y, wh - h));
+                        item.rot += rand(-90, 90);
+                    }
+
+                    item.node.style.left = item.x + 'px';
+                    item.node.style.top = item.y + 'px';
+                    item.node.style.transform = 'rotate(' + item.rot + 'deg) scale(' + item.sx + ',' + item.sy + ') skew(' + rand(-18, 18) + 'deg,' + rand(-12, 12) + 'deg)';
+                    if (item.crystal) {
+                        item.node.style.filter = 'none';
+                        item.node.style.opacity = '1';
+                    } else {
+                        item.node.style.filter = 'saturate(' + rand(1.5, 2.8).toFixed(2) + ') contrast(' + rand(1.15, 2.0).toFixed(2) + ') hue-rotate(' + rand(0, 360).toFixed(0) + 'deg)';
+                        item.node.style.opacity = String(rand(0.55, 1.0).toFixed(2));
+                    }
+                }
+
+                if (unlockState && unlockState.active) {
+                    moveUnlockBox();
+                }
+                rafId = window.requestAnimationFrame(tickChaos);
+            }
+
+            function showUnlockBox() {
+                if (!active) return;
+                unlockState = {
+                    active: true,
+                    x: randInt(0, Math.max(0, window.innerWidth - 440)),
+                    y: randInt(0, Math.max(0, window.innerHeight - 240)),
+                    vx: rand(-15, 15),
+                    vy: rand(-13, 13),
+                    rot: rand(-24, 24),
+                    vrot: rand(-3.8, 3.8),
+                    teleportCountdown: randInt(25, 80),
+                    frame: 0
+                };
+                unlockBox.classList.add('active');
+                unlockBox.setAttribute('aria-hidden', 'false');
+                promptReadout.classList.add('active');
+                moveUnlockBox();
+                passwordInput.focus();
+            }
+
+            function addTrailCard(x, y, scaleBoost) {
+                var card = document.createElement('img');
+                card.className = 'brainrot-flag-trail';
+                card.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
+                card.alt = '';
+                var rot = rand(-140, 140);
+                var scale = rand(0.65, 1.3) * (scaleBoost || 1);
+                card.style.left = x + 'px';
+                card.style.top = y + 'px';
+                card.style.transform = 'rotate(' + rot.toFixed(1) + 'deg) scale(' + scale.toFixed(2) + ')';
+                card.style.opacity = String(rand(0.42, 0.96).toFixed(2));
+                overlay.appendChild(card);
+                trailNodes.push(card);
+                if (trailNodes.length > maxTrailNodes) {
+                    var old = trailNodes.shift();
+                    if (old && old.isConnected) {
+                        old.remove();
+                    }
+                }
+            }
+
+            function burstTrail(x, y, count) {
+                for (var i = 0; i < count; i++) {
+                    addTrailCard(
+                        x + rand(-120, 120),
+                        y + rand(-90, 90),
+                        rand(0.8, 1.35)
+                    );
+                }
+            }
+
+            function moveUnlockBox() {
+                if (!unlockState || !unlockState.active) return;
+                var ww = window.innerWidth;
+                var wh = window.innerHeight;
+                var bw = unlockBox.offsetWidth || 380;
+                var bh = unlockBox.offsetHeight || 220;
+                unlockState.frame += 1;
+
+                unlockState.x += unlockState.vx;
+                unlockState.y += unlockState.vy;
+                unlockState.rot += unlockState.vrot;
+                unlockState.teleportCountdown--;
+
+                if (unlockState.x < 0 || unlockState.x + bw > ww) {
+                    unlockState.vx *= -1;
+                    unlockState.vrot += rand(-1.2, 1.2);
+                }
+                if (unlockState.y < 0 || unlockState.y + bh > wh) {
+                    unlockState.vy *= -1;
+                    unlockState.vrot += rand(-1.2, 1.2);
+                }
+
+                if (lastPointerX !== null && lastPointerY !== null) {
+                    var cx = unlockState.x + (bw / 2);
+                    var cy = unlockState.y + (bh / 2);
+                    var dx = cx - lastPointerX;
+                    var dy = cy - lastPointerY;
+                    var dist = Math.sqrt((dx * dx) + (dy * dy));
+                    if (dist < 220) {
+                        var force = (220 - dist) / 220;
+                        unlockState.vx += (dx / (dist || 1)) * (2.8 * force + rand(0.8, 2.6));
+                        unlockState.vy += (dy / (dist || 1)) * (2.8 * force + rand(0.8, 2.6));
+                        unlockState.vrot += rand(-0.9, 0.9);
+                        if (Math.random() < 0.18) {
+                            unlockState.x = randInt(0, Math.max(0, ww - bw));
+                            unlockState.y = randInt(0, Math.max(0, wh - bh));
+                            burstTrail(unlockState.x + bw / 2, unlockState.y + bh / 2, randInt(6, 12));
+                        }
+                    }
+                }
+
+                if (unlockState.teleportCountdown <= 0 || Math.random() < 0.015) {
+                    unlockState.x = randInt(0, Math.max(0, ww - bw));
+                    unlockState.y = randInt(0, Math.max(0, wh - bh));
+                    unlockState.vx = rand(-16, 16);
+                    unlockState.vy = rand(-14, 14);
+                    unlockState.vrot = rand(-4.2, 4.2);
+                    unlockState.teleportCountdown = randInt(16, 64);
+                    burstTrail(unlockState.x + bw / 2, unlockState.y + bh / 2, randInt(10, 18));
+                }
+
+                if (unlockState.frame % 2 === 0) {
+                    addTrailCard(
+                        unlockState.x + rand(-35, bw - 15),
+                        unlockState.y + rand(-35, bh - 15),
+                        1
+                    );
+                }
+
+                unlockBox.style.left = unlockState.x + 'px';
+                unlockBox.style.top = unlockState.y + 'px';
+                unlockBox.style.transform = 'rotate(' + unlockState.rot + 'deg) scale(' + rand(0.9, 1.15).toFixed(2) + ')';
+            }
+
+            function clearTimers() {
+                for (var i = 0; i < spawnTimers.length; i++) {
+                    window.clearTimeout(spawnTimers[i]);
+                }
+                spawnTimers = [];
+                if (unlockTimer) {
+                    window.clearTimeout(unlockTimer);
+                    unlockTimer = null;
+                }
+            }
+
+            function stopBrainrot() {
+                active = false;
+                document.body.classList.remove('brainrot-active');
+                clearTimers();
+                if (rafId) {
+                    window.cancelAnimationFrame(rafId);
+                    rafId = null;
+                }
+                chaosObjects.forEach(function (item) {
+                    try {
+                        item.node.pause();
+                        item.node.removeAttribute('src');
+                        item.node.load();
+                        item.node.remove();
+                    } catch (_err) {}
+                });
+                chaosObjects = [];
+                trailNodes.forEach(function (node) {
+                    if (node && node.isConnected) {
+                        node.remove();
+                    }
+                });
+                trailNodes = [];
+                overlay.classList.remove('active');
+                unlockBox.classList.remove('active');
+                unlockBox.setAttribute('aria-hidden', 'true');
+                promptReadout.classList.remove('active');
+                unlockState = null;
+                errorEl.textContent = '';
+                passwordInput.value = '';
+            }
+
+            function startBrainrot() {
+                if (started) return;
+                started = true;
+                active = true;
+                document.body.classList.add('brainrot-active');
+                overlay.classList.add('active');
+                videoSources.forEach(scheduleSource);
+                rafId = window.requestAnimationFrame(tickChaos);
+                unlockTimer = window.setTimeout(showUnlockBox, 60000);
+            }
+
+            function tryPassword() {
+                if (passwordInput.value.trim().toLowerCase() === BRAINROT_PASSWORD) {
+                    stopBrainrot();
+                    return;
+                }
+                errorEl.textContent = 'Incorrect password.';
+                passwordInput.select();
+            }
+
+            document.addEventListener('keydown', function () {
+                startBrainrot();
+            }, { once: true });
+
+            submitBtn.addEventListener('click', tryPassword);
+            passwordInput.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    tryPassword();
+                }
+            });
+            document.addEventListener('mousemove', function (event) {
+                lastPointerX = event.clientX;
+                lastPointerY = event.clientY;
+            });
+            unlockBox.addEventListener('mouseenter', function () {
+                if (!unlockState || !unlockState.active) return;
+                unlockState.x += rand(-220, 220);
+                unlockState.y += rand(-180, 180);
+                unlockState.vx += rand(-9, 9);
+                unlockState.vy += rand(-8, 8);
+                unlockState.vrot += rand(-2.5, 2.5);
+                burstTrail(unlockState.x, unlockState.y, randInt(8, 14));
+            });
+            window.addEventListener('beforeunload', stopBrainrot);
         })();
     </script>
 
@@ -951,6 +1578,46 @@
     </div>
 
     <script>
+        // Arapaho language lock countdown + language menu block
+        (function () {
+            var banner = document.getElementById('arapahoLockBanner');
+            if (!banner) return;
+
+            var countdown = document.getElementById('arapahoLockCountdown');
+            var remaining = parseInt(banner.getAttribute('data-seconds') || '0', 10);
+            if (!remaining || remaining <= 0) return;
+
+            var links = document.querySelectorAll('[data-lang-switch]');
+            links.forEach(function (link) {
+                if (link.getAttribute('data-lang-switch') !== 'arp') {
+                    link.classList.add('language-locked');
+                    link.setAttribute('aria-disabled', 'true');
+                    link.setAttribute('tabindex', '-1');
+                    link.addEventListener('click', function (event) {
+                        event.preventDefault();
+                    });
+                }
+            });
+
+            function renderTime(seconds) {
+                var mins = Math.floor(seconds / 60);
+                var secs = seconds % 60;
+                return mins + ':' + String(secs).padStart(2, '0');
+            }
+
+            function tick() {
+                if (remaining <= 0) {
+                    banner.remove();
+                    return;
+                }
+                countdown.textContent = renderTime(remaining);
+                remaining -= 1;
+                window.setTimeout(tick, 1000);
+            }
+
+            tick();
+        })();
+
         // Initialize toasts
         document.querySelectorAll('#toastContainer .toast').forEach(function (el) {
             new bootstrap.Toast(el, { delay: 5000 }).show();

@@ -272,6 +272,25 @@ The Pro-Am Relay pairs professional athletes with college competitors:
    - Pro women with college men
 4. View and print team assignments
 
+### Virtual Woodboss
+
+The Virtual Woodboss (accessible to judges and admins from any tournament page) calculates how many chopping blocks and how much saw log material to prepare for block prep day:
+
+1. Go to the tournament page and click **Virtual Woodboss**
+2. Click **Configure Wood Specs** — enter species and diameter for each event group
+3. For relay events, enter team count after the lottery
+4. Click **View Wood Count Report** — see counts by event and by species; use the share link to give the block prep crew read-only access
+5. Click **Block Lottery View** — printable list of competitor names grouped by block type for drawing numbers
+6. Click **History** to compare wood needs across past tournaments
+
+**Formulas used:**
+- Crosscut (Single Buck, Double Buck, Jack & Jill): 2" per cut; Double Buck / Jack & Jill are partnered — 1 cut per pair
+- Stock Saw: 5" per cut
+- Hot Saw: 6.5" per cut
+- Obstacle Pole: 2" per competitor + 5" per every 10 competitors (timber lags)
+- Cookie Stack: 1 log per 3 competitors (no linear footage)
+- Pro-Am Relay double buck: manually entered team count × 2" per cut
+
 ### Partnered Axe Throw
 
 This event has preliminary rounds, then finals:
@@ -430,4 +449,4 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for technical documentation including:
 
 ---
 
-*Last updated: February 2026 — V1.4.0*
+*Last updated: March 2026 — V1.5.0*

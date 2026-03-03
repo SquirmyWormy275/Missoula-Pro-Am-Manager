@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wood Report — {{ tournament.name }} {{ tournament.year }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: "Segoe UI", Arial, sans-serif;
+            font-size: 11pt;
+            color: #1a1a1a;
+            background: #fff;
+            padding: 1cm 1.5cm;
+        }
+
+        header {
+            border-bottom: 3px solid #2c5c1e;
+            padding-bottom: 0.5em;
+            margin-bottom: 1em;
+        }
+
+        header h1 {
+            font-size: 18pt;
+            color: #2c5c1e;
+            font-weight: 700;
+        }
+        header p {
+            font-size: 9pt;
+            color: #555;
+            margin-top: 0.2em;
+        }
+
+        h2 {
+            font-size: 12pt;
+            font-weight: 700;
+            color: #2c5c1e;
+            margin-top: 1.2em;
+            margin-bottom: 0.4em;
+            padding: 0.3em 0.6em;
+            background: #e8f4e0;
+            border-left: 4px solid #2c5c1e;
+        }
+
+        h3 {
+            font-size: 10pt;
+            font-weight: 700;
+            color: #555;
+            margin-top: 1em;
+            margin-bottom: 0.3em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1em;
+            font-size: 9.5pt;
+        }
+
+        thead th {
+            background: #2c5c1e;
+            color: #fff;
+            padding: 0.35em 0.6em;
+            text-align: left;
+            font-size: 8.5pt;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        tbody tr:nth-child(even) { background: #f5f9f2; }
+        tbody tr:nth-child(odd)  { background: #fff; }
+
+        td {
+            padding: 0.3em 0.6em;
+            border-bottom: 1px solid #dde8d8;
+            vertical-align: middle;
+        }
+
+        tfoot td {
+            font-weight: 700;
+            border-top: 2px solid #2c5c1e;
+            background: #d4e8ca;
+            padding: 0.4em 0.6em;
+        }
+
+        .text-end { text-align: right; }
+        .text-center { text-align: center; }
+        .fw-bold { font-weight: 700; }
+        .text-muted { color: #888; font-style: italic; }
+
+        .total-row td { font-weight: 700; font-size: 10pt; }
+        .formula { font-family: monospace; font-size: 8.5pt; color: #444; }
+
+        /* Two-column species summaries */
+        .species-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1em;
+            margin-bottom: 1em;
+        }
+        .species-section h3 { margin-top: 0; }
+
+        .print-note {
+            font-size: 8pt;
+            color: #888;
+            margin-top: 1.5em;
+            border-top: 1px solid #ccc;
+            padding-top: 0.4em;
+        }
+
+        .no-print { display: block; margin-bottom: 1em; }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { padding: 0.5cm 1cm; }
+            header { page-break-after: avoid; }
+            h2 { page-break-after: avoid; }
+            table { page-break-inside: auto; }
+            tr { page-break-inside: avoid; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Print button (hidden on print) -->
+    <div class="no-print">
+        <button onclick="window.print()" style="
+            background:#2c5c1e; color:#fff; border:none; padding:0.5em 1.4em;
+            border-radius:4px; font-size:10pt; cursor:pointer; font-weight:600;">
+            &#128438; Print
+        </button>
+        <a href="javascript:window.close()" style="
+            margin-left:1em; font-size:9.5pt; color:#555; text-decoration:none;">
+            ✕ Close
+        </a>
+    </div>
+
+    <header>
+        <h1>Virtual Woodboss — Wood Count Report</h1>
+        <p>
+            {{ tournament.name }} {{ tournament.year }}
+            {% if tournament.college_date %}&nbsp;·&nbsp;College: {{ tournament.college_date.strftime('%B %d, %Y') }}{% endif %}
+            {% if tournament.pro_date %}&nbsp;·&nbsp;Pro: {{ tournament.pro_date.strftime('%B %d, %Y') }}{% endif %}
+        </p>
+        <p style="margin-top:0.1em; font-size:8pt; color:#888;">
+            Generated for block prep day · 1 block per enrolled competitor · Saw wood estimates per head judge specification
+        </p>
+    </header>
+
+    <!-- ═══════════════════════════════════
+         CHOPPING BLOCKS
+    ═══════════════════════════════════ -->
+    <h2>&#9632; Chopping Blocks</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Event Group</th>
+                <th>Species</th>
+                <th>Size</th>
+                <th class="text-end">Competitors</th>
+                <th class="text-end">Blocks Needed</th>
+                <th style="width:80px;">&#10003; Check</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% set block_total = namespace(n=0) %}
+            {% for b in report.blocks %}
+            {% if b.competitor_count > 0 %}
+            {% set block_total.n = block_total.n + b.competitor_count %}
+            <tr>
+                <td class="fw-bold">{{ b.label }}</td>
+                <td>{{ b.species or '—' }}</td>
+                <td>{{ b.size_display or '—' }}</td>
+                <td class="text-end">{{ b.competitor_count }}</td>
+                <td class="text-end fw-bold">{{ b.competitor_count }}</td>
+                <td></td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            {% if block_total.n == 0 %}
+            <tr>
+                <td colspan="6" class="text-center text-muted">No competitors enrolled in chopping events.</td>
+            </tr>
+            {% endif %}
+        </tbody>
+        {% if block_total.n > 0 %}
+        <tfoot>
+            <tr class="total-row">
+                <td colspan="4" class="text-end">TOTAL BLOCKS:</td>
+                <td class="text-end">{{ block_total.n }}</td>
+                <td></td>
+            </tr>
+        </tfoot>
+        {% endif %}
+    </table>
+
+    <!-- ═══════════════════════════════════
+         SAW LOG MATERIAL
+    ═══════════════════════════════════ -->
+    <h2>&#9632; Saw Log Material</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Event</th>
+                <th>Competitors</th>
+                <th>Calculation</th>
+                <th>Species</th>
+                <th>Size</th>
+                <th class="text-end">Total</th>
+                <th style="width:80px;">&#10003; Check</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% set saw_total_in = namespace(n=0.0) %}
+            {% set saw_total_logs = namespace(n=0) %}
+            {% for s in report.saw_wood %}
+            {% if s.competitor_count > 0 %}
+            {% if s.total_inches is not none %}{% set saw_total_in.n = saw_total_in.n + s.total_inches %}{% endif %}
+            {% if s.log_count is not none %}{% set saw_total_logs.n = saw_total_logs.n + s.log_count %}{% endif %}
+            <tr>
+                <td class="fw-bold">{{ s.event_label }}</td>
+                <td>{{ s.competitor_count }}</td>
+                <td class="formula">{{ s.formula_desc }}</td>
+                <td>{{ s.species or '—' }}</td>
+                <td>{{ s.size_display or '—' }}</td>
+                <td class="text-end fw-bold">
+                    {% if s.total_inches is not none %}
+                        {{ '%.1f'|format(s.total_inches) }}"
+                    {% elif s.log_count is not none %}
+                        {{ s.log_count }} log{{ 's' if s.log_count != 1 else '' }}
+                    {% endif %}
+                </td>
+                <td></td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            {% if saw_total_in.n == 0 and saw_total_logs.n == 0 %}
+            <tr>
+                <td colspan="7" class="text-center text-muted">No competitors enrolled in saw events.</td>
+            </tr>
+            {% endif %}
+        </tbody>
+        {% if saw_total_in.n > 0 or saw_total_logs.n > 0 %}
+        <tfoot>
+            {% if saw_total_in.n > 0 %}
+            <tr class="total-row">
+                <td colspan="5" class="text-end">TOTAL SAW LOG MATERIAL:</td>
+                <td class="text-end">{{ '%.1f'|format(saw_total_in.n) }}"</td>
+                <td></td>
+            </tr>
+            {% endif %}
+            {% if saw_total_logs.n > 0 %}
+            <tr class="total-row">
+                <td colspan="5" class="text-end">TOTAL COOKIE STACK LOGS:</td>
+                <td class="text-end">{{ saw_total_logs.n }}</td>
+                <td></td>
+            </tr>
+            {% endif %}
+        </tfoot>
+        {% endif %}
+    </table>
+
+    <!-- ═══════════════════════════════════
+         BY SPECIES SUMMARY
+    ═══════════════════════════════════ -->
+    <h2>&#9632; Summary by Species / Size</h2>
+
+    <div class="species-grid">
+        <!-- Blocks -->
+        <div class="species-section">
+            <h3>Chopping Blocks</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Species</th>
+                        <th>Size</th>
+                        <th class="text-end">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if report.by_species.blocks %}
+                    {% for grp in report.by_species.blocks %}
+                    <tr>
+                        <td>{{ grp.species }}</td>
+                        <td>{{ grp.size_display }}</td>
+                        <td class="text-end fw-bold">{{ grp.total_count }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr><td colspan="3" class="text-muted">No data</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Logs -->
+        <div class="species-section">
+            <h3>Saw Logs</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Species</th>
+                        <th>Size</th>
+                        <th class="text-end">Linear</th>
+                        <th class="text-end">Cookies</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if report.by_species.logs %}
+                    {% for grp in report.by_species.logs %}
+                    <tr>
+                        <td>{{ grp.species }}</td>
+                        <td>{{ grp.size_display }}</td>
+                        <td class="text-end fw-bold">
+                            {% if grp.total_inches > 0 %}{{ '%.1f'|format(grp.total_inches) }}"{% else %}—{% endif %}
+                        </td>
+                        <td class="text-end fw-bold">
+                            {% if grp.total_log_count > 0 %}{{ grp.total_log_count }}{% else %}—{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr><td colspan="4" class="text-muted">No data</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <p class="print-note">
+        Formulas: Crosscut = 2" per cut · Stock Saw = 5" per cut · Hot Saw = 6.5" per cut ·
+        Obstacle Pole = 2" per competitor + 5" per 10 competitors (timber lags) · Cookie Stack = 1 log per 3 competitors ·
+        Blocks = 1 per enrolled competitor
+    </p>
+
+</body>
+</html>

@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block title %}Woodboss History{% endblock %}
+
+{% block extra_css %}
+<style>
+    .history-table th {
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--sx-text-2);
+        border-bottom: 1px solid var(--sx-border-bright);
+        padding: 0.55rem 0.75rem;
+    }
+    .history-table td {
+        padding: 0.5rem 0.75rem;
+        vertical-align: middle;
+        border-color: var(--sx-border);
+        font-size: 0.9rem;
+    }
+    .unconfigured {
+        color: var(--sx-text-3);
+        font-style: italic;
+        font-size: 0.82rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+            <li class="breadcrumb-item active">Woodboss — Historical Forecast</li>
+        </ol>
+    </nav>
+
+    <div class="row mb-4">
+        <div class="col">
+            <h1>
+                <i class="bi bi-clock-history text-info"></i>
+                Wood Usage History
+            </h1>
+            <p class="text-muted mb-0">
+                Compare block and saw log requirements across past tournaments to forecast future needs.
+                Only tournaments with configured wood specs show calculated totals.
+            </p>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table history-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Year</th>
+                            <th>Tournament</th>
+                            <th>Status</th>
+                            <th class="text-end">Total Blocks</th>
+                            <th class="text-end">Total Saw (linear)</th>
+                            <th class="text-end">Cookie Logs</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if history %}
+                        {% for entry in history %}
+                        <tr>
+                            <td>{{ entry.tournament.year }}</td>
+                            <td>
+                                <a href="{{ url_for('woodboss.dashboard', tid=entry.tournament.id) }}">
+                                    {{ entry.tournament.name }}
+                                </a>
+                            </td>
+                            <td>
+                                {% set s = entry.tournament.status %}
+                                {% if s == 'completed' %}
+                                    <span class="badge bg-success">Completed</span>
+                                {% elif s == 'pro_active' %}
+                                    <span class="badge bg-warning">Pro Active</span>
+                                {% elif s == 'college_active' %}
+                                    <span class="badge bg-primary">College Active</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Setup</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if entry.is_configured %}
+                                    <span class="fw-bold text-warning">{{ entry.total_blocks }}</span>
+                                {% else %}
+                                    <span class="unconfigured">not configured</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if entry.is_configured %}
+                                    <span class="fw-bold text-info">{{ '%.1f'|format(entry.total_saw_inches) }}"</span>
+                                {% else %}
+                                    <span class="unconfigured">not configured</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if entry.is_configured %}
+                                    <span class="fw-bold text-success">{{ entry.total_cookie_logs }}</span>
+                                {% else %}
+                                    <span class="unconfigured">—</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('woodboss.report', tid=entry.tournament.id) }}"
+                                   class="btn btn-sm btn-outline-secondary">
+                                    <i class="bi bi-eye"></i> Report
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted fst-italic py-4">
+                                No tournaments found.
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Aggregated averages (if we have ≥2 configured tournaments) -->
+    {% set configured = history | selectattr('is_configured') | list %}
+    {% if configured | length >= 2 %}
+    {% set avg_blocks = (configured | sum(attribute='total_blocks')) / configured | length %}
+    {% set avg_saw = (configured | sum(attribute='total_saw_inches')) / configured | length %}
+    {% set avg_cookie = (configured | sum(attribute='total_cookie_logs')) / configured | length %}
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5 class="mb-0">
+                <i class="bi bi-calculator"></i>
+                Averages ({{ configured | length }} configured tournaments)
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="row text-center">
+                <div class="col-md-4">
+                    <h3 class="text-warning mb-0">{{ '%.0f'|format(avg_blocks) }}</h3>
+                    <p class="text-muted mt-1 mb-0">Avg Blocks / Tournament</p>
+                </div>
+                <div class="col-md-4">
+                    <h3 class="text-info mb-0">{{ '%.1f'|format(avg_saw) }}"</h3>
+                    <p class="text-muted mt-1 mb-0">Avg Saw Log / Tournament</p>
+                </div>
+                <div class="col-md-4">
+                    <h3 class="text-success mb-0">{{ '%.1f'|format(avg_cookie) }}</h3>
+                    <p class="text-muted mt-1 mb-0">Avg Cookie Logs / Tournament</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

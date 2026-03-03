@@ -14,6 +14,8 @@
         </div>
     </div>
 
+    <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row">
         <!-- College Events Setup -->
         <div class="col-lg-6 mb-4">
@@ -22,10 +24,6 @@
                     <h5 class="mb-0"><i class="bi bi-mortarboard"></i> College Events (Friday)</h5>
                 </div>
                 <div class="card-body">
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="event_type" value="college">
-
                         <!-- OPEN Events -->
                         <h6 class="text-muted mb-3">Traditionally OPEN Events</h6>
                         <p class="small text-muted">These events can be run as OPEN (anyone can participate) or CLOSED (counts against 6-event limit).</p>
@@ -36,7 +34,6 @@
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div>
                                         <strong>{{ event.name }}</strong>
-                                        <small class="text-muted">({{ event.scoring_type }})</small>
                                         {% if event.get('is_partnered') %}
                                             <span class="badge bg-info">Partnered</span>
                                         {% endif %}
@@ -73,7 +70,9 @@
                                            {% if existing_config.college_closed_enabled.get(event.name, True) %}checked{% endif %}>
                                     <label class="form-check-label" for="college_{{ event.field_key }}">
                                         {{ event.name }}
-                                        <small class="text-muted">({{ event.scoring_type }})</small>
+                                        {% if event.name == 'Birling' %}
+                                            <small class="text-muted">(double elimination bracket)</small>
+                                        {% endif %}
                                     </label>
                                 </div>
                             </div>
@@ -81,10 +80,9 @@
                         </div>
 
                         <hr>
-                        <button type="submit" class="btn btn-primary w-100">
-                            <i class="bi bi-check-circle"></i> Create College Events
+                        <button type="submit" class="btn btn-primary w-100" name="action_scope" value="college">
+                            <i class="bi bi-check-circle"></i> Save College Configuration
                         </button>
-                    </form>
                 </div>
             </div>
         </div>
@@ -96,10 +94,6 @@
                     <h5 class="mb-0"><i class="bi bi-trophy"></i> Pro Events (Saturday)</h5>
                 </div>
                 <div class="card-body">
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="event_type" value="pro">
-
                         <p class="small text-muted">Select which events to include and whether to run men's/women's divisions.</p>
 
                         {% for event in pro_events %}
@@ -134,7 +128,13 @@
                                             <label class="form-check-label" for="pro_{{ event.field_key }}_F">Women's</label>
                                         </div>
                                         {% else %}
-                                        <span class="text-muted small">Mixed/Open event</span>
+                                        <span class="text-muted small">
+                                            {% if event.name == '1-Board Springboard' %}
+                                                Intermediate/Masters/Women
+                                            {% else %}
+                                                Open event
+                                            {% endif %}
+                                        </span>
                                         {% endif %}
                                     </div>
                                 </div>
@@ -143,13 +143,20 @@
                         {% endfor %}
 
                         <hr>
-                        <button type="submit" class="btn btn-warning w-100">
-                            <i class="bi bi-check-circle"></i> Create Pro Events
+                        <button type="submit" class="btn btn-warning w-100" name="action_scope" value="pro">
+                            <i class="bi bi-check-circle"></i> Save Pro Configuration
                         </button>
-                    </form>
                 </div>
             </div>
         </div>
     </div>
+    <div class="row">
+        <div class="col-12">
+            <button type="submit" class="btn btn-proam w-100" name="action_scope" value="both">
+                <i class="bi bi-save2"></i> Save College + Pro Together
+            </button>
+        </div>
+    </div>
+    </form>
 </div>
 {% endblock %}

@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+
+{% block title %}Block Lottery — {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ── Column layout ───────────────────────────────────────── */
+    .lottery-columns {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1rem;
+        align-items: start;
+    }
+    .lottery-col {
+        border: 1px solid var(--sx-border-bright);
+        border-radius: 10px;
+        background: var(--sx-surface-2);
+        overflow: hidden;
+    }
+    .lottery-col-header {
+        background: linear-gradient(135deg, #291800, #3a2208);
+        border-bottom: 2px solid rgba(232,144,18,0.5);
+        padding: 0.7rem 0.9rem;
+    }
+    .lottery-col-header .species-name {
+        font-family: "Fraunces", Georgia, serif;
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: var(--sx-gold);
+    }
+    .lottery-col-header .size-badge {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: var(--sx-amber);
+        border: 1px solid rgba(232,144,18,0.4);
+        border-radius: 6px;
+        padding: 0.1em 0.5em;
+        display: inline-block;
+    }
+    .lottery-col-header .block-count {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: var(--sx-gold);
+        line-height: 1;
+    }
+
+    /* ── Event sections within a column ─────────────────────── */
+    .event-section {
+        border-bottom: 1px solid var(--sx-border);
+        padding: 0.6rem 0.9rem;
+    }
+    .event-section:last-child { border-bottom: none; }
+    .event-section-header {
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--sx-text-2);
+        margin-bottom: 0.4rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .event-section-header .event-count {
+        background: rgba(59,142,232,0.15);
+        border: 1px solid rgba(59,142,232,0.3);
+        color: #6cb6f5;
+        border-radius: 10px;
+        padding: 0.05em 0.5em;
+        font-size: 0.72rem;
+    }
+
+    /* ── Competitor cards ────────────────────────────────────── */
+    .comp-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+    .comp-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.25rem 0;
+        font-size: 0.88rem;
+    }
+    .comp-item + .comp-item { border-top: 1px solid rgba(255,255,255,0.04); }
+    .comp-name { font-weight: 600; color: var(--sx-text); }
+    .comp-affiliation {
+        font-size: 0.74rem;
+        color: var(--sx-text-3);
+        border: 1px solid var(--sx-border);
+        border-radius: 4px;
+        padding: 0 0.3em;
+        white-space: nowrap;
+    }
+    .comp-checkbox {
+        width: 14px; height: 14px;
+        border: 1px solid var(--sx-border-bright);
+        border-radius: 3px;
+        flex-shrink: 0;
+        background: var(--sx-surface-3);
+    }
+
+    /* ── Print styles ────────────────────────────────────────── */
+    @media print {
+        .no-print { display: none !important; }
+        .lottery-columns { grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+        .lottery-col { border: 1px solid #ccc; background: #fff; border-radius: 6px; }
+        .lottery-col-header { background: #2c5c1e; }
+        .lottery-col-header .species-name { color: #fff; }
+        .lottery-col-header .size-badge { color: #e8c97a; border-color: #e8c97a; }
+        .lottery-col-header .block-count { color: #fff; }
+        .event-section-header { color: #444; }
+        .comp-name { color: #111; }
+        .comp-affiliation { color: #555; border-color: #ccc; }
+        body { background: #fff; color: #111; padding: 0.5cm; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    <nav aria-label="breadcrumb" class="mb-3 no-print">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+            <li class="breadcrumb-item">
+                <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
+                    {{ tournament.name }} {{ tournament.year }}
+                </a>
+            </li>
+            <li class="breadcrumb-item">
+                <a href="{{ url_for('woodboss.dashboard', tid=tournament.id) }}">Virtual Woodboss</a>
+            </li>
+            <li class="breadcrumb-item active">Block Lottery</li>
+        </ol>
+    </nav>
+
+    <!-- Header -->
+    <div class="row align-items-center mb-4">
+        <div class="col">
+            <h1>
+                <i class="bi bi-shuffle text-warning"></i>
+                Block Lottery View
+            </h1>
+            <p class="text-muted mb-0">
+                {{ tournament.name }} {{ tournament.year }} &nbsp;·&nbsp;
+                Columns = species/size groups &nbsp;·&nbsp; Sections = individual events &nbsp;·&nbsp; Cards = competitor note cards
+            </p>
+        </div>
+        <div class="col-auto no-print">
+            <button onclick="window.print()" class="btn btn-outline-success btn-sm">
+                <i class="bi bi-printer"></i> Print
+            </button>
+            <a href="{{ url_for('woodboss.dashboard', tid=tournament.id) }}"
+               class="btn btn-outline-secondary btn-sm ms-2">
+                <i class="bi bi-arrow-left"></i> Back
+            </a>
+        </div>
+    </div>
+
+    <!-- Print header (print only) -->
+    <div style="display:none;" class="print-only">
+        <h2 style="font-family:serif; color:#2c5c1e; border-bottom:2px solid #2c5c1e; padding-bottom:0.3em; margin-bottom:1em;">
+            Block Lottery — {{ tournament.name }} {{ tournament.year }}
+        </h2>
+    </div>
+
+    {% if not columns %}
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+        No block data available. Either no competitors are enrolled in chopping events yet,
+        or wood specs haven't been configured.
+        <a href="{{ url_for('woodboss.config_form', tid=tournament.id) }}" class="alert-link">
+            Configure wood specs &rarr;
+        </a>
+    </div>
+    {% else %}
+
+    <!-- Totals bar -->
+    <div class="row g-2 mb-4 no-print">
+        {% for col in columns %}
+        <div class="col-auto">
+            <div class="card" style="background:var(--sx-surface-2);">
+                <div class="card-body py-2 px-3 d-flex align-items-center gap-2">
+                    <span style="color:var(--sx-gold); font-weight:700;">{{ col.size_display }}</span>
+                    <span class="text-muted" style="font-size:0.85rem;">{{ col.species }}</span>
+                    <span class="badge bg-warning">{{ col.total_blocks }} blocks</span>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Lottery columns -->
+    <div class="lottery-columns">
+        {% for col in columns %}
+        <div class="lottery-col">
+
+            <!-- Column header: species + size + total -->
+            <div class="lottery-col-header">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <div class="species-name">{{ col.species }}</div>
+                        <div class="size-badge mt-1">{{ col.size_display }} block</div>
+                    </div>
+                    <div class="text-end">
+                        <div class="block-count">{{ col.total_blocks }}</div>
+                        <div style="font-size:0.7rem; color:var(--sx-text-2);">blocks</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- One section per event within this species/size group -->
+            {% for section in col.sections %}
+            <div class="event-section">
+                <div class="event-section-header">
+                    <div>
+                        <div>{{ section.config_label }}</div>
+                        <div style="font-size:0.7rem; font-weight:400; text-transform:none; letter-spacing:0; color:var(--sx-text-3);">
+                            {{ section.event_name }}
+                        </div>
+                    </div>
+                    <span class="event-count">{{ section.competitors | length }}</span>
+                </div>
+
+                <ul class="comp-list">
+                    {% for comp in section.competitors %}
+                    <li class="comp-item">
+                        <div class="comp-checkbox"></div>
+                        <div class="comp-name">{{ comp.name }}</div>
+                        {% if comp.affiliation %}
+                        <div class="comp-affiliation">{{ comp.affiliation }}</div>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endfor %}
+
+        </div>
+        {% endfor %}
+    </div>
+
+    {% endif %}
+
+</div>
+{% endblock %}

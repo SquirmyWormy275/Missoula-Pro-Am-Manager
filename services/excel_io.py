@@ -176,12 +176,29 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
                 existing.pro_am_lottery_opt_in = relay_opt_in
 
     db.session.flush()
-    _validate_college_entry_constraints(touched_team_ids)
+    errors_by_team = _validate_college_entry_constraints(touched_team_ids)
+
+    invalid_count = 0
+    valid_count = 0
+    for team_id in touched_team_ids:
+        team = Team.query.get(team_id)
+        if not team:
+            continue
+        team_errors = errors_by_team.get(team_id, [])
+        if team_errors:
+            team.set_validation_errors(team_errors)
+            invalid_count += 1
+        else:
+            team.validation_errors = '[]'
+            team.status = 'active'
+            valid_count += 1
+
     db.session.commit()
 
     return {
-        'teams': teams_created,
-        'competitors': competitors_created
+        'teams': valid_count,
+        'invalid_teams': invalid_count,
+        'competitors': competitors_created,
     }
 
 
@@ -547,10 +564,17 @@ def _canonicalize_event_name(raw_name: str) -> str:
     return raw_name.strip()
 
 
-def _validate_college_entry_constraints(team_ids: set):
-    """Validate college entry constraints for touched teams before commit."""
+def _validate_college_entry_constraints(team_ids: set) -> dict:
+    """
+    Validate college entry constraints for the given team IDs.
+
+    Returns a dict mapping team_id -> list of structured error dicts.
+    Teams with no errors are not included in the returned dict.
+    Each error dict has at minimum: 'type' and 'message' keys, plus
+    type-specific fields (competitor_id, competitor_name, event_name, etc.).
+    """
     if not team_ids:
-        return
+        return {}
 
     MAX_EVENTS_PER_COMPETITOR = 6
     MAX_PER_EVENT_PER_GENDER_PER_TEAM = 3
@@ -562,7 +586,7 @@ def _validate_college_entry_constraints(team_ids: set):
         'Standing Block Hard Hit',
         'Standing Block Speed'
     }
-    errors = []
+    errors_by_team = {}
     partner_gender_requirements = _partnered_event_gender_requirements()
 
     for team_id in team_ids:
@@ -570,6 +594,7 @@ def _validate_college_entry_constraints(team_ids: set):
         if not team:
             continue
 
+        team_errors = []
         per_event_gender_counts = {}
         active_members = team.members.filter_by(status='active').all()
         member_events_map = {}
@@ -590,15 +615,28 @@ def _validate_college_entry_constraints(team_ids: set):
             member_name_norm = _normalize_person_name(member.name)
 
             if len(events) > MAX_EVENTS_PER_COMPETITOR:
-                errors.append(
-                    f'{team.team_code}: {member.name} entered {len(events)} events (max {MAX_EVENTS_PER_COMPETITOR})'
-                )
+                team_errors.append({
+                    'type': 'too_many_events',
+                    'message': f'{member.name} entered {len(events)} events (max {MAX_EVENTS_PER_COMPETITOR})',
+                    'competitor_id': member.id,
+                    'competitor_name': member.name,
+                    'count': len(events),
+                    'max': MAX_EVENTS_PER_COMPETITOR,
+                    'events': events,
+                })
 
             chopping_count = sum(1 for e in events if e in CHOPPING_EVENTS)
             if chopping_count > MAX_CHOPPING_EVENTS_PER_COMPETITOR:
-                errors.append(
-                    f'{team.team_code}: {member.name} entered {chopping_count} chopping events (max {MAX_CHOPPING_EVENTS_PER_COMPETITOR})'
-                )
+                chopping_events = [e for e in events if e in CHOPPING_EVENTS]
+                team_errors.append({
+                    'type': 'too_many_chopping',
+                    'message': f'{member.name} entered {chopping_count} chopping events (max {MAX_CHOPPING_EVENTS_PER_COMPETITOR})',
+                    'competitor_id': member.id,
+                    'competitor_name': member.name,
+                    'count': chopping_count,
+                    'max': MAX_CHOPPING_EVENTS_PER_COMPETITOR,
+                    'events': chopping_events,
+                })
 
             for event_name in events:
                 if event_name in partner_gender_requirements:
@@ -608,12 +646,28 @@ def _validate_college_entry_constraints(team_ids: set):
 
         for (event_name, gender), count in per_event_gender_counts.items():
             if count > MAX_PER_EVENT_PER_GENDER_PER_TEAM:
-                errors.append(
-                    f'{team.team_code}: {count} {gender} competitors entered "{event_name}" (max {MAX_PER_EVENT_PER_GENDER_PER_TEAM})'
-                )
+                # Collect competitor IDs in this over-limit group for fix forms
+                over_competitors = [
+                    {'id': m.id, 'name': m.name}
+                    for m in active_members
+                    if m.gender == gender and event_name in member_events_map.get(_normalize_person_name(m.name), set())
+                    and event_name not in partner_gender_requirements
+                ]
+                team_errors.append({
+                    'type': 'too_many_per_event',
+                    'message': f'{count} {gender} competitors entered "{event_name}" (max {MAX_PER_EVENT_PER_GENDER_PER_TEAM})',
+                    'event_name': event_name,
+                    'gender': gender,
+                    'count': count,
+                    'max': MAX_PER_EVENT_PER_GENDER_PER_TEAM,
+                    'competitors': over_competitors,
+                })
 
         # Partnered events are limited by number of pairs, not number of people.
         pair_counts = {}
+        # Track partner errors to avoid duplicate entries per pair
+        partner_error_pairs = set()
+
         for member in active_members:
             member_name = member.name.strip()
             member_name_norm = _normalize_person_name(member_name)
@@ -627,32 +681,57 @@ def _validate_college_entry_constraints(team_ids: set):
 
                 partner_name = str(partners.get(event_name, '')).strip()
                 if not partner_name:
-                    errors.append(
-                        f'{team.team_code}: {member_name} entered "{event_name}" without a partner name'
-                    )
+                    team_errors.append({
+                        'type': 'missing_partner',
+                        'message': f'{member_name} entered "{event_name}" without a partner name',
+                        'competitor_id': member.id,
+                        'competitor_name': member_name,
+                        'event_name': event_name,
+                    })
                     continue
 
                 partner_name_norm = _normalize_person_name(partner_name)
                 partner_member = member_by_norm_name.get(partner_name_norm)
                 if not partner_member:
-                    errors.append(
-                        f'{team.team_code}: {member_name} lists "{partner_name}" for "{event_name}" but that partner is not on this team'
-                    )
+                    team_errors.append({
+                        'type': 'partner_not_on_team',
+                        'message': f'{member_name} lists "{partner_name}" for "{event_name}" but that partner is not on this team',
+                        'competitor_id': member.id,
+                        'competitor_name': member_name,
+                        'event_name': event_name,
+                        'partner_name': partner_name,
+                    })
                     continue
 
                 partner_events = member_events_map.get(partner_name_norm, set())
                 if event_name not in partner_events:
-                    errors.append(
-                        f'{team.team_code}: {member_name} lists {partner_member.name} for "{event_name}" but {partner_member.name} is not entered in that event'
-                    )
+                    team_errors.append({
+                        'type': 'partner_not_in_event',
+                        'message': f'{member_name} lists {partner_member.name} for "{event_name}" but {partner_member.name} is not entered in that event',
+                        'competitor_id': member.id,
+                        'competitor_name': member_name,
+                        'event_name': event_name,
+                        'partner_name': partner_member.name,
+                        'partner_id': partner_member.id,
+                    })
                     continue
 
                 partner_partners = member_partners_map.get(partner_name_norm, {})
                 reciprocal_name = str(partner_partners.get(event_name, '')).strip()
                 if _normalize_person_name(reciprocal_name) != member_name_norm:
-                    errors.append(
-                        f'{team.team_code}: partner mismatch in "{event_name}" between {member_name} and {partner_member.name}'
-                    )
+                    # Deduplicate: only report once per pair per event
+                    pair_key = (event_name, tuple(sorted([member_name_norm, partner_name_norm])))
+                    if pair_key not in partner_error_pairs:
+                        partner_error_pairs.add(pair_key)
+                        team_errors.append({
+                            'type': 'partner_mismatch',
+                            'message': f'Partner mismatch in "{event_name}" between {member_name} and {partner_member.name}',
+                            'competitor_id': member.id,
+                            'competitor_name': member_name,
+                            'event_name': event_name,
+                            'partner_name': partner_member.name,
+                            'partner_id': partner_member.id,
+                        })
                     continue
 
                 requirement = partner_gender_requirements.get(event_name, 'any')
@@ -664,21 +743,32 @@ def _validate_college_entry_constraints(team_ids: set):
         for (event_name, bucket), pairs in pair_counts.items():
             pair_count = len(pairs)
             if pair_count > MAX_PAIRS_PER_PARTNERED_EVENT:
-                if bucket == 'ALL':
-                    errors.append(
-                        f'{team.team_code}: {pair_count} pairs entered "{event_name}" (max {MAX_PAIRS_PER_PARTNERED_EVENT})'
-                    )
-                else:
-                    errors.append(
-                        f'{team.team_code}: {pair_count} {bucket} pairs entered "{event_name}" (max {MAX_PAIRS_PER_PARTNERED_EVENT})'
-                    )
+                # Collect the pair competitor IDs for fix forms
+                pair_competitors = []
+                for pair_id in pairs:
+                    for norm_name in pair_id:
+                        m = member_by_norm_name.get(norm_name)
+                        if m:
+                            pair_competitors.append({'id': m.id, 'name': m.name})
+                pair_msg = (
+                    f'{pair_count} pairs entered "{event_name}" (max {MAX_PAIRS_PER_PARTNERED_EVENT})'
+                    if bucket == 'ALL'
+                    else f'{pair_count} {bucket} pairs entered "{event_name}" (max {MAX_PAIRS_PER_PARTNERED_EVENT})'
+                )
+                team_errors.append({
+                    'type': 'too_many_pairs',
+                    'message': pair_msg,
+                    'event_name': event_name,
+                    'gender': None if bucket == 'ALL' else bucket,
+                    'count': pair_count,
+                    'max': MAX_PAIRS_PER_PARTNERED_EVENT,
+                    'competitors': pair_competitors,
+                })
 
-    if errors:
-        preview = '; '.join(errors[:8])
-        remaining = len(errors) - 8
-        if remaining > 0:
-            preview += f'; ...and {remaining} more'
-        raise ValueError(f'Entry form limit violations: {preview}')
+        if team_errors:
+            errors_by_team[team_id] = team_errors
+
+    return errors_by_team
 
 
 def _partnered_event_gender_requirements() -> dict:

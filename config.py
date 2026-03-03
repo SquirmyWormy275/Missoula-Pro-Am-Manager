@@ -202,13 +202,9 @@ SHIRT_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
 # Friday Night Feature — crowd-pleasing pro events eligible for the Friday evening showcase.
 # Selections are persisted per-tournament in instance/friday_feature_<id>.json
 FRIDAY_NIGHT_EVENTS = [
-    'Hot Saw',
-    'Birling',
-    'Pole Climb',
-    'Obstacle Pole',
     'Springboard',
+    'Pro 1-Board',
     '3-Board Jigger',
-    'Cookie Stack',
 ]
 
 # Saturday priority ordering defaults (override via EVENT_ORDER_CONFIG_PATH if needed).
@@ -218,4 +214,5 @@ COLLEGE_SATURDAY_PRIORITY_DEFAULT = [
     ('Standing Block Speed', 'F'),
     ('Standing Block Hard Hit', 'F'),
     ('Obstacle Pole', 'M'),
+    ('Obstacle Pole', 'F'),
 ]
