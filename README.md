@@ -449,4 +449,4 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for technical documentation including:
 
 ---
 
-*Last updated: March 2026 — V1.5.0*
+*Last updated: March 2026 — V1.6.0*

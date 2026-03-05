@@ -21,31 +21,120 @@ LIST_ONLY_EVENT_NAMES = {
 }
 
 
-@scheduling_bp.route('/<int:tournament_id>/events')
+@scheduling_bp.route('/<int:tournament_id>/events', methods=['GET', 'POST'])
 def event_list(tournament_id):
-    """List all events for a tournament."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    """Unified Events & Schedule page — heat status, schedule options, generation actions."""
+    from services.schedule_builder import build_day_schedule, COLLEGE_SATURDAY_PRIORITY
+    from services.heat_generator import generate_event_heats
+    from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
 
-    college_events = tournament.events.filter_by(event_type='college').all()
-    pro_events = tournament.events.filter_by(event_type='pro').all()
+    tournament = Tournament.query.get_or_404(tournament_id)
+    session_key = f'schedule_options_{tournament_id}'
+
+    # ── Eligible option lists (FNF pro events, Saturday college overflow) ──
+    friday_feature_names = set(config.FRIDAY_NIGHT_EVENTS)
+    all_pro = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
+    fnf_eligible = [e for e in all_pro if e.name in friday_feature_names]
+
+    priority_index = {p: i for i, p in enumerate(COLLEGE_SATURDAY_PRIORITY)}
+    all_college = tournament.events.filter_by(event_type='college').all()
+    sat_eligible = sorted(
+        [e for e in all_college if (e.name, e.gender) in priority_index],
+        key=lambda e: priority_index[(e.name, e.gender)]
+    )
+
+    saved = session.get(session_key, {})
+
+    # ── POST: handle schedule option actions ──────────────────────────────
+    if request.method == 'POST':
+        action = request.form.get('action', '')
+        try:
+            friday_pro_event_ids = [int(eid) for eid in request.form.getlist('friday_pro_event_ids') if str(eid).strip()]
+            saturday_college_event_ids = [int(eid) for eid in request.form.getlist('saturday_college_event_ids') if str(eid).strip()]
+        except (TypeError, ValueError):
+            flash('Invalid event ID in schedule submission.', 'error')
+            return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+
+        saved = {'friday_pro_event_ids': friday_pro_event_ids,
+                 'saturday_college_event_ids': saturday_college_event_ids}
+        session[session_key] = saved
+        session.modified = True
+
+        if action == 'generate_all':
+            _generate_all_heats(tournament, generate_event_heats)
+            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
+            if flights is not None:
+                flash(f'Built {flights} pro flight(s).', 'success')
+                integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
+                if integration['integrated_heats'] > 0:
+                    db.session.commit()
+                    flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
+        elif action == 'rebuild_flights':
+            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
+            if flights is not None:
+                flash(f'Rebuilt {flights} pro flight(s).', 'success')
+                integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
+                if integration['integrated_heats'] > 0:
+                    db.session.commit()
+                    flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
+        elif action == 'integrate_spillover':
+            integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
+            db.session.commit()
+            flash(integration['message'], 'info')
+            if integration['integrated_heats'] > 0:
+                flash(f"Integrated {integration['integrated_heats']} heat(s) into flights.", 'success')
+
+        return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+
+    # ── GET: normalise saved options ──────────────────────────────────────
+    saved = {
+        'friday_pro_event_ids': [int(i) for i in saved.get('friday_pro_event_ids', [])],
+        'saturday_college_event_ids': [int(i) for i in saved.get('saturday_college_event_ids', [])],
+    }
+
+    # ── Event data ────────────────────────────────────────────────────────
+    college_events = all_college
+    pro_events = all_pro
     all_events = college_events + pro_events
-    assignment_details = _build_assignment_details(tournament, college_events + pro_events)
-    entrant_counts = {
-        event.id: len(_signed_up_competitors(event))
-        for event in all_events
-    }
-    event_progress = {
-        event.id: _build_event_progress(event, entrant_counts[event.id])
-        for event in all_events
-    }
+    entrant_counts = {e.id: len(_signed_up_competitors(e)) for e in all_events}
+    event_progress = {e.id: _build_event_progress(e, entrant_counts[e.id]) for e in all_events}
+
+    college_closed = [e for e in college_events if not _is_list_only_event(e)]
+    college_with_heats = sum(1 for e in college_closed if event_progress[e.id]['heat_count'] > 0)
+    college_heats_total = len(college_closed)
+
+    flights_built = Flight.query.join(Heat).join(Event).filter(
+        Event.tournament_id == tournament_id,
+        Event.event_type == 'pro'
+    ).count() > 0
+    pro_heats_exist = any(event_progress[e.id]['heat_count'] > 0 for e in pro_events)
+
+    # ── Schedule preview (for collapsed accordion) ─────────────────────
+    schedule = build_day_schedule(
+        tournament,
+        friday_pro_event_ids=saved['friday_pro_event_ids'],
+        saturday_college_event_ids=saved['saturday_college_event_ids'],
+    )
+    detailed_schedule = _hydrate_schedule_for_display(tournament, schedule)
+    has_schedule_overrides = bool(saved['friday_pro_event_ids'] or saved['saturday_college_event_ids'])
 
     return render_template('scheduling/events.html',
                            tournament=tournament,
                            college_events=college_events,
                            pro_events=pro_events,
-                           assignment_details=assignment_details,
                            entrant_counts=entrant_counts,
-                           event_progress=event_progress)
+                           event_progress=event_progress,
+                           college_with_heats=college_with_heats,
+                           college_heats_total=college_heats_total,
+                           flights_built=flights_built,
+                           pro_heats_exist=pro_heats_exist,
+                           fnf_eligible=fnf_eligible,
+                           sat_eligible=sat_eligible,
+                           selected_friday_pro_event_ids=saved['friday_pro_event_ids'],
+                           selected_saturday_college_event_ids=saved['saturday_college_event_ids'],
+                           has_schedule_overrides=has_schedule_overrides,
+                           schedule=schedule,
+                           detailed_schedule=detailed_schedule)
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])
@@ -90,27 +179,45 @@ def setup_events(tournament_id):
                            college_open_events=college_open_events,
                            college_closed_events=college_closed_events,
                            pro_events=pro_events,
-                           existing_config=existing_config)
+                           existing_config=existing_config,
+                           stand_configs=config.STAND_CONFIGS)
+
+
+def _parse_stand_overrides(form_data):
+    """Extract stands_{stand_type} overrides from form data. Returns dict of stand_type -> int."""
+    overrides = {}
+    for stand_type in config.STAND_CONFIGS:
+        raw = form_data.get(f'stands_{stand_type}')
+        if raw:
+            try:
+                val = int(raw)
+                if val >= 1:
+                    overrides[stand_type] = val
+            except (TypeError, ValueError):
+                pass
+    return overrides
 
 
 def _create_college_events(tournament, form_data, college_open_events, college_closed_events):
     """Create/update college events based on form configuration and remove deselected events."""
     selected_signatures = set()
+    stand_overrides = _parse_stand_overrides(form_data)
 
     # Process OPEN events (check if each should be treated as CLOSED)
     for event_config in college_open_events:
         # Check if this event should be treated as CLOSED
         is_open = form_data.get(f"open_{event_config['field_key']}", 'open') == 'open'
+        max_stands_override = stand_overrides.get(event_config.get('stand_type'))
 
         # Create gendered versions if applicable
         if event_config.get('is_partnered') and event_config.get('partner_gender') == 'mixed':
             # Mixed gender events are not gendered
-            event = _upsert_event(tournament, event_config, 'college', None, is_open)
+            event = _upsert_event(tournament, event_config, 'college', None, is_open, max_stands_override)
             selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
         else:
             # Create men's and women's versions
-            event_m = _upsert_event(tournament, event_config, 'college', 'M', is_open)
-            event_f = _upsert_event(tournament, event_config, 'college', 'F', is_open)
+            event_m = _upsert_event(tournament, event_config, 'college', 'M', is_open, max_stands_override)
+            event_f = _upsert_event(tournament, event_config, 'college', 'F', is_open, max_stands_override)
             selected_signatures.add(_event_signature(event_m.name, event_m.event_type, event_m.gender))
             selected_signatures.add(_event_signature(event_f.name, event_f.event_type, event_f.gender))
 
@@ -119,14 +226,15 @@ def _create_college_events(tournament, form_data, college_open_events, college_c
         if form_data.get(f"enable_{event_config['field_key']}") != 'on':
             continue
 
+        max_stands_override = stand_overrides.get(event_config.get('stand_type'))
         if event_config.get('is_gendered', True):
             # Create men's and women's versions
-            event_m = _upsert_event(tournament, event_config, 'college', 'M', False)
-            event_f = _upsert_event(tournament, event_config, 'college', 'F', False)
+            event_m = _upsert_event(tournament, event_config, 'college', 'M', False, max_stands_override)
+            event_f = _upsert_event(tournament, event_config, 'college', 'F', False, max_stands_override)
             selected_signatures.add(_event_signature(event_m.name, event_m.event_type, event_m.gender))
             selected_signatures.add(_event_signature(event_f.name, event_f.event_type, event_f.gender))
         else:
-            event = _upsert_event(tournament, event_config, 'college', None, False)
+            event = _upsert_event(tournament, event_config, 'college', None, False, max_stands_override)
             selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
 
     return _remove_deselected_events(tournament, 'college', selected_signatures)
@@ -135,28 +243,30 @@ def _create_college_events(tournament, form_data, college_open_events, college_c
 def _create_pro_events(tournament, form_data, pro_events):
     """Create/update pro events based on form configuration and remove deselected events."""
     selected_signatures = set()
+    stand_overrides = _parse_stand_overrides(form_data)
 
     for event_config in pro_events:
         # Check if this event is enabled
         if form_data.get(f"enable_{event_config['field_key']}") != 'on':
             continue
 
+        max_stands_override = stand_overrides.get(event_config.get('stand_type'))
         if event_config.get('is_gendered', False):
             # Check which genders are enabled
             if form_data.get(f"enable_{event_config['field_key']}_M") == 'on':
-                event_m = _upsert_event(tournament, event_config, 'pro', 'M', False)
+                event_m = _upsert_event(tournament, event_config, 'pro', 'M', False, max_stands_override)
                 selected_signatures.add(_event_signature(event_m.name, event_m.event_type, event_m.gender))
             if form_data.get(f"enable_{event_config['field_key']}_F") == 'on':
-                event_f = _upsert_event(tournament, event_config, 'pro', 'F', False)
+                event_f = _upsert_event(tournament, event_config, 'pro', 'F', False, max_stands_override)
                 selected_signatures.add(_event_signature(event_f.name, event_f.event_type, event_f.gender))
         else:
-            event = _upsert_event(tournament, event_config, 'pro', None, False)
+            event = _upsert_event(tournament, event_config, 'pro', None, False, max_stands_override)
             selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
 
     return _remove_deselected_events(tournament, 'pro', selected_signatures)
 
 
-def _upsert_event(tournament, event_config, event_type, gender, is_open):
+def _upsert_event(tournament, event_config, event_type, gender, is_open, max_stands_override=None):
     """Create or update a single event from configuration."""
     stand_config = config.STAND_CONFIGS.get(event_config.get('stand_type', ''), {})
 
@@ -182,7 +292,7 @@ def _upsert_event(tournament, event_config, event_type, gender, is_open):
     event.partner_gender_requirement = event_config.get('partner_gender')
     event.requires_dual_runs = event_config.get('requires_dual_runs', False)
     event.stand_type = event_config.get('stand_type')
-    event.max_stands = stand_config.get('total')
+    event.max_stands = max_stands_override if max_stands_override is not None else stand_config.get('total')
     event.has_prelims = event_config.get('has_prelims', False)
 
     return event
@@ -399,17 +509,29 @@ def _get_existing_event_config(tournament):
             'F': any(e.gender == 'F' for e in matching),
         }
 
+    # Per-stand-type count overrides stored on existing events
+    stand_counts = {}
+    for event in events:
+        if event.stand_type and event.max_stands is not None:
+            stand_counts[event.stand_type] = event.max_stands
+
     return {
         'college_open_state': open_state,
         'college_closed_enabled': closed_enabled,
         'pro_enabled': pro_enabled,
         'pro_gender': pro_gender,
+        'stand_counts': stand_counts,
     }
 
 
 @scheduling_bp.route('/<int:tournament_id>/day-schedule', methods=['GET', 'POST'])
 def day_schedule(tournament_id):
-    """Generate a Friday/Saturday schedule using Missoula Pro Am rules."""
+    """Redirects to the unified Events & Schedule page."""
+    return redirect(url_for('scheduling.event_list', tournament_id=tournament_id), 301)
+
+
+def _day_schedule_legacy(tournament_id):
+    """Legacy day-schedule logic — kept for reference, no longer routed."""
     from services.schedule_builder import build_day_schedule, COLLEGE_SATURDAY_PRIORITY
     from services.heat_generator import generate_event_heats
     from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
@@ -640,6 +762,52 @@ def generate_heats(tournament_id, event_id):
                             event_id=event_id))
 
 
+@scheduling_bp.route('/<int:tournament_id>/generate-college-heats', methods=['POST'])
+def generate_college_heats(tournament_id):
+    """Bulk-generate heats for all closed college events in one click."""
+    from services.heat_generator import generate_event_heats
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    events = tournament.events.filter_by(event_type='college').order_by(Event.name, Event.gender).all()
+
+    generated = 0
+    skipped_open = 0
+    skipped_completed = 0
+    errors = 0
+
+    for event in events:
+        if _is_list_only_event(event):
+            skipped_open += 1
+            continue
+        if event.status == 'completed':
+            skipped_completed += 1
+            continue
+        try:
+            generate_event_heats(event)
+            generated += 1
+        except Exception as exc:
+            if 'No competitors entered' in str(exc):
+                skipped_open += 1
+            else:
+                errors += 1
+                flash(f'Error generating heats for {event.display_name}: {exc}', 'error')
+
+    parts = []
+    if generated:
+        parts.append(f'Heats generated for {generated} event(s)')
+    if skipped_open:
+        parts.append(f'{skipped_open} signup-list event(s) skipped')
+    if skipped_completed:
+        parts.append(f'{skipped_completed} completed event(s) unchanged')
+    if parts:
+        flash('. '.join(parts) + '.', 'success')
+
+    log_action('generate_college_heats', f'Bulk college heat generation: {generated} generated, '
+               f'{skipped_open} skipped open, {errors} errors',
+               tournament_id=tournament_id)
+    return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+
+
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/move-competitor', methods=['POST'])
 def move_competitor_between_heats(tournament_id, event_id):
     """Move a competitor between heats (and mirrored dual run heat, if needed)."""
@@ -675,6 +843,7 @@ def move_competitor_between_heats(tournament_id, event_id):
         from_pairs.append(source)
         to_pairs.append(target)
 
+    comp_type = event.event_type  # 'pro' or 'college'
     for source, target in zip(from_pairs, to_pairs):
         source_ids = source.get_competitors()
         if competitor_id not in source_ids:
@@ -693,6 +862,9 @@ def move_competitor_between_heats(tournament_id, event_id):
         target_assignments = target.get_stand_assignments()
         target_assignments[str(competitor_id)] = _next_open_stand(target_ids, target_assignments, event)
         target.stand_assignments = json.dumps(target_assignments)
+
+        source.sync_assignments(comp_type)
+        target.sync_assignments(comp_type)
 
     db.session.commit()
     flash('Competitor moved successfully.', 'success')
@@ -804,7 +976,7 @@ def _build_event_progress(event: Event, entrant_count: int) -> dict:
 def _next_open_stand(target_ids: list[int], assignments: dict, event: Event) -> int | None:
     """Return next available stand number for a target heat."""
     stand_config = config.STAND_CONFIGS.get(event.stand_type or '', {})
-    total = stand_config.get('total', max(len(target_ids), 1))
+    total = event.max_stands if event.max_stands is not None else stand_config.get('total', max(len(target_ids), 1))
     if event.stand_type == 'saw_hand':
         total = min(total, 4)
     if event.event_type == 'college' and _normalize_name(event.name) == _normalize_name('Stock Saw'):
@@ -823,12 +995,48 @@ def _next_open_stand(target_ids: list[int], assignments: dict, event: Event) -> 
 @scheduling_bp.route('/<int:tournament_id>/flights')
 def flight_list(tournament_id):
     """View and manage flights for pro competition."""
+    from models.competitor import ProCompetitor, CollegeCompetitor
+
     tournament = Tournament.query.get_or_404(tournament_id)
     flights = Flight.query.filter_by(tournament_id=tournament_id).order_by(Flight.flight_number).all()
 
+    # Pre-fetch competitor names + stand assignments for display.
+    # Sort heats within each flight by event name → heat_number → run_number
+    # so that heats from the same event appear together in ascending sequence.
+    flight_data = []
+    for flight in flights:
+        heat_rows = []
+        heats_sorted = sorted(
+            flight.heats.all(),
+            key=lambda h: (h.event.name if h.event else '', h.heat_number, h.run_number)
+        )
+        for heat in heats_sorted:
+            event = Event.query.get(heat.event_id)
+            if not event:
+                continue
+            comp_ids = heat.get_competitors()
+            assignments = heat.get_stand_assignments()
+            if event.event_type == 'college':
+                comps = {c.id: c for c in CollegeCompetitor.query.filter(
+                    CollegeCompetitor.id.in_(comp_ids)).all()} if comp_ids else {}
+            else:
+                comps = {c.id: c for c in ProCompetitor.query.filter(
+                    ProCompetitor.id.in_(comp_ids)).all()} if comp_ids else {}
+            heat_rows.append({
+                'heat': heat,
+                'event': event,
+                'competitors': [
+                    {'name': comps[cid].name if cid in comps else f'ID:{cid}',
+                     'stand': assignments.get(str(cid), '?')}
+                    for cid in comp_ids
+                ],
+            })
+        flight_data.append({'flight': flight, 'heats': heat_rows})
+
     return render_template('pro/flights.html',
                            tournament=tournament,
-                           flights=flights)
+                           flights=flights,
+                           flight_data=flight_data)
 
 
 @scheduling_bp.route('/<int:tournament_id>/flights/build', methods=['GET', 'POST'])
@@ -898,15 +1106,27 @@ def _save_fnf_config(tournament_id: int, data: dict) -> None:
 
 @scheduling_bp.route('/<int:tournament_id>/friday-night', methods=['GET', 'POST'])
 def friday_feature(tournament_id):
-    """Configure and view Friday Night Feature events."""
+    """Configure Friday Night Feature events and Saturday college spillover."""
+    from services.schedule_builder import COLLEGE_SATURDAY_PRIORITY
+
     tournament = Tournament.query.get_or_404(tournament_id)
 
-    # Eligible events: pro events whose name matches FRIDAY_NIGHT_EVENTS candidates
+    # FNF: pro events eligible for Friday Night
     eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
     pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
     eligible_events = [e for e in pro_events if e.name in eligible_names]
 
+    # Saturday spillover: college events eligible to run Saturday morning
+    priority_index = {p: i for i, p in enumerate(COLLEGE_SATURDAY_PRIORITY)}
+    all_college = tournament.events.filter_by(event_type='college').all()
+    sat_eligible = sorted(
+        [e for e in all_college if (e.name, e.gender) in priority_index],
+        key=lambda e: priority_index[(e.name, e.gender)]
+    )
+
     fnf_config = _load_fnf_config(tournament_id)
+    session_key = f'schedule_options_{tournament_id}'
+    saved_opts = session.get(session_key, {})
 
     if request.method == 'POST':
         selected_ids = [int(x) for x in request.form.getlist('event_ids') if x.isdigit()]
@@ -919,17 +1139,33 @@ def friday_feature(tournament_id):
             try:
                 yr, mo, dy = (int(p) for p in date_str.split('-'))
                 tournament.friday_feature_date = date_type(yr, mo, dy)
-                db.session.commit()
             except (TypeError, ValueError):
                 flash('Invalid date format. Use YYYY-MM-DD.', 'error')
 
         _save_fnf_config(tournament_id, {'event_ids': selected_ids, 'notes': notes})
+
+        # Save Saturday spillover selections into the shared schedule session
+        try:
+            saturday_college_event_ids = [
+                int(eid) for eid in request.form.getlist('saturday_college_event_ids') if str(eid).strip()
+            ]
+        except (TypeError, ValueError):
+            saturday_college_event_ids = []
+
+        saved_opts = dict(saved_opts)
+        saved_opts['saturday_college_event_ids'] = saturday_college_event_ids
+        session[session_key] = saved_opts
+        session.modified = True
+
         log_action('friday_feature_configured', 'tournament', tournament_id, {
-            'event_count': len(selected_ids),
+            'fnf_event_count': len(selected_ids),
+            'sat_spillover_count': len(saturday_college_event_ids),
         })
         db.session.commit()
-        flash('Friday Night Feature schedule saved.', 'success')
+        flash('Friday Night Feature & Saturday spillover saved.', 'success')
         return redirect(url_for('scheduling.friday_feature', tournament_id=tournament_id))
+
+    selected_saturday_ids = set(int(i) for i in saved_opts.get('saturday_college_event_ids', []))
 
     return render_template(
         'scheduling/friday_feature.html',
@@ -937,6 +1173,8 @@ def friday_feature(tournament_id):
         eligible_events=eligible_events,
         selected_ids=set(fnf_config.get('event_ids', [])),
         notes=fnf_config.get('notes', ''),
+        sat_eligible=sat_eligible,
+        selected_saturday_ids=selected_saturday_ids,
     )
 
 

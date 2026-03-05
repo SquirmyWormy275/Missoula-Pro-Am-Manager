@@ -5,118 +5,116 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>College Standings - {{ tournament.name }} {{ tournament.year }}</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: Arial, sans-serif;
-            font-size: 12pt;
-            line-height: 1.4;
+            font-size: 11pt;
+            line-height: 1.35;
             padding: 0.5in;
+            color: #111;
         }
 
         .header {
             text-align: center;
-            margin-bottom: 30px;
-            border-bottom: 3px double #2d5a27;
-            padding-bottom: 15px;
+            margin-bottom: 24px;
+            border-bottom: 2px solid #111;
+            padding-bottom: 12px;
         }
 
         .header h1 {
-            font-size: 24pt;
-            color: #2d5a27;
-            margin-bottom: 5px;
+            font-size: 22pt;
+            color: #000;
+            margin-bottom: 4px;
         }
 
         .header h2 {
-            font-size: 14pt;
+            font-size: 13pt;
             font-weight: normal;
-            color: #666;
+            color: #444;
         }
 
         .section {
-            margin-bottom: 30px;
+            margin-bottom: 24px;
             page-break-inside: avoid;
         }
 
         .section-title {
-            font-size: 16pt;
-            color: #2d5a27;
-            border-bottom: 2px solid #2d5a27;
-            padding-bottom: 5px;
-            margin-bottom: 15px;
+            font-size: 14pt;
+            color: #000;
+            border-bottom: 2px solid #111;
+            padding-bottom: 4px;
+            margin-bottom: 10px;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
+            border: 1px solid #999;
         }
 
         th, td {
-            padding: 8px 12px;
+            padding: 7px 9px;
             text-align: left;
-            border-bottom: 1px solid #ddd;
+            border-bottom: 1px solid #c7c7c7;
+            border-right: 1px solid #d5d5d5;
+            vertical-align: top;
         }
+
+        tr td:last-child, tr th:last-child { border-right: none; }
 
         th {
-            background-color: #2d5a27;
-            color: white;
-            font-weight: bold;
+            background-color: #efefef;
+            color: #111;
+            font-weight: 700;
+            font-size: 9pt;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
         }
 
-        tr:nth-child(even) {
-            background-color: #f9f9f9;
-        }
+        tr:nth-child(even) { background-color: #fafafa; }
 
         .rank {
             text-align: center;
-            font-weight: bold;
-            width: 50px;
+            font-weight: 700;
+            width: 68px;
         }
-
-        .rank-1 { color: #daa520; font-size: 14pt; }
-        .rank-2 { color: #888; font-size: 13pt; }
-        .rank-3 { color: #cd7f32; font-size: 13pt; }
 
         .points {
             text-align: right;
-            font-weight: bold;
-            width: 80px;
+            font-weight: 700;
+            width: 88px;
         }
 
-        .team-code {
-            font-weight: bold;
-        }
-
-        .school-name {
-            color: #666;
-            font-size: 10pt;
-        }
+        .team-code { font-weight: 700; }
 
         .columns {
             display: flex;
-            gap: 30px;
+            gap: 16px;
+            align-items: flex-start;
         }
 
-        .column {
-            flex: 1;
-        }
+        .column { flex: 1; }
 
         .footer {
-            margin-top: 40px;
+            margin-top: 26px;
             text-align: center;
-            font-size: 10pt;
-            color: #999;
-            border-top: 1px solid #ddd;
-            padding-top: 10px;
+            font-size: 9pt;
+            color: #555;
+            border-top: 1px solid #bbb;
+            padding-top: 8px;
         }
 
         @media print {
             body { padding: 0; }
-            .no-print { display: none; }
+            .no-print { display: none !important; }
+            .columns {
+                display: block;
+            }
+            .column {
+                margin-bottom: 16px;
+            }
         }
     </style>
 </head>
@@ -127,7 +125,6 @@
     </div>
 
     <div class="columns">
-        <!-- Bull of the Woods -->
         <div class="column">
             <div class="section">
                 <h3 class="section-title">Bull of the Woods - Top Men</h3>
@@ -143,7 +140,7 @@
                     <tbody>
                         {% for c in bull %}
                         <tr>
-                            <td class="rank rank-{{ loop.index if loop.index <= 3 else '' }}">{{ loop.index }}</td>
+                            <td class="rank">{{ loop.index }}</td>
                             <td><strong>{{ c.name }}</strong></td>
                             <td>{{ c.team.team_code if c.team else 'N/A' }}</td>
                             <td class="points">{{ c.individual_points }}</td>
@@ -154,7 +151,6 @@
             </div>
         </div>
 
-        <!-- Belle of the Woods -->
         <div class="column">
             <div class="section">
                 <h3 class="section-title">Belle of the Woods - Top Women</h3>
@@ -170,7 +166,7 @@
                     <tbody>
                         {% for c in belle %}
                         <tr>
-                            <td class="rank rank-{{ loop.index if loop.index <= 3 else '' }}">{{ loop.index }}</td>
+                            <td class="rank">{{ loop.index }}</td>
                             <td><strong>{{ c.name }}</strong></td>
                             <td>{{ c.team.team_code if c.team else 'N/A' }}</td>
                             <td class="points">{{ c.individual_points }}</td>
@@ -182,7 +178,6 @@
         </div>
     </div>
 
-    <!-- Team Standings -->
     <div class="section">
         <h3 class="section-title">Team Standings</h3>
         <table>
@@ -191,14 +186,14 @@
                     <th class="rank">Rank</th>
                     <th>Team</th>
                     <th>School</th>
-                    <th style="text-align: center;">Members</th>
+                    <th style="text-align: center; width: 90px;">Members</th>
                     <th class="points">Points</th>
                 </tr>
             </thead>
             <tbody>
                 {% for t in team_standings %}
                 <tr>
-                    <td class="rank rank-{{ loop.index if loop.index <= 3 else '' }}">{{ loop.index }}</td>
+                    <td class="rank">{{ loop.index }}</td>
                     <td class="team-code">{{ t.team_code }}</td>
                     <td>{{ t.school_name }}</td>
                     <td style="text-align: center;">{{ t.member_count }}</td>

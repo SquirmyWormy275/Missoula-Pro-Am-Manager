@@ -2,25 +2,172 @@
 
 {% block title %}Flights - {{ tournament.name }} {{ tournament.year }}{% endblock %}
 
+{% block extra_css %}
+<style>
+.flight-block {
+    border: 2px solid #dee2e6;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+    overflow: hidden;
+}
+.flight-block.status-in_progress { border-color: #ffc107; }
+.flight-block.status-completed    { border-color: #198754; }
+
+.flight-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+    gap: 12px;
+}
+.flight-block.status-in_progress .flight-block-header { background: #fff8e1; border-bottom-color: #ffc107; }
+.flight-block.status-completed    .flight-block-header { background: #f0fff4; border-bottom-color: #198754; }
+
+.flight-title {
+    font-size: 1.05rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #343a40;
+}
+
+.heat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0;
+}
+
+.heat-tile {
+    border-right: 1px solid #dee2e6;
+    border-bottom: 1px solid #dee2e6;
+    padding: 10px 12px;
+}
+.heat-tile:last-child,
+.heat-tile:nth-child(n):not(:nth-last-child(-n+1)):where(:last-of-type) {
+    border-right: none;
+}
+
+.heat-tile-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #e9ecef;
+}
+.heat-tile-event {
+    font-weight: 700;
+    font-size: 0.85rem;
+    line-height: 1.2;
+    color: #212529;
+}
+.heat-tile-num {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #6c757d;
+    white-space: nowrap;
+    margin-left: 8px;
+}
+
+.heat-tile table {
+    width: 100%;
+    font-size: 0.83rem;
+    border-collapse: collapse;
+}
+.heat-tile table td {
+    padding: 2px 4px;
+    vertical-align: middle;
+}
+.heat-tile table .td-stand {
+    width: 28px;
+    text-align: center;
+    font-weight: 700;
+    color: #495057;
+    background: #f1f3f5;
+    border-radius: 3px;
+    font-size: 0.78rem;
+}
+.heat-tile table .td-name {
+    padding-left: 8px;
+    color: #212529;
+}
+.heat-tile table tr + tr td {
+    border-top: 1px solid #f1f3f5;
+}
+
+.heat-tile-footer {
+    margin-top: 6px;
+    text-align: right;
+}
+
+.flight-footer {
+    padding: 8px 16px;
+    border-top: 1px solid #dee2e6;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+}
+.flight-block.status-in_progress .flight-footer { background: #fff8e1; }
+.flight-block.status-completed    .flight-footer { background: #f0fff4; }
+
+/* College heats — amber tint to distinguish from pro */
+.heat-tile-college {
+    background: #fff8e1;
+    border-left: 3px solid #e65100;
+}
+.heat-tile-college .heat-tile-header {
+    border-bottom-color: #ffe0b2;
+}
+.badge-college-label {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    background: #e65100;
+    color: #fff;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-right: 5px;
+    vertical-align: middle;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
-    <div class="row mb-4">
+    <div class="row mb-3">
         <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item active">Pro Flights</li>
+                </ol>
+            </nav>
             <div class="d-flex justify-content-between align-items-center">
                 <div>
-                    <h1>
+                    <h1 class="mb-0">
                         <i class="bi bi-layers text-warning"></i>
                         Pro Competition Flights
                     </h1>
-                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }} - Saturday Show Schedule</p>
+                    <p class="text-muted mb-0">{{ tournament.name }} {{ tournament.year }} — Saturday Show Schedule</p>
                 </div>
-                <div>
+                <div class="d-flex gap-2">
+                    <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary btn-sm" target="_blank">
+                        <i class="bi bi-printer"></i> Print Heat Sheets
+                    </a>
                     {% if not flights %}
-                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}" class="btn btn-warning">
+                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
+                       class="btn btn-warning">
                         <i class="bi bi-plus-circle"></i> Build Flights
                     </a>
                     {% else %}
-                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}" class="btn btn-outline-warning">
+                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-warning btn-sm">
                         <i class="bi bi-arrow-repeat"></i> Rebuild Flights
                     </a>
                     {% endif %}
@@ -29,98 +176,106 @@
         </div>
     </div>
 
-    {% if flights %}
-    <div class="row">
-        {% for flight in flights %}
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 {% if flight.status == 'completed' %}border-success{% elif flight.status == 'in_progress' %}border-warning{% endif %}">
-                <div class="card-header d-flex justify-content-between align-items-center
-                            {% if flight.status == 'completed' %}bg-success text-white
-                            {% elif flight.status == 'in_progress' %}bg-warning text-dark
-                            {% else %}bg-light{% endif %}">
-                    <h5 class="mb-0">
-                        <i class="bi bi-layers"></i>
-                        Flight {{ flight.flight_number }}
-                    </h5>
-                    {% if flight.status == 'completed' %}
-                        <span class="badge bg-light text-success">Complete</span>
-                    {% elif flight.status == 'in_progress' %}
-                        <span class="badge bg-dark">Active</span>
-                    {% endif %}
-                </div>
-                <div class="card-body p-0">
-                    <ul class="list-group list-group-flush">
-                        {% for heat in flight.get_heats_ordered() %}
-                        <li class="list-group-item d-flex justify-content-between align-items-center py-2">
-                            <span>
-                                <strong>{{ heat.event.display_name if heat.event else 'Unknown' }}</strong>
-                                <br>
-                                <small class="text-muted">Heat {{ heat.heat_number }} - {{ heat.competitor_count }} competitors</small>
-                            </span>
-                            <span>
-                                {% if heat.status == 'completed' %}
-                                    <span class="badge bg-success"><i class="bi bi-check"></i></span>
-                                {% elif heat.status == 'in_progress' %}
-                                    <span class="badge bg-warning text-dark">Active</span>
-                                {% else %}
-                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}"
-                                       class="btn btn-sm btn-outline-primary">
-                                        <i class="bi bi-play"></i>
-                                    </a>
-                                {% endif %}
-                            </span>
-                        </li>
-                        {% else %}
-                        <li class="list-group-item text-center text-muted py-3">
-                            No heats in this flight
-                        </li>
-                        {% endfor %}
-                    </ul>
-                </div>
-                <div class="card-footer d-flex justify-content-between align-items-center">
-                    <small class="text-muted">{{ flight.heat_count }} heats | {{ flight.event_variety }} events</small>
-                    {% if flight.status == 'pending' %}
-                    <form method="post"
-                          action="{{ url_for('scheduling.start_flight', tournament_id=tournament.id, flight_id=flight.id) }}"
-                          class="d-inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-sm btn-warning"
-                                onclick="return confirm('Start Flight {{ flight.flight_number }}? This will send SMS notifications to opted-in competitors in upcoming flights.')">
-                            <i class="bi bi-play-fill"></i> Start
-                        </button>
-                    </form>
-                    {% elif flight.status == 'in_progress' %}
-                    <form method="post"
-                          action="{{ url_for('scheduling.complete_flight', tournament_id=tournament.id, flight_id=flight.id) }}"
-                          class="d-inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-sm btn-success">
-                            <i class="bi bi-check-lg"></i> Complete
-                        </button>
-                    </form>
-                    {% endif %}
-                </div>
+    {% if flight_data %}
+    {% for fd in flight_data %}
+    {% set flight = fd.flight %}
+    <div class="flight-block status-{{ flight.status }}">
+
+        {# Compute total competitors across all heats in this flight #}
+        {% set ns = namespace(total_comps=0) %}
+        {% for row in fd.heats %}{% set ns.total_comps = ns.total_comps + row.competitors|length %}{% endfor %}
+
+        {# Flight header #}
+        <div class="flight-block-header">
+            <div class="d-flex align-items-center gap-3">
+                <span class="flight-title">
+                    <i class="bi bi-layers me-1"></i>Flight {{ flight.flight_number }}
+                    {% if flight.name %} — {{ flight.name }}{% endif %}
+                </span>
+                {% if flight.status == 'completed' %}
+                    <span class="badge bg-success">Complete</span>
+                {% elif flight.status == 'in_progress' %}
+                    <span class="badge bg-warning text-dark">Active</span>
+                {% else %}
+                    <span class="badge bg-secondary">Pending</span>
+                {% endif %}
+                <span class="text-muted small">{{ fd.heats|length }} heat{{ 's' if fd.heats|length != 1 else '' }} &middot; {{ ns.total_comps }} competitor{{ 's' if ns.total_comps != 1 else '' }}</span>
             </div>
+            {# Start / Complete controls #}
+            {% if flight.status == 'pending' %}
+            <form method="post"
+                  action="{{ url_for('scheduling.start_flight', tournament_id=tournament.id, flight_id=flight.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-warning btn-sm"
+                        data-confirm="Start Flight {{ flight.flight_number }}? This will notify opted-in competitors.">
+                    <i class="bi bi-play-fill"></i> Start Flight
+                </button>
+            </form>
+            {% elif flight.status == 'in_progress' %}
+            <form method="post"
+                  action="{{ url_for('scheduling.complete_flight', tournament_id=tournament.id, flight_id=flight.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-success btn-sm">
+                    <i class="bi bi-check-lg"></i> Mark Complete
+                </button>
+            </form>
+            {% endif %}
         </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    <div class="row">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-body text-center py-5">
-                    <i class="bi bi-layers display-1 text-muted"></i>
-                    <h4 class="mt-4">No Flights Built Yet</h4>
-                    <p class="text-muted">
-                        Build flights to organize heats from different events into a show schedule.
-                        <br>
-                        Flights mix events for crowd variety and engagement.
-                    </p>
-                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}" class="btn btn-warning btn-lg">
-                        <i class="bi bi-plus-circle"></i> Build Flights Now
+
+        {# Heat tiles grid #}
+        <div class="heat-grid">
+            {% for row in fd.heats %}
+            {% set is_college = row.event.event_type == 'college' %}
+            <div class="heat-tile {{ 'heat-tile-college' if is_college else '' }} {% if row.heat.status == 'completed' %}bg-light{% endif %}">
+                <div class="heat-tile-header">
+                    <span class="heat-tile-event">
+                        {% if is_college %}<span class="badge-college-label">COLLEGE</span>{% endif %}{{ row.event.display_name }}
+                        {% if row.event.gender %}<small class="text-muted fw-normal"> ({{ 'M' if row.event.gender == 'M' else 'F' }})</small>{% endif %}
+                    </span>
+                    <span class="heat-tile-num">
+                        Heat {{ row.heat.heat_number }}
+                        {% if row.heat.run_number > 1 %}&nbsp;·&nbsp;Run {{ row.heat.run_number }}{% endif %}
+                        {% if row.heat.status == 'completed' %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% endif %}
+                    </span>
+                </div>
+                <table>
+                    {% for comp in row.competitors %}
+                    <tr>
+                        <td class="td-stand">{{ comp.stand }}</td>
+                        <td class="td-name">{{ comp.name }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="2" class="text-muted fst-italic">No competitors</td></tr>
+                    {% endfor %}
+                </table>
+                {% if row.heat.status != 'completed' %}
+                <div class="heat-tile-footer">
+                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=row.heat.id) }}"
+                       class="btn btn-sm btn-outline-primary" style="font-size:0.8rem; padding:5px 14px;">
+                        <i class="bi bi-pencil-fill"></i> Score
                     </a>
                 </div>
+                {% endif %}
             </div>
+            {% endfor %}
+        </div>
+
+    </div>
+    {% endfor %}
+
+    {% else %}
+    <div class="card">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-layers display-1 text-muted"></i>
+            <h4 class="mt-4">No Flights Built Yet</h4>
+            <p class="text-muted">
+                Build flights to organize heats from different events into a show schedule.
+                <br>Flights mix events for crowd variety and engagement.
+            </p>
+            <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
+               class="btn btn-warning btn-lg">
+                <i class="bi bi-plus-circle"></i> Build Flights Now
+            </a>
         </div>
     </div>
     {% endif %}

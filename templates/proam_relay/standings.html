@@ -252,7 +252,34 @@
 <style>
 @media print {
     .breadcrumb, .btn, .no-print { display: none !important; }
-    .card { border: 1px solid #ddd !important; }
+    body {
+        background: #fff !important;
+        color: #000 !important;
+    }
+    .card {
+        border: 1px solid #999 !important;
+        box-shadow: none !important;
+        break-inside: avoid;
+    }
+    .card-header {
+        background: #efefef !important;
+        color: #111 !important;
+        border-bottom: 1px solid #bbb !important;
+    }
+    .table th, .table td {
+        border-color: #bbb !important;
+        color: #111 !important;
+        background: transparent !important;
+    }
+    .table thead th {
+        background: #efefef !important;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        font-size: 9pt;
+    }
+    .card.bg-warning.text-dark {
+        display: none !important;
+    }
 }
 </style>
 {% endblock %}

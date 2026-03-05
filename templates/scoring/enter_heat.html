@@ -140,12 +140,20 @@
 
                         <hr>
 
-                        <div class="d-grid gap-2 sticky-save">
-                            <button type="submit" class="btn btn-proam btn-lg">
-                                <i class="bi bi-check-circle"></i> Save Results
-                            </button>
+                        <div class="sticky-save">
+                            <div class="d-grid gap-2 mb-2">
+                                <button type="submit" id="savePrimaryBtn" class="btn btn-proam btn-lg">
+                                    <i class="bi bi-check-circle"></i> Save Results
+                                </button>
+                                {% if next_heat_url %}
+                                <button type="submit" id="saveNextBtn" class="btn btn-outline-warning"
+                                        data-next-url="{{ next_heat_url }}">
+                                    <i class="bi bi-skip-forward-fill"></i> Save &amp; Next Heat
+                                </button>
+                                {% endif %}
+                            </div>
                             <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
-                               class="btn btn-outline-secondary">
+                               class="btn btn-outline-secondary w-100">
                                 <i class="bi bi-arrow-left"></i> Back to Event
                             </a>
                         </div>
@@ -168,6 +176,7 @@
         const netStatusLabel = document.getElementById('netStatusLabel');
         const postUrl = "{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}";
         const redirectUrl = "{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}";
+        let nextHeatOverride = null; // set when "Save & Next" is clicked
         const heatId = {{ heat.id }};
         const eventId = {{ event.id }};
         const scoringOrder = "{{ event.scoring_order }}";
@@ -404,7 +413,8 @@
             try {
                 const response = await postEntry(entry);
                 removeEntry(entry);
-                window.location.href = response.redirect_url || redirectUrl;
+                window.location.href = nextHeatOverride || response.redirect_url || redirectUrl;
+                nextHeatOverride = null;
             } catch (err) {
                 if (err.httpStatus === 409) {
                     setStatus('<i class="bi bi-exclamation-circle"></i> This heat changed elsewhere. Reload and save again.', 'alert-danger');
@@ -416,6 +426,14 @@
                 setSavingState(false);
             }
         });
+
+        // "Save & Next Heat" — capture destination before form submit fires
+        var saveNextBtn = document.getElementById('saveNextBtn');
+        if (saveNextBtn) {
+            saveNextBtn.addEventListener('click', function () {
+                nextHeatOverride = saveNextBtn.getAttribute('data-next-url');
+            });
+        }
 
         window.addEventListener('online', function () {
             refreshNetworkStatus();

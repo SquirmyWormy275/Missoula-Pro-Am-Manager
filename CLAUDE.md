@@ -128,6 +128,9 @@ static/
     offline_queue.js    # Offline queue UI: banner + manual replay
     img/                # Brand logos (STRATHEX, Pro-Am)
 
+FlightLogic.md          # Source-of-truth for all flight builder rules, heat gen rules, stand configs,
+                        # algorithm details, constants, and known gaps. Update when rules change.
+
 uploads/                # Uploaded Excel entry forms (gitignored)
 instance/proam.db       # SQLite database (auto-created; gitignored)
 ```
@@ -319,7 +322,10 @@ Flight
 - Heat swap/edit: move competitors between heats (`/scheduling/<tid>/heats/swap`)
 - Heat sync check (GET JSON) + sync fix (POST reconcile) to keep `Heat.competitors` and `HeatAssignment` rows consistent
 - Heat sheets print page (`/scheduling/<tid>/heat-sheets`)
-- Flight builder: greedy competitor-spacing (min 4 heats between appearances, target 5); Cookie Stack / Standing Block mutual exclusion enforced via `_CONFLICTING_STANDS` in `flight_builder.py`
+- `Heat.sync_assignments(competitor_type)` method: syncs `HeatAssignment` rows from the authoritative `Heat.competitors` JSON; called after heat generation, flight rebuild, and competitor moves
+- Flight builder: greedy competitor-spacing (min 4 heats between appearances, target 5); per-event sequential queue (heats within any event appear in ascending heat_number order); Cookie Stack / Standing Block mutual exclusion enforced via `_CONFLICTING_STANDS` in `flight_builder.py`; springboard flight opener (`_promote_springboard_to_flight_start`) places a springboard heat at position 0 of each flight block
+- Unified Events & Schedule page (`/scheduling/<tid>/events`): single-page heat generation, flight build, and spillover integration; stand count override inputs; session-stored schedule options; schedule preview; one-click "Generate All College Heats" bulk action
+- Collapsible tournament sidebar (`templates/_sidebar.html`): sticky 220px/44px sidebar with 5 sections (Show Entries, Show Configuration, Scoring, Results, Admin); localStorage state; unscored-heats badge
 - Score entry: standard events (single-value and dual-run); score outlier flagging (`_flag_score_outliers()` in scoring.py, ⚠ badge in results)
 - Position calculation and point/payout award on finalization
 - College standings: Bull/Belle of the Woods, team standings; live 30s polling in spectator portal
@@ -330,6 +336,7 @@ Flight
 - Birling bracket: full double-elimination bracket generation with advance logic (`_advance_winner`, `_drop_to_losers`, `_advance_loser_winner`); bracket viewer route + `birling_bracket.html`
 - Validation service for teams, college competitors, pro competitors, heat constraints; validation API (JSON) endpoints
 - Saturday priority route (`/scheduling/<tid>/college/saturday-priority`) for college overflow event flagging
+- College Saturday overflow flight integration: `integrate_college_spillover_into_flights()` places Chokerman's Race Run 2 at the end of the last flight in heat-number order; other overflow events distributed round-robin; wired to `event_list` POST actions
 - Friday Night Feature: route, config (JSON in `instance/`), and template (`/scheduling/<tid>/friday-feature`) — UI exists, no heat generation or flight integration
 - Flask-Login authentication: 7 roles (admin, judge, scorer, registrar, competitor, spectator, viewer); login/logout/bootstrap/user-management; audit log viewer (`/auth/audit`, admin-only, paginated, filterable)
 - `require_judge_for_management_routes` before_request hook; portal and auth routes are public
@@ -354,8 +361,6 @@ Flight
 **Excel results export route (direct download):** `export_results_to_excel()` exists in `services/excel_io.py`. An async background export job route exists at `/reporting/<tid>/export-results/async`, but no route triggers a direct synchronous Excel download. The async job approach is the recommended path forward — completing the status/download endpoint would close this gap.
 
 **Friday Night Feature heat generation and flight integration:** The Friday Night Feature has a route, config storage, and UI template. However, no heat generation logic or flight integration exists for it. Heats and flights for Friday Night Feature events must be managed manually or via the standard event/heat flow.
-
-**College Saturday overflow flight integration:** A `saturday_priority` route flags which college events are Saturday candidates. However, no mechanism integrates these flagged events into the Saturday pro flight schedule, and no automated Saturday scheduling exists for the second run of Chokerman's Race (which is mandatory Saturday).
 
 **Tournament model missing `providing_shirts` boolean:** The show decides before entry forms go out whether it provides shirts. `ProCompetitor.shirt_size` is always collected regardless. Adding this field requires a schema migration.
 
@@ -391,7 +396,7 @@ Safe error handling: failures print descriptive messages but allow continued ope
 
 Database schema changes: do not use `db.create_all()` for schema modifications on an existing database. `db.create_all()` only creates tables that do not yet exist — it does not alter existing tables. Use Flask-Migrate (Alembic) for all schema changes after initial setup. If Flask-Migrate is not yet initialized in this project, flag it and ask before proceeding with any schema change that would modify an existing table.
 
-HeatAssignment vs Heat.competitors: `Heat.competitors` (JSON field) is the authoritative source for heat composition and is what the heat generator reads and writes. `HeatAssignment` rows are used only by the validation service. All new code reading or writing heat composition must use `Heat.competitors`. Whenever `Heat.competitors` is modified, keep `HeatAssignment` rows in sync to avoid validation false positives.
+HeatAssignment vs Heat.competitors: `Heat.competitors` (JSON field) is the authoritative source for heat composition and is what the heat generator reads and writes. `HeatAssignment` rows are used only by the validation service. All new code reading or writing heat composition must use `Heat.competitors`. After modifying `Heat.competitors`, call `heat.sync_assignments(event.event_type)` (after `db.session.flush()` so `heat.id` is assigned) to keep the two representations consistent.
 
 Input conversion: All `int()` and `float()` calls on POST form data must be wrapped in `try/except (TypeError, ValueError)`. Flash a descriptive error message and redirect rather than raising an unhandled exception that produces a 500 response.
 
@@ -431,7 +436,6 @@ The following features remain as planned or implied by the codebase and requirem
 
 **Remaining gaps (from Section 5):**
 - Friday Night Feature heat generation and flight integration
-- College Saturday overflow flight integration
 - Excel results export direct download route
 - Auto-partner assignment for pro events
 - Pro event fee configuration UI

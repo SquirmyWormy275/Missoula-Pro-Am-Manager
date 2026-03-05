@@ -307,7 +307,7 @@ class HeatValidator:
             return result
 
         stand_config = config.STAND_CONFIGS[stand_type]
-        max_per_heat = stand_config.get('total', 8)
+        max_per_heat = event.max_stands if event.max_stands is not None else stand_config.get('total', 8)
 
         if len(assignments) > max_per_heat:
             result.add_error(

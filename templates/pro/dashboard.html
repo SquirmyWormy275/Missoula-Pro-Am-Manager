@@ -24,6 +24,9 @@
                 {{ COMPETITION.pro_title }}
             </h1>
             <p class="text-muted mb-0">{{ tournament.name }} {{ tournament.year }} &mdash; {{ COMPETITION.pro_day }}</p>
+            <p class="text-muted small mt-1 mb-0">
+                Import pro entries, manage flights, track fee collection, view event leaders, and run payout settlement.
+            </p>
         </div>
         <div class="col-auto d-flex gap-2 flex-wrap justify-content-end">
             <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}"

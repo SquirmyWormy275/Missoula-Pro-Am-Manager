@@ -7,98 +7,99 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: Arial, sans-serif;
-            font-size: 9pt;
-            padding: 0.4in;
+            font-size: 10pt;
+            padding: 0.35in;
+            color: #111;
         }
         .header {
             text-align: center;
-            margin-bottom: 20px;
-            border-bottom: 3px solid #2d5a27;
-            padding-bottom: 10px;
+            margin-bottom: 14px;
+            border-bottom: 2px solid #111;
+            padding-bottom: 8px;
         }
-        .header h1 { font-size: 20pt; color: #2d5a27; margin-bottom: 3px; }
-        .header h2 { font-size: 12pt; font-weight: normal; color: #666; }
+        .header h1 { font-size: 18pt; color: #000; margin-bottom: 2px; }
+        .header h2 { font-size: 11pt; font-weight: normal; color: #444; }
 
         .section-header {
-            background: #2d5a27;
-            color: white;
-            padding: 8px 12px;
-            font-size: 14pt;
-            margin: 20px 0 10px 0;
+            background: #e6e6e6;
+            color: #111;
+            border: 1px solid #999;
+            padding: 6px 10px;
+            font-size: 11pt;
+            font-weight: 700;
+            margin: 14px 0 8px 0;
             page-break-after: avoid;
-        }
-        .section-header.pro {
-            background: #ffc107;
-            color: #333;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
         }
 
         .events-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 15px;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
         }
 
         .event-card {
-            border: 1px solid #ddd;
-            border-radius: 5px;
+            border: 1px solid #999;
+            border-radius: 3px;
             page-break-inside: avoid;
+            overflow: hidden;
         }
         .event-card-header {
-            background: #0d6efd;
-            color: white;
-            padding: 6px 10px;
-            font-weight: bold;
-            font-size: 10pt;
-            border-radius: 4px 4px 0 0;
-        }
-        .event-card-header.pro {
-            background: #ffc107;
-            color: #333;
+            background: #efefef;
+            color: #111;
+            padding: 5px 8px;
+            font-weight: 700;
+            font-size: 9.5pt;
+            border-bottom: 1px solid #bbb;
         }
         .event-card table {
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
         }
+        .event-card th,
         .event-card td {
-            padding: 3px 8px;
-            border-bottom: 1px solid #eee;
-            font-size: 8pt;
+            padding: 3px 6px;
+            border-bottom: 1px solid #ececec;
+            border-right: 1px solid #efefef;
+            font-size: 8.5pt;
+            vertical-align: top;
         }
-        .event-card tr:last-child td {
-            border-bottom: none;
+        .event-card th:last-child,
+        .event-card td:last-child { border-right: none; }
+        .event-card tr:last-child td { border-bottom: none; }
+        .event-card thead th {
+            background: #f7f7f7;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            font-size: 7.3pt;
+            font-weight: 700;
+            color: #333;
         }
 
-        .rank {
-            width: 25px;
-            text-align: center;
-            font-weight: bold;
-        }
-        .rank-1 { color: #daa520; }
-        .rank-2 { color: #888; }
-        .rank-3 { color: #cd7f32; }
-
-        .result { text-align: right; color: #666; font-size: 7pt; }
-        .points { text-align: right; font-weight: bold; color: #0d6efd; }
-        .payout { text-align: right; font-weight: bold; color: #198754; }
+        .rank { width: 35px; text-align: center; font-weight: 700; }
+        .result { text-align: right; color: #222; width: 85px; }
+        .points, .payout { text-align: right; font-weight: 700; width: 55px; }
 
         .footer {
-            margin-top: 30px;
+            margin-top: 14px;
             text-align: center;
             font-size: 8pt;
-            color: #999;
-            border-top: 1px solid #ddd;
-            padding-top: 8px;
+            color: #555;
+            border-top: 1px solid #bbb;
+            padding-top: 6px;
         }
 
         @media print {
-            body { padding: 0.25in; }
-            .no-print { display: none; }
-            .events-grid { grid-template-columns: repeat(3, 1fr); }
+            body { padding: 0.2in; }
+            .no-print { display: none !important; }
+            .events-grid { grid-template-columns: repeat(2, 1fr); }
         }
 
         @page {
             size: landscape;
-            margin: 0.5in;
+            margin: 0.35in;
         }
     </style>
 </head>
@@ -117,11 +118,18 @@
         <div class="event-card">
             <div class="event-card-header">{{ event.display_name }}</div>
             <table>
+                <thead>
+                    <tr>
+                        <th class="rank">Pos</th>
+                        <th>Competitor</th>
+                        <th class="result">Result</th>
+                        <th class="points">Pts</th>
+                    </tr>
+                </thead>
+                <tbody>
                 {% for r in event.get_results_sorted()[:6] %}
                 <tr>
-                    <td class="rank rank-{{ r.final_position if r.final_position and r.final_position <= 3 else '' }}">
-                        {{ r.final_position or '-' }}
-                    </td>
+                    <td class="rank">{{ r.final_position or '-' }}</td>
                     <td>{{ r.competitor_name }}</td>
                     <td class="result">
                         {% if event.scoring_type == 'time' and r.result_value %}
@@ -133,6 +141,7 @@
                     <td class="points">{{ r.points_awarded or '' }}</td>
                 </tr>
                 {% endfor %}
+                </tbody>
             </table>
         </div>
         {% endfor %}
@@ -140,19 +149,26 @@
     {% endif %}
 
     {% if pro_events %}
-    <div class="section-header pro">
+    <div class="section-header">
         Professional Competition Results (Saturday)
     </div>
     <div class="events-grid">
         {% for event in pro_events %}
         <div class="event-card">
-            <div class="event-card-header pro">{{ event.display_name }}</div>
+            <div class="event-card-header">{{ event.display_name }}</div>
             <table>
+                <thead>
+                    <tr>
+                        <th class="rank">Pos</th>
+                        <th>Competitor</th>
+                        <th class="result">Result</th>
+                        <th class="payout">$</th>
+                    </tr>
+                </thead>
+                <tbody>
                 {% for r in event.get_results_sorted()[:6] %}
                 <tr>
-                    <td class="rank rank-{{ r.final_position if r.final_position and r.final_position <= 3 else '' }}">
-                        {{ r.final_position or '-' }}
-                    </td>
+                    <td class="rank">{{ r.final_position or '-' }}</td>
                     <td>{{ r.competitor_name }}</td>
                     <td class="result">
                         {% if event.scoring_type == 'time' and r.result_value %}
@@ -166,6 +182,7 @@
                     </td>
                 </tr>
                 {% endfor %}
+                </tbody>
             </table>
         </div>
         {% endfor %}

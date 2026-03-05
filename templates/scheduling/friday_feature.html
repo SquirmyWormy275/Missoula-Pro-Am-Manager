@@ -1,103 +1,166 @@
 {% extends "base.html" %}
-{% block title %}Friday Night Feature - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+{% block title %}Friday Night & Saturday Options - {{ tournament.name }} {{ tournament.year }}{% endblock %}
 {% block content %}
 <div class="container-fluid py-3">
     <div class="d-flex justify-content-between align-items-center mb-3">
-        <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Friday Night Feature</h4>
+        <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Friday Night &amp; Saturday Options</h4>
         <a class="btn btn-outline-secondary btn-sm"
            href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Back to Events</a>
     </div>
 
-    <div class="card shadow-sm mb-3">
+    <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="row g-4 mb-4">
+
+            {# ── Left: Friday Night Feature ─────────────────────────────── #}
+            <div class="col-lg-6">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header card-header-proam">
+                        <h6 class="mb-0"><i class="bi bi-stars me-1 text-warning"></i> Friday Night Feature</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Friday Night Date</label>
+                            <input type="date" class="form-control" style="max-width:220px;" name="friday_feature_date"
+                                   value="{{ tournament.friday_feature_date.isoformat() if tournament.friday_feature_date else '' }}">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Select Pro Events to Run Friday Night</label>
+                            {% if eligible_events %}
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle">
+                                    <thead>
+                                        <tr>
+                                            <th style="width:50px;">Include</th>
+                                            <th>Event</th>
+                                            <th>Type</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for event in eligible_events %}
+                                        <tr>
+                                            <td>
+                                                <input type="checkbox" class="form-check-input" name="event_ids"
+                                                       value="{{ event.id }}"
+                                                       {% if event.id in selected_ids %}checked{% endif %}>
+                                            </td>
+                                            <td>{{ event.display_name }}</td>
+                                            <td><span class="badge bg-secondary">{{ event.scoring_type }}</span></td>
+                                            <td>
+                                                {% if event.status == 'completed' %}
+                                                <span class="badge bg-success">Completed</span>
+                                                {% elif event.status == 'in_progress' %}
+                                                <span class="badge bg-warning text-dark">In Progress</span>
+                                                {% else %}
+                                                <span class="badge bg-light text-dark border">Pending</span>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <p class="text-muted small mb-0">No Friday Night eligible events found. Set up pro events first.</p>
+                            {% endif %}
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Notes / Schedule Details</label>
+                            <textarea class="form-control" name="notes" rows="3"
+                                      placeholder="e.g. Doors open 6 PM, Hot Saw finals at 7 PM…">{{ notes }}</textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {# ── Right: Saturday Spillover ───────────────────────────────── #}
+            <div class="col-lg-6">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header" style="background:rgba(59,142,232,0.12);">
+                        <h6 class="mb-0"><i class="bi bi-arrow-right-circle me-1 text-primary"></i> Saturday Spillover</h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">
+                            College events checked here will be slotted into Saturday morning pro flights
+                            instead of running Friday. Use this when a college event runs long or has too
+                            many competitors to finish on Friday.
+                        </p>
+                        {% if sat_eligible %}
+                        {% for event in sat_eligible %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox"
+                                   name="saturday_college_event_ids" value="{{ event.id }}"
+                                   id="sat_{{ event.id }}"
+                                   {% if event.id in selected_saturday_ids %}checked{% endif %}>
+                            <label class="form-check-label" for="sat_{{ event.id }}">
+                                {{ event.display_name }}
+                                {% if event.gender %}<small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}
+                            </label>
+                        </div>
+                        {% endfor %}
+                        {% else %}
+                        <p class="text-muted small mb-0">No college events are eligible for Saturday spillover. Configure college events first.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+        </div>{# /row #}
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-proam">
+                <i class="bi bi-save me-1"></i>Save Friday Night &amp; Saturday Options
+            </button>
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+               class="btn btn-outline-secondary">Cancel</a>
+        </div>
+
+    </form>
+
+    {# ── Summary card (shown when anything is configured) ─────────────── #}
+    {% if selected_ids or selected_saturday_ids %}
+    <div class="card shadow-sm mt-4">
         <div class="card-header card-header-proam">
-            <h6 class="mb-0">Configure Friday Night Feature</h6>
+            <h6 class="mb-0">Current Configuration</h6>
         </div>
         <div class="card-body">
-            <form method="POST">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-                <div class="mb-3">
-                    <label class="form-label fw-semibold">Friday Night Date</label>
-                    <input type="date" class="form-control" style="max-width:220px;" name="friday_feature_date"
-                           value="{{ tournament.friday_feature_date.isoformat() if tournament.friday_feature_date else '' }}">
-                </div>
-
-                <div class="mb-3">
-                    <label class="form-label fw-semibold">Select Events</label>
-                    {% if eligible_events %}
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle">
-                            <thead>
-                                <tr>
-                                    <th style="width:50px;">Include</th>
-                                    <th>Event</th>
-                                    <th>Type</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for event in eligible_events %}
-                                <tr>
-                                    <td>
-                                        <input type="checkbox" class="form-check-input" name="event_ids"
-                                               value="{{ event.id }}"
-                                               {% if event.id in selected_ids %}checked{% endif %}>
-                                    </td>
-                                    <td>{{ event.display_name }}</td>
-                                    <td><span class="badge bg-secondary">{{ event.scoring_type }}</span></td>
-                                    <td>
-                                        {% if event.status == 'completed' %}
-                                        <span class="badge bg-success">Completed</span>
-                                        {% elif event.status == 'in_progress' %}
-                                        <span class="badge bg-warning text-dark">In Progress</span>
-                                        {% else %}
-                                        <span class="badge bg-light text-dark border">Pending</span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <strong>Friday Night Feature</strong>
+                    {% if tournament.friday_feature_date %}
+                    <div class="text-muted small">{{ tournament.friday_feature_date.strftime('%B %d, %Y') }}</div>
+                    {% endif %}
+                    {% if selected_ids %}
+                    <ul class="mb-1 mt-1">
+                        {% for event in eligible_events %}{% if event.id in selected_ids %}
+                        <li>{{ event.display_name }}</li>
+                        {% endif %}{% endfor %}
+                    </ul>
                     {% else %}
-                    <div class="text-muted">
-                        No Friday Night eligible events found. Set up pro events first.
-                    </div>
+                    <p class="text-muted small mb-0">None selected</p>
+                    {% endif %}
+                    {% if notes %}<p class="text-muted small fst-italic mb-0">{{ notes }}</p>{% endif %}
+                </div>
+                <div class="col-md-6">
+                    <strong>Saturday Spillover</strong>
+                    {% if selected_saturday_ids %}
+                    <ul class="mb-1 mt-1">
+                        {% for event in sat_eligible %}{% if event.id in selected_saturday_ids %}
+                        <li>{{ event.display_name }}{% if event.gender %} <small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}</li>
+                        {% endif %}{% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="text-muted small mb-0">None — all college events run Friday</p>
                     {% endif %}
                 </div>
-
-                <div class="mb-3">
-                    <label class="form-label fw-semibold">Notes / Schedule Details</label>
-                    <textarea class="form-control" name="notes" rows="3"
-                              placeholder="e.g. Doors open 6 PM, Hot Saw finals at 7 PM…">{{ notes }}</textarea>
-                </div>
-
-                <button type="submit" class="btn btn-proam">Save Friday Night Feature</button>
-            </form>
-        </div>
-    </div>
-
-    {% if selected_ids %}
-    <div class="card shadow-sm">
-        <div class="card-header card-header-proam">
-            <h6 class="mb-0">Current Schedule</h6>
-        </div>
-        <div class="card-body">
-            {% if tournament.friday_feature_date %}
-            <p class="mb-2"><strong>Date:</strong> {{ tournament.friday_feature_date.strftime('%B %d, %Y') }}</p>
-            {% endif %}
-            <ul class="mb-2">
-                {% for event in eligible_events %}
-                {% if event.id in selected_ids %}
-                <li>{{ event.display_name }}</li>
-                {% endif %}
-                {% endfor %}
-            </ul>
-            {% if notes %}
-            <p class="text-muted mb-0"><em>{{ notes }}</em></p>
-            {% endif %}
+            </div>
         </div>
     </div>
     {% endif %}
+
 </div>
 {% endblock %}

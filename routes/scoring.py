@@ -239,12 +239,21 @@ def enter_heat_results(tournament_id, heat_id):
                 'stand': heat.get_stand_for_competitor(comp_id)
             })
 
+    # Find next unscored heat in the same event (for "Save & Next Heat" button)
+    next_heat = Heat.query.filter_by(event_id=event.id, status='pending') \
+                          .filter(Heat.id != heat.id) \
+                          .order_by(Heat.heat_number, Heat.run_number).first()
+    next_heat_url = url_for('scoring.enter_heat_results',
+                            tournament_id=tournament_id,
+                            heat_id=next_heat.id) if next_heat else None
+
     return render_template('scoring/enter_heat.html',
                            tournament=tournament,
                            heat=heat,
                            event=event,
                            competitors=competitors,
-                           heat_version=heat.version_id)
+                           heat_version=heat.version_id,
+                           next_heat_url=next_heat_url)
 
 
 def _calculate_positions(event):

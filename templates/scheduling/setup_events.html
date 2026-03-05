@@ -150,6 +150,49 @@
             </div>
         </div>
     </div>
+    <!-- Stand Configuration -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header" id="standsHeading">
+                    <h5 class="mb-0">
+                        <button class="btn btn-link text-decoration-none p-0 text-dark"
+                                type="button" data-bs-toggle="collapse"
+                                data-bs-target="#standsCollapse" aria-expanded="false"
+                                aria-controls="standsCollapse">
+                            <i class="bi bi-layout-split text-secondary"></i>
+                            Stand Count Configuration
+                            <small class="text-muted ms-2">(optional — overrides defaults per event type)</small>
+                        </button>
+                    </h5>
+                </div>
+                <div id="standsCollapse" class="collapse">
+                    <div class="card-body">
+                        <p class="small text-muted mb-3">
+                            Set how many stands are available for each event type at this venue.
+                            Affects heat size and stand assignments. Leave at default unless your venue differs.
+                        </p>
+                        <div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 g-3">
+                            {% for stand_type, scfg in stand_configs.items() %}
+                            <div class="col">
+                                <label class="form-label small fw-semibold mb-1">
+                                    {{ stand_type.replace('_', ' ').title() }}
+                                    <span class="text-muted">(default: {{ scfg.total }})</span>
+                                </label>
+                                <input type="number"
+                                       class="form-control form-control-sm"
+                                       name="stands_{{ stand_type }}"
+                                       min="1" max="20"
+                                       value="{{ existing_config.stand_counts.get(stand_type, scfg.total) }}">
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="row">
         <div class="col-12">
             <button type="submit" class="btn btn-proam w-100" name="action_scope" value="both">

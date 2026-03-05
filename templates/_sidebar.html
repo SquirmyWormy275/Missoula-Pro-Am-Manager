@@ -1,0 +1,419 @@
+{# templates/_sidebar.html
+   Collapsible tournament management sidebar.
+   Rendered inside base.html when tournament context is available + judge role.
+   Requires: tournament (model), request (auto-available in Jinja2 Flask context).
+
+   Sidebar states:
+     • Expanded  (220px) — icons + labels visible
+     • Collapsed (44px)  — icons only, labels hidden
+   Each of the 4 section groups is independently collapsible.
+   All state is persisted in localStorage.
+#}
+<nav id="appSidebar"
+     class="sidebar d-none d-lg-flex flex-column no-print flex-shrink-0"
+     style="width:220px; position:sticky; top:0; height:calc(100vh - 90px);
+            overflow:hidden; z-index:100; transition:width 0.2s ease;">
+
+    <!-- ── SIDEBAR HEADER ─────────────────────────────── -->
+    <div class="sb-head d-flex align-items-center px-2"
+         style="min-height:50px; flex-shrink:0; border-bottom:1px solid var(--sx-border); gap:6px;">
+        <!-- Tournament label (hidden when collapsed) -->
+        <div class="sb-text flex-grow-1 overflow-hidden">
+            <div class="fw-bold text-truncate"
+                 style="font-size:0.80rem; color:var(--sx-text); font-family:'Fraunces',serif; line-height:1.2;">
+                {{ tournament.name }} {{ tournament.year }}
+            </div>
+            <div class="mt-1">
+                {% if tournament.status == 'setup' %}
+                    <span class="badge bg-secondary" style="font-size:0.60rem;">Setup</span>
+                {% elif tournament.status == 'college_active' %}
+                    <span class="badge bg-primary" style="font-size:0.60rem;">College Active</span>
+                {% elif tournament.status == 'pro_active' %}
+                    <span class="badge bg-warning text-dark" style="font-size:0.60rem;">Pro Active</span>
+                {% elif tournament.status == 'completed' %}
+                    <span class="badge bg-success" style="font-size:0.60rem;">Completed</span>
+                {% endif %}
+            </div>
+        </div>
+        <!-- Collapse toggle button -->
+        <button id="sbToggleBtn" class="btn btn-link p-1 flex-shrink-0"
+                style="color:var(--sx-text-3); font-size:1rem; line-height:1; text-decoration:none;"
+                title="Collapse sidebar">
+            <i class="bi bi-chevron-double-left" id="sbToggleIcon"></i>
+        </button>
+    </div>
+
+    <!-- ── SCROLLABLE BODY ────────────────────────────── -->
+    <div class="sb-body flex-grow-1" style="overflow-y:auto; overflow-x:hidden; padding:0.4rem 0 1rem;">
+
+        <!-- Overview (always visible) -->
+        <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}"
+           class="nav-link {{ 'active' if request.endpoint == 'main.tournament_detail' else '' }}"
+           title="Overview">
+            <i class="bi bi-grid-3x3-gap sb-icon"></i>
+            <span class="sb-text ms-2">Overview</span>
+        </a>
+
+        <!-- ── 1. SHOW ENTRIES ───────────────────────── -->
+        <button class="sb-group-toggle" data-group="sb-entries">
+            <i class="bi bi-person-lines-fill sb-icon" style="font-size:0.9rem;"></i>
+            <span class="sb-text ms-2">Show Entries</span>
+            <i class="bi bi-chevron-down sb-chevron sb-text"></i>
+        </button>
+        <div id="sb-entries" class="sb-group-body">
+            <a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'main.college_dashboard' else '' }}"
+               title="College Day">
+                <i class="bi bi-mortarboard sb-icon"></i>
+                <span class="sb-text ms-2">College Day</span>
+            </a>
+            <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}"
+               class="nav-link sidebar-child {{ 'active' if request.endpoint == 'registration.college_registration' else '' }}"
+               title="Entry Import">
+                <i class="bi bi-upload sb-icon"></i>
+                <span class="sb-text ms-2">Entry Import</span>
+            </a>
+            <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'main.pro_dashboard' else '' }}"
+               title="Pro Day">
+                <i class="bi bi-trophy sb-icon"></i>
+                <span class="sb-text ms-2">Pro Day</span>
+            </a>
+            <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}"
+               class="nav-link sidebar-child {{ 'active' if request.endpoint in ('registration.pro_registration', 'import_pro.import_upload', 'import_pro.import_review') else '' }}"
+               title="Pro Entry Import">
+                <i class="bi bi-person-plus sb-icon"></i>
+                <span class="sb-text ms-2">Pro Entry Import</span>
+            </a>
+        </div>
+
+        <!-- ── 2. SHOW CONFIGURATION ─────────────────── -->
+        <button class="sb-group-toggle" data-group="sb-config">
+            <i class="bi bi-sliders sb-icon" style="font-size:0.9rem;"></i>
+            <span class="sb-text ms-2">Show Configuration</span>
+            <i class="bi bi-chevron-down sb-chevron sb-text"></i>
+        </button>
+        <div id="sb-config" class="sb-group-body">
+            <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'scheduling.setup_events' else '' }}"
+               title="Configure Events">
+                <i class="bi bi-calendar-plus sb-icon"></i>
+                <span class="sb-text ms-2">Configure Events</span>
+            </a>
+            <a href="{{ url_for('scheduling.friday_feature', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'scheduling.friday_feature' else '' }}"
+               title="Friday Night Feature">
+                <i class="bi bi-stars sb-icon"></i>
+                <span class="sb-text ms-2">Friday Night</span>
+            </a>
+            <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'scheduling.preflight_check' else '' }}"
+               title="Preflight Check">
+                <i class="bi bi-shield-check sb-icon"></i>
+                <span class="sb-text ms-2">Preflight Check</span>
+            </a>
+            <a href="{{ url_for('woodboss.report', tid=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint in ('woodboss.report', 'woodboss.config_form', 'woodboss.lottery', 'woodboss.history') else '' }}"
+               title="Virtual Woodboss">
+                <i class="bi bi-tools sb-icon"></i>
+                <span class="sb-text ms-2">Virtual Woodboss</span>
+            </a>
+        </div>
+
+        <!-- ── 3. SCORING ────────────────────────────── -->
+        <button class="sb-group-toggle" data-group="sb-scoring">
+            <i class="bi bi-pencil-square sb-icon" style="font-size:0.9rem;"></i>
+            <span class="sb-text ms-2">Scoring</span>
+            <i class="bi bi-chevron-down sb-chevron sb-text"></i>
+        </button>
+        <div id="sb-scoring" class="sb-group-body">
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint in ('scheduling.event_list', 'scheduling.event_detail', 'scheduling.day_schedule') else '' }}"
+               title="Events & Schedule"
+               style="display:flex; align-items:center;">
+                <i class="bi bi-calendar-event sb-icon"></i>
+                <span class="sb-text ms-2">Events &amp; Schedule</span>
+                {% if unscored_heats > 0 %}
+                <span class="badge rounded-pill ms-auto" style="background:var(--sx-amber); color:#fff; font-size:0.62rem; padding:2px 6px; flex-shrink:0;">{{ unscored_heats }}</span>
+                {% endif %}
+            </a>
+            <a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint in ('scheduling.flight_list', 'scheduling.flight_detail', 'scheduling.day_schedule') else '' }}"
+               title="Flights">
+                <i class="bi bi-layers sb-icon"></i>
+                <span class="sb-text ms-2">Flights</span>
+            </a>
+            <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'scheduling.heat_sheets' else '' }}"
+               title="Heat Sheets">
+                <i class="bi bi-printer sb-icon"></i>
+                <span class="sb-text ms-2">Heat Sheets</span>
+            </a>
+            <a href="{{ url_for('portal.kiosk', tournament_id=tournament.id) }}"
+               class="nav-link" target="_blank" rel="noopener"
+               title="Kiosk Display">
+                <i class="bi bi-display sb-icon"></i>
+                <span class="sb-text ms-2">Kiosk Display <i class="bi bi-box-arrow-up-right" style="font-size:0.65rem; opacity:0.5;"></i></span>
+            </a>
+        </div>
+
+        <!-- ── 4. RESULTS ────────────────────────────── -->
+        <button class="sb-group-toggle" data-group="sb-results">
+            <i class="bi bi-bar-chart-fill sb-icon" style="font-size:0.9rem;"></i>
+            <span class="sb-text ms-2">Results</span>
+            <i class="bi bi-chevron-down sb-chevron sb-text"></i>
+        </button>
+        <div id="sb-results" class="sb-group-body">
+            <a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'reporting.all_results' else '' }}"
+               title="All Results">
+                <i class="bi bi-file-text sb-icon"></i>
+                <span class="sb-text ms-2">All Results</span>
+            </a>
+            <a href="{{ url_for('reporting.college_standings', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'reporting.college_standings' else '' }}"
+               title="College Standings">
+                <i class="bi bi-bar-chart sb-icon"></i>
+                <span class="sb-text ms-2">College Standings</span>
+            </a>
+            <a href="{{ url_for('reporting.pro_payout_summary', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'reporting.pro_payout_summary' else '' }}"
+               title="Pro Payouts">
+                <i class="bi bi-cash-stack sb-icon"></i>
+                <span class="sb-text ms-2">Pro Payouts</span>
+            </a>
+            {% if current_user.is_authenticated and current_user.is_admin %}
+            <a href="{{ url_for('reporting.payout_settlement', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'reporting.payout_settlement' else '' }}"
+               title="Payout Settlement">
+                <i class="bi bi-check2-square sb-icon"></i>
+                <span class="sb-text ms-2">Payout Settlement</span>
+            </a>
+            {% endif %}
+        </div>
+
+        <!-- ── ADMIN (admin-only) ─────────────────────── -->
+        {% if current_user.is_authenticated and current_user.is_admin %}
+        <button class="sb-group-toggle" data-group="sb-admin">
+            <i class="bi bi-gear-fill sb-icon" style="font-size:0.9rem;"></i>
+            <span class="sb-text ms-2">Admin</span>
+            <i class="bi bi-chevron-down sb-chevron sb-text"></i>
+        </button>
+        <div id="sb-admin" class="sb-group-body">
+            <a href="{{ url_for('auth.manage_users') }}"
+               class="nav-link {{ 'active' if request.endpoint == 'auth.manage_users' else '' }}"
+               title="Users">
+                <i class="bi bi-people sb-icon"></i>
+                <span class="sb-text ms-2">Users</span>
+            </a>
+            <a href="{{ url_for('auth.audit_log') }}"
+               class="nav-link {{ 'active' if request.endpoint == 'auth.audit_log' else '' }}"
+               title="Audit Log">
+                <i class="bi bi-journal-text sb-icon"></i>
+                <span class="sb-text ms-2">Audit Log</span>
+            </a>
+        </div>
+        {% endif %}
+
+    </div>
+
+    <!-- ── BOTTOM BACK LINK ───────────────────────────── -->
+    <div style="flex-shrink:0; border-top:1px solid var(--sx-border); padding:0.3rem 0;">
+        <a href="{{ url_for('main.judge_dashboard') }}"
+           class="nav-link" style="color:var(--sx-text-3); font-size:0.82rem;"
+           title="All Tournaments">
+            <i class="bi bi-arrow-left sb-icon"></i>
+            <span class="sb-text ms-2">All Tournaments</span>
+        </a>
+    </div>
+
+</nav>
+
+<style>
+/* ── Sidebar section label (group toggle button) ─────── */
+.sb-group-toggle {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 0.42rem 0.75rem;
+    margin: 2px 6px 0;
+    width: calc(100% - 12px);
+    border: none;
+    background: transparent;
+    color: var(--sx-text-3);
+    font-size: 0.60rem;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.sb-group-toggle:hover {
+    background: rgba(255,255,255,0.04);
+    color: var(--sx-text-2);
+}
+.sb-group-toggle .sb-chevron {
+    margin-left: auto;
+    font-size: 0.75rem;
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+.sb-group-toggle.open .sb-chevron {
+    transform: rotate(180deg);
+}
+
+/* ── Section body (collapsible) ──────────────────────── */
+.sb-group-body {
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height 0.22s ease;
+}
+.sb-group-body.open {
+    max-height: 600px; /* large enough for any section */
+}
+
+/* ── Child (indented) items ──────────────────────────── */
+.sidebar .nav-link.sidebar-child {
+    padding-left: 1.85rem;
+    font-size: 0.82rem;
+    color: var(--sx-text-3);
+}
+.sidebar .nav-link.sidebar-child:hover { color: var(--sx-text-2); }
+.sidebar .nav-link.sidebar-child.active {
+    color: #f0735a;
+    border-left-color: var(--sx-fire);
+    background: rgba(232,57,31,0.10);
+}
+
+/* ── Collapsed sidebar state ─────────────────────────── */
+#appSidebar.sb-collapsed {
+    width: 44px !important;
+}
+#appSidebar.sb-collapsed .sb-text {
+    display: none !important;
+}
+#appSidebar.sb-collapsed .sb-group-toggle {
+    justify-content: center;
+    padding: 0.45rem;
+    margin: 2px 3px 0;
+    width: calc(100% - 6px);
+}
+#appSidebar.sb-collapsed .sb-chevron {
+    display: none;
+}
+#appSidebar.sb-collapsed .sb-group-body {
+    max-height: 0 !important;
+    overflow: hidden;
+}
+#appSidebar.sb-collapsed .nav-link {
+    padding: 0.45rem;
+    justify-content: center;
+}
+#appSidebar.sb-collapsed .nav-link.sidebar-child {
+    display: none !important;
+}
+#appSidebar.sb-collapsed .sb-icon {
+    margin: 0 !important;
+    font-size: 1.05rem;
+}
+#appSidebar.sb-collapsed .sb-head .flex-grow-1 {
+    display: none;
+}
+
+/* ── Nav links: icon always centred when collapsed ───── */
+.sidebar .nav-link {
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.sidebar .sb-icon {
+    flex-shrink: 0;
+    font-size: 0.95rem;
+    min-width: 16px;
+    text-align: center;
+}
+
+/* ── Print ───────────────────────────────────────────── */
+@media print {
+    #appSidebar { display: none !important; }
+}
+
+/* ── Mobile fallback ─────────────────────────────────── */
+@media (max-width: 991px) {
+    #appSidebar { display: none !important; }
+}
+</style>
+
+<script>
+(function () {
+    var LS_COLLAPSED = 'proam_sb_collapsed';
+    var LS_GROUPS    = 'proam_sb_groups';
+
+    var sidebar    = document.getElementById('appSidebar');
+    var toggleBtn  = document.getElementById('sbToggleBtn');
+    var toggleIcon = document.getElementById('sbToggleIcon');
+
+    var isCollapsed = localStorage.getItem(LS_COLLAPSED) === '1';
+    var defaultOpen = { 'sb-entries': true, 'sb-config': true, 'sb-scoring': true, 'sb-results': true, 'sb-admin': true };
+    var groupState;
+    try { groupState = Object.assign({}, defaultOpen, JSON.parse(localStorage.getItem(LS_GROUPS) || '{}')); }
+    catch (e) { groupState = Object.assign({}, defaultOpen); }
+
+    function applyCollapsed(val) {
+        sidebar.classList.toggle('sb-collapsed', val);
+        toggleIcon.className = val ? 'bi bi-chevron-double-right' : 'bi bi-chevron-double-left';
+        toggleBtn.title = val ? 'Expand sidebar' : 'Collapse sidebar';
+    }
+
+    function applyGroup(gid, open) {
+        var body   = document.getElementById(gid);
+        var toggle = document.querySelector('[data-group="' + gid + '"]');
+        if (!body || !toggle) return;
+        body.classList.toggle('open', open);
+        toggle.classList.toggle('open', open);
+    }
+
+    /* Init */
+    applyCollapsed(isCollapsed);
+    Object.keys(groupState).forEach(function (gid) { applyGroup(gid, groupState[gid]); });
+
+    /* Always open the group containing the active page link */
+    sidebar.querySelectorAll('.sb-group-body').forEach(function (body) {
+        if (body.querySelector('.nav-link.active')) {
+            applyGroup(body.id, true);
+            groupState[body.id] = true;
+        }
+    });
+
+    /* Sidebar-wide toggle */
+    toggleBtn.addEventListener('click', function () {
+        isCollapsed = !isCollapsed;
+        applyCollapsed(isCollapsed);
+        localStorage.setItem(LS_COLLAPSED, isCollapsed ? '1' : '0');
+    });
+
+    /* Section group toggles — single listener handles both states */
+    sidebar.querySelectorAll('.sb-group-toggle').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var gid = btn.dataset.group;
+            if (isCollapsed) {
+                /* Expand the sidebar, then open this group */
+                isCollapsed = false;
+                applyCollapsed(false);
+                localStorage.setItem(LS_COLLAPSED, '0');
+                applyGroup(gid, true);
+                groupState[gid] = true;
+            } else {
+                var open = !document.getElementById(gid).classList.contains('open');
+                applyGroup(gid, open);
+                groupState[gid] = open;
+            }
+            localStorage.setItem(LS_GROUPS, JSON.stringify(groupState));
+        });
+    });
+})();
+</script>

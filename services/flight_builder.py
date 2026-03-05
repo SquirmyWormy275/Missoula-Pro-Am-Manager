@@ -4,7 +4,7 @@ Builds flights with event variety for crowd engagement.
 Ensures competitors have maximum rest between their events (target: 5+ heats, minimum: 4).
 """
 from database import db
-from models import Tournament, Event, Heat, Flight
+from models import Tournament, Event, Heat, HeatAssignment, Flight
 import math
 import json
 import random
@@ -60,6 +60,10 @@ def build_pro_flights(tournament: Tournament, heats_per_flight: int = 8) -> int:
 
     # Build optimized heat order using competitor spacing algorithm
     ordered_heats = _optimize_heat_order(all_heats)
+
+    # Promote the first pro springboard heat in each flight block to position 0
+    # of that block so every flight opens with a springboard cut.
+    ordered_heats = _promote_springboard_to_flight_start(ordered_heats, heats_per_flight)
 
     # Calculate number of flights needed.
     # Partnered axe requires one heat per flight, so ensure enough flights.
@@ -137,6 +141,8 @@ def _prepare_partnered_axe_show_heats(event: Event | None) -> list[Heat]:
         created.append(heat)
 
     db.session.flush()
+    for heat in created:
+        heat.sync_assignments('pro')
     return created
 
 
@@ -185,12 +191,45 @@ def _insert_partnered_axe_heats(flights: list[Flight], axe_heats: list[Heat]) ->
         heat.flight_id = flight.id
 
 
+def _promote_springboard_to_flight_start(ordered_heats: list, heats_per_flight: int) -> list:
+    """
+    Move the first pro springboard heat in each flight block to position 0 of that block.
+
+    Each flight should open with a springboard cut when one is available.
+    Only the first springboard heat in a block is moved — this preserves the
+    sequential heat-number constraint because that heat is already the next
+    sequential springboard heat in the global order.
+    """
+    result = list(ordered_heats)
+    total = len(result)
+
+    for block_start in range(0, total, heats_per_flight):
+        block_end = min(block_start + heats_per_flight, total)
+
+        # Find the first springboard heat in this block (skip position 0 — already correct).
+        sb_idx = None
+        for i in range(block_start + 1, block_end):
+            hd = result[i]
+            if (getattr(hd['event'], 'event_type', '') == 'pro' and
+                    getattr(hd['event'], 'stand_type', '') == 'springboard'):
+                sb_idx = i
+                break
+
+        if sb_idx is not None:
+            sb_heat = result.pop(sb_idx)
+            result.insert(block_start, sb_heat)
+
+    return result
+
+
 def _optimize_heat_order(all_heats: list) -> list:
     """
-    Optimize heat order to maximize spacing between competitor appearances.
+    Optimize heat order using a per-event sequential queue.
 
-    Uses a greedy algorithm that selects the next heat based on which one
-    has competitors with the longest time since their last appearance.
+    At each step only the NEXT unplaced heat from each event is eligible.
+    This guarantees that within any event, heats appear in ascending heat_number
+    order across the show (Heat 1 before Heat 2 before Heat 3 ...).
+    The greedy pick at each step still maximises competitor spacing across events.
 
     Args:
         all_heats: List of heat data dicts with 'heat', 'event', 'competitors'
@@ -201,46 +240,81 @@ def _optimize_heat_order(all_heats: list) -> list:
     if not all_heats:
         return []
 
-    ordered = []
-    remaining = list(all_heats)
+    from collections import defaultdict
 
-    # Track when each competitor was last scheduled (heat index in ordered list)
-    competitor_last_heat = {}
-    # Track last position at which each stand_type was used (for stand conflict enforcement)
+    # Build a sorted queue for each event (by heat_number then run_number).
+    event_queues: dict[int, list] = defaultdict(list)
+    for heat_data in all_heats:
+        event_queues[heat_data['heat'].event_id].append(heat_data)
+    for eid in event_queues:
+        event_queues[eid].sort(
+            key=lambda h: (h['heat'].heat_number, h['heat'].run_number)
+        )
+    event_ids = list(event_queues.keys())
+    # Pointer to the next unplaced heat in each event's queue.
+    event_ptrs: dict[int, int] = {eid: 0 for eid in event_ids}
+
+    ordered: list = []
+    competitor_last_heat: dict[int, int] = {}
     stand_type_last_position: dict[str, int] = {}
 
-    while remaining:
-        best_heat = None
-        best_score = -1
-        best_index = 0
+    while True:
+        # Collect candidates: front of each non-exhausted event queue.
+        candidates = [
+            (eid, event_queues[eid][event_ptrs[eid]])
+            for eid in event_ids
+            if event_ptrs[eid] < len(event_queues[eid])
+        ]
+        if not candidates:
+            break
 
-        for i, heat_data in enumerate(remaining):
-            score = _calculate_heat_score(
-                heat_data['competitors'],
-                competitor_last_heat,
-                len(ordered),
-                heat_data['event'],
-                stand_type_last_position,
+        current_position = len(ordered)
+
+        # Score every candidate with stand-conflict enforcement.
+        scored = [
+            (
+                _calculate_heat_score(
+                    hd['competitors'],
+                    competitor_last_heat,
+                    current_position,
+                    hd['event'],
+                    stand_type_last_position,
+                ),
+                eid,
+                hd,
             )
+            for eid, hd in candidates
+        ]
 
-            if score > best_score:
-                best_score = score
-                best_heat = heat_data
-                best_index = i
+        best_score, best_eid, best_heat_data = max(scored, key=lambda x: x[0])
 
-        # Add the best heat to our ordered list
-        if best_heat:
-            ordered.append(best_heat)
+        # If every candidate is blocked by a stand conflict, re-score ignoring it.
+        if best_score < 0:
+            scored_no_conflict = [
+                (
+                    _calculate_heat_score(
+                        hd['competitors'],
+                        competitor_last_heat,
+                        current_position,
+                        hd['event'],
+                        None,  # disable stand conflict check
+                    ),
+                    eid,
+                    hd,
+                )
+                for eid, hd in candidates
+            ]
+            _, best_eid, best_heat_data = max(scored_no_conflict, key=lambda x: x[0])
 
-            # Update competitor and stand type tracking
-            current_position = len(ordered) - 1
-            for comp_id in best_heat['competitors']:
-                competitor_last_heat[comp_id] = current_position
-            stand_type = getattr(best_heat['event'], 'stand_type', None)
-            if stand_type:
-                stand_type_last_position[stand_type] = current_position
+        ordered.append(best_heat_data)
+        event_ptrs[best_eid] += 1
 
-            remaining.pop(best_index)
+        pos = len(ordered) - 1
+        for comp_id in best_heat_data['competitors']:
+            competitor_last_heat[comp_id] = pos
+        stand_type = getattr(best_heat_data['event'], 'stand_type', None)
+        if stand_type:
+            stand_type_last_position[stand_type] = pos
 
     return ordered
 
@@ -465,11 +539,14 @@ def integrate_college_spillover_into_flights(tournament: Tournament, college_eve
     if not events:
         return {'integrated_heats': 0, 'events': 0, 'message': 'No selected spillover events.'}
 
+    last_flight = flights[-1]
     integrated = 0
     per_event = 0
     flight_idx = 0
     for event in sorted(events, key=lambda e: (e.name, e.gender or '')):
         if event.name == "Chokerman's Race":
+            # Run 2 only on Saturday. All heats group together at the end of
+            # the last flight in the same heat-number order as Run 1.
             heats = event.heats.filter_by(run_number=2).order_by(Heat.heat_number).all()
         else:
             heats = event.heats.order_by(Heat.run_number, Heat.heat_number).all()
@@ -481,9 +558,13 @@ def integrate_college_spillover_into_flights(tournament: Tournament, college_eve
             # Keep preexisting placement if already integrated.
             if heat.flight_id is not None:
                 continue
-            target = flights[flight_idx % len(flights)]
-            heat.flight_id = target.id
-            flight_idx += 1
+            if event.name == "Chokerman's Race":
+                # Always place at end of last flight.
+                heat.flight_id = last_flight.id
+            else:
+                target = flights[flight_idx % len(flights)]
+                heat.flight_id = target.id
+                flight_idx += 1
             integrated += 1
 
     db.session.flush()

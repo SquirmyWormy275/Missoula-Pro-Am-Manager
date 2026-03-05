@@ -113,6 +113,19 @@ def create_app():
         remaining = 0
         if isinstance(lock_until, (int, float)):
             remaining = max(0, int(lock_until - time.time()))
+
+        # Unscored heat count for sidebar badge — only when inside a tournament route
+        unscored_heats = 0
+        try:
+            tid = request.view_args.get('tournament_id') if request.view_args else None
+            if tid:
+                from models import Heat
+                from models import Event as _Event
+                unscored_heats = Heat.query.join(_Event, Heat.event_id == _Event.id) \
+                    .filter(_Event.tournament_id == tid, Heat.status == 'pending').count()
+        except Exception:
+            pass
+
         return {
             'NAV': text.section('NAV'),
             'COMPETITION': text.section('COMPETITION'),
@@ -121,6 +134,7 @@ def create_app():
             'ARAPAHO_ALLOWED': arapaho_allowed,
             'ARAPAHO_LOCK_REMAINING': remaining,
             'ui': text.ui,
+            'unscored_heats': unscored_heats,
         }
 
     # Register blueprints

@@ -613,6 +613,36 @@
         body.portal-mobile .navbar .container-fluid { padding-top: 0.3rem; padding-bottom: 0.3rem; }
 
         /* ═══════════════════════════════════════════════════════════
+           ARAPAHO FLAG LOADING BAR
+        ═══════════════════════════════════════════════════════════ */
+        .arp-loading-bar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 5px;
+            z-index: 9999;
+            background: repeating-linear-gradient(
+                90deg,
+                #003087 0px,   #003087 14px,
+                #FFD700 14px,  #FFD700 20px,
+                #c40000 20px,  #c40000 34px,
+                #000000 34px,  #000000 40px,
+                #ffffff 40px,  #ffffff 46px,
+                #c40000 46px,  #c40000 60px,
+                #FFD700 60px,  #FFD700 66px,
+                #003087 66px,  #003087 80px
+            );
+            background-size: 200% 100%;
+            animation: arp-sweep 0.9s linear infinite;
+            display: none;
+            pointer-events: none;
+        }
+        .arp-loading-bar.active { display: block; }
+        @keyframes arp-sweep {
+            from { background-position: 200% 0; }
+            to   { background-position:   0% 0; }
+        }
+
+        /* ═══════════════════════════════════════════════════════════
            ARAPAHO LANGUAGE MODE
         ═══════════════════════════════════════════════════════════ */
         body.lang-arp {
@@ -708,7 +738,7 @@
             position: fixed;
             top: 20%;
             left: 20%;
-            z-index: 2600;
+            z-index: 5005;
             width: min(92vw, 420px);
             background: rgba(14, 14, 14, 0.95);
             border: 2px solid rgba(255, 255, 255, 0.75);
@@ -717,6 +747,9 @@
             display: none;
             pointer-events: auto;
             transform-origin: center center;
+            isolation: isolate;
+            outline: 3px solid rgba(255, 255, 255, 0.78);
+            outline-offset: 2px;
         }
         #brainrotUnlock.active {
             display: block;
@@ -802,6 +835,403 @@
             will-change: transform, opacity;
             opacity: 0.9;
         }
+        .brainrot-tail-flag {
+            position: absolute;
+            width: clamp(30px, 6vw, 96px);
+            height: auto;
+            border-radius: 5px;
+            border: 1px solid rgba(255, 255, 255, 0.78);
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.7), 0 0 12px rgba(196, 0, 0, 0.55);
+            pointer-events: none;
+            will-change: transform, opacity, top, left;
+        }
+        .brainrot-flag-storm {
+            position: absolute;
+            width: clamp(54px, 9vw, 170px);
+            height: auto;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.85);
+            box-shadow: 0 0 14px rgba(0, 0, 0, 0.8), 0 0 24px rgba(196, 0, 0, 0.62);
+            pointer-events: none;
+            opacity: 0.92;
+            will-change: transform, top, left, opacity;
+        }
+        .brainrot-word-popup {
+            position: fixed;
+            z-index: 2750;
+            color: #fff;
+            text-shadow: 0 0 8px rgba(0, 0, 0, 0.95), 0 0 14px rgba(196, 0, 0, 0.8);
+            pointer-events: none;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+        }
+        .brainrot-dvd-word {
+            position: fixed;
+            z-index: 2740;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.75);
+            border-radius: 8px;
+            padding: 4px 8px;
+            font-weight: 700;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        .brainrot-flash-card {
+            position: fixed;
+            inset: 0;
+            z-index: 2790;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: clamp(1.2rem, 4vw, 3.2rem);
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #fff;
+            background: rgba(196, 0, 0, 0.56);
+            text-shadow: 0 0 10px #000, 0 0 22px #000;
+            pointer-events: none;
+            opacity: 0;
+            animation: brainrotFlashIn 700ms ease-out forwards;
+        }
+        @keyframes brainrotFlashIn {
+            0% { opacity: 0; transform: scale(1.2) rotate(-7deg); }
+            20% { opacity: 0.95; transform: scale(1) rotate(0deg); }
+            100% { opacity: 0; transform: scale(1.1) rotate(3deg); }
+        }
+        .brainrot-pronounce {
+            position: fixed;
+            z-index: 2780;
+            width: min(90vw, 360px);
+            background: rgba(10, 10, 10, 0.92);
+            border: 2px solid rgba(255, 255, 255, 0.75);
+            box-shadow: 0 0 28px rgba(196, 0, 0, 0.8);
+            border-radius: 10px;
+            color: #fff;
+            padding: 10px;
+            pointer-events: none;
+            font-weight: 700;
+        }
+        .brainrot-pronounce .hint {
+            font-size: 0.7rem;
+            opacity: 0.9;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        .brainrot-pronounce .line {
+            margin-top: 4px;
+            font-size: 1rem;
+            color: #ffe9e9;
+        }
+        .brainrot-mouse-flag {
+            position: fixed;
+            z-index: 2760;
+            width: 26px;
+            height: 16px;
+            object-fit: cover;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            border-radius: 3px;
+            pointer-events: none;
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.9);
+        }
+        .brainrot-wheel {
+            position: fixed;
+            z-index: 2770;
+            width: 240px;
+            height: 240px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            background: radial-gradient(circle, rgba(196,0,0,0.55), rgba(0,0,0,0.86));
+            box-shadow: 0 0 30px rgba(196,0,0,0.75);
+            pointer-events: none;
+            display: none;
+            animation: brainrotSpin 1.3s linear infinite;
+        }
+        @keyframes brainrotSpin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .brainrot-wheel span {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            color: #fff;
+            font-size: 0.72rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            text-shadow: 0 0 10px #000;
+            transform-origin: 0 0;
+        }
+        .brainrot-rain-word {
+            position: fixed;
+            z-index: 2720;
+            color: #fff;
+            font-weight: 800;
+            text-shadow: 0 0 10px #000;
+            pointer-events: none;
+            animation: brainrotFall linear forwards;
+        }
+        @keyframes brainrotFall {
+            from { transform: translateY(-12vh) rotate(0deg); opacity: 0.95; }
+            to { transform: translateY(115vh) rotate(20deg); opacity: 0.35; }
+        }
+        .brainrot-loader {
+            position: fixed;
+            z-index: 2765;
+            width: min(88vw, 320px);
+            background: rgba(0, 0, 0, 0.82);
+            border: 1px solid rgba(255, 255, 255, 0.75);
+            border-radius: 8px;
+            padding: 8px 10px;
+            pointer-events: none;
+        }
+        .brainrot-loader .label {
+            color: #fff;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 5px;
+        }
+        .brainrot-loader .bar {
+            height: 10px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #fff, #c40000, #fff);
+            background-size: 220% 100%;
+            animation: brainrotBar 460ms linear infinite;
+        }
+        @keyframes brainrotBar {
+            from { background-position: 0% 0%; }
+            to { background-position: 100% 0%; }
+        }
+        .brainrot-sports-kaleido {
+            position: fixed;
+            z-index: 2735;
+            width: min(92vw, 460px);
+            aspect-ratio: 16 / 9;
+            pointer-events: none;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 2px;
+            border: 2px solid rgba(255, 255, 255, 0.85);
+            box-shadow: 0 0 20px rgba(196, 0, 0, 0.72);
+            background: #000;
+        }
+        .brainrot-sports-kaleido video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: contrast(1.2) saturate(1.4);
+        }
+        .brainrot-sports-kaleido video:nth-child(2) { transform: scaleX(-1); }
+        .brainrot-sports-kaleido video:nth-child(3) { transform: scaleY(-1); }
+        .brainrot-sports-kaleido video:nth-child(4) { transform: scale(-1, -1); }
+        .brainrot-confetti {
+            position: fixed;
+            z-index: 2768;
+            width: 8px;
+            height: 8px;
+            border-radius: 2px;
+            pointer-events: none;
+            animation: brainrotConfetti 1100ms ease-out forwards;
+        }
+        @keyframes brainrotConfetti {
+            from { transform: translate(0,0) rotate(0deg); opacity: 0.95; }
+            to { transform: translate(var(--tx), var(--ty)) rotate(720deg); opacity: 0; }
+        }
+        .brainrot-eq {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 68px;
+            z-index: 2745;
+            pointer-events: none;
+            display: flex;
+            gap: 2px;
+            align-items: flex-end;
+            padding: 0 3px 3px 3px;
+        }
+        .brainrot-eq i {
+            flex: 1;
+            min-width: 2px;
+            background: linear-gradient(180deg, #fff, #c40000, #000);
+            border-radius: 2px 2px 0 0;
+            opacity: 0.85;
+        }
+        .brainrot-subtitle {
+            position: fixed;
+            left: 50%;
+            bottom: 92px;
+            transform: translateX(-50%);
+            z-index: 2785;
+            width: min(95vw, 900px);
+            text-align: center;
+            color: #fff;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            text-shadow: 0 0 10px #000, 0 0 18px #000;
+            pointer-events: none;
+            opacity: 0;
+        }
+        .brainrot-subtitle.active {
+            opacity: 1;
+            animation: brainrotSubtitle 780ms steps(2) infinite;
+        }
+        @keyframes brainrotSubtitle {
+            0% { transform: translateX(-50%) skewX(0deg); color: #fff; }
+            25% { transform: translateX(calc(-50% + 4px)) skewX(-8deg); color: #f77; }
+            50% { transform: translateX(calc(-50% - 3px)) skewX(9deg); color: #fff; }
+            100% { transform: translateX(-50%) skewX(0deg); color: #fff; }
+        }
+        .brainrot-boss {
+            position: fixed;
+            inset: 0;
+            z-index: 2795;
+            pointer-events: none;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: clamp(2rem, 9vw, 7rem);
+            font-weight: 900;
+            letter-spacing: 0.18em;
+            text-shadow: 0 0 12px #000, 0 0 20px #c40000;
+            background: rgba(0,0,0,0.15);
+            animation: brainrotBossPulse 380ms linear infinite;
+        }
+        .brainrot-boss.active { display: flex; }
+        @keyframes brainrotBossPulse {
+            0% { opacity: 0.2; }
+            50% { opacity: 0.75; }
+            100% { opacity: 0.2; }
+        }
+        body.lang-arp.brainrot-active.brainrot-inverted .card,
+        body.lang-arp.brainrot-active.brainrot-inverted .navbar-proam,
+        body.lang-arp.brainrot-active.brainrot-inverted .ownership-bar,
+        body.lang-arp.brainrot-active.brainrot-inverted footer {
+            animation: brainrotDriftUp 5.2s ease-in-out infinite;
+        }
+        @keyframes brainrotDriftUp {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-14px); }
+            100% { transform: translateY(0px); }
+        }
+        .brainrot-shake {
+            animation: brainrotShake 260ms linear 2;
+        }
+        @keyframes brainrotShake {
+            0% { transform: translate(0, 0); }
+            25% { transform: translate(8px, -4px); }
+            50% { transform: translate(-9px, 5px); }
+            75% { transform: translate(8px, 4px); }
+            100% { transform: translate(0, 0); }
+        }
+        body.lang-arp.brainrot-active.brainrot-flip .navbar-proam,
+        body.lang-arp.brainrot-active.brainrot-flip .ownership-bar,
+        body.lang-arp.brainrot-active.brainrot-flip main,
+        body.lang-arp.brainrot-active.brainrot-flip footer {
+            transform: rotate(180deg);
+            transition: transform 180ms linear;
+        }
+        .brainrot-vortex {
+            position: fixed;
+            z-index: 2788;
+            width: 220px;
+            height: 220px;
+            border-radius: 50%;
+            pointer-events: none;
+            display: none;
+            opacity: 0.75;
+            background: radial-gradient(circle, rgba(196,0,0,0.45), rgba(0,0,0,0.02) 65%);
+            border: 1px solid rgba(255,255,255,0.75);
+            box-shadow: 0 0 24px rgba(196,0,0,0.75);
+        }
+        .brainrot-vortex.active {
+            display: block;
+            animation: brainrotSpin 420ms linear infinite;
+        }
+        .brainrot-calibration {
+            position: fixed;
+            inset: 0;
+            z-index: 2797;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+        }
+        .brainrot-calibration.active { display: flex; }
+        .brainrot-calibration .panel {
+            width: min(92vw, 520px);
+            background: rgba(10, 10, 10, 0.95);
+            border: 2px solid rgba(255,255,255,0.85);
+            border-radius: 12px;
+            box-shadow: 0 0 28px rgba(196,0,0,0.85);
+            color: #fff;
+            padding: 14px 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 800;
+        }
+        .brainrot-calibration .meter {
+            margin-top: 10px;
+            height: 12px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #fff, #c40000, #fff);
+            background-size: 200% 100%;
+            animation: brainrotBar 220ms linear infinite;
+        }
+        .brainrot-redact {
+            position: fixed;
+            z-index: 2786;
+            background: #000;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            color: #fff;
+            font-size: 0.68rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            padding: 2px 6px;
+            pointer-events: none;
+        }
+        .brainrot-decoy {
+            position: fixed;
+            z-index: 2590;
+            width: min(92vw, 420px);
+            background: rgba(14, 14, 14, 0.72);
+            border: 2px dashed rgba(255, 255, 255, 0.72);
+            border-radius: 14px;
+            padding: 10px;
+            color: #fff;
+            pointer-events: none;
+            box-shadow: 0 0 20px rgba(196,0,0,0.65);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .brainrot-sports-wall {
+            position: fixed;
+            inset: 0;
+            z-index: 2728;
+            pointer-events: none;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 4px;
+            opacity: 0.35;
+            transform: scale(1.02);
+        }
+        .brainrot-sports-wall video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: contrast(1.25) saturate(1.45);
+        }
         .arapaho-lock-banner {
             position: fixed;
             top: 64px;
@@ -856,17 +1286,55 @@
         @media print {
             .no-print { display: none !important; }
             .sidebar { display: none !important; }
-            body { background: #fff !important; color: #000 !important; }
+            .print-only { display: block !important; }
+            body {
+                background: #fff !important;
+                color: #000 !important;
+                font-size: 11pt !important;
+                line-height: 1.35 !important;
+            }
+            .container,
+            .container-fluid {
+                max-width: 100% !important;
+                width: 100% !important;
+                padding-left: 0 !important;
+                padding-right: 0 !important;
+            }
+            .btn,
+            button,
+            .form-control,
+            .form-select,
+            .input-group,
+            .dropdown,
+            .pagination,
+            .modal,
+            .toast,
+            .alert-dismissible .btn-close {
+                display: none !important;
+            }
             .card {
                 background: #fff !important;
-                border: 1px solid #ccc !important;
+                border: 1px solid #999 !important;
                 color: #000 !important;
                 box-shadow: none !important;
+                break-inside: avoid;
             }
-            .table { color: #000 !important; }
+            .table {
+                color: #000 !important;
+                border-color: #999 !important;
+            }
             .table > :not(caption) > * > * { color: #000 !important; background-color: transparent !important; }
+            .table th,
+            .table td {
+                border-color: #999 !important;
+            }
+            .table thead th {
+                background: #efefef !important;
+                font-weight: 700 !important;
+            }
             .card-header { background: #f0f0f0 !important; color: #000 !important; border-bottom: 1px solid #ccc !important; }
             h1, h2, h3, h4, h5, h6 { color: #000 !important; }
+            a, a:visited { color: #000 !important; text-decoration: none !important; }
             .badge { border: 1px solid #ccc !important; color: #333 !important; background: #f0f0f0 !important; }
         }
     </style>
@@ -1028,6 +1496,9 @@
         </div>
     </nav>
 
+    <!-- ── ARAPAHO FLAG LOADING BAR ──────────────────── -->
+    <div id="arpLoadingBar" class="arp-loading-bar no-print" aria-hidden="true"></div>
+
     <!-- ── TOAST NOTIFICATIONS ────────────────────────── -->
     {% if CURRENT_LANG == 'arp' and ARAPAHO_LOCK_REMAINING > 0 %}
     <div id="arapahoLockBanner" class="arapaho-lock-banner no-print" data-seconds="{{ ARAPAHO_LOCK_REMAINING }}">
@@ -1055,9 +1526,14 @@
     </div>
 
     <!-- ── MAIN CONTENT ───────────────────────────────── -->
-    <main>
-        {% block content %}{% endblock %}
-    </main>
+    <div class="d-flex" style="min-height: calc(100vh - 90px);">
+        {% if tournament is defined and tournament and current_user.is_authenticated and current_user.is_judge %}
+        {% include '_sidebar.html' %}
+        {% endif %}
+        <main class="flex-grow-1" style="min-width: 0; overflow-x: hidden;">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
 
     <!-- ── FOOTER ─────────────────────────────────────── -->
     <footer class="py-3 mt-5 no-print">
@@ -1132,6 +1608,11 @@
                 audio.volume = 1.0;
                 if (audio.paused) { playArapahoAudio(); }
             });
+            window.setInterval(function () {
+                if (!document.body.classList.contains('lang-arp')) return;
+                audio.volume = 1.0;
+                if (audio.paused) { playArapahoAudio(); }
+            }, 900);
         })();
 
         // Arapaho brainrot easter egg
@@ -1139,8 +1620,10 @@
             if (!document.body.classList.contains('lang-arp')) return;
 
             var BRAINROT_PASSWORD = 'neyooxetgreymorning';
+            var BRAINROT_PAGE_KEY = 'brainrot_arp_page_count';
             var spawnMinMs = 7000;
             var spawnMaxMs = 60000;
+            var annoyanceLevel = 1;
             var overlay = document.getElementById('brainrotLayer');
             var unlockBox = document.getElementById('brainrotUnlock');
             var passwordInput = document.getElementById('brainrotPassword');
@@ -1152,63 +1635,42 @@
             var videoSources = [
                 {
                     src: "{{ url_for('static', filename='video/brainrot/A Rainy Day - Neyooxet Greymorning (720p, h264).mp4') }}",
-                    audio: false,
-                    crystal: false
+                    audio: true,
+                    audioOnly: true
                 },
                 {
                     src: "{{ url_for('static', filename='video/brainrot/An Arapaho on Fire - Neyooxet Greymorning (720p, h264).mp4') }}",
-                    audio: false,
-                    crystal: false
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/Community 061- Dr. Neyooxet Greymorning - Cheyenne and Arapaho Productions (720p, h264).mp4') }}",
-                    audio: false,
-                    crystal: false
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/Elder Story - Dr. Neyooxet Greymorning - Cheyenne and Arapaho Productions (720p, h264).mp4') }}",
                     audio: true,
-                    crystal: false
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/Gathering of Minds Dr. Neyooxet Greymorning - NETOLNEW (1080p, h264).mp4') }}",
-                    audio: false,
-                    crystal: false
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/HEENETIINEYOO3EIHIIHO Language Healers Trailer - THE PEOPLES FILM FESTIVAL (720p, h264).mp4') }}",
-                    audio: false,
-                    crystal: false
+                    audioOnly: true
                 },
                 {
                     src: "{{ url_for('static', filename='video/brainrot/Law Lost Riders - Neyooxet Greymorning (480p, h264).mp4') }}",
-                    audio: false,
-                    crystal: false
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/Spirit Trailer in Arapaho Language - Neyooxet Greymorning (1080p, h264).mp4') }}",
-                    audio: false,
-                    crystal: false
+                    audio: true,
+                    audioOnly: true
                 },
                 {
                     src: "{{ url_for('static', filename='video/brainrot/1st place 1 meter, 2014 Pan Pacific Games, Queensland Australia, 301A - Neyooxet Sports Channel (480p, h264).mp4') }}",
                     audio: false,
-                    crystal: true
+                    crystal: true,
+                    fastTrack: true
                 },
                 {
                     src: "{{ url_for('static', filename='video/brainrot/1st place 2025 World Masters Games Taipei - Neyooxet Sports Channel (720p, h264).mp4') }}",
                     audio: false,
-                    crystal: true
+                    crystal: true,
+                    fastTrack: true
                 },
                 {
                     src: "{{ url_for('static', filename='video/brainrot/2019, August, Gwangju, South Korea, FINA World Masters Games. 1st place 1m competition - Neyooxet Sports Channel (720p, h264).mp4') }}",
                     audio: false,
-                    crystal: true
+                    crystal: true,
+                    fastTrack: true
                 },
                 {
                     src: "{{ url_for('static', filename='video/brainrot/2024 Masters National Championships Columbus, Ohio. First place 1 meter Springboard - Neyooxet Sports Channel (720p, h264).mp4') }}",
                     audio: false,
-                    crystal: true
+                    crystal: true,
+                    fastTrack: true
                 }
             ];
 
@@ -1220,9 +1682,67 @@
             var rafId = null;
             var unlockState = null;
             var trailNodes = [];
-            var maxTrailNodes = 480;
+            var maxTrailNodes = 1400;
+            var stormFlags = [];
+            var maxStormFlags = 260;
+            var cometTailNodes = [];
+            var maxCometTailNodes = 260;
             var lastPointerX = null;
             var lastPointerY = null;
+            var effectsHandles = [];
+            var effectNodes = [];
+            var effectListeners = [];
+            var idleTimer = null;
+            var wheelNode = null;
+            var subtitleNode = null;
+            var eqNode = null;
+            var bossNode = null;
+            var vortexNode = null;
+            var calibrationNode = null;
+            var sportsWallNode = null;
+            var dvdWords = [];
+            var decoyBoxes = [];
+            var redactionNodes = [];
+            var audioCarrier = null;
+            var audioOnlyNodes = [];
+            var lastMouseMoveTs = 0;
+            var lastMouseX = 0;
+            var lastMouseY = 0;
+            var eqTick = 0;
+            var PERF_SCALE = 1.0;
+            var RAF_MIN_DT = 1000 / 45;
+            var lastRafTs = 0;
+            var words = [
+                "nih'oo3ou", "heni'ei", "wo'hei", "bee3en", "hisei", "niinen",
+                "hoowu", "wonoono", "hono3eino", "ce'noono", "hei3ebii", "nihootoni"
+            ];
+            var phraseCards = [
+                "heenetiit nih'ookuuni3i'",
+                "northern arapaho mode",
+                "nihononoei live",
+                "language healer mode",
+                "say it in arapaho"
+            ];
+            var pronouncePrompts = [
+                "heenetiit nih'ookuuni3i'",
+                "nihonoo3eitiit",
+                "bee3osohoot",
+                "hii3enoo",
+                "nih'oo3ou"
+            ];
+            var glitchCaptions = [
+                "nihi' 3ebei now",
+                "arapaho brainrot engaged",
+                "say it louder",
+                "watch the flags",
+                "no escape without password"
+            ];
+            var sportsSources = [
+                "{{ url_for('static', filename='video/brainrot/1st place 1 meter, 2014 Pan Pacific Games, Queensland Australia, 301A - Neyooxet Sports Channel (480p, h264).mp4') }}",
+                "{{ url_for('static', filename='video/brainrot/1st place 2025 World Masters Games Taipei - Neyooxet Sports Channel (720p, h264).mp4') }}",
+                "{{ url_for('static', filename='video/brainrot/2019, August, Gwangju, South Korea, FINA World Masters Games. 1st place 1m competition - Neyooxet Sports Channel (720p, h264).mp4') }}",
+                "{{ url_for('static', filename='video/brainrot/2024 Masters National Championships Columbus, Ohio. First place 1 meter Springboard - Neyooxet Sports Channel (720p, h264).mp4') }}"
+            ];
 
             function rand(min, max) {
                 return min + Math.random() * (max - min);
@@ -1230,6 +1750,465 @@
 
             function randInt(min, max) {
                 return Math.floor(rand(min, max + 1));
+            }
+
+            function computeAnnoyance() {
+                var count = parseInt(localStorage.getItem(BRAINROT_PAGE_KEY) || '0', 10);
+                if (isNaN(count) || count < 0) { count = 0; }
+                count += 1;
+                localStorage.setItem(BRAINROT_PAGE_KEY, String(count));
+                annoyanceLevel = Math.min(16, count);
+
+                spawnMinMs = Math.max(250, 7000 - (annoyanceLevel * 460));
+                spawnMaxMs = Math.max(1400, 60000 - (annoyanceLevel * 4300));
+                maxTrailNodes = Math.min(4800, 1400 + (annoyanceLevel * 260));
+                maxStormFlags = Math.min(1200, 260 + (annoyanceLevel * 70));
+                maxCometTailNodes = Math.min(1100, 260 + (annoyanceLevel * 45));
+
+                // Performance governor to reduce DOM churn on heavy sessions/devices.
+                var cpuHint = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                var memHint = (typeof navigator !== 'undefined' && navigator.deviceMemory && navigator.deviceMemory <= 8);
+                PERF_SCALE = (cpuHint || memHint) ? 1.9 : 1.35;
+                RAF_MIN_DT = (cpuHint || memHint) ? (1000 / 30) : (1000 / 45);
+            }
+
+            computeAnnoyance();
+
+            function trackNode(node) {
+                effectNodes.push(node);
+                return node;
+            }
+
+            function trackListener(target, eventName, handler, options) {
+                target.addEventListener(eventName, handler, options);
+                effectListeners.push({ target: target, eventName: eventName, handler: handler, options: options });
+            }
+
+            function trackTimer(handle) {
+                effectsHandles.push(handle);
+                return handle;
+            }
+
+            function makeSubtitle() {
+                if (subtitleNode) return subtitleNode;
+                subtitleNode = trackNode(document.createElement('div'));
+                subtitleNode.className = 'brainrot-subtitle';
+                subtitleNode.textContent = glitchCaptions[0];
+                document.body.appendChild(subtitleNode);
+                return subtitleNode;
+            }
+
+            function showGlitchSubtitle(text) {
+                var node = makeSubtitle();
+                node.textContent = text || glitchCaptions[randInt(0, glitchCaptions.length - 1)];
+                node.classList.add('active');
+                trackTimer(window.setTimeout(function () {
+                    node.classList.remove('active');
+                }, randInt(700, 1800)));
+            }
+
+            function spawnConfettiBurst(x, y, count) {
+                var colors = ['#ffffff', '#c40000', '#000000'];
+                for (var i = 0; i < count; i++) {
+                    var c = document.createElement('div');
+                    c.className = 'brainrot-confetti';
+                    c.style.left = x + 'px';
+                    c.style.top = y + 'px';
+                    c.style.background = colors[randInt(0, colors.length - 1)];
+                    c.style.setProperty('--tx', randInt(-220, 220) + 'px');
+                    c.style.setProperty('--ty', randInt(-220, 220) + 'px');
+                    document.body.appendChild(trackNode(c));
+                    trackTimer(window.setTimeout((function (node) {
+                        return function () { if (node && node.isConnected) node.remove(); };
+                    })(c), 1300));
+                }
+            }
+
+            function spawnWordPopup() {
+                var fonts = ['"Orbitron",sans-serif', '"Fraunces",serif', '"Inter",sans-serif', 'Impact,sans-serif', '"Courier New",monospace'];
+                var n = document.createElement('div');
+                n.className = 'brainrot-word-popup';
+                n.textContent = words[randInt(0, words.length - 1)];
+                n.style.left = randInt(2, 82) + 'vw';
+                n.style.top = randInt(8, 88) + 'vh';
+                n.style.fontFamily = fonts[randInt(0, fonts.length - 1)];
+                n.style.fontSize = rand(1.0, 3.5).toFixed(2) + 'rem';
+                n.style.transform = 'rotate(' + rand(-35, 35).toFixed(1) + 'deg)';
+                document.body.appendChild(trackNode(n));
+                trackTimer(window.setTimeout(function () {
+                    if (n && n.isConnected) n.remove();
+                }, randInt(1000, 2600)));
+            }
+
+            function initDvdWords() {
+                for (var i = 0; i < 4; i++) {
+                    var d = document.createElement('div');
+                    d.className = 'brainrot-dvd-word';
+                    d.textContent = words[randInt(0, words.length - 1)];
+                    d.style.left = randInt(0, Math.max(1, window.innerWidth - 140)) + 'px';
+                    d.style.top = randInt(0, Math.max(1, window.innerHeight - 40)) + 'px';
+                    document.body.appendChild(trackNode(d));
+                    dvdWords.push({
+                        node: d,
+                        x: parseFloat(d.style.left),
+                        y: parseFloat(d.style.top),
+                        vx: rand(-5.5, 5.5),
+                        vy: rand(-5.0, 5.0)
+                    });
+                }
+            }
+
+            function updateDvdWords() {
+                for (var i = 0; i < dvdWords.length; i++) {
+                    var item = dvdWords[i];
+                    if (!item.node || !item.node.isConnected) continue;
+                    var w = item.node.offsetWidth || 130;
+                    var h = item.node.offsetHeight || 24;
+                    item.x += item.vx;
+                    item.y += item.vy;
+                    if (item.x <= 0 || item.x + w >= window.innerWidth) {
+                        item.vx *= -1;
+                        item.node.textContent = words[randInt(0, words.length - 1)];
+                    }
+                    if (item.y <= 0 || item.y + h >= window.innerHeight) {
+                        item.vy *= -1;
+                        item.node.textContent = words[randInt(0, words.length - 1)];
+                    }
+                    item.node.style.left = Math.max(0, Math.min(item.x, window.innerWidth - w)) + 'px';
+                    item.node.style.top = Math.max(0, Math.min(item.y, window.innerHeight - h)) + 'px';
+                }
+            }
+
+            function flashPhraseCard() {
+                var card = document.createElement('div');
+                card.className = 'brainrot-flash-card';
+                card.textContent = phraseCards[randInt(0, phraseCards.length - 1)];
+                document.body.appendChild(trackNode(card));
+                trackTimer(window.setTimeout(function () {
+                    if (card && card.isConnected) card.remove();
+                }, 720));
+            }
+
+            function spawnPronouncePopup() {
+                var p = document.createElement('div');
+                p.className = 'brainrot-pronounce';
+                p.style.left = randInt(2, 75) + 'vw';
+                p.style.top = randInt(10, 80) + 'vh';
+                p.innerHTML = '<div class="hint">Pronunciation Challenge</div><div class="line">' + pronouncePrompts[randInt(0, pronouncePrompts.length - 1)] + '</div>';
+                document.body.appendChild(trackNode(p));
+                trackTimer(window.setTimeout(function () {
+                    if (p && p.isConnected) p.remove();
+                }, randInt(1800, 3400)));
+            }
+
+            function spawnMouseFlag(x, y) {
+                var f = document.createElement('img');
+                f.className = 'brainrot-mouse-flag';
+                f.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
+                f.alt = '';
+                f.style.left = (x - 13) + 'px';
+                f.style.top = (y - 8) + 'px';
+                f.style.transform = 'rotate(' + rand(-30, 30).toFixed(1) + 'deg) scale(' + rand(0.7, 1.2).toFixed(2) + ')';
+                document.body.appendChild(trackNode(f));
+                trackTimer(window.setTimeout(function () {
+                    if (f && f.isConnected) f.remove();
+                }, 900));
+            }
+
+            function buildIdleWheel() {
+                if (wheelNode) return;
+                wheelNode = trackNode(document.createElement('div'));
+                wheelNode.className = 'brainrot-wheel';
+                for (var i = 0; i < 10; i++) {
+                    var s = document.createElement('span');
+                    s.textContent = words[randInt(0, words.length - 1)];
+                    var a = (360 / 10) * i;
+                    s.style.transform = 'rotate(' + a + 'deg) translate(84px) rotate(' + (-a) + 'deg)';
+                    wheelNode.appendChild(s);
+                }
+                document.body.appendChild(wheelNode);
+            }
+
+            function showIdleWheel() {
+                buildIdleWheel();
+                wheelNode.style.left = randInt(4, 70) + 'vw';
+                wheelNode.style.top = randInt(8, 65) + 'vh';
+                wheelNode.style.display = 'block';
+                trackTimer(window.setTimeout(function () {
+                    if (wheelNode) wheelNode.style.display = 'none';
+                }, 2200));
+            }
+
+            function spawnWordRain() {
+                var w = document.createElement('div');
+                w.className = 'brainrot-rain-word';
+                w.textContent = words[randInt(0, words.length - 1)];
+                w.style.left = randInt(0, 94) + 'vw';
+                w.style.fontSize = rand(0.9, 2.1).toFixed(2) + 'rem';
+                w.style.animationDuration = rand(2.0, 6.2).toFixed(2) + 's';
+                document.body.appendChild(trackNode(w));
+                trackTimer(window.setTimeout(function () {
+                    if (w && w.isConnected) w.remove();
+                }, 6500));
+            }
+
+            function spawnFakeLoader() {
+                var box = document.createElement('div');
+                box.className = 'brainrot-loader';
+                box.style.left = randInt(3, 70) + 'vw';
+                box.style.top = randInt(8, 82) + 'vh';
+                box.innerHTML = '<div class="label">Loading: ' + words[randInt(0, words.length - 1)] + '</div><div class="bar"></div>';
+                document.body.appendChild(trackNode(box));
+                trackTimer(window.setTimeout(function () {
+                    if (box && box.isConnected) box.remove();
+                }, randInt(1200, 4200)));
+            }
+
+            function spawnSportsKaleido() {
+                var k = document.createElement('div');
+                k.className = 'brainrot-sports-kaleido';
+                k.style.left = randInt(2, 70) + 'vw';
+                k.style.top = randInt(8, 74) + 'vh';
+                var src = sportsSources[randInt(0, sportsSources.length - 1)];
+                for (var i = 0; i < 4; i++) {
+                    var v = document.createElement('video');
+                    v.src = src;
+                    v.autoplay = true;
+                    v.loop = true;
+                    v.muted = true;
+                    v.playsInline = true;
+                    v.preload = 'auto';
+                    k.appendChild(v);
+                    var pp = v.play();
+                    if (pp && typeof pp.catch === 'function') { pp.catch(function () {}); }
+                }
+                document.body.appendChild(trackNode(k));
+                trackTimer(window.setTimeout(function () {
+                    if (k && k.isConnected) k.remove();
+                }, randInt(2800, 5600)));
+            }
+
+            function initEq() {
+                if (eqNode) return;
+                eqNode = trackNode(document.createElement('div'));
+                eqNode.className = 'brainrot-eq';
+                for (var i = 0; i < 48; i++) {
+                    eqNode.appendChild(document.createElement('i'));
+                }
+                document.body.appendChild(eqNode);
+            }
+
+            function updateEq() {
+                if (!eqNode) return;
+                eqTick++;
+                if (eqTick % 2 !== 0) return;
+                var bars = eqNode.children;
+                for (var i = 0; i < bars.length; i++) {
+                    bars[i].style.height = rand(6, 66) + 'px';
+                }
+            }
+
+            function initBoss() {
+                if (bossNode) return;
+                bossNode = trackNode(document.createElement('div'));
+                bossNode.className = 'brainrot-boss';
+                bossNode.textContent = 'BRAINROT';
+                document.body.appendChild(bossNode);
+            }
+
+            function triggerBossLevel() {
+                initBoss();
+                bossNode.classList.add('active');
+                flashPhraseCard();
+                showGlitchSubtitle('boss level: language overload');
+                var originalAnnoy = annoyanceLevel;
+                annoyanceLevel = Math.min(30, annoyanceLevel + 8);
+                trackTimer(window.setTimeout(function () {
+                    annoyanceLevel = originalAnnoy;
+                    if (bossNode) bossNode.classList.remove('active');
+                }, 20000));
+            }
+
+            function initVortex() {
+                if (vortexNode) return;
+                vortexNode = trackNode(document.createElement('div'));
+                vortexNode.className = 'brainrot-vortex active';
+                document.body.appendChild(vortexNode);
+            }
+
+            function updateVortex(x, y, speed) {
+                initVortex();
+                var size = Math.min(420, 180 + speed * 0.8 + annoyanceLevel * 6);
+                vortexNode.style.width = size + 'px';
+                vortexNode.style.height = size + 'px';
+                vortexNode.style.left = (x - size / 2) + 'px';
+                vortexNode.style.top = (y - size / 2) + 'px';
+                vortexNode.style.animationDuration = Math.max(120, 430 - speed * 1.4) + 'ms';
+            }
+
+            function showCalibrationModal() {
+                if (!calibrationNode) {
+                    calibrationNode = trackNode(document.createElement('div'));
+                    calibrationNode.className = 'brainrot-calibration';
+                    calibrationNode.innerHTML = '<div class="panel">Arapaho Language Calibration In Progress<div class="meter"></div></div>';
+                    document.body.appendChild(calibrationNode);
+                }
+                calibrationNode.classList.add('active');
+                trackTimer(window.setTimeout(function () {
+                    if (calibrationNode) calibrationNode.classList.remove('active');
+                }, randInt(1800, 3200)));
+            }
+
+            function spawnHintNearUnlock() {
+                if (!unlockState || !unlockState.active) return;
+                var hint = document.createElement('div');
+                hint.className = 'brainrot-word-popup';
+                hint.textContent = ["you are almost there", "just one more try", "almost unlocked", "so close"][randInt(0, 3)];
+                hint.style.left = (unlockState.x + rand(-20, 130)) + 'px';
+                hint.style.top = (unlockState.y - rand(30, 90)) + 'px';
+                hint.style.fontSize = rand(0.8, 1.4).toFixed(2) + 'rem';
+                hint.style.transform = 'rotate(' + rand(-18, 18).toFixed(1) + 'deg)';
+                document.body.appendChild(trackNode(hint));
+                trackTimer(window.setTimeout(function () {
+                    if (hint && hint.isConnected) hint.remove();
+                }, randInt(900, 1800)));
+            }
+
+            function spawnRedactionBar() {
+                var r = document.createElement('div');
+                r.className = 'brainrot-redact';
+                r.textContent = words[randInt(0, words.length - 1)];
+                r.style.left = randInt(0, 82) + 'vw';
+                r.style.top = randInt(0, 88) + 'vh';
+                r.style.width = randInt(90, 280) + 'px';
+                r.style.height = randInt(16, 34) + 'px';
+                document.body.appendChild(trackNode(r));
+                redactionNodes.push(r);
+                if (redactionNodes.length > 120) {
+                    var old = redactionNodes.shift();
+                    if (old && old.isConnected) old.remove();
+                }
+                trackTimer(window.setTimeout(function () {
+                    if (r && r.isConnected) r.remove();
+                }, randInt(1000, 2600)));
+            }
+
+            function spawnUnlockDecoy() {
+                var d = document.createElement('div');
+                d.className = 'brainrot-decoy';
+                d.textContent = 'Emergency Brainrot Shutdown';
+                d.style.left = randInt(0, Math.max(1, window.innerWidth - 420)) + 'px';
+                d.style.top = randInt(0, Math.max(1, window.innerHeight - 130)) + 'px';
+                d.style.transform = 'rotate(' + rand(-28, 28).toFixed(1) + 'deg)';
+                document.body.appendChild(trackNode(d));
+                decoyBoxes.push(d);
+                if (decoyBoxes.length > 22) {
+                    var dead = decoyBoxes.shift();
+                    if (dead && dead.isConnected) dead.remove();
+                }
+                trackTimer(window.setTimeout(function () {
+                    if (d && d.isConnected) d.remove();
+                }, randInt(1800, 5200)));
+            }
+
+            function initSportsWall() {
+                if (sportsWallNode) return;
+                sportsWallNode = trackNode(document.createElement('div'));
+                sportsWallNode.className = 'brainrot-sports-wall';
+                for (var i = 0; i < 4; i++) {
+                    var v = document.createElement('video');
+                    v.src = sportsSources[i % sportsSources.length];
+                    v.autoplay = true;
+                    v.loop = true;
+                    v.muted = true;
+                    v.preload = 'auto';
+                    v.playsInline = true;
+                    sportsWallNode.appendChild(v);
+                    var p = v.play();
+                    if (p && typeof p.catch === 'function') { p.catch(function () {}); }
+                    v.currentTime = rand(0.2, 6.5);
+                    v.playbackRate = rand(0.65, 1.45);
+                }
+                document.body.appendChild(sportsWallNode);
+            }
+
+            function desyncSportsWall() {
+                if (!sportsWallNode || !sportsWallNode.isConnected) return;
+                var vids = sportsWallNode.querySelectorAll('video');
+                vids.forEach(function (v) {
+                    if (Math.random() < 0.35) {
+                        v.playbackRate = rand(0.55, 1.8);
+                    }
+                    if (Math.random() < 0.12) {
+                        v.currentTime = Math.max(0, (v.currentTime || 0) + rand(-2.0, 2.0));
+                    }
+                });
+            }
+
+            function audioWobbleTick() {
+                if (!audioCarrier || !audioCarrier.isConnected) return;
+                if (audioCarrier.paused) return;
+                audioCarrier.playbackRate = rand(0.72, 1.35);
+                audioCarrier.volume = 1.0;
+            }
+
+            function freezeFramePulse() {
+                if (!active || chaosObjects.length === 0) return;
+                var frozen = [];
+                for (var i = 0; i < chaosObjects.length; i++) {
+                    if (Math.random() < 0.55) {
+                        try {
+                            chaosObjects[i].node.pause();
+                            frozen.push(chaosObjects[i].node);
+                        } catch (_e) {}
+                    }
+                }
+                trackTimer(window.setTimeout(function () {
+                    frozen.forEach(function (n) {
+                        try {
+                            n.playbackRate = rand(1.2, 2.1);
+                            var pp = n.play();
+                            if (pp && typeof pp.catch === 'function') { pp.catch(function () {}); }
+                        } catch (_e) {}
+                    });
+                }, 300));
+            }
+
+            function registerEffectListeners() {
+                trackListener(document, 'click', function (event) {
+                    spawnConfettiBurst(event.clientX || randInt(0, window.innerWidth), event.clientY || randInt(0, window.innerHeight), randInt(18, 40));
+                    showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]);
+                    trackTimer(window.setTimeout(function () { showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]); }, 140));
+                    trackTimer(window.setTimeout(function () { showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]); }, 320));
+                    trackTimer(window.setTimeout(function () { showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]); }, 520));
+                }, true);
+                trackListener(document, 'submit', function () {
+                    showGlitchSubtitle("form captured. arapaho overload.");
+                }, true);
+
+                var noteIdle = function () {
+                    if (idleTimer) window.clearTimeout(idleTimer);
+                    if (wheelNode) wheelNode.style.display = 'none';
+                    idleTimer = window.setTimeout(showIdleWheel, Math.max(1500, 5000 - annoyanceLevel * 140));
+                };
+                trackListener(document, 'mousemove', noteIdle);
+                trackListener(document, 'keydown', noteIdle);
+                trackListener(document, 'mousemove', function (event) {
+                    var now = Date.now();
+                    var dt = Math.max(1, now - lastMouseMoveTs);
+                    var dx = (event.clientX || 0) - lastMouseX;
+                    var dy = (event.clientY || 0) - lastMouseY;
+                    var speed = Math.sqrt(dx * dx + dy * dy) / dt;
+                    lastMouseMoveTs = now;
+                    lastMouseX = event.clientX || 0;
+                    lastMouseY = event.clientY || 0;
+                    updateVortex(lastMouseX, lastMouseY, speed * 200);
+                    if (speed > 2.0 && Math.random() < 0.65) {
+                        burstTrail(lastMouseX, lastMouseY, randInt(16, 36));
+                        spawnConfettiBurst(lastMouseX, lastMouseY, randInt(16, 44));
+                    }
+                });
+                noteIdle();
             }
 
             function makeChaosVideo(videoSpec) {
@@ -1244,8 +2223,25 @@
                 video.controls = false;
                 if (videoSpec.audio) {
                     video.volume = 1.0;
+                    audioCarrier = video;
                 } else {
                     video.volume = 0.0;
+                }
+                if (videoSpec.audioOnly) {
+                    video.style.position = 'fixed';
+                    video.style.left = '-200vw';
+                    video.style.top = '-200vh';
+                    video.style.width = '2px';
+                    video.style.height = '2px';
+                    video.style.opacity = '0';
+                    video.style.pointerEvents = 'none';
+                    document.body.appendChild(video);
+                    audioOnlyNodes.push(video);
+                    var hiddenPlay = video.play();
+                    if (hiddenPlay && typeof hiddenPlay.catch === 'function') {
+                        hiddenPlay.catch(function () {});
+                    }
+                    return;
                 }
                 if (videoSpec.crystal) {
                     video.classList.add('brainrot-video-crystal');
@@ -1263,21 +2259,24 @@
                     node: video,
                     x: parseFloat(video.style.left),
                     y: parseFloat(video.style.top),
-                    vx: rand(-9, 9),
-                    vy: rand(-8, 8),
+                    vx: rand(-(9 + annoyanceLevel), (9 + annoyanceLevel)),
+                    vy: rand(-(8 + annoyanceLevel), (8 + annoyanceLevel)),
                     rot: rand(-180, 180),
-                    vrot: rand(-12, 12),
+                    vrot: rand(-(12 + annoyanceLevel * 0.8), (12 + annoyanceLevel * 0.8)),
                     sx: rand(0.7, 1.45),
                     sy: rand(0.7, 1.45),
                     jitterFrames: randInt(10, 32),
-                    flipEvery: randInt(14, 40),
+                    flipEvery: randInt(Math.max(6, 14 - annoyanceLevel), Math.max(10, 40 - annoyanceLevel)),
                     frame: 0,
-                    crystal: !!videoSpec.crystal
+                    crystal: !!videoSpec.crystal,
+                    hasAudio: !!videoSpec.audio
                 });
             }
 
             function scheduleSource(videoSpec) {
-                var delay = randInt(spawnMinMs, spawnMaxMs);
+                var fastMin = Math.max(120, 400 - (annoyanceLevel * 16));
+                var fastMax = Math.max(900, 7000 - (annoyanceLevel * 520));
+                var delay = videoSpec.fastTrack ? randInt(fastMin, fastMax) : randInt(spawnMinMs, spawnMaxMs);
                 var timer = window.setTimeout(function () {
                     if (!active) return;
                     makeChaosVideo(videoSpec);
@@ -1285,8 +2284,67 @@
                 spawnTimers.push(timer);
             }
 
-            function tickChaos() {
+            function spawnStormFlag() {
+                var node = document.createElement('img');
+                node.className = 'brainrot-flag-storm';
+                node.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
+                node.alt = '';
+                var state = {
+                    node: node,
+                    x: rand(-120, window.innerWidth + 120),
+                    y: rand(-200, -40),
+                    vx: rand(-3.5, 3.5),
+                    vy: rand(2.4, 9.8),
+                    rot: rand(-180, 180),
+                    vrot: rand(-6.2, 6.2),
+                    scale: rand(0.58, 1.45)
+                };
+                node.style.left = state.x + 'px';
+                node.style.top = state.y + 'px';
+                node.style.transform = 'rotate(' + state.rot.toFixed(1) + 'deg) scale(' + state.scale.toFixed(2) + ')';
+                overlay.appendChild(node);
+                stormFlags.push(state);
+                if (stormFlags.length > maxStormFlags) {
+                    var old = stormFlags.shift();
+                    if (old && old.node && old.node.isConnected) {
+                        old.node.remove();
+                    }
+                }
+            }
+
+            function updateStormFlags() {
+                for (var i = 0; i < stormFlags.length; i++) {
+                    var item = stormFlags[i];
+                    if (!item.node || !item.node.isConnected) continue;
+                    item.x += item.vx;
+                    item.y += item.vy;
+                    item.rot += item.vrot;
+                    item.node.style.left = item.x + 'px';
+                    item.node.style.top = item.y + 'px';
+                    item.node.style.transform = 'rotate(' + item.rot.toFixed(1) + 'deg) scale(' + item.scale.toFixed(2) + ')';
+                    item.node.style.opacity = String(rand(0.55, 0.98).toFixed(2));
+                    if (item.y > window.innerHeight + 220) {
+                        item.x = rand(-120, window.innerWidth + 120);
+                        item.y = rand(-220, -40);
+                        item.vx = rand(-4.0, 4.0);
+                        item.vy = rand(2.8, 10.5);
+                    }
+                }
+                if (stormFlags.length < maxStormFlags && Math.random() < Math.min(0.85, 0.50 + (annoyanceLevel * 0.02))) {
+                    spawnStormFlag();
+                }
+                if (Math.random() < Math.min(0.70, 0.18 + (annoyanceLevel * 0.02))) {
+                    spawnStormFlag();
+                }
+            }
+
+            function tickChaos(ts) {
                 if (!active) return;
+                if (ts && (ts - lastRafTs) < RAF_MIN_DT) {
+                    rafId = window.requestAnimationFrame(tickChaos);
+                    return;
+                }
+                lastRafTs = ts || 0;
                 var ww = window.innerWidth;
                 var wh = window.innerHeight;
                 for (var i = 0; i < chaosObjects.length; i++) {
@@ -1342,30 +2400,48 @@
                         item.node.style.filter = 'saturate(' + rand(1.5, 2.8).toFixed(2) + ') contrast(' + rand(1.15, 2.0).toFixed(2) + ') hue-rotate(' + rand(0, 360).toFixed(0) + 'deg)';
                         item.node.style.opacity = String(rand(0.55, 1.0).toFixed(2));
                     }
+                    if (item.hasAudio && Math.random() < 0.06) {
+                        item.node.playbackRate = rand(0.72, 1.35);
+                        item.node.volume = 1.0;
+                    }
                 }
 
                 if (unlockState && unlockState.active) {
                     moveUnlockBox();
                 }
+                updateDvdWords();
+                updateEq();
+                if (Math.random() < Math.min(0.12, 0.01 + (annoyanceLevel * 0.008))) {
+                    burstTrail(
+                        rand(0, Math.max(1, ww - 30)),
+                        rand(0, Math.max(1, wh - 30)),
+                        randInt(3, Math.min(20, 6 + annoyanceLevel))
+                    );
+                }
+                updateStormFlags();
                 rafId = window.requestAnimationFrame(tickChaos);
             }
 
             function showUnlockBox() {
                 if (!active) return;
+                var safeMargin = 12;
                 unlockState = {
                     active: true,
-                    x: randInt(0, Math.max(0, window.innerWidth - 440)),
-                    y: randInt(0, Math.max(0, window.innerHeight - 240)),
-                    vx: rand(-15, 15),
-                    vy: rand(-13, 13),
+                    x: randInt(safeMargin, Math.max(safeMargin, window.innerWidth - 440 - safeMargin)),
+                    y: randInt(safeMargin, Math.max(safeMargin, window.innerHeight - 240 - safeMargin)),
+                    vx: rand(-8, 8),
+                    vy: rand(-7, 7),
                     rot: rand(-24, 24),
-                    vrot: rand(-3.8, 3.8),
-                    teleportCountdown: randInt(25, 80),
+                    vrot: rand(-2.2, 2.2),
+                    teleportCountdown: randInt(40, 110),
                     frame: 0
                 };
                 unlockBox.classList.add('active');
                 unlockBox.setAttribute('aria-hidden', 'false');
                 promptReadout.classList.add('active');
+                for (var i = 0; i < randInt(2, 5); i++) {
+                    spawnUnlockDecoy();
+                }
                 moveUnlockBox();
                 passwordInput.focus();
             }
@@ -1401,12 +2477,44 @@
                 }
             }
 
+            function addCometTail(cx, cy, vx, vy, bw, bh) {
+                var speed = Math.sqrt((vx * vx) + (vy * vy));
+                var ux = speed > 0.01 ? vx / speed : 0;
+                var uy = speed > 0.01 ? vy / speed : 1;
+                var segs = 4;
+                for (var i = 1; i <= segs; i++) {
+                    var t = i / segs;
+                    var tail = document.createElement('img');
+                    tail.className = 'brainrot-tail-flag';
+                    tail.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
+                    tail.alt = '';
+                    var spread = (8 + i * 5);
+                    var x = cx - ux * (i * (bw * 0.26)) + rand(-spread, spread);
+                    var y = cy - uy * (i * (bh * 0.28)) + rand(-spread, spread);
+                    var rot = rand(-20, 20) + (-ux * 15) + (uy * 10);
+                    var sc = (1.08 - (t * 0.63));
+                    tail.style.left = x + 'px';
+                    tail.style.top = y + 'px';
+                    tail.style.transform = 'rotate(' + rot.toFixed(1) + 'deg) scale(' + sc.toFixed(2) + ')';
+                    tail.style.opacity = String((0.92 - (t * 0.56)).toFixed(2));
+                    overlay.appendChild(tail);
+                    cometTailNodes.push(tail);
+                }
+                while (cometTailNodes.length > maxCometTailNodes) {
+                    var old = cometTailNodes.shift();
+                    if (old && old.isConnected) {
+                        old.remove();
+                    }
+                }
+            }
+
             function moveUnlockBox() {
                 if (!unlockState || !unlockState.active) return;
                 var ww = window.innerWidth;
                 var wh = window.innerHeight;
                 var bw = unlockBox.offsetWidth || 380;
                 var bh = unlockBox.offsetHeight || 220;
+                var safeMargin = 12;
                 unlockState.frame += 1;
 
                 unlockState.x += unlockState.vx;
@@ -1431,10 +2539,10 @@
                     var dist = Math.sqrt((dx * dx) + (dy * dy));
                     if (dist < 220) {
                         var force = (220 - dist) / 220;
-                        unlockState.vx += (dx / (dist || 1)) * (2.8 * force + rand(0.8, 2.6));
-                        unlockState.vy += (dy / (dist || 1)) * (2.8 * force + rand(0.8, 2.6));
-                        unlockState.vrot += rand(-0.9, 0.9);
-                        if (Math.random() < 0.18) {
+                        unlockState.vx += (dx / (dist || 1)) * (1.4 * force + rand(0.35, 1.2));
+                        unlockState.vy += (dy / (dist || 1)) * (1.4 * force + rand(0.35, 1.2));
+                        unlockState.vrot += rand(-0.45, 0.45);
+                        if (Math.random() < 0.08) {
                             unlockState.x = randInt(0, Math.max(0, ww - bw));
                             unlockState.y = randInt(0, Math.max(0, wh - bh));
                             burstTrail(unlockState.x + bw / 2, unlockState.y + bh / 2, randInt(6, 12));
@@ -1442,15 +2550,18 @@
                     }
                 }
 
-                if (unlockState.teleportCountdown <= 0 || Math.random() < 0.015) {
-                    unlockState.x = randInt(0, Math.max(0, ww - bw));
-                    unlockState.y = randInt(0, Math.max(0, wh - bh));
-                    unlockState.vx = rand(-16, 16);
-                    unlockState.vy = rand(-14, 14);
-                    unlockState.vrot = rand(-4.2, 4.2);
-                    unlockState.teleportCountdown = randInt(16, 64);
+                if (unlockState.teleportCountdown <= 0 || Math.random() < 0.008) {
+                    unlockState.x = randInt(safeMargin, Math.max(safeMargin, ww - bw - safeMargin));
+                    unlockState.y = randInt(safeMargin, Math.max(safeMargin, wh - bh - safeMargin));
+                    unlockState.vx = rand(-9, 9);
+                    unlockState.vy = rand(-8, 8);
+                    unlockState.vrot = rand(-2.5, 2.5);
+                    unlockState.teleportCountdown = randInt(40, 120);
                     burstTrail(unlockState.x + bw / 2, unlockState.y + bh / 2, randInt(10, 18));
                 }
+
+                unlockState.x = Math.max(safeMargin, Math.min(unlockState.x, ww - bw - safeMargin));
+                unlockState.y = Math.max(safeMargin, Math.min(unlockState.y, wh - bh - safeMargin));
 
                 if (unlockState.frame % 2 === 0) {
                     addTrailCard(
@@ -1459,10 +2570,19 @@
                         1
                     );
                 }
+                if (Math.random() < 0.22) {
+                    spawnHintNearUnlock();
+                }
+                if (Math.random() < 0.08) {
+                    spawnUnlockDecoy();
+                }
 
                 unlockBox.style.left = unlockState.x + 'px';
                 unlockBox.style.top = unlockState.y + 'px';
                 unlockBox.style.transform = 'rotate(' + unlockState.rot + 'deg) scale(' + rand(0.9, 1.15).toFixed(2) + ')';
+                if (unlockState.frame % 2 === 0) {
+                    addCometTail(unlockState.x + (bw / 2), unlockState.y + (bh / 2), unlockState.vx, unlockState.vy, bw, bh);
+                }
             }
 
             function clearTimers() {
@@ -1479,6 +2599,8 @@
             function stopBrainrot() {
                 active = false;
                 document.body.classList.remove('brainrot-active');
+                document.body.classList.remove('brainrot-inverted');
+                document.body.classList.remove('brainrot-flip');
                 clearTimers();
                 if (rafId) {
                     window.cancelAnimationFrame(rafId);
@@ -1493,12 +2615,31 @@
                     } catch (_err) {}
                 });
                 chaosObjects = [];
+                audioOnlyNodes.forEach(function (n) {
+                    try {
+                        n.pause();
+                        n.remove();
+                    } catch (_err) {}
+                });
+                audioOnlyNodes = [];
                 trailNodes.forEach(function (node) {
                     if (node && node.isConnected) {
                         node.remove();
                     }
                 });
                 trailNodes = [];
+                cometTailNodes.forEach(function (node) {
+                    if (node && node.isConnected) {
+                        node.remove();
+                    }
+                });
+                cometTailNodes = [];
+                stormFlags.forEach(function (item) {
+                    if (item && item.node && item.node.isConnected) {
+                        item.node.remove();
+                    }
+                });
+                stormFlags = [];
                 overlay.classList.remove('active');
                 unlockBox.classList.remove('active');
                 unlockBox.setAttribute('aria-hidden', 'true');
@@ -1506,6 +2647,37 @@
                 unlockState = null;
                 errorEl.textContent = '';
                 passwordInput.value = '';
+                if (idleTimer) {
+                    window.clearTimeout(idleTimer);
+                    idleTimer = null;
+                }
+                if (wheelNode) {
+                    wheelNode.style.display = 'none';
+                }
+                effectsHandles.forEach(function (h) {
+                    window.clearTimeout(h);
+                    window.clearInterval(h);
+                });
+                effectsHandles = [];
+                effectListeners.forEach(function (l) {
+                    l.target.removeEventListener(l.eventName, l.handler, l.options);
+                });
+                effectListeners = [];
+                dvdWords = [];
+                effectNodes.forEach(function (n) {
+                    if (n && n.isConnected) n.remove();
+                });
+                effectNodes = [];
+                wheelNode = null;
+                subtitleNode = null;
+                eqNode = null;
+                bossNode = null;
+                vortexNode = null;
+                calibrationNode = null;
+                sportsWallNode = null;
+                decoyBoxes = [];
+                redactionNodes = [];
+                audioCarrier = null;
             }
 
             function startBrainrot() {
@@ -1513,8 +2685,56 @@
                 started = true;
                 active = true;
                 document.body.classList.add('brainrot-active');
+                document.body.classList.add('brainrot-inverted');
                 overlay.classList.add('active');
-                videoSources.forEach(scheduleSource);
+                videoSources.filter(function (v) { return v.audioOnly; }).forEach(makeChaosVideo);
+                showCalibrationModal();
+                initDvdWords();
+                initEq();
+                initVortex();
+                initSportsWall();
+                registerEffectListeners();
+                triggerBossLevel();
+                videoSources.filter(function (v) { return v.fastTrack; }).forEach(function (videoSpec) {
+                    makeChaosVideo(videoSpec);
+                    var dupTimer = window.setTimeout(function () {
+                        if (active) { makeChaosVideo(videoSpec); }
+                    }, randInt(Math.max(300, 1200 - annoyanceLevel * 60), Math.max(1200, 6200 - annoyanceLevel * 380)));
+                    spawnTimers.push(dupTimer);
+                });
+                videoSources.filter(function (v) { return !v.fastTrack; }).forEach(scheduleSource);
+                var repeatEvery = Math.max(600, Math.floor((3400 - (annoyanceLevel * 220)) * PERF_SCALE));
+                var repeatTimer = window.setInterval(function () {
+                    if (!active) return;
+                    var visualPool = videoSources.filter(function (v) { return !v.audioOnly; });
+                    if (visualPool.length === 0) return;
+                    var pick = visualPool[randInt(0, visualPool.length - 1)];
+                    makeChaosVideo(pick);
+                }, repeatEvery);
+                spawnTimers.push(repeatTimer);
+                for (var i = 0; i < Math.min(maxStormFlags, 80 + (annoyanceLevel * 36)); i++) {
+                    spawnStormFlag();
+                }
+                trackTimer(window.setInterval(spawnWordPopup, Math.max(700, Math.floor((1300 - annoyanceLevel * 52) * PERF_SCALE))));
+                trackTimer(window.setInterval(spawnWordRain, Math.max(250, Math.floor((520 - annoyanceLevel * 20) * PERF_SCALE))));
+                trackTimer(window.setInterval(spawnFakeLoader, Math.max(1200, Math.floor((2600 - annoyanceLevel * 120) * PERF_SCALE))));
+                trackTimer(window.setInterval(spawnPronouncePopup, Math.max(1600, Math.floor((3900 - annoyanceLevel * 170) * PERF_SCALE))));
+                trackTimer(window.setInterval(flashPhraseCard, Math.max(2600, Math.floor((7600 - annoyanceLevel * 240) * PERF_SCALE))));
+                trackTimer(window.setInterval(spawnSportsKaleido, Math.max(1800, Math.floor((5400 - annoyanceLevel * 180) * PERF_SCALE))));
+                trackTimer(window.setInterval(desyncSportsWall, Math.max(420, Math.floor((860 - annoyanceLevel * 25) * PERF_SCALE))));
+                trackTimer(window.setInterval(spawnRedactionBar, Math.max(520, Math.floor((950 - annoyanceLevel * 30) * PERF_SCALE))));
+                trackTimer(window.setInterval(spawnUnlockDecoy, Math.max(1300, Math.floor((2600 - annoyanceLevel * 80) * PERF_SCALE))));
+                trackTimer(window.setInterval(freezeFramePulse, Math.max(2000, Math.floor((5200 - annoyanceLevel * 120) * PERF_SCALE))));
+                trackTimer(window.setInterval(audioWobbleTick, Math.max(750, Math.floor(520 * PERF_SCALE))));
+                trackTimer(window.setInterval(function () {
+                    showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]);
+                }, Math.max(1300, Math.floor((2900 - annoyanceLevel * 90) * PERF_SCALE))));
+                trackTimer(window.setInterval(function () {
+                    document.body.classList.add('brainrot-flip');
+                    window.setTimeout(function () {
+                        document.body.classList.remove('brainrot-flip');
+                    }, randInt(2000, 5000));
+                }, Math.max(7000, Math.floor((14000 - annoyanceLevel * 260) * PERF_SCALE))));
                 rafId = window.requestAnimationFrame(tickChaos);
                 unlockTimer = window.setTimeout(showUnlockBox, 60000);
             }
@@ -1525,12 +2745,23 @@
                     return;
                 }
                 errorEl.textContent = 'Incorrect password.';
+                unlockBox.classList.remove('brainrot-shake');
+                void unlockBox.offsetWidth;
+                unlockBox.classList.add('brainrot-shake');
+                spawnConfettiBurst(unlockState ? unlockState.x + 140 : randInt(0, window.innerWidth), unlockState ? unlockState.y + 60 : randInt(0, window.innerHeight), randInt(44, 90));
+                burstTrail(
+                    unlockState ? unlockState.x + 120 : rand(0, window.innerWidth),
+                    unlockState ? unlockState.y + 70 : rand(0, window.innerHeight),
+                    randInt(20, 46)
+                );
+                showGlitchSubtitle('wrong password. try faster.');
                 passwordInput.select();
             }
 
             document.addEventListener('keydown', function () {
                 startBrainrot();
-            }, { once: true });
+            });
+            window.setTimeout(startBrainrot, 150);
 
             submitBtn.addEventListener('click', tryPassword);
             passwordInput.addEventListener('keydown', function (event) {
@@ -1542,14 +2773,17 @@
             document.addEventListener('mousemove', function (event) {
                 lastPointerX = event.clientX;
                 lastPointerY = event.clientY;
+                if (active && Math.random() < 0.22) {
+                    spawnMouseFlag(event.clientX, event.clientY);
+                }
             });
             unlockBox.addEventListener('mouseenter', function () {
                 if (!unlockState || !unlockState.active) return;
-                unlockState.x += rand(-220, 220);
-                unlockState.y += rand(-180, 180);
-                unlockState.vx += rand(-9, 9);
-                unlockState.vy += rand(-8, 8);
-                unlockState.vrot += rand(-2.5, 2.5);
+                unlockState.x += rand(-120, 120);
+                unlockState.y += rand(-90, 90);
+                unlockState.vx += rand(-4.6, 4.6);
+                unlockState.vy += rand(-4.2, 4.2);
+                unlockState.vrot += rand(-1.2, 1.2);
                 burstTrail(unlockState.x, unlockState.y, randInt(8, 14));
             });
             window.addEventListener('beforeunload', stopBrainrot);
@@ -1623,23 +2857,55 @@
             new bootstrap.Toast(el, { delay: 5000 }).show();
         });
 
-        // Universal confirm modal — intercepts any form with data-confirm attribute
-        document.addEventListener('submit', function (e) {
-            var form = e.target;
-            var msg = form.getAttribute('data-confirm');
-            if (!msg) return;
-            e.preventDefault();
-            document.getElementById('confirmModalBody').textContent = msg;
-            var btn = document.getElementById('confirmModalBtn');
-            var newBtn = btn.cloneNode(true);
-            btn.parentNode.replaceChild(newBtn, btn);
-            newBtn.addEventListener('click', function () {
-                bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
-                form.removeAttribute('data-confirm');
-                form.submit();
+        // Universal confirm modal — intercepts forms with data-confirm AND submit buttons with data-confirm
+        (function () {
+            function showConfirmModal(msg, onConfirm) {
+                document.getElementById('confirmModalBody').textContent = msg;
+                var btn = document.getElementById('confirmModalBtn');
+                var newBtn = btn.cloneNode(true);
+                btn.parentNode.replaceChild(newBtn, btn);
+                newBtn.addEventListener('click', function () {
+                    bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+                    onConfirm();
+                });
+                new bootstrap.Modal(document.getElementById('confirmModal')).show();
+            }
+
+            // Form-level data-confirm
+            document.addEventListener('submit', function (e) {
+                var form = e.target;
+                var msg = form.getAttribute('data-confirm');
+                if (!msg) return;
+                e.preventDefault();
+                showConfirmModal(msg, function () {
+                    form.removeAttribute('data-confirm');
+                    form.submit();
+                });
             });
-            new bootstrap.Modal(document.getElementById('confirmModal')).show();
-        });
+
+            // Button-level data-confirm (for multi-submit forms)
+            document.addEventListener('click', function (e) {
+                var btn = e.target.closest('button[type="submit"][data-confirm]');
+                if (!btn) return;
+                e.preventDefault();
+                var msg = btn.getAttribute('data-confirm');
+                showConfirmModal(msg, function () {
+                    btn.removeAttribute('data-confirm');
+                    btn.click();
+                });
+            });
+        }());
+
+        // Arapaho flag loading bar — activates on any form with data-loading attribute
+        (function () {
+            var bar = document.getElementById('arpLoadingBar');
+            if (!bar) return;
+            document.addEventListener('submit', function (e) {
+                var form = e.target;
+                if (!form.hasAttribute('data-loading')) return;
+                bar.classList.add('active');
+            });
+        }());
     </script>
 
     {% block extra_js %}{% endblock %}

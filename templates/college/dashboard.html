@@ -24,6 +24,9 @@
                 {{ COMPETITION.college_title }}
             </h1>
             <p class="text-muted mb-0">{{ tournament.name }} {{ tournament.year }} &mdash; {{ COMPETITION.college_day }}</p>
+            <p class="text-muted small mt-1 mb-0">
+                Import rosters, view team standings, track individual competitors, and monitor live event results.
+            </p>
         </div>
         <div class="col-auto d-flex gap-2 flex-wrap justify-content-end">
             <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}"

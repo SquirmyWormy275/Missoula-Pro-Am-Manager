@@ -3,7 +3,7 @@ Heat generation service using snake draft distribution.
 Adapted from STRATHEX tournament_ui.py patterns.
 """
 from database import db
-from models import Event, Heat, EventResult
+from models import Event, Heat, HeatAssignment, EventResult
 from models.competitor import CollegeCompetitor, ProCompetitor
 import config
 import math
@@ -45,9 +45,9 @@ def generate_event_heats(event: Event) -> int:
         db.session.commit()
         return 0
 
-    # Get stand configuration
+    # Get stand configuration; event.max_stands is authoritative when set
     stand_config = config.STAND_CONFIGS.get(event.stand_type, {})
-    max_per_heat = stand_config.get('total', 4)
+    max_per_heat = event.max_stands if event.max_stands is not None else stand_config.get('total', 4)
 
     # Calculate number of heats needed
     num_heats = math.ceil(len(competitors) / max_per_heat)
@@ -65,6 +65,7 @@ def generate_event_heats(event: Event) -> int:
 
     # Create Heat objects
     stand_numbers = _stand_numbers_for_event(event, max_per_heat, stand_config)
+    created_heats = []
     for heat_num, heat_competitors in enumerate(heats, start=1):
         heat = Heat(
             event_id=event.id,
@@ -79,9 +80,11 @@ def generate_event_heats(event: Event) -> int:
             heat.set_stand_assignment(comp['id'], stand_num)
 
         db.session.add(heat)
+        created_heats.append(heat)
 
     # For dual-run events, create second run heats
     if event.requires_dual_runs:
+        run2_stands = list(reversed(stand_numbers))
         for heat_num, heat_competitors in enumerate(heats, start=1):
             heat = Heat(
                 event_id=event.id,
@@ -91,13 +94,19 @@ def generate_event_heats(event: Event) -> int:
             heat.set_competitors([c['id'] for c in heat_competitors])
 
             # Swap stand assignments for run 2 (e.g., Course 1 <-> Course 2)
-            run2_stands = list(reversed(stand_numbers))
             for i, comp in enumerate(heat_competitors):
                 heat.set_stand_assignment(comp['id'], run2_stands[i])
 
             db.session.add(heat)
+            created_heats.append(heat)
 
     event.status = 'in_progress'
+    db.session.flush()
+
+    comp_type = event.event_type  # 'pro' or 'college'
+    for heat in created_heats:
+        heat.sync_assignments(comp_type)
+
     db.session.commit()
 
     return num_heats

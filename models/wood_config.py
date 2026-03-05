@@ -9,8 +9,10 @@ config_key conventions:
                  e.g. block_underhand_college_M
                       block_standing_pro_F
                       block_springboard_pro_open
-  Saw logs:      log_general  (Single Buck, Double Buck, J&J, Hot Saw, OP, Cookie Stack)
+  Saw logs:      log_general  (Single Buck, Double Buck, J&J, Hot Saw)
                  log_stock    (Stock Saw — may differ from general)
+                 log_op       (Obstacle Pole — independent species/size)
+                 log_cookie   (Cookie Stack — independent species/size)
   Relay blocks:  block_relay_underhand  (Pro-Am Relay underhand butcher block)
                  block_relay_standing   (Pro-Am Relay standing butcher block)
                  These use count_override instead of enrollment-derived counts.

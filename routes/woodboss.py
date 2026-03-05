@@ -51,6 +51,8 @@ def config_form(tid):
     block_rows = woodboss_svc.calculate_blocks(tid, configs=configs)
     general_cfg = configs.get(woodboss_svc.LOG_GENERAL_KEY)
     stock_cfg = configs.get(woodboss_svc.LOG_STOCK_KEY)
+    op_cfg = configs.get(woodboss_svc.LOG_OP_KEY)
+    cookie_cfg = configs.get(woodboss_svc.LOG_COOKIE_KEY)
 
     # All tournaments (for copy-from dropdown), excluding current
     all_tournaments = (
@@ -66,6 +68,8 @@ def config_form(tid):
         block_rows=block_rows,
         general_cfg=general_cfg,
         stock_cfg=stock_cfg,
+        op_cfg=op_cfg,
+        cookie_cfg=cookie_cfg,
         configs=configs,
         other_tournaments=other_tournaments,
     )

@@ -235,6 +235,15 @@
         text-align: center;
         flex-shrink: 0;
     }
+    .quick-launch-item .ql-text { flex: 1; min-width: 0; }
+    .quick-launch-item .ql-title { display: block; font-weight: 600; }
+    .quick-launch-item .ql-desc {
+        display: block;
+        font-size: 0.72rem;
+        color: var(--sx-text-3);
+        line-height: 1.3;
+        white-space: normal;
+    }
 
     @media (max-width: 991px) {
         .hero-logo-lockup { gap: 0.75rem; margin-bottom: 1rem; }
@@ -369,20 +378,32 @@
                 </div>
                 <div>
                     <a class="quick-launch-item" href="{{ url_for('scheduling.event_list', tournament_id=active_tournament.id) }}">
-                        <i class="bi bi-list-ul"></i>
-                        <span>Event Grid &amp; Progress</span>
+                        <i class="bi bi-calendar-event"></i>
+                        <span class="ql-text">
+                            <span class="ql-title">Events &amp; Schedule</span>
+                            <span class="ql-desc">Generate heats, build flights, set FNF &amp; Saturday options</span>
+                        </span>
                     </a>
-                    <a class="quick-launch-item" href="{{ url_for('scheduling.day_schedule', tournament_id=active_tournament.id) }}">
-                        <i class="bi bi-calendar-week"></i>
-                        <span>Day Schedule Builder</span>
+                    <a class="quick-launch-item" href="{{ url_for('scheduling.flight_list', tournament_id=active_tournament.id) }}">
+                        <i class="bi bi-layers"></i>
+                        <span class="ql-text">
+                            <span class="ql-title">Pro Flights</span>
+                            <span class="ql-desc">Saturday show roster — start flights, score heats</span>
+                        </span>
                     </a>
                     <a class="quick-launch-item" href="{{ url_for('reporting.export_results', tournament_id=active_tournament.id) }}">
                         <i class="bi bi-file-earmark-spreadsheet"></i>
-                        <span>Export Results</span>
+                        <span class="ql-text">
+                            <span class="ql-title">Export Results</span>
+                            <span class="ql-desc">Download final standings as a spreadsheet</span>
+                        </span>
                     </a>
                     <a class="quick-launch-item" href="{{ url_for('reporting.all_results', tournament_id=active_tournament.id) }}">
                         <i class="bi bi-bar-chart-steps"></i>
-                        <span>View All Results</span>
+                        <span class="ql-text">
+                            <span class="ql-title">View All Results</span>
+                            <span class="ql-desc">Full results table — college standings and pro payouts</span>
+                        </span>
                     </a>
                 </div>
             </div>

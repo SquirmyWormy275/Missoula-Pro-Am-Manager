@@ -97,7 +97,7 @@
         <li class="nav-item">
             <a class="nav-link {{ 'active' if view == 'order' }}"
                href="{{ url_for('woodboss.report', tid=tournament.id, view='order') }}">
-                <i class="bi bi-cart3"></i> Ordering Summary
+                <i class="bi bi-cart3"></i> Block Turning Report
             </a>
         </li>
     </ul>
@@ -291,12 +291,6 @@
 
     {% elif view == 'order' %}
     <!-- ═══ ORDERING SUMMARY ════════════════════════════════════════ -->
-
-    <div class="alert alert-info mb-4">
-        <i class="bi bi-info-circle-fill me-2"></i>
-        A flat purchase/prep list combining all blocks and logs by species and size.
-        Hand this to your sawyer, supplier, or block prep crew.
-    </div>
 
     {% if report.ordering %}
     <div class="row g-3">

@@ -10,8 +10,10 @@ Formulas (per head judge specification):
       Double Buck and Jack & Jill are partnered → 1 cut per pair
   - Stock Saw: 5" per cut (1 cut per competitor)
   - Hot Saw: 6.5" per cut (1 cut per competitor)
-  - Obstacle Pole: 2" per competitor + 5" per every 10 competitors (timber lags)
+  - Obstacle Pole: 2" per competitor + 5" per every 7 competitors (timber lags)
+      Uses log_op config (independent — does not share species/size with general log).
   - Cookie Stack: 1 log per 3 competitors (cookie logs, not linear footage)
+      Uses log_cookie config (independent — does not share species/size with general log).
   - Chopping blocks: 1 block per enrolled competitor
   - Relay blocks: count_override (set manually — lottery-determined team count)
 """
@@ -85,6 +87,8 @@ SAW_EVENTS = [
 # Log species config keys
 LOG_GENERAL_KEY = 'log_general'
 LOG_STOCK_KEY = 'log_stock'
+LOG_OP_KEY = 'log_op'
+LOG_COOKIE_KEY = 'log_cookie'
 LOG_RELAY_DOUBLEBUCK_KEY = 'log_relay_doublebuck'
 
 
@@ -99,12 +103,28 @@ def _get_configs(tournament_id):
     return {row.config_key: row for row in rows}
 
 
+def _get_pro_event_map(tournament_id):
+    """
+    Return {str(event_id): Event} for all pro events in this tournament.
+
+    Pro competitors store event IDs (not names) in events_entered, so we need
+    this lookup to resolve IDs to event names for fragment matching.
+    """
+    from models.event import Event
+    rows = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
+    return {str(r.id): r for r in rows}
+
+
 def _count_competitors(tournament_id):
     """
     Count enrolled competitors per (event_name_lower, competitor_type, gender).
 
     Returns a defaultdict(int) keyed by (event_name_lower, 'college'|'pro', 'M'|'F').
-    Event names are stored as strings in the JSON events_entered column.
+
+    College competitors store event names in events_entered (e.g. "Single Buck").
+    Pro competitors store event IDs; these are resolved to event.name via the Event table.
+    For gendered pro events (event.gender set), the event gender is used.
+    For open/mixed pro events, the competitor's own gender is used.
     """
     from models.competitor import CollegeCompetitor, ProCompetitor
 
@@ -121,15 +141,22 @@ def _count_competitors(tournament_id):
             key = (event_name.lower().strip(), 'college', gender)
             counts[key] += 1
 
+    pro_event_map = _get_pro_event_map(tournament_id)
+
     pro_comps = (
         ProCompetitor.query
         .filter_by(tournament_id=tournament_id, status='active')
         .all()
     )
     for comp in pro_comps:
-        gender = comp.gender or 'M'
-        for event_name in comp.get_events_entered():
-            key = (event_name.lower().strip(), 'pro', gender)
+        comp_gender = comp.gender or 'M'
+        for event_id in comp.get_events_entered():
+            event = pro_event_map.get(str(event_id).strip())
+            if not event:
+                continue
+            # Use event gender if the event is gendered; else use competitor gender
+            gender = event.gender or comp_gender
+            key = (event.name.lower().strip(), 'pro', gender)
             counts[key] += 1
 
     return counts
@@ -141,6 +168,8 @@ def _list_competitors(tournament_id):
 
     Returns a list of dicts:
         {'name': str, 'affiliation': str, 'gender': str, 'comp_type': 'college'|'pro', 'events': [str]}
+
+    Pro competitor events are resolved from IDs to event names.
     """
     from models.competitor import CollegeCompetitor, ProCompetitor
 
@@ -161,18 +190,26 @@ def _list_competitors(tournament_id):
             'events': comp.get_events_entered(),
         })
 
+    pro_event_map = _get_pro_event_map(tournament_id)
+
     pro_comps = (
         ProCompetitor.query
         .filter_by(tournament_id=tournament_id, status='active')
         .all()
     )
     for comp in pro_comps:
+        # Resolve event IDs to event names
+        event_names = []
+        for event_id in comp.get_events_entered():
+            event = pro_event_map.get(str(event_id).strip())
+            if event:
+                event_names.append(event.name)
         result.append({
             'name': comp.name,
             'affiliation': '',
             'gender': comp.gender or 'M',
             'comp_type': 'pro',
-            'events': comp.get_events_entered(),
+            'events': event_names,
         })
 
     return result
@@ -301,6 +338,8 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
 
     general_cfg = configs.get(LOG_GENERAL_KEY)
     stock_cfg = configs.get(LOG_STOCK_KEY) or general_cfg  # fall back to general if stock not set
+    op_cfg = configs.get(LOG_OP_KEY)        # independent — no fallback to general
+    cookie_cfg = configs.get(LOG_COOKIE_KEY)  # independent — no fallback to general
 
     results = []
 
@@ -315,8 +354,18 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
         if not matched:
             continue
 
-        cfg = stock_cfg if category == 'stocksaw' else general_cfg
-        cfg_key = LOG_STOCK_KEY if category == 'stocksaw' else LOG_GENERAL_KEY
+        if category == 'stocksaw':
+            cfg = stock_cfg
+            cfg_key = LOG_STOCK_KEY
+        elif category == 'op':
+            cfg = op_cfg
+            cfg_key = LOG_OP_KEY
+        elif category == 'cookie':
+            cfg = cookie_cfg
+            cfg_key = LOG_COOKIE_KEY
+        else:
+            cfg = general_cfg
+            cfg_key = LOG_GENERAL_KEY
 
         # Gendered events emit separate M/F rows; open events collapse all genders
         is_gendered = fragment in ('single buck', 'double buck', 'stock saw', 'obstacle pole')
@@ -348,9 +397,9 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
                 formula_desc = f'{cut_count} cut{"s" if cut_count != 1 else ""} × 6.5" = {total_inches:.1f}"'
                 log_count = None
             elif category == 'op':
-                lag_blocks = math.ceil(cut_count / 10) * 5
+                lag_blocks = math.ceil(cut_count / 7) * 5
                 total_inches = cut_count * 2.0 + lag_blocks
-                formula_desc = f'{cut_count} × 2" + ⌈{cut_count}/10⌉×5" lag = {total_inches:.0f}"'
+                formula_desc = f'{cut_count} × 2" + ⌈{cut_count}/7⌉×5" lag = {total_inches:.0f}"'
                 log_count = None
             elif category == 'cookie':
                 log_count = math.ceil(cut_count / 3)

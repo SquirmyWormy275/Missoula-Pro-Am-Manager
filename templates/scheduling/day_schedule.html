@@ -91,27 +91,30 @@
                                 {% endif %}
                             </div>
                         </div>
-                        <div class="d-flex gap-2 flex-wrap">
-                            <button type="submit" name="action" value="generate_schedule" class="btn btn-dark">
-                                <i class="bi bi-arrow-repeat"></i> Generate Schedule
-                            </button>
-                            <button type="submit" name="action" value="rebuild_flights" class="btn btn-outline-warning"
-                                    onclick="return confirm('Rebuild pro flights from current pro heats?');">
-                                <i class="bi bi-shuffle"></i> Rebuild Pro Flights
-                            </button>
-                            <button type="submit" name="action" value="generate_all" class="btn btn-warning text-dark"
-                                    onclick="return confirm('Generate heats for all events and rebuild pro flights?');">
-                                <i class="bi bi-lightning-charge"></i> Generate All Heats + Build Flights
-                            </button>
-                            <button type="submit" name="action" value="integrate_spillover" class="btn btn-outline-primary"
-                                    onclick="return confirm('Integrate selected college spillover heats into existing Saturday flights?');">
-                                <i class="bi bi-link-45deg"></i> Integrate Spillover to Flights
-                            </button>
-                        </div>
-                        <div class="alert alert-info mt-3 mb-0">
-                            <i class="bi bi-info-circle"></i>
-                            Before you choose Friday Night Feature or Saturday spillover, this page uses <strong>College</strong> and <strong>Pro</strong> grouping only.
-                            Day labels appear after you make those selections and regenerate.
+                        <div class="d-flex gap-2 flex-wrap align-items-start">
+                            <div>
+                                <button type="submit" name="action" value="generate_all" class="btn btn-primary"
+                                        onclick="return confirm('Generate heats for all events and rebuild pro flights? Existing heats will be regenerated.');">
+                                    <i class="bi bi-lightning-charge"></i> Generate All Heats + Build Flights
+                                </button>
+                                <div class="text-muted small mt-1">Generates heats for every event and builds Saturday pro flight groupings.</div>
+                            </div>
+                            <div class="vr d-none d-md-block mx-1"></div>
+                            <div>
+                                <button type="submit" name="action" value="rebuild_flights" class="btn btn-outline-secondary"
+                                        onclick="return confirm('Rebuild pro flights from existing pro heats?');">
+                                    <i class="bi bi-shuffle"></i> Rebuild Pro Flights Only
+                                </button>
+                                <div class="text-muted small mt-1">Re-runs flight grouping without touching heats.</div>
+                            </div>
+                            <div class="vr d-none d-md-block mx-1"></div>
+                            <div>
+                                <button type="submit" name="action" value="integrate_spillover" class="btn btn-outline-secondary"
+                                        onclick="return confirm('Integrate selected college spillover heats into existing Saturday flights?');">
+                                    <i class="bi bi-link-45deg"></i> Integrate College Spillover
+                                </button>
+                                <div class="text-muted small mt-1">Adds checked college events to Saturday flights without regenerating heats.</div>
+                            </div>
                         </div>
                     </form>
                 </div>
@@ -121,53 +124,28 @@
 
     <div class="row mb-4">
         <div class="col-12">
-            <div class="card">
-                <div class="card-header bg-dark text-white">
-                    <h5 class="mb-0"><i class="bi bi-signpost-split"></i> Next Step</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row g-3">
-                        <div class="col-lg-4">
-                            <div class="border rounded p-3 h-100">
-                                <div class="d-flex align-items-center gap-2 mb-2">
-                                    <span class="badge bg-warning text-dark">Step 1</span>
-                                    <strong>Friday Night Feature</strong>
-                                </div>
-                                <p class="text-muted small mb-3">Choose which pro events move into the Friday night showcase.</p>
-                                <a href="{{ url_for('scheduling.friday_feature', tournament_id=tournament.id) }}"
-                                   class="btn {% if not has_schedule_overrides %}btn-proam{% else %}btn-outline-warning{% endif %} w-100">
-                                    <i class="bi bi-stars"></i> Configure Friday Night Feature
-                                </a>
-                            </div>
-                        </div>
-                        <div class="col-lg-4">
-                            <div class="border rounded p-3 h-100">
-                                <div class="d-flex align-items-center gap-2 mb-2">
-                                    <span class="badge bg-primary">Step 2</span>
-                                    <strong>Heats Setup</strong>
-                                </div>
-                                <p class="text-muted small mb-3">Generate and review heats for each event before scoring starts.</p>
-                                <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
-                                   class="btn {% if has_schedule_overrides %}btn-proam{% else %}btn-outline-primary{% endif %} w-100">
-                                    <i class="bi bi-list-check"></i> Generate / Manage Heats
-                                </a>
-                            </div>
-                        </div>
-                        <div class="col-lg-4">
-                            <div class="border rounded p-3 h-100">
-                                <div class="d-flex align-items-center gap-2 mb-2">
-                                    <span class="badge bg-success">Step 3</span>
-                                    <strong>Build Pro Flights</strong>
-                                </div>
-                                <p class="text-muted small mb-3">After pro heats are ready, build Saturday flight groupings.</p>
-                                <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
-                                   class="btn {% if has_schedule_overrides and schedule.saturday_source != 'flights' %}btn-proam{% else %}btn-outline-success{% endif %} w-100">
-                                    <i class="bi bi-shuffle"></i> Build Pro Flights
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-list-ul"></i> Events &amp; Heats
+                </a>
+                <a href="{{ url_for('scheduling.friday_feature', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-stars"></i> Friday Night Feature (optional)
+                </a>
+                <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-warning btn-sm">
+                    <i class="bi bi-shield-check"></i> Preflight Check
+                </a>
+                {% if schedule.saturday_source == 'flights' %}
+                <span class="badge bg-success align-self-center">
+                    <i class="bi bi-check-circle me-1"></i>Flights built
+                </span>
+                {% else %}
+                <span class="badge bg-secondary align-self-center">
+                    <i class="bi bi-exclamation-circle me-1"></i>No flights yet
+                </span>
+                {% endif %}
             </div>
         </div>
     </div>

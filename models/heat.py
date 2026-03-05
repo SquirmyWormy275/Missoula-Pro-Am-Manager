@@ -93,6 +93,22 @@ class Heat(db.Model):
         assignments = self.get_stand_assignments()
         return assignments.get(str(competitor_id))
 
+    def sync_assignments(self, competitor_type: str) -> None:
+        """Rebuild HeatAssignment rows to match the authoritative competitors JSON.
+
+        Must be called after self.id is assigned (i.e., after db.session.flush()).
+        competitor_type should be 'pro' or 'college' (matches event.event_type).
+        """
+        HeatAssignment.query.filter_by(heat_id=self.id).delete()
+        assignments = self.get_stand_assignments()
+        for comp_id in self.get_competitors():
+            db.session.add(HeatAssignment(
+                heat_id=self.id,
+                competitor_id=comp_id,
+                competitor_type=competitor_type,
+                stand_number=assignments.get(str(comp_id)),
+            ))
+
     @property
     def competitor_count(self):
         """Return number of competitors in this heat."""

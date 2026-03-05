@@ -136,6 +136,7 @@ def tournament_detail(tournament_id):
 
     from models.wood_config import WoodConfig
     # Get summary statistics
+    flights_built = Flight.query.filter_by(tournament_id=tournament_id).count() > 0
     stats = {
         'college_teams': tournament.college_team_count,
         'college_competitors': tournament.college_competitor_count,
@@ -144,6 +145,7 @@ def tournament_detail(tournament_id):
         'completed_events': tournament.events.filter_by(status='completed').count(),
         'heats_generated': Heat.query.join(Event).filter(Event.tournament_id == tournament_id).count(),
         'wood_configured': WoodConfig.query.filter_by(tournament_id=tournament_id).first() is not None,
+        'flights_built': flights_built,
     }
 
     return render_template('tournament_detail.html',

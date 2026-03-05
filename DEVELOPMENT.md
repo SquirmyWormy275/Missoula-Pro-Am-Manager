@@ -528,6 +528,49 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-03-04 (V1.6.0)
+
+**Collapsible tournament management sidebar:**
+- Added `templates/_sidebar.html`: sticky collapsible sidebar component (220px expanded / 44px icon-only); 5 independently collapsible sections (Show Entries, Show Configuration, Scoring, Results, Admin); localStorage-persisted collapse state; active-link auto-expand; unscored-heats badge on "Events & Schedule" link
+- Updated `base.html` with full STRATHEX dark-theme redesign; sidebar rendered when tournament context is available; `unscored_heats` count injected via `app.py` context processor
+
+**Unified Events & Schedule page (`/scheduling/<tid>/events`):**
+- `event_list` route now accepts POST with actions: `generate_all`, `rebuild_flights`, `integrate_spillover`; session-stored schedule options (Friday Night Feature pro events, Saturday college overflow events); schedule preview via `build_day_schedule()`
+- Redesigned `templates/scheduling/events.html`: heat status per event, one-click "Generate All Heats" + "Build Flights" + "Integrate Spillover", schedule preview accordion, event progress badges
+- `/scheduling/<tid>/day-schedule` now redirects to `event_list` (301) — legacy route preserved
+- New `generate_college_heats` bulk route: generates heats for all closed college events in one click; skips OPEN/list-only and completed events; flashes per-event error if generation fails
+- Stand count overrides: `setup_events` form now includes per-stand-type count inputs; `_parse_stand_overrides()` helper; `_upsert_event()` uses override when provided; `_get_existing_event_config()` returns `stand_counts`; `_next_open_stand()` uses `event.max_stands` as authoritative
+
+**Flight builder algorithm improvements:**
+- Per-event sequential queue (`_optimize_heat_order`): only the NEXT unplaced heat from each event is eligible at each step, guaranteeing heats within any event appear in ascending `heat_number` order across the show schedule
+- Springboard flight opener (`_promote_springboard_to_flight_start`): after greedy ordering, the first pro springboard heat in each flight block is moved to position 0 of that block
+- Stand conflict deadlock fallback: if all candidates score `-1.0`, re-score ignoring stand conflicts and take the best-spacing choice
+
+**College Saturday overflow integration (closes known gap):**
+- `integrate_college_spillover_into_flights()` now handles Chokerman's Race Run 2 separately: all Run 2 heats are placed together at the end of the last flight in heat-number order
+- Other overflow events distributed round-robin across all flights (unchanged behavior, now wired to `event_list` POST)
+- `event_list` calls integration automatically after `generate_all` and `rebuild_flights` actions if Saturday college event IDs are selected
+
+**HeatAssignment sync (`Heat.sync_assignments`):**
+- New `Heat.sync_assignments(competitor_type)` method: deletes and rebuilds `HeatAssignment` rows from the authoritative `Heat.competitors` JSON — closes the consistency gap between the two representations
+- Called automatically after heat generation (`heat_generator.py`), after flight rebuilds (`flight_builder.py`), and after competitor moves (`scheduling.py` `move_competitor_between_heats`)
+
+**Score entry: "Save & Next Heat" button:**
+- `routes/scoring.py` now queries the next pending heat in the same event; passes `next_heat_url` to `enter_heat.html`
+- `templates/scoring/enter_heat.html` shows a "Save & Next Heat" button when one exists
+
+**Woodboss fixes:**
+- OP lag formula corrected: 5" lag every **7** competitors (was 10)
+- `log_op` and `log_cookie` config keys are now fully independent (no fallback to `log_general`); `LOG_OP_KEY` and `LOG_COOKIE_KEY` constants exported
+- Pro competitor event lookup fixed: `_count_competitors()` and `_list_competitors()` now resolve event IDs to event names via the Event table (pro competitors store IDs in `events_entered`, not names)
+- `routes/woodboss.py` passes `op_cfg` and `cookie_cfg` to config form template
+
+**New documentation:**
+- Added `FlightLogic.md`: 480-line source-of-truth document for all flight builder rules, heat generation rules, stand configurations, algorithm details, edge cases, and build sequence — referenced by `services/flight_builder.py` and `services/heat_generator.py`
+
+**Print template cleanup:**
+- Reformatted `all_results_print.html`, `college_standings_print.html`, `event_results_print.html`, `payout_summary_print.html`, `day_schedule_print.html`, `heat_sheets_print.html` — consistent no-print classes, page-break handling, layout fixes
+
 ### 2026-03-02 (V1.5.0)
 
 **Virtual Woodboss — complete material planning system for block prep days:**

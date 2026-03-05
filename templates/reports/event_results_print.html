@@ -9,54 +9,66 @@
             font-family: Arial, sans-serif;
             font-size: 11pt;
             padding: 0.5in;
+            color: #111;
+            line-height: 1.35;
         }
         .header {
             text-align: center;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #2d5a27;
+            margin-bottom: 18px;
+            border-bottom: 2px solid #111;
             padding-bottom: 10px;
         }
-        .header h1 { font-size: 20pt; color: #2d5a27; }
-        .header h2 { font-size: 14pt; font-weight: normal; color: #666; }
+        .header h1 { font-size: 20pt; color: #000; }
+        .header h2 { font-size: 13pt; font-weight: normal; color: #444; }
         .event-type {
             display: inline-block;
+            margin-top: 6px;
             padding: 3px 10px;
-            background: {% if event.event_type == 'college' %}#0d6efd{% else %}#ffc107{% endif %};
-            color: {% if event.event_type == 'college' %}white{% else %}black{% endif %};
+            border: 1px solid #888;
+            background: #efefef;
+            color: #111;
             border-radius: 3px;
-            font-size: 10pt;
+            font-size: 9pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
         }
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 15px;
+            margin-top: 12px;
+            table-layout: fixed;
+            border: 1px solid #999;
         }
         th, td {
-            padding: 8px 10px;
+            padding: 7px 9px;
             text-align: left;
-            border-bottom: 1px solid #ddd;
+            border-bottom: 1px solid #c7c7c7;
+            border-right: 1px solid #d5d5d5;
+            vertical-align: top;
         }
+        tr td:last-child, tr th:last-child { border-right: none; }
         th {
-            background-color: #2d5a27;
-            color: white;
+            background-color: #efefef;
+            color: #111;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            font-size: 9pt;
         }
-        tr:nth-child(even) { background-color: #f9f9f9; }
-        .rank { text-align: center; width: 60px; font-weight: bold; }
-        .rank-1 { color: #daa520; font-size: 14pt; }
-        .rank-2 { color: #888; }
-        .rank-3 { color: #cd7f32; }
+        tr:nth-child(even) { background-color: #fafafa; }
+        .rank { text-align: center; width: 70px; font-weight: 700; }
         .result { text-align: right; }
-        .points, .payout { text-align: right; font-weight: bold; width: 80px; }
-        .payout { color: #198754; }
+        .points, .payout { text-align: right; font-weight: 700; width: 110px; }
         .footer {
-            margin-top: 30px;
+            margin-top: 24px;
             text-align: center;
             font-size: 9pt;
-            color: #999;
+            color: #555;
         }
         @media print {
             body { padding: 0; }
-            .no-print { display: none; }
+            .no-print { display: none !important; }
         }
     </style>
 </head>
@@ -86,7 +98,7 @@
         <tbody>
             {% for r in results %}
             <tr>
-                <td class="rank rank-{{ r.final_position if r.final_position and r.final_position <= 3 else '' }}">
+                <td class="rank">
                     {% if r.final_position %}
                         {{ r.final_position }}{{ 'st' if r.final_position == 1 else 'nd' if r.final_position == 2 else 'rd' if r.final_position == 3 else 'th' }}
                     {% else %}

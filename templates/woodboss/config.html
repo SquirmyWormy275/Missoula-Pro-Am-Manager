@@ -125,6 +125,8 @@
                             {% for row in block_rows %}
                             {% set ck = row.config_key %}
                             {% set is_relay = ck in ('block_relay_underhand', 'block_relay_standing') %}
+                            {# Only show rows with enrolled competitors, relay rows (always), or already-configured rows #}
+                            {% if not (row.competitor_count == 0 and not is_relay and ck not in configs) %}
                             <tr {% if is_relay %}class="relay-row"{% endif %}>
                                 <td>
                                     <div class="event-group-label">{{ row.label }}</div>
@@ -180,6 +182,7 @@
                                     {% endif %}
                                 </td>
                             </tr>
+                            {% endif %}
                             {% endfor %}
                         </tbody>
                     </table>
@@ -211,7 +214,7 @@
                                 <td>
                                     <div class="event-group-label">General Saw Log</div>
                                     <div class="text-muted" style="font-size:0.75rem;">
-                                        Single Buck · Double Buck · Jack &amp; Jill · Hot Saw · Obstacle Pole · Cookie Stack
+                                        Single Buck · Double Buck · Jack &amp; Jill · Hot Saw
                                     </div>
                                 </td>
                                 <td>
@@ -286,6 +289,86 @@
                                            placeholder="Optional">
                                 </td>
                             </tr>
+                            <!-- Obstacle Pole Log -->
+                            <tr>
+                                <td>
+                                    <div class="event-group-label">Obstacle Pole Log</div>
+                                    <div class="text-muted" style="font-size:0.75rem;">
+                                        Obstacle Pole only — independent species/size from all other log categories
+                                    </div>
+                                </td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm"
+                                           name="species_log_op"
+                                           value="{{ op_cfg.species if op_cfg and op_cfg.config_key == 'log_op' and op_cfg.species else '' }}"
+                                           placeholder="e.g. White Pine">
+                                </td>
+                                <td>
+                                    <input type="number" class="form-control form-control-sm"
+                                           name="size_value_log_op"
+                                           value="{{ op_cfg.size_value if op_cfg and op_cfg.config_key == 'log_op' and op_cfg.size_value is not none else '' }}"
+                                           step="0.5" min="0" placeholder="e.g. 10">
+                                </td>
+                                <td>
+                                    <div class="btn-group unit-group" role="group">
+                                        <input type="radio" class="btn-check" name="size_unit_log_op"
+                                               id="uin_log_op" value="in"
+                                               {% if not op_cfg or op_cfg.config_key != 'log_op' or op_cfg.size_unit == 'in' %}checked{% endif %}>
+                                        <label class="btn btn-outline-secondary btn-sm" for="uin_log_op">in</label>
+                                        <input type="radio" class="btn-check" name="size_unit_log_op"
+                                               id="umm_log_op" value="mm"
+                                               {% if op_cfg and op_cfg.config_key == 'log_op' and op_cfg.size_unit == 'mm' %}checked{% endif %}>
+                                        <label class="btn btn-outline-secondary btn-sm" for="umm_log_op">mm</label>
+                                    </div>
+                                </td>
+                                <td><!-- auto (from enrollment) --></td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm"
+                                           name="notes_log_op"
+                                           value="{{ op_cfg.notes if op_cfg and op_cfg.config_key == 'log_op' and op_cfg.notes else '' }}"
+                                           placeholder="Optional">
+                                </td>
+                            </tr>
+                            <!-- Cookie Stack Log -->
+                            <tr>
+                                <td>
+                                    <div class="event-group-label">Cookie Stack Log</div>
+                                    <div class="text-muted" style="font-size:0.75rem;">
+                                        Cookie Stack only — independent species/size from all other log categories
+                                    </div>
+                                </td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm"
+                                           name="species_log_cookie"
+                                           value="{{ cookie_cfg.species if cookie_cfg and cookie_cfg.config_key == 'log_cookie' and cookie_cfg.species else '' }}"
+                                           placeholder="e.g. White Pine">
+                                </td>
+                                <td>
+                                    <input type="number" class="form-control form-control-sm"
+                                           name="size_value_log_cookie"
+                                           value="{{ cookie_cfg.size_value if cookie_cfg and cookie_cfg.config_key == 'log_cookie' and cookie_cfg.size_value is not none else '' }}"
+                                           step="0.5" min="0" placeholder="e.g. 10">
+                                </td>
+                                <td>
+                                    <div class="btn-group unit-group" role="group">
+                                        <input type="radio" class="btn-check" name="size_unit_log_cookie"
+                                               id="uin_log_cookie" value="in"
+                                               {% if not cookie_cfg or cookie_cfg.config_key != 'log_cookie' or cookie_cfg.size_unit == 'in' %}checked{% endif %}>
+                                        <label class="btn btn-outline-secondary btn-sm" for="uin_log_cookie">in</label>
+                                        <input type="radio" class="btn-check" name="size_unit_log_cookie"
+                                               id="umm_log_cookie" value="mm"
+                                               {% if cookie_cfg and cookie_cfg.config_key == 'log_cookie' and cookie_cfg.size_unit == 'mm' %}checked{% endif %}>
+                                        <label class="btn btn-outline-secondary btn-sm" for="umm_log_cookie">mm</label>
+                                    </div>
+                                </td>
+                                <td><!-- auto (from enrollment) --></td>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm"
+                                           name="notes_log_cookie"
+                                           value="{{ cookie_cfg.notes if cookie_cfg and cookie_cfg.config_key == 'log_cookie' and cookie_cfg.notes else '' }}"
+                                           placeholder="Optional">
+                                </td>
+                            </tr>
                             <!-- Pro-Am Relay Double Buck -->
                             {% set relay_db_cfg = configs.get('log_relay_doublebuck') %}
                             <tr class="relay-row">
@@ -301,13 +384,13 @@
                                     <input type="text" class="form-control form-control-sm"
                                            name="species_log_relay_doublebuck"
                                            value="{{ relay_db_cfg.species if relay_db_cfg and relay_db_cfg.species else '' }}"
-                                           placeholder="(uses general log)">
+                                           placeholder="e.g. White Pine">
                                 </td>
                                 <td>
                                     <input type="number" class="form-control form-control-sm"
                                            name="size_value_log_relay_doublebuck"
                                            value="{{ relay_db_cfg.size_value if relay_db_cfg and relay_db_cfg.size_value is not none else '' }}"
-                                           step="0.5" min="0" placeholder="(uses general)">
+                                           step="0.5" min="0" placeholder="e.g. 10">
                                 </td>
                                 <td>
                                     <div class="btn-group unit-group" role="group">
