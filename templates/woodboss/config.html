@@ -125,8 +125,6 @@
                             {% for row in block_rows %}
                             {% set ck = row.config_key %}
                             {% set is_relay = ck in ('block_relay_underhand', 'block_relay_standing') %}
-                            {# Only show rows with enrolled competitors, relay rows (always), or already-configured rows #}
-                            {% if not (row.competitor_count == 0 and not is_relay and ck not in configs) %}
                             <tr {% if is_relay %}class="relay-row"{% endif %}>
                                 <td>
                                     <div class="event-group-label">{{ row.label }}</div>
@@ -182,7 +180,6 @@
                                     {% endif %}
                                 </td>
                             </tr>
-                            {% endif %}
                             {% endfor %}
                         </tbody>
                     </table>

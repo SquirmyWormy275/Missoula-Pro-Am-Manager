@@ -135,6 +135,7 @@ class ProCompetitor(db.Model):
 
     # Springboard specific
     is_left_handed_springboard = db.Column(db.Boolean, default=False)
+    springboard_slow_heat = db.Column(db.Boolean, default=False)
 
     # Event and fee tracking - stored as JSON
     events_entered = db.Column(db.Text, default='[]')  # List of event IDs

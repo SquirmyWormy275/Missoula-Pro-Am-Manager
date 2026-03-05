@@ -41,10 +41,27 @@ BLOCK_EVENT_GROUPS = [
     ('standing block', 'pro',     'F', 'block_standing_pro_F',     'Standing Block — Pro Women'),
     ('springboard', 'college', 'M', 'block_springboard_college_M', 'Springboard — College Men'),
     ('springboard', 'college', 'F', 'block_springboard_college_F', 'Springboard — College Women'),
+    ('1-board', 'college', 'M', 'block_springboard_college_M', 'Springboard — College Men'),
+    ('1-board', 'college', 'F', 'block_springboard_college_F', 'Springboard — College Women'),
+    ('one board', 'college', 'M', 'block_springboard_college_M', 'Springboard — College Men'),
+    ('one board', 'college', 'F', 'block_springboard_college_F', 'Springboard — College Women'),
+    ('2-board', 'college', 'M', 'block_springboard_college_M', 'Springboard — College Men'),
+    ('2-board', 'college', 'F', 'block_springboard_college_F', 'Springboard — College Women'),
+    ('2 board', 'college', 'M', 'block_springboard_college_M', 'Springboard — College Men'),
+    ('2 board', 'college', 'F', 'block_springboard_college_F', 'Springboard — College Women'),
+    ('two board', 'college', 'M', 'block_springboard_college_M', 'Springboard — College Men'),
+    ('two board', 'college', 'F', 'block_springboard_college_F', 'Springboard — College Women'),
     # Pro springboard events: 1-Board, 3-Board Jigger, Pro 1-Board are all open gender
     ('springboard',  'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
     ('1-board',      'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
+    ('one board',    'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
+    ('2-board',      'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
+    ('2 board',      'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
+    ('two board',    'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
     ('3-board',      'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
+    ('3 board',      'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
+    ('three-board',  'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
+    ('three board',  'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
 ]
 
 # Relay block config_keys — no enrollment fragment matching; count comes from count_override
@@ -264,6 +281,7 @@ def calculate_blocks(tournament_id, counts=None, configs=None):
     # Accumulate enrollment-based counts per config_key
     key_counts = defaultdict(int)
     for (event_lower, comp_type, gender), n in counts.items():
+        matched_cfg_keys = set()
         for (fragment, grp_type, grp_gender, cfg_key, _label) in BLOCK_EVENT_GROUPS:
             if fragment not in event_lower:
                 continue
@@ -272,6 +290,8 @@ def calculate_blocks(tournament_id, counts=None, configs=None):
             # grp_gender=None means open (any gender matches)
             if grp_gender is not None and gender != grp_gender:
                 continue
+            matched_cfg_keys.add(cfg_key)
+        for cfg_key in matched_cfg_keys:
             key_counts[cfg_key] += n
 
     results = []
@@ -620,6 +640,7 @@ def get_lottery_view(tournament_id):
         comp_type = comp['comp_type']
         for event_name in comp['events']:
             event_lower = event_name.lower().strip()
+            matched_cfg_keys = set()
             for (fragment, grp_type, grp_gender, cfg_key, _label) in BLOCK_EVENT_GROUPS:
                 if fragment not in event_lower:
                     continue
@@ -627,6 +648,8 @@ def get_lottery_view(tournament_id):
                     continue
                 if grp_gender is not None and gender != grp_gender:
                     continue
+                matched_cfg_keys.add(cfg_key)
+            for cfg_key in matched_cfg_keys:
                 key_event_comps[cfg_key][event_name].append({
                     'name': comp['name'],
                     'affiliation': comp['affiliation'],
@@ -685,6 +708,50 @@ def get_lottery_view(tournament_id):
     return result
 
 
+def calculate_springboard_dummies(blocks):
+    """
+    Calculate springboard dummy/tree requirements from block counts.
+
+    Rules:
+      - 1-board + 2-board style springboard runs: 3 runs per dummy
+      - 3-board jigger runs: 2 runs per dummy
+    """
+    one_two_keys = {
+        'block_springboard_college_M',
+        'block_springboard_college_F',
+        'block_springboard_pro',
+    }
+    three_board_keys = {'block_3board_pro'}
+
+    one_two_runs = sum(
+        b['competitor_count']
+        for b in blocks
+        if b['config_key'] in one_two_keys
+    )
+    three_board_runs = sum(
+        b['competitor_count']
+        for b in blocks
+        if b['config_key'] in three_board_keys
+    )
+
+    one_two_per_dummy = 3
+    three_board_per_dummy = 2
+
+    one_two_dummies = math.ceil(one_two_runs / one_two_per_dummy) if one_two_runs > 0 else 0
+    three_board_dummies = math.ceil(three_board_runs / three_board_per_dummy) if three_board_runs > 0 else 0
+
+    return {
+        'one_two_runs': one_two_runs,
+        'three_board_runs': three_board_runs,
+        'one_two_per_dummy': one_two_per_dummy,
+        'three_board_per_dummy': three_board_per_dummy,
+        'one_two_dummies': one_two_dummies,
+        'three_board_dummies': three_board_dummies,
+        'total_runs': one_two_runs + three_board_runs,
+        'total_dummies': one_two_dummies + three_board_dummies,
+    }
+
+
 def get_wood_report(tournament_id):
     """
     Full wood material report for a tournament.
@@ -700,6 +767,7 @@ def get_wood_report(tournament_id):
           'total_blocks': int,
           'total_saw_inches': float,
           'total_cookie_logs': int,
+          'springboard': dict,
         }
     """
     configs = _get_configs(tournament_id)
@@ -708,6 +776,7 @@ def get_wood_report(tournament_id):
     saw_wood = calculate_saw_wood(tournament_id, counts=counts, configs=configs)
     by_species = _group_by_species(blocks, saw_wood)
     ordering = get_ordering_summary(blocks, saw_wood)
+    springboard = calculate_springboard_dummies(blocks)
 
     total_blocks = sum(b['competitor_count'] for b in blocks)
     total_saw_inches = sum(s['total_inches'] for s in saw_wood if s['total_inches'] is not None)
@@ -723,6 +792,7 @@ def get_wood_report(tournament_id):
         'total_blocks': total_blocks,
         'total_saw_inches': total_saw_inches,
         'total_cookie_logs': total_cookie_logs,
+        'springboard': springboard,
     }
 
 

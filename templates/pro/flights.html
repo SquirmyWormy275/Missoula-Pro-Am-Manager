@@ -133,6 +133,18 @@
     margin-right: 5px;
     vertical-align: middle;
 }
+.badge-pro-label {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    background: #0b5ed7;
+    color: #fff;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-right: 5px;
+    vertical-align: middle;
+}
 </style>
 {% endblock %}
 
@@ -229,7 +241,12 @@
             <div class="heat-tile {{ 'heat-tile-college' if is_college else '' }} {% if row.heat.status == 'completed' %}bg-light{% endif %}">
                 <div class="heat-tile-header">
                     <span class="heat-tile-event">
-                        {% if is_college %}<span class="badge-college-label">COLLEGE</span>{% endif %}{{ row.event.display_name }}
+                        {% if is_college %}
+                        <span class="badge-college-label">COLLEGE</span>
+                        {% else %}
+                        <span class="badge-pro-label">PRO</span>
+                        {% endif %}
+                        {{ row.event.display_name }}
                         {% if row.event.gender %}<small class="text-muted fw-normal"> ({{ 'M' if row.event.gender == 'M' else 'F' }})</small>{% endif %}
                     </span>
                     <span class="heat-tile-num">

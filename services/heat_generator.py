@@ -7,6 +7,7 @@ from models import Event, Heat, HeatAssignment, EventResult
 from models.competitor import CollegeCompetitor, ProCompetitor
 import config
 import math
+from services.gear_sharing import competitors_share_gear_for_event
 
 LIST_ONLY_EVENT_NAMES = {
     'axethrow',
@@ -190,6 +191,7 @@ def _get_event_competitors(event: Event) -> list:
                     'name': comp.name,
                     'gender': comp.gender,
                     'is_left_handed': comp.is_left_handed_springboard,
+                    'is_slow_springboard': bool(getattr(comp, 'springboard_slow_heat', False)),
                     'gear_sharing': comp.get_gear_sharing(),
                     'partner_name': _get_partner_name_for_event(comp, event)
                 })
@@ -301,38 +303,67 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
     """
     Generate springboard heats with left-handed cutter grouping.
 
-    Left-handed cutters need to be on the same dummy and spread across heats.
+    Left-handed cutters need to be grouped into the same heat.
     """
-    # Separate left-handed and right-handed cutters
-    left_handed = [c for c in competitors if c.get('is_left_handed', False)]
-    right_handed = [c for c in competitors if not c.get('is_left_handed', False)]
-
-    # If no left-handed, use standard distribution
-    if not left_handed:
-        return _generate_standard_heats(competitors, num_heats, max_per_heat, event=event)
-
-    # Create heats ensuring left-handed are spread out
     heats = [[] for _ in range(num_heats)]
 
-    # Distribute left-handed first (one per heat if possible)
-    for i, comp in enumerate(left_handed):
-        heat_idx = i % num_heats
-        heats[heat_idx].append(comp)
+    # Dedicated springboard buckets:
+    # - Left-handed cutters must stay together in one heat.
+    # - Slow-heat cutters should be grouped into the dedicated slow heat.
+    left_handed = [c for c in competitors if c.get('is_left_handed', False)]
+    slow_heat = [c for c in competitors if c.get('is_slow_springboard', False)]
 
-    # Then distribute right-handed using snake draft
-    remaining_spots = [[max_per_heat - len(h)] for h in heats]
+    left_heat_idx = 0 if left_handed else None
+    slow_heat_idx = (num_heats - 1) if slow_heat else None
+    if left_heat_idx is not None and slow_heat_idx is not None and num_heats == 1:
+        slow_heat_idx = left_heat_idx
+
+    assigned_ids = set()
+
+    def _place_group(group: list, preferred_idx: int | None):
+        if not group:
+            return
+        remaining = [g for g in group if g['id'] not in assigned_ids]
+        if not remaining:
+            return
+
+        # Prefer one dedicated heat; overflow stays grouped into adjacent heats.
+        idx = preferred_idx if preferred_idx is not None else 0
+        while remaining:
+            candidate = None
+            for probe in list(range(idx, num_heats)) + list(range(0, idx)):
+                if len(heats[probe]) < max_per_heat:
+                    candidate = probe
+                    break
+            if candidate is None:
+                break
+            idx = candidate
+            capacity = max_per_heat - len(heats[idx])
+            take = remaining[:max(0, capacity)]
+            heats[idx].extend(take)
+            for comp in take:
+                assigned_ids.add(comp['id'])
+            remaining = remaining[len(take):]
+            idx += 1
+
+    _place_group(left_handed, left_heat_idx)
+    _place_group(slow_heat, slow_heat_idx)
+
+    # Fill the remaining cutters with snake draft while respecting capacity.
+    remaining = [c for c in competitors if c['id'] not in assigned_ids]
+    if not remaining:
+        return heats
+
     heat_idx = 0
     direction = 1
-
-    for comp in right_handed:
-        # Find next heat with space
-        while heats[heat_idx] and len(heats[heat_idx]) >= max_per_heat:
-            heat_idx += direction
+    for comp in remaining:
+        attempts = 0
+        while attempts < num_heats and len(heats[heat_idx]) >= max_per_heat:
             heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
-
+            attempts += 1
+        if attempts >= num_heats:
+            break
         heats[heat_idx].append(comp)
-
-        # Move to next heat
         heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
 
     return heats
@@ -373,6 +404,19 @@ def _competitor_entered_event(event: Event, entered_events: list) -> bool:
     target_id = str(event.id)
     target_name = _normalize_name(event.name)
     target_display_name = _normalize_name(event.display_name)
+    aliases = {target_name, target_display_name}
+
+    if event.event_type == 'pro':
+        if target_name == 'springboard':
+            aliases.update({'springboardl', 'springboardr'})
+        elif target_name in {'pro1board', '1boardspringboard'}:
+            aliases.update({'intermediate1boardspringboard', 'pro1board', '1boardspringboard'})
+        elif target_name == 'jackjillsawing':
+            aliases.update({'jackjill', 'jackandjill'})
+        elif target_name in {'poleclimb', 'speedclimb'}:
+            aliases.update({'poleclimb', 'speedclimb'})
+        elif target_name == 'partneredaxethrow':
+            aliases.update({'partneredaxethrow', 'axethrow'})
 
     for raw in entered:
         value = str(raw).strip()
@@ -381,7 +425,7 @@ def _competitor_entered_event(event: Event, entered_events: list) -> bool:
         if value == target_id:
             return True
         normalized = _normalize_name(value)
-        if normalized in {target_name, target_display_name}:
+        if normalized in aliases:
             return True
     return False
 
@@ -412,55 +456,13 @@ def _has_gear_sharing_conflict(comp: dict, heat_competitors: list, event: Event)
 
 def _competitors_share_gear_for_event(comp1: dict, comp2: dict, event: Event) -> bool:
     """Check event-specific gear-sharing conflict between two competitors."""
-    sharing1 = comp1.get('gear_sharing', {}) or {}
-    sharing2 = comp2.get('gear_sharing', {}) or {}
-    name1 = str(comp1.get('name', '')).strip().lower()
-    name2 = str(comp2.get('name', '')).strip().lower()
-
-    for key1, value1 in sharing1.items():
-        if not _gear_key_matches_event(key1, event):
-            continue
-
-        value1_text = str(value1).strip()
-        if not value1_text:
-            continue
-
-        # Partner-name style rules.
-        if value1_text.lower() == name2:
-            return True
-
-        # Group-token style rules from team-level gear notes.
-        if value1_text.startswith('group:'):
-            for key2, value2 in sharing2.items():
-                if _gear_key_matches_event(key2, event) and str(value2).strip() == value1_text:
-                    return True
-
-    # Symmetric check for partner-name rules set on comp2 only.
-    for key2, value2 in sharing2.items():
-        if _gear_key_matches_event(key2, event) and str(value2).strip().lower() == name1:
-            return True
-
-    return False
-
-
-def _gear_key_matches_event(key: str, event: Event) -> bool:
-    """Match a gear-sharing key against an event."""
-    key = str(key).strip().lower()
-    event_name = (event.display_name if event else '').lower()
-
-    if not event:
-        return False
-    if key == str(event.id):
-        return True
-    if key.startswith('category:'):
-        category = key.split(':', 1)[1]
-        if category == 'crosscut':
-            return event.stand_type == 'saw_hand' or any(token in event_name for token in ['buck', 'saw', 'crosscut'])
-        if category == 'chainsaw':
-            return any(token in event_name for token in ['stock saw', 'power saw', 'hot saw'])
-        return False
-
-    return key in event_name
+    return competitors_share_gear_for_event(
+        str(comp1.get('name', '')).strip(),
+        comp1.get('gear_sharing', {}) or {},
+        str(comp2.get('name', '')).strip(),
+        comp2.get('gear_sharing', {}) or {},
+        event,
+    )
 
 
 def check_gear_sharing_conflicts(heats: list) -> list:
@@ -474,17 +476,18 @@ def check_gear_sharing_conflicts(heats: list) -> list:
     for heat_num, heat in enumerate(heats, start=1):
         for i, comp1 in enumerate(heat):
             for comp2 in heat[i+1:]:
-                # Check if either is sharing gear with the other
-                sharing1 = comp1.get('gear_sharing', {})
-                sharing2 = comp2.get('gear_sharing', {})
-
-                for event_id, partner in sharing1.items():
-                    if partner == comp2.get('name'):
-                        conflicts.append({
-                            'heat': heat_num,
-                            'competitor1': comp1['name'],
-                            'competitor2': comp2['name'],
-                            'type': 'gear_sharing'
-                        })
+                if competitors_share_gear_for_event(
+                    str(comp1.get('name', '')),
+                    comp1.get('gear_sharing', {}) or {},
+                    str(comp2.get('name', '')),
+                    comp2.get('gear_sharing', {}) or {},
+                    None,
+                ):
+                    conflicts.append({
+                        'heat': heat_num,
+                        'competitor1': comp1['name'],
+                        'competitor2': comp2['name'],
+                        'type': 'gear_sharing'
+                    })
 
     return conflicts

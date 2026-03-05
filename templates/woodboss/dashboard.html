@@ -55,7 +55,7 @@
     <!-- Quick stats (only if there are enrolled competitors) -->
     {% if report.total_blocks > 0 or report.total_saw_inches > 0 %}
     <div class="row mb-4">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card text-center">
                 <div class="card-body">
                     <h2 class="card-title text-warning mb-0">{{ report.total_blocks }}</h2>
@@ -63,7 +63,15 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h2 class="card-title text-secondary mb-0">{{ report.springboard.total_dummies }}</h2>
+                    <p class="card-text text-muted mt-1">Springboard Dummies</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
             <div class="card text-center">
                 <div class="card-body">
                     <h2 class="card-title text-info mb-0">{{ '%.1f'|format(report.total_saw_inches) }}"</h2>
@@ -71,7 +79,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card text-center">
                 <div class="card-body">
                     <h2 class="card-title text-success mb-0">{{ report.total_cookie_logs }}</h2>

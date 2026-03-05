@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Friday Night & Saturday Options - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+{% block title %}Friday Showcase & Saturday Options - {{ tournament.name }} {{ tournament.year }}{% endblock %}
 {% block content %}
 <div class="container-fluid py-3">
     <div class="d-flex justify-content-between align-items-center mb-3">
-        <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Friday Night &amp; Saturday Options</h4>
+        <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Friday Showcase &amp; Saturday Options</h4>
         <a class="btn btn-outline-secondary btn-sm"
            href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Back to Events</a>
     </div>
@@ -17,17 +17,17 @@
             <div class="col-lg-6">
                 <div class="card shadow-sm h-100">
                     <div class="card-header card-header-proam">
-                        <h6 class="mb-0"><i class="bi bi-stars me-1 text-warning"></i> Friday Night Feature</h6>
+                        <h6 class="mb-0"><i class="bi bi-stars me-1 text-warning"></i> Friday Showcase</h6>
                     </div>
                     <div class="card-body">
                         <div class="mb-3">
-                            <label class="form-label fw-semibold">Friday Night Date</label>
+                            <label class="form-label fw-semibold">Friday Showcase Date</label>
                             <input type="date" class="form-control" style="max-width:220px;" name="friday_feature_date"
                                    value="{{ tournament.friday_feature_date.isoformat() if tournament.friday_feature_date else '' }}">
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label fw-semibold">Select Pro Events to Run Friday Night</label>
+                            <label class="form-label fw-semibold">Select Pro Events to Run in the Friday Showcase</label>
                             {% if eligible_events %}
                             <div class="table-responsive">
                                 <table class="table table-sm align-middle">
@@ -64,7 +64,7 @@
                                 </table>
                             </div>
                             {% else %}
-                            <p class="text-muted small mb-0">No Friday Night eligible events found. Set up pro events first.</p>
+                            <p class="text-muted small mb-0">No Friday Showcase eligible events found. Set up pro events first.</p>
                             {% endif %}
                         </div>
 
@@ -113,7 +113,7 @@
 
         <div class="d-flex gap-2">
             <button type="submit" class="btn btn-proam">
-                <i class="bi bi-save me-1"></i>Save Friday Night &amp; Saturday Options
+                <i class="bi bi-save me-1"></i>Save Friday Showcase &amp; Saturday Options
             </button>
             <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
                class="btn btn-outline-secondary">Cancel</a>
@@ -130,7 +130,7 @@
         <div class="card-body">
             <div class="row g-3">
                 <div class="col-md-6">
-                    <strong>Friday Night Feature</strong>
+                    <strong>Friday Showcase</strong>
                     {% if tournament.friday_feature_date %}
                     <div class="text-muted small">{{ tournament.friday_feature_date.strftime('%B %d, %Y') }}</div>
                     {% endif %}

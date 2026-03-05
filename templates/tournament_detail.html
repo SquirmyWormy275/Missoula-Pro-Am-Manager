@@ -269,7 +269,7 @@
                 <div class="fw-bold" style="color:var(--sx-amber);">Import Pro Entries</div>
                 <div class="small text-muted">College rosters are loaded. Add pro competitors via the Google Forms export importer.</div>
             </div>
-            <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}"
+            <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}"
                class="btn btn-warning btn-sm flex-shrink-0">Import Pro Entries <i class="bi bi-arrow-right ms-1"></i></a>
         </div>
         {% elif stats.heats_generated == 0 %}
@@ -363,9 +363,9 @@
                    class="btn btn-outline-secondary btn-sm">
                     <i class="bi bi-upload"></i> College Entry Import
                 </a>
-                <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}"
+                <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}"
                    class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-person-plus"></i> Pro Entry Import
+                    <i class="bi bi-person-plus"></i> Pro Operations
                 </a>
             </div>
 

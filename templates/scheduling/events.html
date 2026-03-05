@@ -94,6 +94,140 @@
 
 
     {# ══════════════════════════════════════════════════════════════════
+       SCHEDULE OPTIONS  (Friday Showcase + Saturday Spillover)
+    ══════════════════════════════════════════════════════════════════ #}
+    <div class="card mb-4">
+        <div class="card-header d-flex align-items-center justify-content-between py-2">
+            <h5 class="mb-0">
+                <i class="bi bi-calendar2-week me-2 text-secondary"></i>
+                Friday &amp; Saturday Options
+            </h5>
+            {% if has_schedule_overrides %}
+            <span class="badge bg-primary">Options saved</span>
+            {% else %}
+            <span class="badge bg-secondary">Default (all college = Friday, all pro = Saturday)</span>
+            {% endif %}
+        </div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" data-loading>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="row g-4 mb-4">
+                    {# Left: Friday Showcase #}
+                    <div class="col-md-6">
+                        <div class="fw-semibold mb-2">
+                            <i class="bi bi-stars text-warning me-1"></i>
+                            Friday Showcase
+                            <span class="text-muted fw-normal small ms-1">(optional — pro events to run Friday)</span>
+                        </div>
+                        {% if fnf_eligible %}
+                        {% for event in fnf_eligible %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox"
+                                   name="friday_pro_event_ids" value="{{ event.id }}"
+                                   id="fnf_{{ event.id }}"
+                                   {% if event.id in selected_friday_pro_event_ids %}checked{% endif %}>
+                            <label class="form-check-label" for="fnf_{{ event.id }}">
+                                {{ event.display_name }}
+                                {% if event.gender %}<small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}
+                            </label>
+                        </div>
+                        {% endfor %}
+                        {% else %}
+                        <p class="text-muted small mb-0">No pro events are configured as Friday Showcase events.</p>
+                        {% endif %}
+                    </div>
+
+                    {# Right: Saturday Spillover #}
+                    <div class="col-md-6">
+                        <div class="fw-semibold mb-2">
+                            <i class="bi bi-arrow-right-circle text-primary me-1"></i>
+                            Saturday Spillover
+                            <span class="text-muted fw-normal small ms-1">(college events that run Saturday morning)</span>
+                        </div>
+                        {% if sat_eligible %}
+                        {% for event in sat_eligible %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox"
+                                   name="saturday_college_event_ids" value="{{ event.id }}"
+                                   id="sat_{{ event.id }}"
+                                   {% if event.id in selected_saturday_college_event_ids %}checked{% endif %}>
+                            <label class="form-check-label" for="sat_{{ event.id }}">
+                                {{ event.display_name }}
+                                {% if event.gender %}<small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}
+                            </label>
+                        </div>
+                        {% endfor %}
+                        {% else %}
+                        <p class="text-muted small mb-0">No college events are eligible for Saturday spillover.</p>
+                        {% endif %}
+                    </div>
+                </div>
+
+                {# Guided action flow #}
+                {% set recommended_action = 'generate_all' %}
+                {% set recommended_label = 'Generate All Heats + Build Flights' %}
+                {% set recommended_help = 'Build a full schedule from current registrations and options.' %}
+                {% if pro_heats_exist and not flights_built %}
+                    {% set recommended_action = 'rebuild_flights' %}
+                    {% set recommended_label = 'Build Pro Flights' %}
+                    {% set recommended_help = 'Pro heats already exist. Build Saturday flights without touching heats.' %}
+                {% elif flights_built and selected_saturday_college_event_ids %}
+                    {% set recommended_action = 'integrate_spillover' %}
+                    {% set recommended_label = 'Integrate Saturday Spillover' %}
+                    {% set recommended_help = 'Apply selected college spillover events into built flights.' %}
+                {% endif %}
+
+                <div class="pt-3 border-top">
+                    <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                        <div>
+                            <div class="fw-semibold mb-1">Recommended Next Step</div>
+                            <div class="small text-muted">{{ recommended_help }}</div>
+                        </div>
+                        <button type="submit" name="action" value="{{ recommended_action }}" class="btn btn-primary"
+                                data-confirm="Proceed with {{ recommended_label|lower }}?">
+                            <i class="bi bi-lightning-charge me-1"></i>{{ recommended_label }}
+                        </button>
+                    </div>
+
+                    <div class="accordion mt-3" id="advancedActions">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="advancedActionsHead">
+                                <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                                        data-bs-target="#advancedActionsBody" aria-expanded="false" aria-controls="advancedActionsBody">
+                                    Advanced Actions
+                                </button>
+                            </h2>
+                            <div id="advancedActionsBody" class="accordion-collapse collapse" aria-labelledby="advancedActionsHead">
+                                <div class="accordion-body">
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <button type="submit" name="action" value="generate_all" class="btn btn-outline-secondary btn-sm"
+                                                data-confirm="Generate heats for all events and build pro flights? Existing heats will be regenerated.">
+                                            <i class="bi bi-lightning-charge me-1"></i>Generate All
+                                        </button>
+                                        <button type="submit" name="action" value="rebuild_flights" class="btn btn-outline-secondary btn-sm"
+                                                data-confirm="Rebuild pro flights from existing pro heats?">
+                                            <i class="bi bi-shuffle me-1"></i>Rebuild Flights Only
+                                        </button>
+                                        <button type="submit" name="action" value="integrate_spillover" class="btn btn-outline-secondary btn-sm"
+                                                data-confirm="Integrate selected Saturday college events into existing flights?">
+                                            <i class="bi bi-link-45deg me-1"></i>Integrate Spillover
+                                        </button>
+                                        <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}" class="btn btn-outline-warning btn-sm">
+                                            <i class="bi bi-shield-check me-1"></i>Open Preflight
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    {# ══════════════════════════════════════════════════════════════════
        COLLEGE EVENTS
     ══════════════════════════════════════════════════════════════════ #}
     <div class="card mb-4">
@@ -236,108 +370,6 @@
                 </a>
             </div>
             {% endif %}
-        </div>
-    </div>
-
-
-    {# ══════════════════════════════════════════════════════════════════
-       SCHEDULE OPTIONS  (Friday Night Feature + Saturday Spillover)
-    ══════════════════════════════════════════════════════════════════ #}
-    <div class="card mb-4">
-        <div class="card-header d-flex align-items-center justify-content-between py-2">
-            <h5 class="mb-0">
-                <i class="bi bi-calendar2-week me-2 text-secondary"></i>
-                Friday &amp; Saturday Options
-            </h5>
-            {% if has_schedule_overrides %}
-            <span class="badge bg-primary">Options saved</span>
-            {% else %}
-            <span class="badge bg-secondary">Default (all college = Friday, all pro = Saturday)</span>
-            {% endif %}
-        </div>
-        <div class="card-body">
-            <form method="POST" action="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" data-loading>
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-                <div class="row g-4 mb-4">
-                    {# Left: Friday Night Feature #}
-                    <div class="col-md-6">
-                        <div class="fw-semibold mb-2">
-                            <i class="bi bi-stars text-warning me-1"></i>
-                            Friday Night Feature
-                            <span class="text-muted fw-normal small ms-1">(optional — pro events to run Friday)</span>
-                        </div>
-                        {% if fnf_eligible %}
-                        {% for event in fnf_eligible %}
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox"
-                                   name="friday_pro_event_ids" value="{{ event.id }}"
-                                   id="fnf_{{ event.id }}"
-                                   {% if event.id in selected_friday_pro_event_ids %}checked{% endif %}>
-                            <label class="form-check-label" for="fnf_{{ event.id }}">
-                                {{ event.display_name }}
-                                {% if event.gender %}<small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}
-                            </label>
-                        </div>
-                        {% endfor %}
-                        {% else %}
-                        <p class="text-muted small mb-0">No pro events are configured as Friday Night Feature events.</p>
-                        {% endif %}
-                    </div>
-
-                    {# Right: Saturday Spillover #}
-                    <div class="col-md-6">
-                        <div class="fw-semibold mb-2">
-                            <i class="bi bi-arrow-right-circle text-primary me-1"></i>
-                            Saturday Spillover
-                            <span class="text-muted fw-normal small ms-1">(college events that run Saturday morning)</span>
-                        </div>
-                        {% if sat_eligible %}
-                        {% for event in sat_eligible %}
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox"
-                                   name="saturday_college_event_ids" value="{{ event.id }}"
-                                   id="sat_{{ event.id }}"
-                                   {% if event.id in selected_saturday_college_event_ids %}checked{% endif %}>
-                            <label class="form-check-label" for="sat_{{ event.id }}">
-                                {{ event.display_name }}
-                                {% if event.gender %}<small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}
-                            </label>
-                        </div>
-                        {% endfor %}
-                        {% else %}
-                        <p class="text-muted small mb-0">No college events are eligible for Saturday spillover.</p>
-                        {% endif %}
-                    </div>
-                </div>
-
-                {# Action buttons #}
-                <div class="d-flex flex-wrap gap-3 pt-3 border-top">
-                    <div>
-                        <button type="submit" name="action" value="generate_all" class="btn btn-primary"
-                                data-confirm="Generate heats for all events and build pro flights? Existing heats will be regenerated.">
-                            <i class="bi bi-lightning-charge me-1"></i>Generate All Heats + Build Flights
-                        </button>
-                        <div class="text-muted small mt-1">Regenerates all heats and builds Saturday flight groupings using the options above.</div>
-                    </div>
-                    <div class="vr d-none d-lg-block"></div>
-                    <div>
-                        <button type="submit" name="action" value="rebuild_flights" class="btn btn-outline-secondary"
-                                data-confirm="Rebuild pro flights from existing pro heats?">
-                            <i class="bi bi-shuffle me-1"></i>Rebuild Flights Only
-                        </button>
-                        <div class="text-muted small mt-1">Re-runs flight grouping without touching heats.</div>
-                    </div>
-                    <div class="vr d-none d-lg-block"></div>
-                    <div>
-                        <button type="submit" name="action" value="integrate_spillover" class="btn btn-outline-secondary"
-                                data-confirm="Integrate selected Saturday college events into existing flights?">
-                            <i class="bi bi-link-45deg me-1"></i>Integrate Spillover
-                        </button>
-                        <div class="text-muted small mt-1">Slots checked college events into Saturday without regenerating heats.</div>
-                    </div>
-                </div>
-            </form>
         </div>
     </div>
 
@@ -492,7 +524,7 @@
                     <i class="bi bi-layout-three-columns me-2"></i>
                     Schedule Preview
                     <span class="text-muted fw-normal ms-2" style="font-size:0.8rem;">
-                        Friday Day &middot; Friday Night Feature &middot; Saturday Show
+                        Friday Day &middot; Friday Showcase &middot; Saturday Show
                     </span>
                     <span class="badge {{ 'bg-success' if schedule.saturday_source == 'flights' else 'bg-secondary' }} ms-2" style="font-size:0.7rem;">
                         {{ 'Using flights' if schedule.saturday_source == 'flights' else 'No flights yet' }}
@@ -535,11 +567,11 @@
                                 {% endfor %}
                             </ol>
                         </div>
-                        {# Friday Night Feature #}
+                        {# Friday Showcase #}
                         <div class="col-lg-4 border-end">
                             <div class="px-3 py-2 border-bottom bg-secondary text-white small fw-bold text-uppercase">
                                 <i class="bi bi-stars me-1"></i>
-                                {{ 'Friday Night Feature' if has_schedule_overrides else 'Pro Events' }}
+                                {{ 'Friday Showcase' if has_schedule_overrides else 'Pro Events' }}
                             </div>
                             <ol class="list-group list-group-flush list-group-numbered">
                                 {% for item in detailed_schedule.friday_feature %}

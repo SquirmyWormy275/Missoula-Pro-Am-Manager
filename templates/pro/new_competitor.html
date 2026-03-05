@@ -11,7 +11,7 @@
                     <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro</a></li>
-                    <li class="breadcrumb-item"><a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}">Registration</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro Operations</a></li>
                     <li class="breadcrumb-item active">New Competitor</li>
                 </ol>
             </nav>
@@ -96,6 +96,14 @@
                                 </label>
                             </div>
                         </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="springboard_slow_heat" name="springboard_slow_heat">
+                                <label class="form-check-label" for="springboard_slow_heat">
+                                    Relegate to Springboard Slow Heat
+                                </label>
+                            </div>
+                        </div>
 
                         <hr>
 
@@ -103,7 +111,7 @@
                             <button type="submit" class="btn btn-warning">
                                 <i class="bi bi-check-circle"></i> Register Competitor
                             </button>
-                            <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}" class="btn btn-outline-secondary">
+                            <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}" class="btn btn-outline-secondary">
                                 <i class="bi bi-x-circle"></i> Cancel
                             </a>
                         </div>

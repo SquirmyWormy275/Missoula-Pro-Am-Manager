@@ -16,6 +16,7 @@ from database import db
 from models import Event, EventResult, ProCompetitor, Tournament
 from services.audit import log_action
 from services.upload_security import malware_scan, save_upload, validate_excel_upload
+from services.gear_sharing import build_name_index, parse_gear_sharing_details, resolve_partner_name
 
 import_pro_bp = Blueprint('import_pro', __name__)
 
@@ -23,8 +24,10 @@ _ALLOWED = {'xlsx', 'xls'}
 
 # Fee lookup: canonical event name -> amount (used when writing entry_fees JSON)
 _EVENT_FEES = {
+    'Springboard':            10,
     'Springboard (L)':          10,
     'Springboard (R)':          10,
+    'Pro 1-Board':              10,
     '1-Board Springboard':      10,
     "Men's Underhand":          10,
     "Women's Underhand":        10,
@@ -32,9 +35,11 @@ _EVENT_FEES = {
     "Men's Single Buck":         5,
     "Women's Single Buck":       5,
     "Men's Double Buck":         5,
+    'Jack & Jill Sawing':        5,
     'Jack & Jill':               5,
     'Hot Saw':                   5,
     'Obstacle Pole':             5,
+    'Pole Climb':                5,
     'Speed Climb':               5,
     'Cookie Stack':              5,
     'Partnered Axe Throw':       5,
@@ -182,7 +187,12 @@ def confirm_pro_entries(tournament_id):
     imported = 0
     updated  = 0
     errors   = []
+    gear_parse_warnings = 0
     now      = datetime.utcnow()
+
+    existing_names = [c.name for c in ProCompetitor.query.filter_by(tournament_id=tournament_id).all()]
+    incoming_names = [str(e.get('name') or '').strip() for e in entries if str(e.get('name') or '').strip()]
+    name_index = build_name_index(existing_names + incoming_names)
 
     for entry in entries:
         try:
@@ -210,6 +220,7 @@ def confirm_pro_entries(tournament_id):
             competitor.waiver_signature   = entry.get('waiver_signature')
             competitor.gear_sharing_details = entry.get('gear_sharing_details')
             competitor.notes          = entry.get('notes')
+            competitor.springboard_slow_heat = bool(entry.get('springboard_slow_heat', False))
             competitor.total_fees     = entry.get('total_fees', 0)
             competitor.import_timestamp = now
 
@@ -229,6 +240,11 @@ def confirm_pro_entries(tournament_id):
                 event_ids_or_names.append(ev.id if ev else event_name)
             competitor.set_events_entered(event_ids_or_names)
 
+            # Refresh mapping payloads on import update to avoid stale keys.
+            competitor.entry_fees = '{}'
+            competitor.partners = '{}'
+            competitor.gear_sharing = '{}'
+
             # ---- Entry fees JSON ----
             for event_name in entry.get('events', []):
                 ev  = event_by_name.get(event_name)
@@ -241,7 +257,23 @@ def confirm_pro_entries(tournament_id):
             for event_name, partner_name in entry.get('partners', {}).items():
                 ev  = event_by_name.get(event_name)
                 key = str(ev.id) if ev else event_name
-                competitor.set_partner(key, partner_name)
+                canonical_partner = resolve_partner_name(partner_name, name_index)
+                if canonical_partner:
+                    competitor.set_partner(key, canonical_partner)
+
+            # ---- Gear sharing JSON (parsed from free-text details) ----
+            if entry.get('gear_sharing'):
+                parsed_gear, warnings = parse_gear_sharing_details(
+                    details_text=entry.get('gear_sharing_details') or '',
+                    event_pool=pro_events,
+                    name_index=name_index,
+                    self_name=entry.get('name') or '',
+                    entered_event_names=entry.get('events') or [],
+                )
+                for gear_key, partner_name in parsed_gear.items():
+                    competitor.set_gear_sharing(gear_key, partner_name)
+                if warnings:
+                    gear_parse_warnings += 1
 
             if is_new:
                 db.session.add(competitor)
@@ -292,6 +324,8 @@ def confirm_pro_entries(tournament_id):
     session.pop(_session_key(tournament_id), None)
 
     summary = f'Import complete: {imported} added, {updated} updated.'
+    if gear_parse_warnings:
+        summary += f' Gear-sharing parse warnings on {gear_parse_warnings} row(s); review competitor detail pages.'
     log_action('pro_import_confirmed', 'tournament', tournament_id, {
         'imported': imported,
         'updated': updated,

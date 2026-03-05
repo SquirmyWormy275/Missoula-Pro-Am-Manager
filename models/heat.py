@@ -51,6 +51,7 @@ class Heat(db.Model):
 
     # Optional flight assignment (pro only)
     flight_id = db.Column(db.Integer, db.ForeignKey('flights.id'), nullable=True)
+    flight_position = db.Column(db.Integer, nullable=True)  # 1-based order within a flight
 
     def __repr__(self):
         run_str = f" Run {self.run_number}" if self.run_number > 1 else ""
@@ -141,7 +142,11 @@ class Flight(db.Model):
 
     def get_heats_ordered(self):
         """Return heats in this flight, ordered by their sequence."""
-        return self.heats.order_by(Heat.id).all()
+        return self.heats.order_by(
+            db.case((Heat.flight_position.is_(None), 1), else_=0),
+            Heat.flight_position,
+            Heat.id,
+        ).all()
 
     def add_heat(self, heat):
         """Add a heat to this flight."""

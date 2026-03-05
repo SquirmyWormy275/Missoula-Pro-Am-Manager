@@ -99,7 +99,8 @@ def create_app():
         from models.user import User
 
         @login_manager.user_loader
-        def load_user(user_id: str):
+        def load_user(user_id: str): 
+            
             if not user_id:
                 return None
             return User.query.get(int(user_id))

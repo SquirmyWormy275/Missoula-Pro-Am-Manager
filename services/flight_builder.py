@@ -90,6 +90,7 @@ def build_pro_flights(tournament: Tournament, heats_per_flight: int = 8) -> int:
         while heats_in_flight < heats_per_flight and heat_index < total_heats:
             heat_data = ordered_heats[heat_index]
             heat_data['heat'].flight_id = flight.id
+            heat_data['heat'].flight_position = heats_in_flight + 1
             heat_index += 1
             heats_in_flight += 1
 
@@ -189,6 +190,15 @@ def _insert_partnered_axe_heats(flights: list[Flight], axe_heats: list[Heat]) ->
     for idx, heat in enumerate(shuffled_heats):
         flight = flight_pool[idx % len(flight_pool)]
         heat.flight_id = flight.id
+        heat.flight_position = _next_flight_position(flight.id)
+
+
+def _next_flight_position(flight_id: int) -> int:
+    """Return next 1-based display position within a flight."""
+    max_pos = db.session.query(db.func.max(Heat.flight_position)).filter(
+        Heat.flight_id == flight_id
+    ).scalar()
+    return int(max_pos or 0) + 1
 
 
 def _promote_springboard_to_flight_start(ordered_heats: list, heats_per_flight: int) -> list:
@@ -561,9 +571,11 @@ def integrate_college_spillover_into_flights(tournament: Tournament, college_eve
             if event.name == "Chokerman's Race":
                 # Always place at end of last flight.
                 heat.flight_id = last_flight.id
+                heat.flight_position = _next_flight_position(last_flight.id)
             else:
                 target = flights[flight_idx % len(flights)]
                 heat.flight_id = target.id
+                heat.flight_position = _next_flight_position(target.id)
                 flight_idx += 1
             integrated += 1
 
@@ -573,4 +585,3 @@ def integrate_college_spillover_into_flights(tournament: Tournament, college_eve
         'events': per_event,
         'message': 'College spillover heats integrated into flights.',
     }
-

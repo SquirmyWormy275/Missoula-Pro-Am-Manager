@@ -202,6 +202,43 @@
     <!-- ═══════════════════════════════════
          SAW LOG MATERIAL
     ═══════════════════════════════════ -->
+    <h2>&#9632; Springboard Dummies</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Group</th>
+                <th class="text-end">Runs</th>
+                <th>Rule</th>
+                <th class="text-end">Dummies Needed</th>
+                <th style="width:80px;">&#10003; Check</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="fw-bold">1-Board / 2-Board Springboard</td>
+                <td class="text-end">{{ report.springboard.one_two_runs }}</td>
+                <td class="formula">{{ report.springboard.one_two_per_dummy }} runs per dummy</td>
+                <td class="text-end fw-bold">{{ report.springboard.one_two_dummies }}</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td class="fw-bold">3-Board Jigger</td>
+                <td class="text-end">{{ report.springboard.three_board_runs }}</td>
+                <td class="formula">{{ report.springboard.three_board_per_dummy }} runs per dummy</td>
+                <td class="text-end fw-bold">{{ report.springboard.three_board_dummies }}</td>
+                <td></td>
+            </tr>
+        </tbody>
+        <tfoot>
+            <tr class="total-row">
+                <td colspan="3" class="text-end">TOTAL SPRINGBOARD DUMMIES:</td>
+                <td class="text-end">{{ report.springboard.total_dummies }}</td>
+                <td></td>
+            </tr>
+        </tfoot>
+    </table>
+
     <h2>&#9632; Saw Log Material</h2>
 
     <table>

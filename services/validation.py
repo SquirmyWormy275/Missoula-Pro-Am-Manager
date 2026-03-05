@@ -12,6 +12,7 @@ from models import Tournament, Event, Heat, HeatAssignment
 from models.team import Team
 from models.competitor import CollegeCompetitor, ProCompetitor
 import config
+from services.gear_sharing import competitors_share_gear_for_event
 
 
 class ValidationError:
@@ -266,32 +267,47 @@ class HeatValidator:
     def validate_gear_sharing(cls, heat: Heat) -> ValidationResult:
         """Check for gear sharing conflicts within a heat."""
         result = ValidationResult()
+        event = Event.query.get(heat.event_id)
+        if not event:
+            return result
 
         assignments = HeatAssignment.query.filter_by(heat_id=heat.id).all()
+        if len(assignments) <= 1:
+            return result
 
-        # Get all competitor IDs in this heat
-        competitor_ids = {a.competitor_id for a in assignments}
+        competitor_ids = [a.competitor_id for a in assignments]
+        if event.event_type == 'pro':
+            comp_rows = ProCompetitor.query.filter(ProCompetitor.id.in_(competitor_ids)).all()
+        else:
+            comp_rows = CollegeCompetitor.query.filter(CollegeCompetitor.id.in_(competitor_ids)).all()
+        by_id = {c.id: c for c in comp_rows}
 
-        # Check each competitor's gear sharing
-        for assignment in assignments:
-            if assignment.competitor_type == 'pro':
-                competitor = ProCompetitor.query.get(assignment.competitor_id)
-                if competitor:
-                    gear_sharing = competitor.get_gear_sharing()
-                    event_id = str(heat.event_id)
+        seen_pairs = set()
+        for i, a1 in enumerate(assignments):
+            c1 = by_id.get(a1.competitor_id)
+            if not c1:
+                continue
+            for a2 in assignments[i + 1:]:
+                c2 = by_id.get(a2.competitor_id)
+                if not c2:
+                    continue
+                pair_key = tuple(sorted([c1.id, c2.id]))
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
 
-                    if event_id in gear_sharing:
-                        partner_name = gear_sharing[event_id]
-                        # Find partner by name in this heat
-                        for other in assignments:
-                            if other.competitor_id != assignment.competitor_id:
-                                other_comp = ProCompetitor.query.get(other.competitor_id)
-                                if other_comp and other_comp.name == partner_name:
-                                    result.add_error(
-                                        'GEAR_SHARING_CONFLICT',
-                                        f'{competitor.name} shares gear with {partner_name} but both are in Heat {heat.heat_number}',
-                                        entity_id=heat.id
-                                    )
+                if competitors_share_gear_for_event(
+                    c1.name,
+                    c1.get_gear_sharing() if hasattr(c1, 'get_gear_sharing') else {},
+                    c2.name,
+                    c2.get_gear_sharing() if hasattr(c2, 'get_gear_sharing') else {},
+                    event,
+                ):
+                    result.add_error(
+                        'GEAR_SHARING_CONFLICT',
+                        f'{c1.name} and {c2.name} share gear in {event.display_name} but are both in Heat {heat.heat_number}.',
+                        entity_id=heat.id
+                    )
 
         return result
 

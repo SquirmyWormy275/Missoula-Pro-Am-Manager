@@ -6,6 +6,7 @@ import pandas as pd
 import config
 from database import db
 from models import Tournament, Team, CollegeCompetitor, ProCompetitor
+from services.gear_sharing import infer_equipment_categories, normalize_person_name
 
 
 def process_college_entry_form(filepath: str, tournament: Tournament) -> dict:
@@ -420,25 +421,56 @@ def _extract_gear_sharing_note(team_identifier, team_df: pd.DataFrame, school_co
 def _apply_gear_sharing_note_to_team(team: Team, note_text: str):
     """Map imported gear-sharing notes to team members for heat generation constraints."""
     categories = _infer_gear_categories(note_text)
-    if not categories:
+    explicit_events = _infer_events_from_gear_note(note_text)
+    if not categories and not explicit_events:
         return
 
-    for category in categories:
-        group_token = f'group:team:{team.id}:{category}'
-        event_key = f'category:{category}'
-        for competitor in team.members.filter_by(status='active').all():
-            competitor.set_gear_sharing(event_key, group_token)
+    active_members = team.members.filter_by(status='active').all()
+    target_members = _gear_note_target_members(note_text, active_members)
+    if not target_members:
+        target_members = active_members
+
+    for competitor in target_members:
+        if explicit_events:
+            for event_name in explicit_events:
+                token = f'group:team:{team.id}:{normalize_person_name(event_name)}'
+                competitor.set_gear_sharing(event_name, token)
+        for category in categories:
+            token = f'group:team:{team.id}:{category}'
+            competitor.set_gear_sharing(f'category:{category}', token)
 
 
 def _infer_gear_categories(note_text: str) -> list:
     """Infer gear categories from free-text notes."""
-    normalized = _normalize_label(note_text)
-    categories = []
-    if any(token in normalized for token in ['crosscut', 'single buck', 'double buck', 'buck', 'saw']):
-        categories.append('crosscut')
-    if any(token in normalized for token in ['stock saw', 'powersaw', 'power saw', 'hot saw']):
-        categories.append('chainsaw')
-    return categories
+    return sorted(infer_equipment_categories(note_text))
+
+
+def _infer_events_from_gear_note(note_text: str) -> list[str]:
+    """Extract explicit event names from a gear note."""
+    note_norm = _normalize_label(note_text)
+    if not note_norm:
+        return []
+    events = set()
+    for cfg in (config.COLLEGE_OPEN_EVENTS + config.COLLEGE_CLOSED_EVENTS):
+        canonical = _canonicalize_event_name(cfg.get('name', ''))
+        if not canonical:
+            continue
+        if _normalize_label(canonical) in note_norm:
+            events.add(canonical)
+    return sorted(events)
+
+
+def _gear_note_target_members(note_text: str, members: list[CollegeCompetitor]) -> list[CollegeCompetitor]:
+    """Return members explicitly mentioned in a gear note."""
+    if not note_text:
+        return []
+    text_norm = normalize_person_name(note_text)
+    matches = []
+    for member in members:
+        name_norm = normalize_person_name(member.name)
+        if name_norm and name_norm in text_norm:
+            matches.append(member)
+    return matches
 
 
 def _parse_gender(value) -> str:

@@ -23,7 +23,6 @@
     </div>
 
     <div class="row">
-        <!-- Upload Form -->
         <div class="col-md-4 mb-4">
             <div class="card">
                 <div class="card-header card-header-proam">
@@ -31,14 +30,12 @@
                 </div>
                 <div class="card-body">
                     <p class="text-muted">Upload an Excel file (.xlsx) with team entry information.</p>
-
                     <form action="{{ url_for('registration.upload_college_entry', tournament_id=tournament.id) }}"
                           method="POST" enctype="multipart/form-data">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">
                             <label for="file" class="form-label">Select Entry Form</label>
-                            <input type="file" class="form-control" id="file" name="file"
-                                   accept=".xlsx,.xls" required>
+                            <input type="file" class="form-control" id="file" name="file" accept=".xlsx,.xls" required>
                         </div>
                         <div class="d-grid">
                             <button type="submit" class="btn btn-proam">
@@ -49,58 +46,34 @@
                 </div>
             </div>
 
-            <!-- Format Info -->
-            <div class="card mt-3">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-info-circle"></i> Expected Format</h6>
-                </div>
-                <div class="card-body">
-                    <p class="small text-muted">The entry form should include columns for:</p>
-                    <ul class="small text-muted mb-0">
-                        <li>School/University name</li>
-                        <li>Team code (e.g., UM-A, CSU-B)</li>
-                        <li>Competitor name</li>
-                        <li>Gender (M/F)</li>
-                        <li>Events entered (optional)</li>
-                        <li>Partners (optional)</li>
-                    </ul>
-                </div>
-            </div>
-
             {% if invalid_teams %}
-            <!-- Re-upload hint for invalid teams -->
             <div class="card mt-3 border-warning">
                 <div class="card-header bg-warning bg-opacity-10">
-                    <h6 class="mb-0 text-warning"><i class="bi bi-exclamation-triangle"></i> Fixing Invalid Teams</h6>
+                    <h6 class="mb-0 text-warning"><i class="bi bi-exclamation-triangle"></i> Invalid Teams Present</h6>
                 </div>
                 <div class="card-body">
                     <p class="small text-muted mb-0">
-                        To fix an entire team via re-upload, correct the spreadsheet and upload it again above.
-                        Teams are matched by team code — valid teams will be promoted automatically.
-                        You can also fix individual errors directly on each team's detail page.
+                        Fix invalid teams inline using the table filter below, or re-upload corrected sheets.
                     </p>
                 </div>
             </div>
             {% endif %}
         </div>
 
-        <!-- Teams List -->
         <div class="col-md-8">
             <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <h6 class="mb-0"><i class="bi bi-people"></i> Registered Teams</h6>
-                    <div>
-                        <span class="badge bg-primary">{{ teams|length }} valid</span>
-                        {% if invalid_teams %}
-                        <span class="badge bg-danger ms-1">{{ invalid_teams|length }} invalid</span>
-                        {% endif %}
+                    <div class="d-flex gap-1">
+                        <button type="button" class="btn btn-sm btn-outline-light team-filter active" data-filter="all">All</button>
+                        <button type="button" class="btn btn-sm btn-outline-success team-filter" data-filter="valid">Valid</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger team-filter" data-filter="invalid">Invalid</button>
                     </div>
                 </div>
                 <div class="card-body">
-                    {% if teams %}
+                    {% if all_teams %}
                     <div class="mb-3">
-                        <input type="text" class="form-control" id="teamSearch"
-                               placeholder="Search by team code or school...">
+                        <input type="text" class="form-control" id="teamSearch" placeholder="Search by team code or school...">
                     </div>
                     <div class="table-responsive">
                         <table class="table table-hover" id="teamsTable">
@@ -111,31 +84,41 @@
                                     <th>Men</th>
                                     <th>Women</th>
                                     <th>Total</th>
-                                    <th>Valid</th>
+                                    <th>Status</th>
+                                    <th>Errors</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {% for t in teams %}
-                                <tr>
+                                {% for t in all_teams %}
+                                {% set is_invalid = (t.status == 'invalid') %}
+                                {% set errs = t.get_validation_errors() if is_invalid else [] %}
+                                <tr data-validity="{{ 'invalid' if is_invalid else 'valid' }}">
                                     <td><strong>{{ t.team_code }}</strong></td>
                                     <td>{{ t.school_name }}</td>
                                     <td>{{ t.male_count }}</td>
                                     <td>{{ t.female_count }}</td>
                                     <td>{{ t.member_count }}</td>
                                     <td>
-                                        {% if t.is_valid %}
-                                            <span class="badge bg-success"><i class="bi bi-check"></i></span>
+                                        {% if is_invalid %}
+                                        <span class="badge bg-danger">Invalid</span>
                                         {% else %}
-                                            <span class="badge bg-danger" title="Need min 2 per gender, max 8 total">
-                                                <i class="bi bi-x"></i>
-                                            </span>
+                                        <span class="badge bg-success">Valid</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if is_invalid %}
+                                        <span class="badge bg-danger" title="{{ errs|map(attribute='message')|join('; ') }}">
+                                            {{ errs|length }} error{% if errs|length != 1 %}s{% endif %}
+                                        </span>
+                                        {% else %}
+                                        <span class="text-muted">-</span>
                                         {% endif %}
                                     </td>
                                     <td>
                                         <a href="{{ url_for('registration.team_detail', tournament_id=tournament.id, team_id=t.id) }}"
-                                           class="btn btn-sm btn-outline-primary">
-                                            <i class="bi bi-eye"></i> View
+                                           class="btn btn-sm {{ 'btn-warning' if is_invalid else 'btn-outline-primary' }}">
+                                            <i class="bi {{ 'bi-tools' if is_invalid else 'bi-eye' }}"></i> {{ 'Fix' if is_invalid else 'View' }}
                                         </a>
                                         <form action="{{ url_for('registration.delete_college_team', tournament_id=tournament.id, team_id=t.id) }}"
                                               method="POST" class="d-inline"
@@ -152,30 +135,27 @@
                         </table>
                     </div>
 
-                    <!-- Summary -->
                     <div class="mt-3 p-3 bg-light rounded">
                         <div class="row text-center">
                             <div class="col">
-                                <h4 class="mb-0">{{ teams|length }}</h4>
+                                <h4 class="mb-0">{{ all_teams|length }}</h4>
                                 <small class="text-muted">Teams</small>
                             </div>
                             <div class="col">
-                                <h4 class="mb-0">{{ teams|sum(attribute='member_count') }}</h4>
+                                <h4 class="mb-0">{{ all_teams|sum(attribute='member_count') }}</h4>
                                 <small class="text-muted">Competitors</small>
                             </div>
                             <div class="col">
-                                <h4 class="mb-0">{{ teams|selectattr('is_valid')|list|length }}</h4>
+                                <h4 class="mb-0">{{ teams|length }}</h4>
                                 <small class="text-muted">Valid Teams</small>
                             </div>
-                            {% if invalid_teams %}
                             <div class="col">
                                 <h4 class="mb-0 text-danger">{{ invalid_teams|length }}</h4>
                                 <small class="text-muted">Invalid Teams</small>
                             </div>
-                            {% endif %}
                         </div>
                     </div>
-                    {% elif not invalid_teams %}
+                    {% else %}
                     <div class="text-center py-5">
                         <i class="bi bi-inbox display-4 text-muted"></i>
                         <p class="mt-3 text-muted">No teams registered yet.</p>
@@ -184,68 +164,6 @@
                     {% endif %}
                 </div>
             </div>
-
-            <!-- Invalid Teams Section -->
-            {% if invalid_teams %}
-            <div class="card mt-4 border-danger">
-                <div class="card-header bg-danger bg-opacity-10 d-flex justify-content-between align-items-center">
-                    <h6 class="mb-0 text-danger">
-                        <i class="bi bi-exclamation-triangle-fill"></i>
-                        Invalid Teams
-                        <span class="badge bg-danger ms-1">{{ invalid_teams|length }}</span>
-                    </h6>
-                    <small class="text-muted">These teams have validation errors and are not counted in standings or scheduling.</small>
-                </div>
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-hover" id="invalidTeamsTable">
-                            <thead class="table-danger">
-                                <tr>
-                                    <th>Team</th>
-                                    <th>School</th>
-                                    <th>Men</th>
-                                    <th>Women</th>
-                                    <th>Total</th>
-                                    <th>Errors</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for t in invalid_teams %}
-                                {% set errs = t.get_validation_errors() %}
-                                <tr>
-                                    <td><strong>{{ t.team_code }}</strong></td>
-                                    <td>{{ t.school_name }}</td>
-                                    <td>{{ t.male_count }}</td>
-                                    <td>{{ t.female_count }}</td>
-                                    <td>{{ t.member_count }}</td>
-                                    <td>
-                                        <span class="badge bg-danger" title="{{ errs|map(attribute='message')|join('; ') }}">
-                                            {{ errs|length }} error{% if errs|length != 1 %}s{% endif %}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <a href="{{ url_for('registration.team_detail', tournament_id=tournament.id, team_id=t.id) }}"
-                                           class="btn btn-sm btn-warning">
-                                            <i class="bi bi-tools"></i> Fix
-                                        </a>
-                                        <form action="{{ url_for('registration.delete_college_team', tournament_id=tournament.id, team_id=t.id) }}"
-                                              method="POST" class="d-inline"
-                                              data-confirm="Delete team {{ t.team_code }} and all competitors? This cannot be undone.">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                            <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                <i class="bi bi-trash"></i> Delete
-                                            </button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            {% endif %}
         </div>
     </div>
 </div>
@@ -254,13 +172,29 @@
 {% block extra_js %}
 <script>
     var teamSearch = document.getElementById('teamSearch');
-    if (teamSearch) {
-        teamSearch.addEventListener('input', function () {
-            var q = this.value.toLowerCase();
-            document.querySelectorAll('#teamsTable tbody tr').forEach(function (row) {
-                row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
-            });
+    var currentFilter = 'all';
+
+    function applyTeamFilters() {
+        var q = teamSearch ? teamSearch.value.toLowerCase() : '';
+        document.querySelectorAll('#teamsTable tbody tr').forEach(function (row) {
+            var textMatch = row.textContent.toLowerCase().includes(q);
+            var valid = row.getAttribute('data-validity');
+            var filterMatch = (currentFilter === 'all') || (currentFilter === valid);
+            row.style.display = (textMatch && filterMatch) ? '' : 'none';
         });
     }
+
+    if (teamSearch) {
+        teamSearch.addEventListener('input', applyTeamFilters);
+    }
+
+    document.querySelectorAll('.team-filter').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            currentFilter = btn.getAttribute('data-filter');
+            document.querySelectorAll('.team-filter').forEach(function (b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            applyTeamFilters();
+        });
+    });
 </script>
 {% endblock %}

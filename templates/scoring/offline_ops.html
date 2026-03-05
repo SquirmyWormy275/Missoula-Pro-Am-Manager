@@ -94,9 +94,9 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/offline_queue_shared.js') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const QUEUE_KEY = 'proam_heat_score_queue_v1';
     const TOURNAMENT_ID = {{ tournament.id }};
     const EVENT_DIRECTORY = {{ event_directory|tojson }};
     const queueBody = document.getElementById('queueBody');
@@ -106,16 +106,11 @@ document.addEventListener('DOMContentLoaded', function () {
     const syncAllBtn = document.getElementById('syncAllBtn');
 
     function readQueue() {
-        try {
-            const parsed = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
-            return Array.isArray(parsed) ? parsed : [];
-        } catch (err) {
-            return [];
-        }
+        return window.ProAmOfflineQueue.read();
     }
 
     function writeQueue(queue) {
-        localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+        window.ProAmOfflineQueue.write(queue);
     }
 
     function isForTournament(entry) {
@@ -192,10 +187,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function removeEntry(url, heatId) {
-        const updated = readQueue().filter(function (entry) {
-            return !(String(entry.url || '') === url && Number(entry.heat_id || 0) === Number(heatId || 0));
-        });
-        writeQueue(updated);
+        window.ProAmOfflineQueue.remove(url, heatId);
         renderQueue();
     }
 

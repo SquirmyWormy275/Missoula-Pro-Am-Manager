@@ -45,6 +45,11 @@ def _safe_redirect_target(target: str | None):
 @main_bp.route('/')
 def index():
     """Public entry page where users choose judge/competitor/spectator mode."""
+    if getattr(current_user, 'is_authenticated', False) and (
+        getattr(current_user, 'is_judge', False) or getattr(current_user, 'is_admin', False)
+    ):
+        return redirect(url_for('main.judge_dashboard'))
+
     active_tournament = Tournament.query.filter(
         Tournament.status.in_(['setup', 'college_active', 'pro_active'])
     ).order_by(Tournament.year.desc()).first()

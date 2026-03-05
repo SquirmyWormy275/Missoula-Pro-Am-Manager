@@ -431,6 +431,20 @@ def _competitor_entered_event(event: Event, entered_events: list) -> bool:
     target_id = str(event.id)
     target_name = _normalize_name(event.name)
     target_display_name = _normalize_name(event.display_name)
+    aliases = {target_name, target_display_name}
+
+    # Backward-compatible aliases for historic imports and form-label variants.
+    if event.event_type == 'pro':
+        if target_name == 'springboard':
+            aliases.update({'springboardl', 'springboardr'})
+        elif target_name in {'pro1board', '1boardspringboard'}:
+            aliases.update({'intermediate1boardspringboard', 'pro1board', '1boardspringboard'})
+        elif target_name == 'jackjillsawing':
+            aliases.update({'jackjill', 'jackandjill'})
+        elif target_name in {'poleclimb', 'speedclimb'}:
+            aliases.update({'poleclimb', 'speedclimb'})
+        elif target_name == 'partneredaxethrow':
+            aliases.update({'partneredaxethrow', 'axethrow'})
 
     for raw in entered:
         value = str(raw).strip()
@@ -439,7 +453,7 @@ def _competitor_entered_event(event: Event, entered_events: list) -> bool:
         if value == target_id:
             return True
         normalized = _normalize_name(value)
-        if normalized in {target_name, target_display_name}:
+        if normalized in aliases:
             return True
     return False
 
@@ -1001,16 +1015,11 @@ def flight_list(tournament_id):
     flights = Flight.query.filter_by(tournament_id=tournament_id).order_by(Flight.flight_number).all()
 
     # Pre-fetch competitor names + stand assignments for display.
-    # Sort heats within each flight by event name → heat_number → run_number
-    # so that heats from the same event appear together in ascending sequence.
+    # Preserve flight sequence order so the displayed opener matches the actual show order.
     flight_data = []
     for flight in flights:
         heat_rows = []
-        heats_sorted = sorted(
-            flight.heats.all(),
-            key=lambda h: (h.event.name if h.event else '', h.heat_number, h.run_number)
-        )
-        for heat in heats_sorted:
+        for heat in flight.get_heats_ordered():
             event = Event.query.get(heat.event_id)
             if not event:
                 continue
@@ -1162,7 +1171,7 @@ def friday_feature(tournament_id):
             'sat_spillover_count': len(saturday_college_event_ids),
         })
         db.session.commit()
-        flash('Friday Night Feature & Saturday spillover saved.', 'success')
+        flash('Friday Showcase & Saturday spillover saved.', 'success')
         return redirect(url_for('scheduling.friday_feature', tournament_id=tournament_id))
 
     selected_saturday_ids = set(int(i) for i in saved_opts.get('saturday_college_event_ids', []))
@@ -1252,7 +1261,7 @@ def heat_sheets(tournament_id):
 
     flight_data = []
     for flight in flights:
-        heats_in_flight = flight.heats.order_by(Heat.id).all()
+        heats_in_flight = flight.get_heats_ordered()
         heat_rows = []
         for heat in heats_in_flight:
             comp_ids = heat.get_competitors()

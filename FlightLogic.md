@@ -29,6 +29,7 @@ written here. If you find a conflict, this document wins — fix the code.
    - 5.3 [Springboard Left-Hand Grouping](#53-springboard-left-hand-grouping)
    - 5.4 [Saw Stand Groups](#54-saw-stand-groups)
    - 5.5 [Partner Unit Placement](#55-partner-unit-placement)
+   - 5.6 [Springboard Slow Heat Flag](#56-springboard-slow-heat-flag)
 6. [Stand Configurations](#6-stand-configurations)
 7. [Algorithm Details](#7-algorithm-details)
    - 7.1 [Greedy Heat Ordering](#71-greedy-heat-ordering)
@@ -179,6 +180,10 @@ Promoting it to the front of its block does not skip or invert any heat_number.
 **When there are no more springboard heats** (e.g., last flight after all springboard cuts are
 done), the flight simply starts with whatever event the greedy algorithm placed there.
 
+**Display order requirement:** once flights are assigned, each heat stores `flight_position`
+within its flight. All flight/heat sheet pages must use `flight_position` order so the printed
+or displayed first heat is the true opener from the builder.
+
 ---
 
 ## 4. College Saturday Overflow Rules
@@ -276,7 +281,7 @@ and one for Run 2 (`run_number=2`).
 Left-handed springboard cutters require assignment to the same dummy. To prevent conflicts:
 
 - Left-handed cutters are identified via `ProCompetitor.is_left_handed_springboard`.
-- They are distributed first — one per heat where possible.
+- All left-handed cutters are grouped into a dedicated heat whenever capacity allows.
 - Right-handed cutters fill remaining spots using snake draft.
 - If there are no left-handed cutters, standard snake draft applies.
 
@@ -298,6 +303,15 @@ For partnered events (Double Buck, Jack & Jill, Peavey Log Roll, Pulp Toss, Part
 - An unpaired competitor (no recognized partner) is treated as a solo unit and placed normally.
 - Gear sharing conflicts are still checked — even a recognized pair cannot be placed in a heat
   where one of them would share gear with another competitor already in that heat.
+
+### 5.6 Springboard Slow Heat Flag
+
+Judges may mark pro competitors for the springboard "slow heat" during pro entry import.
+
+- Slow-heat competitors are identified via `ProCompetitor.springboard_slow_heat`.
+- The springboard heat generator groups slow-heat competitors into a dedicated slow heat
+  (typically the last springboard heat), then fills remaining spots via snake draft.
+- Slow-heat grouping and left-handed grouping are both applied before the general fill pass.
 
 ---
 
@@ -360,7 +374,7 @@ The greedy step still maximises competitor rest between appearances.
 9. Heats are then grouped into flights sequentially: the first 8 become Flight 1, the next 8
    become Flight 2, and so on.
 10. A post-processing pass promotes the first pro springboard heat in each flight block to
-    position 0 of that block (see Section 3.8).
+    position 0 of that block (see Section 3.8), then persisted `flight_position` values are written.
 
 This is O(n·e) per step where e is the number of events, giving overall O(n·e·n) = O(n²e).
 For a typical Missoula Pro Am (30–60 heats, 15–20 events) this completes in well under one second.

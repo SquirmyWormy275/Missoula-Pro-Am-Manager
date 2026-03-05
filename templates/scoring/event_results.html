@@ -262,9 +262,9 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/offline_queue_shared.js') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const QUEUE_KEY = 'proam_heat_score_queue_v1';
     const currentEventId = {{ event.id }};
     const scoringOrder = "{{ event.scoring_order }}";
     const requiresDualRuns = {{ 'true' if event.requires_dual_runs else 'false' }};
@@ -273,12 +273,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const pendingBadge = document.getElementById('offlinePendingCount');
 
     function readQueue() {
-        try {
-            const parsed = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
-            return Array.isArray(parsed) ? parsed : [];
-        } catch (err) {
-            return [];
-        }
+        return window.ProAmOfflineQueue.read();
     }
 
     const seededResults = [

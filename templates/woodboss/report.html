@@ -162,6 +162,47 @@
     </div>
 
     <div class="card section-card">
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-tree"></i> Springboard Dummies</h5>
+            <span class="badge bg-light text-dark fs-6">{{ report.springboard.total_dummies }} total</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table report-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Group</th>
+                            <th class="text-end">Runs</th>
+                            <th>Rule</th>
+                            <th class="text-end">Dummies Needed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1-Board / 2-Board Springboard</td>
+                            <td class="text-end">{{ report.springboard.one_two_runs }}</td>
+                            <td class="formula-code">{{ report.springboard.one_two_per_dummy }} runs per dummy</td>
+                            <td class="text-end fw-bold">{{ report.springboard.one_two_dummies }}</td>
+                        </tr>
+                        <tr>
+                            <td>3-Board Jigger</td>
+                            <td class="text-end">{{ report.springboard.three_board_runs }}</td>
+                            <td class="formula-code">{{ report.springboard.three_board_per_dummy }} runs per dummy</td>
+                            <td class="text-end fw-bold">{{ report.springboard.three_board_dummies }}</td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="3" class="text-end">Total Springboard Dummies:</td>
+                            <td class="text-end total-highlight">{{ report.springboard.total_dummies }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card section-card">
         <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
             <h5 class="mb-0"><i class="bi bi-bar-chart-steps"></i> Saw Log Material</h5>
             <div class="d-flex gap-2">

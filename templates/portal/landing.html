@@ -3,10 +3,15 @@
 {% block content %}
 <div class="container py-4">
     <div class="d-flex justify-content-end mb-2">
-        <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
-           href="{{ url_for('portal.index', view='desktop' if mobile_view else 'mobile') }}">
-            Switch to {{ 'Desktop' if mobile_view else 'Mobile' }} View
-        </a>
+        <div class="dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                View
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="{{ url_for('portal.index', view='mobile') }}">Mobile</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.index', view='desktop') }}">Desktop</a></li>
+            </ul>
+        </div>
     </div>
     <div class="card shadow-sm">
         <div class="card-header card-header-proam">

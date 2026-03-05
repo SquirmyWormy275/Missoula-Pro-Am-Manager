@@ -1565,7 +1565,6 @@
         </div>
     </div>
     <div id="brainrotPromptReadout">Emergency Brainrot Shutdown. Enter password: neyooxetgreymorning</div>
-
     <script>
         // Arapaho audio management
         (function () {
@@ -1615,981 +1614,218 @@
             }, 900);
         })();
 
-        // Arapaho brainrot easter egg
+        // Lightweight Arapaho brainrot (rebuilt)
         (function () {
             if (!document.body.classList.contains('lang-arp')) return;
 
-            var BRAINROT_PASSWORD = 'neyooxetgreymorning';
-            var BRAINROT_PAGE_KEY = 'brainrot_arp_page_count';
-            var spawnMinMs = 7000;
-            var spawnMaxMs = 60000;
-            var annoyanceLevel = 1;
+            var PASSWORD = 'neyooxetgreymorning';
             var overlay = document.getElementById('brainrotLayer');
-            var unlockBox = document.getElementById('brainrotUnlock');
+            var unlock = document.getElementById('brainrotUnlock');
+            var prompt = document.getElementById('brainrotPromptReadout');
             var passwordInput = document.getElementById('brainrotPassword');
             var submitBtn = document.getElementById('brainrotSubmit');
             var errorEl = document.getElementById('brainrotError');
-            var promptReadout = document.getElementById('brainrotPromptReadout');
-            if (!overlay || !unlockBox || !passwordInput || !submitBtn || !errorEl || !promptReadout) return;
+            if (!overlay || !unlock || !prompt || !passwordInput || !submitBtn || !errorEl) return;
 
-            var videoSources = [
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/A Rainy Day - Neyooxet Greymorning (720p, h264).mp4') }}",
-                    audio: true,
-                    audioOnly: true
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/An Arapaho on Fire - Neyooxet Greymorning (720p, h264).mp4') }}",
-                    audio: true,
-                    audioOnly: true
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/Law Lost Riders - Neyooxet Greymorning (480p, h264).mp4') }}",
-                    audio: true,
-                    audioOnly: true
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/1st place 1 meter, 2014 Pan Pacific Games, Queensland Australia, 301A - Neyooxet Sports Channel (480p, h264).mp4') }}",
-                    audio: false,
-                    crystal: true,
-                    fastTrack: true
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/1st place 2025 World Masters Games Taipei - Neyooxet Sports Channel (720p, h264).mp4') }}",
-                    audio: false,
-                    crystal: true,
-                    fastTrack: true
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/2019, August, Gwangju, South Korea, FINA World Masters Games. 1st place 1m competition - Neyooxet Sports Channel (720p, h264).mp4') }}",
-                    audio: false,
-                    crystal: true,
-                    fastTrack: true
-                },
-                {
-                    src: "{{ url_for('static', filename='video/brainrot/2024 Masters National Championships Columbus, Ohio. First place 1 meter Springboard - Neyooxet Sports Channel (720p, h264).mp4') }}",
-                    audio: false,
-                    crystal: true,
-                    fastTrack: true
-                }
+            var audioSources = [
+                "{{ url_for('static', filename='video/brainrot/A Rainy Day - Neyooxet Greymorning (720p, h264).mp4') }}",
+                "{{ url_for('static', filename='video/brainrot/Law Lost Riders - Neyooxet Greymorning (480p, h264).mp4') }}",
+                "{{ url_for('static', filename='video/brainrot/Spirit Trailer in Arapaho Language - Neyooxet Greymorning (1080p, h264).mp4') }}"
             ];
 
-            var started = false;
-            var active = false;
-            var chaosObjects = [];
-            var spawnTimers = [];
-            var unlockTimer = null;
-            var rafId = null;
-            var unlockState = null;
-            var trailNodes = [];
-            var maxTrailNodes = 1400;
-            var stormFlags = [];
-            var maxStormFlags = 260;
-            var cometTailNodes = [];
-            var maxCometTailNodes = 260;
-            var lastPointerX = null;
-            var lastPointerY = null;
-            var effectsHandles = [];
-            var effectNodes = [];
-            var effectListeners = [];
-            var idleTimer = null;
-            var wheelNode = null;
-            var subtitleNode = null;
-            var eqNode = null;
-            var bossNode = null;
-            var vortexNode = null;
-            var calibrationNode = null;
-            var sportsWallNode = null;
-            var dvdWords = [];
-            var decoyBoxes = [];
-            var redactionNodes = [];
-            var audioCarrier = null;
-            var audioOnlyNodes = [];
-            var lastMouseMoveTs = 0;
-            var lastMouseX = 0;
-            var lastMouseY = 0;
-            var eqTick = 0;
-            var PERF_SCALE = 1.0;
-            var RAF_MIN_DT = 1000 / 45;
-            var lastRafTs = 0;
-            var words = [
-                "nih'oo3ou", "heni'ei", "wo'hei", "bee3en", "hisei", "niinen",
-                "hoowu", "wonoono", "hono3eino", "ce'noono", "hei3ebii", "nihootoni"
-            ];
-            var phraseCards = [
-                "heenetiit nih'ookuuni3i'",
-                "northern arapaho mode",
-                "nihononoei live",
-                "language healer mode",
-                "say it in arapaho"
-            ];
-            var pronouncePrompts = [
-                "heenetiit nih'ookuuni3i'",
-                "nihonoo3eitiit",
-                "bee3osohoot",
-                "hii3enoo",
-                "nih'oo3ou"
-            ];
-            var glitchCaptions = [
-                "nihi' 3ebei now",
-                "arapaho brainrot engaged",
-                "say it louder",
-                "watch the flags",
-                "no escape without password"
-            ];
-            var sportsSources = [
+            // Assumed visual pair from provided sports clips.
+            var visualSources = [
                 "{{ url_for('static', filename='video/brainrot/1st place 1 meter, 2014 Pan Pacific Games, Queensland Australia, 301A - Neyooxet Sports Channel (480p, h264).mp4') }}",
-                "{{ url_for('static', filename='video/brainrot/1st place 2025 World Masters Games Taipei - Neyooxet Sports Channel (720p, h264).mp4') }}",
-                "{{ url_for('static', filename='video/brainrot/2019, August, Gwangju, South Korea, FINA World Masters Games. 1st place 1m competition - Neyooxet Sports Channel (720p, h264).mp4') }}",
-                "{{ url_for('static', filename='video/brainrot/2024 Masters National Championships Columbus, Ohio. First place 1 meter Springboard - Neyooxet Sports Channel (720p, h264).mp4') }}"
+                "{{ url_for('static', filename='video/brainrot/1st place 2025 World Masters Games Taipei - Neyooxet Sports Channel (720p, h264).mp4') }}"
             ];
 
-            function rand(min, max) {
-                return min + Math.random() * (max - min);
-            }
+            var words = [
+                "heenetiit nih'ookuuni3i'", "nihonoo3eitiit", "bee3osohoot", "hii3enoo",
+                "nih'oo3ou", "heni'ei", "hoowu", "wonoono"
+            ];
 
-            function randInt(min, max) {
-                return Math.floor(rand(min, max + 1));
-            }
+            var active = false;
+            var started = false;
+            var rafId = null;
+            var unlockTimer = null;
+            var timers = [];
+            var audioNodes = [];
+            var visualNodes = [];
+            var visualState = [];
+            var flagNodes = [];
+            var unlockState = null;
 
-            function computeAnnoyance() {
-                var count = parseInt(localStorage.getItem(BRAINROT_PAGE_KEY) || '0', 10);
-                if (isNaN(count) || count < 0) { count = 0; }
-                count += 1;
-                localStorage.setItem(BRAINROT_PAGE_KEY, String(count));
-                annoyanceLevel = Math.min(16, count);
+            function rand(min, max) { return min + Math.random() * (max - min); }
+            function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+            function trackTimer(t) { timers.push(t); return t; }
 
-                spawnMinMs = Math.max(250, 7000 - (annoyanceLevel * 460));
-                spawnMaxMs = Math.max(1400, 60000 - (annoyanceLevel * 4300));
-                maxTrailNodes = Math.min(4800, 1400 + (annoyanceLevel * 260));
-                maxStormFlags = Math.min(1200, 260 + (annoyanceLevel * 70));
-                maxCometTailNodes = Math.min(1100, 260 + (annoyanceLevel * 45));
-
-                // Performance governor to reduce DOM churn on heavy sessions/devices.
-                var cpuHint = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-                var memHint = (typeof navigator !== 'undefined' && navigator.deviceMemory && navigator.deviceMemory <= 8);
-                PERF_SCALE = (cpuHint || memHint) ? 1.9 : 1.35;
-                RAF_MIN_DT = (cpuHint || memHint) ? (1000 / 30) : (1000 / 45);
-            }
-
-            computeAnnoyance();
-
-            function trackNode(node) {
-                effectNodes.push(node);
-                return node;
-            }
-
-            function trackListener(target, eventName, handler, options) {
-                target.addEventListener(eventName, handler, options);
-                effectListeners.push({ target: target, eventName: eventName, handler: handler, options: options });
-            }
-
-            function trackTimer(handle) {
-                effectsHandles.push(handle);
-                return handle;
-            }
-
-            function makeSubtitle() {
-                if (subtitleNode) return subtitleNode;
-                subtitleNode = trackNode(document.createElement('div'));
-                subtitleNode.className = 'brainrot-subtitle';
-                subtitleNode.textContent = glitchCaptions[0];
-                document.body.appendChild(subtitleNode);
-                return subtitleNode;
-            }
-
-            function showGlitchSubtitle(text) {
-                var node = makeSubtitle();
-                node.textContent = text || glitchCaptions[randInt(0, glitchCaptions.length - 1)];
-                node.classList.add('active');
-                trackTimer(window.setTimeout(function () {
-                    node.classList.remove('active');
-                }, randInt(700, 1800)));
-            }
-
-            function spawnConfettiBurst(x, y, count) {
-                var colors = ['#ffffff', '#c40000', '#000000'];
-                for (var i = 0; i < count; i++) {
-                    var c = document.createElement('div');
-                    c.className = 'brainrot-confetti';
-                    c.style.left = x + 'px';
-                    c.style.top = y + 'px';
-                    c.style.background = colors[randInt(0, colors.length - 1)];
-                    c.style.setProperty('--tx', randInt(-220, 220) + 'px');
-                    c.style.setProperty('--ty', randInt(-220, 220) + 'px');
-                    document.body.appendChild(trackNode(c));
-                    trackTimer(window.setTimeout((function (node) {
-                        return function () { if (node && node.isConnected) node.remove(); };
-                    })(c), 1300));
-                }
-            }
-
-            function spawnWordPopup() {
-                var fonts = ['"Orbitron",sans-serif', '"Fraunces",serif', '"Inter",sans-serif', 'Impact,sans-serif', '"Courier New",monospace'];
-                var n = document.createElement('div');
-                n.className = 'brainrot-word-popup';
-                n.textContent = words[randInt(0, words.length - 1)];
-                n.style.left = randInt(2, 82) + 'vw';
-                n.style.top = randInt(8, 88) + 'vh';
-                n.style.fontFamily = fonts[randInt(0, fonts.length - 1)];
-                n.style.fontSize = rand(1.0, 3.5).toFixed(2) + 'rem';
-                n.style.transform = 'rotate(' + rand(-35, 35).toFixed(1) + 'deg)';
-                document.body.appendChild(trackNode(n));
-                trackTimer(window.setTimeout(function () {
-                    if (n && n.isConnected) n.remove();
-                }, randInt(1000, 2600)));
-            }
-
-            function initDvdWords() {
-                for (var i = 0; i < 4; i++) {
-                    var d = document.createElement('div');
-                    d.className = 'brainrot-dvd-word';
-                    d.textContent = words[randInt(0, words.length - 1)];
-                    d.style.left = randInt(0, Math.max(1, window.innerWidth - 140)) + 'px';
-                    d.style.top = randInt(0, Math.max(1, window.innerHeight - 40)) + 'px';
-                    document.body.appendChild(trackNode(d));
-                    dvdWords.push({
-                        node: d,
-                        x: parseFloat(d.style.left),
-                        y: parseFloat(d.style.top),
-                        vx: rand(-5.5, 5.5),
-                        vy: rand(-5.0, 5.0)
-                    });
-                }
-            }
-
-            function updateDvdWords() {
-                for (var i = 0; i < dvdWords.length; i++) {
-                    var item = dvdWords[i];
-                    if (!item.node || !item.node.isConnected) continue;
-                    var w = item.node.offsetWidth || 130;
-                    var h = item.node.offsetHeight || 24;
-                    item.x += item.vx;
-                    item.y += item.vy;
-                    if (item.x <= 0 || item.x + w >= window.innerWidth) {
-                        item.vx *= -1;
-                        item.node.textContent = words[randInt(0, words.length - 1)];
-                    }
-                    if (item.y <= 0 || item.y + h >= window.innerHeight) {
-                        item.vy *= -1;
-                        item.node.textContent = words[randInt(0, words.length - 1)];
-                    }
-                    item.node.style.left = Math.max(0, Math.min(item.x, window.innerWidth - w)) + 'px';
-                    item.node.style.top = Math.max(0, Math.min(item.y, window.innerHeight - h)) + 'px';
-                }
-            }
-
-            function flashPhraseCard() {
-                var card = document.createElement('div');
-                card.className = 'brainrot-flash-card';
-                card.textContent = phraseCards[randInt(0, phraseCards.length - 1)];
-                document.body.appendChild(trackNode(card));
-                trackTimer(window.setTimeout(function () {
-                    if (card && card.isConnected) card.remove();
-                }, 720));
-            }
-
-            function spawnPronouncePopup() {
-                var p = document.createElement('div');
-                p.className = 'brainrot-pronounce';
-                p.style.left = randInt(2, 75) + 'vw';
-                p.style.top = randInt(10, 80) + 'vh';
-                p.innerHTML = '<div class="hint">Pronunciation Challenge</div><div class="line">' + pronouncePrompts[randInt(0, pronouncePrompts.length - 1)] + '</div>';
-                document.body.appendChild(trackNode(p));
-                trackTimer(window.setTimeout(function () {
-                    if (p && p.isConnected) p.remove();
-                }, randInt(1800, 3400)));
-            }
-
-            function spawnMouseFlag(x, y) {
-                var f = document.createElement('img');
-                f.className = 'brainrot-mouse-flag';
-                f.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
-                f.alt = '';
-                f.style.left = (x - 13) + 'px';
-                f.style.top = (y - 8) + 'px';
-                f.style.transform = 'rotate(' + rand(-30, 30).toFixed(1) + 'deg) scale(' + rand(0.7, 1.2).toFixed(2) + ')';
-                document.body.appendChild(trackNode(f));
-                trackTimer(window.setTimeout(function () {
-                    if (f && f.isConnected) f.remove();
-                }, 900));
-            }
-
-            function buildIdleWheel() {
-                if (wheelNode) return;
-                wheelNode = trackNode(document.createElement('div'));
-                wheelNode.className = 'brainrot-wheel';
-                for (var i = 0; i < 10; i++) {
-                    var s = document.createElement('span');
-                    s.textContent = words[randInt(0, words.length - 1)];
-                    var a = (360 / 10) * i;
-                    s.style.transform = 'rotate(' + a + 'deg) translate(84px) rotate(' + (-a) + 'deg)';
-                    wheelNode.appendChild(s);
-                }
-                document.body.appendChild(wheelNode);
-            }
-
-            function showIdleWheel() {
-                buildIdleWheel();
-                wheelNode.style.left = randInt(4, 70) + 'vw';
-                wheelNode.style.top = randInt(8, 65) + 'vh';
-                wheelNode.style.display = 'block';
-                trackTimer(window.setTimeout(function () {
-                    if (wheelNode) wheelNode.style.display = 'none';
-                }, 2200));
-            }
-
-            function spawnWordRain() {
-                var w = document.createElement('div');
-                w.className = 'brainrot-rain-word';
-                w.textContent = words[randInt(0, words.length - 1)];
-                w.style.left = randInt(0, 94) + 'vw';
-                w.style.fontSize = rand(0.9, 2.1).toFixed(2) + 'rem';
-                w.style.animationDuration = rand(2.0, 6.2).toFixed(2) + 's';
-                document.body.appendChild(trackNode(w));
-                trackTimer(window.setTimeout(function () {
-                    if (w && w.isConnected) w.remove();
-                }, 6500));
-            }
-
-            function spawnFakeLoader() {
-                var box = document.createElement('div');
-                box.className = 'brainrot-loader';
-                box.style.left = randInt(3, 70) + 'vw';
-                box.style.top = randInt(8, 82) + 'vh';
-                box.innerHTML = '<div class="label">Loading: ' + words[randInt(0, words.length - 1)] + '</div><div class="bar"></div>';
-                document.body.appendChild(trackNode(box));
-                trackTimer(window.setTimeout(function () {
-                    if (box && box.isConnected) box.remove();
-                }, randInt(1200, 4200)));
-            }
-
-            function spawnSportsKaleido() {
-                var k = document.createElement('div');
-                k.className = 'brainrot-sports-kaleido';
-                k.style.left = randInt(2, 70) + 'vw';
-                k.style.top = randInt(8, 74) + 'vh';
-                var src = sportsSources[randInt(0, sportsSources.length - 1)];
-                for (var i = 0; i < 4; i++) {
+            function spawnAudioLayers() {
+                audioSources.forEach(function (src) {
                     var v = document.createElement('video');
                     v.src = src;
                     v.autoplay = true;
                     v.loop = true;
-                    v.muted = true;
-                    v.playsInline = true;
-                    v.preload = 'auto';
-                    k.appendChild(v);
-                    var pp = v.play();
-                    if (pp && typeof pp.catch === 'function') { pp.catch(function () {}); }
-                }
-                document.body.appendChild(trackNode(k));
-                trackTimer(window.setTimeout(function () {
-                    if (k && k.isConnected) k.remove();
-                }, randInt(2800, 5600)));
-            }
-
-            function initEq() {
-                if (eqNode) return;
-                eqNode = trackNode(document.createElement('div'));
-                eqNode.className = 'brainrot-eq';
-                for (var i = 0; i < 48; i++) {
-                    eqNode.appendChild(document.createElement('i'));
-                }
-                document.body.appendChild(eqNode);
-            }
-
-            function updateEq() {
-                if (!eqNode) return;
-                eqTick++;
-                if (eqTick % 2 !== 0) return;
-                var bars = eqNode.children;
-                for (var i = 0; i < bars.length; i++) {
-                    bars[i].style.height = rand(6, 66) + 'px';
-                }
-            }
-
-            function initBoss() {
-                if (bossNode) return;
-                bossNode = trackNode(document.createElement('div'));
-                bossNode.className = 'brainrot-boss';
-                bossNode.textContent = 'BRAINROT';
-                document.body.appendChild(bossNode);
-            }
-
-            function triggerBossLevel() {
-                initBoss();
-                bossNode.classList.add('active');
-                flashPhraseCard();
-                showGlitchSubtitle('boss level: language overload');
-                var originalAnnoy = annoyanceLevel;
-                annoyanceLevel = Math.min(30, annoyanceLevel + 8);
-                trackTimer(window.setTimeout(function () {
-                    annoyanceLevel = originalAnnoy;
-                    if (bossNode) bossNode.classList.remove('active');
-                }, 20000));
-            }
-
-            function initVortex() {
-                if (vortexNode) return;
-                vortexNode = trackNode(document.createElement('div'));
-                vortexNode.className = 'brainrot-vortex active';
-                document.body.appendChild(vortexNode);
-            }
-
-            function updateVortex(x, y, speed) {
-                initVortex();
-                var size = Math.min(420, 180 + speed * 0.8 + annoyanceLevel * 6);
-                vortexNode.style.width = size + 'px';
-                vortexNode.style.height = size + 'px';
-                vortexNode.style.left = (x - size / 2) + 'px';
-                vortexNode.style.top = (y - size / 2) + 'px';
-                vortexNode.style.animationDuration = Math.max(120, 430 - speed * 1.4) + 'ms';
-            }
-
-            function showCalibrationModal() {
-                if (!calibrationNode) {
-                    calibrationNode = trackNode(document.createElement('div'));
-                    calibrationNode.className = 'brainrot-calibration';
-                    calibrationNode.innerHTML = '<div class="panel">Arapaho Language Calibration In Progress<div class="meter"></div></div>';
-                    document.body.appendChild(calibrationNode);
-                }
-                calibrationNode.classList.add('active');
-                trackTimer(window.setTimeout(function () {
-                    if (calibrationNode) calibrationNode.classList.remove('active');
-                }, randInt(1800, 3200)));
-            }
-
-            function spawnHintNearUnlock() {
-                if (!unlockState || !unlockState.active) return;
-                var hint = document.createElement('div');
-                hint.className = 'brainrot-word-popup';
-                hint.textContent = ["you are almost there", "just one more try", "almost unlocked", "so close"][randInt(0, 3)];
-                hint.style.left = (unlockState.x + rand(-20, 130)) + 'px';
-                hint.style.top = (unlockState.y - rand(30, 90)) + 'px';
-                hint.style.fontSize = rand(0.8, 1.4).toFixed(2) + 'rem';
-                hint.style.transform = 'rotate(' + rand(-18, 18).toFixed(1) + 'deg)';
-                document.body.appendChild(trackNode(hint));
-                trackTimer(window.setTimeout(function () {
-                    if (hint && hint.isConnected) hint.remove();
-                }, randInt(900, 1800)));
-            }
-
-            function spawnRedactionBar() {
-                var r = document.createElement('div');
-                r.className = 'brainrot-redact';
-                r.textContent = words[randInt(0, words.length - 1)];
-                r.style.left = randInt(0, 82) + 'vw';
-                r.style.top = randInt(0, 88) + 'vh';
-                r.style.width = randInt(90, 280) + 'px';
-                r.style.height = randInt(16, 34) + 'px';
-                document.body.appendChild(trackNode(r));
-                redactionNodes.push(r);
-                if (redactionNodes.length > 120) {
-                    var old = redactionNodes.shift();
-                    if (old && old.isConnected) old.remove();
-                }
-                trackTimer(window.setTimeout(function () {
-                    if (r && r.isConnected) r.remove();
-                }, randInt(1000, 2600)));
-            }
-
-            function spawnUnlockDecoy() {
-                var d = document.createElement('div');
-                d.className = 'brainrot-decoy';
-                d.textContent = 'Emergency Brainrot Shutdown';
-                d.style.left = randInt(0, Math.max(1, window.innerWidth - 420)) + 'px';
-                d.style.top = randInt(0, Math.max(1, window.innerHeight - 130)) + 'px';
-                d.style.transform = 'rotate(' + rand(-28, 28).toFixed(1) + 'deg)';
-                document.body.appendChild(trackNode(d));
-                decoyBoxes.push(d);
-                if (decoyBoxes.length > 22) {
-                    var dead = decoyBoxes.shift();
-                    if (dead && dead.isConnected) dead.remove();
-                }
-                trackTimer(window.setTimeout(function () {
-                    if (d && d.isConnected) d.remove();
-                }, randInt(1800, 5200)));
-            }
-
-            function initSportsWall() {
-                if (sportsWallNode) return;
-                sportsWallNode = trackNode(document.createElement('div'));
-                sportsWallNode.className = 'brainrot-sports-wall';
-                for (var i = 0; i < 4; i++) {
-                    var v = document.createElement('video');
-                    v.src = sportsSources[i % sportsSources.length];
-                    v.autoplay = true;
-                    v.loop = true;
-                    v.muted = true;
+                    v.muted = false;
+                    v.volume = 1.0;
                     v.preload = 'auto';
                     v.playsInline = true;
-                    sportsWallNode.appendChild(v);
+                    v.style.position = 'fixed';
+                    v.style.width = '2px';
+                    v.style.height = '2px';
+                    v.style.left = '-200vw';
+                    v.style.top = '-200vh';
+                    v.style.opacity = '0';
+                    document.body.appendChild(v);
+                    audioNodes.push(v);
                     var p = v.play();
                     if (p && typeof p.catch === 'function') { p.catch(function () {}); }
-                    v.currentTime = rand(0.2, 6.5);
-                    v.playbackRate = rand(0.65, 1.45);
-                }
-                document.body.appendChild(sportsWallNode);
-            }
-
-            function desyncSportsWall() {
-                if (!sportsWallNode || !sportsWallNode.isConnected) return;
-                var vids = sportsWallNode.querySelectorAll('video');
-                vids.forEach(function (v) {
-                    if (Math.random() < 0.35) {
-                        v.playbackRate = rand(0.55, 1.8);
-                    }
-                    if (Math.random() < 0.12) {
-                        v.currentTime = Math.max(0, (v.currentTime || 0) + rand(-2.0, 2.0));
-                    }
                 });
             }
 
-            function audioWobbleTick() {
-                if (!audioCarrier || !audioCarrier.isConnected) return;
-                if (audioCarrier.paused) return;
-                audioCarrier.playbackRate = rand(0.72, 1.35);
-                audioCarrier.volume = 1.0;
-            }
-
-            function freezeFramePulse() {
-                if (!active || chaosObjects.length === 0) return;
-                var frozen = [];
-                for (var i = 0; i < chaosObjects.length; i++) {
-                    if (Math.random() < 0.55) {
-                        try {
-                            chaosObjects[i].node.pause();
-                            frozen.push(chaosObjects[i].node);
-                        } catch (_e) {}
-                    }
-                }
-                trackTimer(window.setTimeout(function () {
-                    frozen.forEach(function (n) {
-                        try {
-                            n.playbackRate = rand(1.2, 2.1);
-                            var pp = n.play();
-                            if (pp && typeof pp.catch === 'function') { pp.catch(function () {}); }
-                        } catch (_e) {}
-                    });
-                }, 300));
-            }
-
-            function registerEffectListeners() {
-                trackListener(document, 'click', function (event) {
-                    spawnConfettiBurst(event.clientX || randInt(0, window.innerWidth), event.clientY || randInt(0, window.innerHeight), randInt(18, 40));
-                    showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]);
-                    trackTimer(window.setTimeout(function () { showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]); }, 140));
-                    trackTimer(window.setTimeout(function () { showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]); }, 320));
-                    trackTimer(window.setTimeout(function () { showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]); }, 520));
-                }, true);
-                trackListener(document, 'submit', function () {
-                    showGlitchSubtitle("form captured. arapaho overload.");
-                }, true);
-
-                var noteIdle = function () {
-                    if (idleTimer) window.clearTimeout(idleTimer);
-                    if (wheelNode) wheelNode.style.display = 'none';
-                    idleTimer = window.setTimeout(showIdleWheel, Math.max(1500, 5000 - annoyanceLevel * 140));
-                };
-                trackListener(document, 'mousemove', noteIdle);
-                trackListener(document, 'keydown', noteIdle);
-                trackListener(document, 'mousemove', function (event) {
-                    var now = Date.now();
-                    var dt = Math.max(1, now - lastMouseMoveTs);
-                    var dx = (event.clientX || 0) - lastMouseX;
-                    var dy = (event.clientY || 0) - lastMouseY;
-                    var speed = Math.sqrt(dx * dx + dy * dy) / dt;
-                    lastMouseMoveTs = now;
-                    lastMouseX = event.clientX || 0;
-                    lastMouseY = event.clientY || 0;
-                    updateVortex(lastMouseX, lastMouseY, speed * 200);
-                    if (speed > 2.0 && Math.random() < 0.65) {
-                        burstTrail(lastMouseX, lastMouseY, randInt(16, 36));
-                        spawnConfettiBurst(lastMouseX, lastMouseY, randInt(16, 44));
-                    }
+            function spawnVisualVideo(src) {
+                var v = document.createElement('video');
+                v.className = 'brainrot-video brainrot-video-crystal';
+                v.src = src;
+                v.autoplay = true;
+                v.loop = true;
+                v.muted = true;
+                v.preload = 'auto';
+                v.playsInline = true;
+                v.volume = 0.0;
+                v.style.left = randInt(0, Math.max(0, window.innerWidth - 360)) + 'px';
+                v.style.top = randInt(0, Math.max(0, window.innerHeight - 220)) + 'px';
+                overlay.appendChild(v);
+                visualNodes.push(v);
+                visualState.push({
+                    node: v,
+                    x: parseFloat(v.style.left),
+                    y: parseFloat(v.style.top),
+                    vx: rand(-3.2, 3.2),
+                    vy: rand(-2.8, 2.8),
+                    rot: rand(-10, 10),
+                    vr: rand(-0.7, 0.7)
                 });
-                noteIdle();
+                var p = v.play();
+                if (p && typeof p.catch === 'function') { p.catch(function () {}); }
             }
 
-            function makeChaosVideo(videoSpec) {
-                var video = document.createElement('video');
-                video.className = 'brainrot-video';
-                video.src = videoSpec.src;
-                video.autoplay = true;
-                video.loop = true;
-                video.muted = !videoSpec.audio;
-                video.preload = 'auto';
-                video.playsInline = true;
-                video.controls = false;
-                if (videoSpec.audio) {
-                    video.volume = 1.0;
-                    audioCarrier = video;
+            function spawnFlag() {
+                var f = document.createElement('img');
+                f.className = 'brainrot-flag-storm';
+                f.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
+                f.alt = '';
+                f.style.left = rand(-80, window.innerWidth + 80) + 'px';
+                f.style.top = rand(-180, -20) + 'px';
+                overlay.appendChild(f);
+                flagNodes.push({
+                    node: f,
+                    x: parseFloat(f.style.left),
+                    y: parseFloat(f.style.top),
+                    vx: rand(-2.2, 2.2),
+                    vy: rand(1.6, 5.0),
+                    rot: rand(-80, 80),
+                    vr: rand(-2.3, 2.3),
+                    scale: rand(0.6, 1.3)
+                });
+                if (flagNodes.length > 220) {
+                    var old = flagNodes.shift();
+                    if (old && old.node && old.node.isConnected) old.node.remove();
+                }
+            }
+
+            function spawnInterrupt(kind) {
+                var el = document.createElement('div');
+                if (kind === 'pronounce') {
+                    el.className = 'brainrot-pronounce';
+                    el.style.left = randInt(4, 70) + 'vw';
+                    el.style.top = randInt(8, 72) + 'vh';
+                    el.innerHTML = '<div class="hint">Pronunciation Challenge</div><div class="line">' + words[randInt(0, words.length - 1)] + '</div>';
                 } else {
-                    video.volume = 0.0;
+                    el.className = 'brainrot-word-popup';
+                    el.textContent = words[randInt(0, words.length - 1)];
+                    el.style.left = randInt(2, 84) + 'vw';
+                    el.style.top = randInt(8, 88) + 'vh';
+                    el.style.fontSize = rand(1.0, 2.5).toFixed(2) + 'rem';
+                    el.style.transform = 'rotate(' + rand(-20, 20).toFixed(1) + 'deg)';
                 }
-                if (videoSpec.audioOnly) {
-                    video.style.position = 'fixed';
-                    video.style.left = '-200vw';
-                    video.style.top = '-200vh';
-                    video.style.width = '2px';
-                    video.style.height = '2px';
-                    video.style.opacity = '0';
-                    video.style.pointerEvents = 'none';
-                    document.body.appendChild(video);
-                    audioOnlyNodes.push(video);
-                    var hiddenPlay = video.play();
-                    if (hiddenPlay && typeof hiddenPlay.catch === 'function') {
-                        hiddenPlay.catch(function () {});
-                    }
-                    return;
-                }
-                if (videoSpec.crystal) {
-                    video.classList.add('brainrot-video-crystal');
-                }
-                video.style.left = randInt(0, Math.max(0, window.innerWidth - 260)) + 'px';
-                video.style.top = randInt(0, Math.max(0, window.innerHeight - 190)) + 'px';
-                overlay.appendChild(video);
-
-                var playTry = video.play();
-                if (playTry && typeof playTry.catch === 'function') {
-                    playTry.catch(function () {});
-                }
-
-                chaosObjects.push({
-                    node: video,
-                    x: parseFloat(video.style.left),
-                    y: parseFloat(video.style.top),
-                    vx: rand(-(9 + annoyanceLevel), (9 + annoyanceLevel)),
-                    vy: rand(-(8 + annoyanceLevel), (8 + annoyanceLevel)),
-                    rot: rand(-180, 180),
-                    vrot: rand(-(12 + annoyanceLevel * 0.8), (12 + annoyanceLevel * 0.8)),
-                    sx: rand(0.7, 1.45),
-                    sy: rand(0.7, 1.45),
-                    jitterFrames: randInt(10, 32),
-                    flipEvery: randInt(Math.max(6, 14 - annoyanceLevel), Math.max(10, 40 - annoyanceLevel)),
-                    frame: 0,
-                    crystal: !!videoSpec.crystal,
-                    hasAudio: !!videoSpec.audio
-                });
+                document.body.appendChild(el);
+                trackTimer(window.setTimeout(function () {
+                    if (el && el.isConnected) el.remove();
+                }, randInt(1400, 3200)));
             }
 
-            function scheduleSource(videoSpec) {
-                var fastMin = Math.max(120, 400 - (annoyanceLevel * 16));
-                var fastMax = Math.max(900, 7000 - (annoyanceLevel * 520));
-                var delay = videoSpec.fastTrack ? randInt(fastMin, fastMax) : randInt(spawnMinMs, spawnMaxMs);
-                var timer = window.setTimeout(function () {
-                    if (!active) return;
-                    makeChaosVideo(videoSpec);
-                }, delay);
-                spawnTimers.push(timer);
-            }
-
-            function spawnStormFlag() {
-                var node = document.createElement('img');
-                node.className = 'brainrot-flag-storm';
-                node.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
-                node.alt = '';
-                var state = {
-                    node: node,
-                    x: rand(-120, window.innerWidth + 120),
-                    y: rand(-200, -40),
-                    vx: rand(-3.5, 3.5),
-                    vy: rand(2.4, 9.8),
-                    rot: rand(-180, 180),
-                    vrot: rand(-6.2, 6.2),
-                    scale: rand(0.58, 1.45)
-                };
-                node.style.left = state.x + 'px';
-                node.style.top = state.y + 'px';
-                node.style.transform = 'rotate(' + state.rot.toFixed(1) + 'deg) scale(' + state.scale.toFixed(2) + ')';
-                overlay.appendChild(node);
-                stormFlags.push(state);
-                if (stormFlags.length > maxStormFlags) {
-                    var old = stormFlags.shift();
-                    if (old && old.node && old.node.isConnected) {
-                        old.node.remove();
-                    }
-                }
-            }
-
-            function updateStormFlags() {
-                for (var i = 0; i < stormFlags.length; i++) {
-                    var item = stormFlags[i];
-                    if (!item.node || !item.node.isConnected) continue;
-                    item.x += item.vx;
-                    item.y += item.vy;
-                    item.rot += item.vrot;
-                    item.node.style.left = item.x + 'px';
-                    item.node.style.top = item.y + 'px';
-                    item.node.style.transform = 'rotate(' + item.rot.toFixed(1) + 'deg) scale(' + item.scale.toFixed(2) + ')';
-                    item.node.style.opacity = String(rand(0.55, 0.98).toFixed(2));
-                    if (item.y > window.innerHeight + 220) {
-                        item.x = rand(-120, window.innerWidth + 120);
-                        item.y = rand(-220, -40);
-                        item.vx = rand(-4.0, 4.0);
-                        item.vy = rand(2.8, 10.5);
-                    }
-                }
-                if (stormFlags.length < maxStormFlags && Math.random() < Math.min(0.85, 0.50 + (annoyanceLevel * 0.02))) {
-                    spawnStormFlag();
-                }
-                if (Math.random() < Math.min(0.70, 0.18 + (annoyanceLevel * 0.02))) {
-                    spawnStormFlag();
-                }
-            }
-
-            function tickChaos(ts) {
+            function showUnlock() {
                 if (!active) return;
-                if (ts && (ts - lastRafTs) < RAF_MIN_DT) {
-                    rafId = window.requestAnimationFrame(tickChaos);
-                    return;
-                }
-                lastRafTs = ts || 0;
-                var ww = window.innerWidth;
-                var wh = window.innerHeight;
-                for (var i = 0; i < chaosObjects.length; i++) {
-                    var item = chaosObjects[i];
-                    if (!item.node.isConnected) continue;
-
-                    var w = item.node.offsetWidth || 300;
-                    var h = item.node.offsetHeight || 170;
-                    item.frame++;
-                    if (item.frame % item.flipEvery === 0) {
-                        item.vx *= -1;
-                        item.vy *= -1;
-                        item.vrot = rand(-18, 18);
-                        item.sx = rand(0.55, 1.65);
-                        item.sy = rand(0.55, 1.65);
-                    }
-
-                    if (item.jitterFrames > 0) {
-                        item.x += rand(-22, 22);
-                        item.y += rand(-18, 18);
-                        item.jitterFrames--;
-                    } else if (Math.random() < 0.02) {
-                        item.jitterFrames = randInt(6, 24);
-                    }
-
-                    item.x += item.vx;
-                    item.y += item.vy;
-                    item.rot += item.vrot;
-                    if (Math.random() < 0.035) {
-                        item.rot += rand(-75, 75);
-                        item.vx += rand(-1.9, 1.9);
-                        item.vy += rand(-1.9, 1.9);
-                    }
-
-                    if (item.x < 0 || item.x + w > ww) {
-                        item.vx *= -1;
-                        item.x = Math.max(0, Math.min(item.x, ww - w));
-                        item.rot += rand(-90, 90);
-                    }
-                    if (item.y < 0 || item.y + h > wh) {
-                        item.vy *= -1;
-                        item.y = Math.max(0, Math.min(item.y, wh - h));
-                        item.rot += rand(-90, 90);
-                    }
-
-                    item.node.style.left = item.x + 'px';
-                    item.node.style.top = item.y + 'px';
-                    item.node.style.transform = 'rotate(' + item.rot + 'deg) scale(' + item.sx + ',' + item.sy + ') skew(' + rand(-18, 18) + 'deg,' + rand(-12, 12) + 'deg)';
-                    if (item.crystal) {
-                        item.node.style.filter = 'none';
-                        item.node.style.opacity = '1';
-                    } else {
-                        item.node.style.filter = 'saturate(' + rand(1.5, 2.8).toFixed(2) + ') contrast(' + rand(1.15, 2.0).toFixed(2) + ') hue-rotate(' + rand(0, 360).toFixed(0) + 'deg)';
-                        item.node.style.opacity = String(rand(0.55, 1.0).toFixed(2));
-                    }
-                    if (item.hasAudio && Math.random() < 0.06) {
-                        item.node.playbackRate = rand(0.72, 1.35);
-                        item.node.volume = 1.0;
-                    }
-                }
-
-                if (unlockState && unlockState.active) {
-                    moveUnlockBox();
-                }
-                updateDvdWords();
-                updateEq();
-                if (Math.random() < Math.min(0.12, 0.01 + (annoyanceLevel * 0.008))) {
-                    burstTrail(
-                        rand(0, Math.max(1, ww - 30)),
-                        rand(0, Math.max(1, wh - 30)),
-                        randInt(3, Math.min(20, 6 + annoyanceLevel))
-                    );
-                }
-                updateStormFlags();
-                rafId = window.requestAnimationFrame(tickChaos);
-            }
-
-            function showUnlockBox() {
-                if (!active) return;
-                var safeMargin = 12;
+                unlock.classList.add('active');
+                prompt.classList.add('active');
+                unlock.setAttribute('aria-hidden', 'false');
                 unlockState = {
-                    active: true,
-                    x: randInt(safeMargin, Math.max(safeMargin, window.innerWidth - 440 - safeMargin)),
-                    y: randInt(safeMargin, Math.max(safeMargin, window.innerHeight - 240 - safeMargin)),
-                    vx: rand(-8, 8),
-                    vy: rand(-7, 7),
-                    rot: rand(-24, 24),
-                    vrot: rand(-2.2, 2.2),
-                    teleportCountdown: randInt(40, 110),
-                    frame: 0
+                    x: randInt(20, Math.max(20, window.innerWidth - 460)),
+                    y: randInt(20, Math.max(20, window.innerHeight - 260)),
+                    vx: rand(-3.4, 3.4),
+                    vy: rand(-3.0, 3.0),
+                    rot: rand(-8, 8),
+                    vr: rand(-0.7, 0.7)
                 };
-                unlockBox.classList.add('active');
-                unlockBox.setAttribute('aria-hidden', 'false');
-                promptReadout.classList.add('active');
-                for (var i = 0; i < randInt(2, 5); i++) {
-                    spawnUnlockDecoy();
-                }
-                moveUnlockBox();
                 passwordInput.focus();
             }
 
-            function addTrailCard(x, y, scaleBoost) {
-                var card = document.createElement('img');
-                card.className = 'brainrot-flag-trail';
-                card.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
-                card.alt = '';
-                var rot = rand(-140, 140);
-                var scale = rand(0.65, 1.3) * (scaleBoost || 1);
-                card.style.left = x + 'px';
-                card.style.top = y + 'px';
-                card.style.transform = 'rotate(' + rot.toFixed(1) + 'deg) scale(' + scale.toFixed(2) + ')';
-                card.style.opacity = String(rand(0.42, 0.96).toFixed(2));
-                overlay.appendChild(card);
-                trailNodes.push(card);
-                if (trailNodes.length > maxTrailNodes) {
-                    var old = trailNodes.shift();
-                    if (old && old.isConnected) {
-                        old.remove();
-                    }
-                }
-            }
-
-            function burstTrail(x, y, count) {
-                for (var i = 0; i < count; i++) {
-                    addTrailCard(
-                        x + rand(-120, 120),
-                        y + rand(-90, 90),
-                        rand(0.8, 1.35)
-                    );
-                }
-            }
-
-            function addCometTail(cx, cy, vx, vy, bw, bh) {
-                var speed = Math.sqrt((vx * vx) + (vy * vy));
-                var ux = speed > 0.01 ? vx / speed : 0;
-                var uy = speed > 0.01 ? vy / speed : 1;
-                var segs = 4;
-                for (var i = 1; i <= segs; i++) {
-                    var t = i / segs;
-                    var tail = document.createElement('img');
-                    tail.className = 'brainrot-tail-flag';
-                    tail.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
-                    tail.alt = '';
-                    var spread = (8 + i * 5);
-                    var x = cx - ux * (i * (bw * 0.26)) + rand(-spread, spread);
-                    var y = cy - uy * (i * (bh * 0.28)) + rand(-spread, spread);
-                    var rot = rand(-20, 20) + (-ux * 15) + (uy * 10);
-                    var sc = (1.08 - (t * 0.63));
-                    tail.style.left = x + 'px';
-                    tail.style.top = y + 'px';
-                    tail.style.transform = 'rotate(' + rot.toFixed(1) + 'deg) scale(' + sc.toFixed(2) + ')';
-                    tail.style.opacity = String((0.92 - (t * 0.56)).toFixed(2));
-                    overlay.appendChild(tail);
-                    cometTailNodes.push(tail);
-                }
-                while (cometTailNodes.length > maxCometTailNodes) {
-                    var old = cometTailNodes.shift();
-                    if (old && old.isConnected) {
-                        old.remove();
-                    }
-                }
-            }
-
-            function moveUnlockBox() {
-                if (!unlockState || !unlockState.active) return;
-                var ww = window.innerWidth;
-                var wh = window.innerHeight;
-                var bw = unlockBox.offsetWidth || 380;
-                var bh = unlockBox.offsetHeight || 220;
-                var safeMargin = 12;
-                unlockState.frame += 1;
-
+            function updateUnlock() {
+                if (!unlockState) return;
+                var w = unlock.offsetWidth || 390;
+                var h = unlock.offsetHeight || 220;
                 unlockState.x += unlockState.vx;
                 unlockState.y += unlockState.vy;
-                unlockState.rot += unlockState.vrot;
-                unlockState.teleportCountdown--;
+                unlockState.rot += unlockState.vr;
+                if (unlockState.x < 10 || unlockState.x + w > window.innerWidth - 10) unlockState.vx *= -1;
+                if (unlockState.y < 10 || unlockState.y + h > window.innerHeight - 10) unlockState.vy *= -1;
+                unlockState.x = Math.max(10, Math.min(unlockState.x, window.innerWidth - w - 10));
+                unlockState.y = Math.max(10, Math.min(unlockState.y, window.innerHeight - h - 10));
+                unlock.style.left = unlockState.x + 'px';
+                unlock.style.top = unlockState.y + 'px';
+                unlock.style.transform = 'rotate(' + unlockState.rot.toFixed(2) + 'deg)';
+            }
 
-                if (unlockState.x < 0 || unlockState.x + bw > ww) {
-                    unlockState.vx *= -1;
-                    unlockState.vrot += rand(-1.2, 1.2);
+            function tick() {
+                if (!active) return;
+                var ww = window.innerWidth;
+                var wh = window.innerHeight;
+                for (var i = 0; i < visualState.length; i++) {
+                    var it = visualState[i];
+                    var n = it.node;
+                    if (!n || !n.isConnected) continue;
+                    var w = n.offsetWidth || 320;
+                    var h = n.offsetHeight || 180;
+                    it.x += it.vx;
+                    it.y += it.vy;
+                    it.rot += it.vr;
+                    if (it.x < 0 || it.x + w > ww) it.vx *= -1;
+                    if (it.y < 0 || it.y + h > wh) it.vy *= -1;
+                    n.style.left = Math.max(0, Math.min(it.x, ww - w)) + 'px';
+                    n.style.top = Math.max(0, Math.min(it.y, wh - h)) + 'px';
+                    n.style.transform = 'rotate(' + it.rot.toFixed(2) + 'deg) scale(1,1)';
                 }
-                if (unlockState.y < 0 || unlockState.y + bh > wh) {
-                    unlockState.vy *= -1;
-                    unlockState.vrot += rand(-1.2, 1.2);
-                }
-
-                if (lastPointerX !== null && lastPointerY !== null) {
-                    var cx = unlockState.x + (bw / 2);
-                    var cy = unlockState.y + (bh / 2);
-                    var dx = cx - lastPointerX;
-                    var dy = cy - lastPointerY;
-                    var dist = Math.sqrt((dx * dx) + (dy * dy));
-                    if (dist < 220) {
-                        var force = (220 - dist) / 220;
-                        unlockState.vx += (dx / (dist || 1)) * (1.4 * force + rand(0.35, 1.2));
-                        unlockState.vy += (dy / (dist || 1)) * (1.4 * force + rand(0.35, 1.2));
-                        unlockState.vrot += rand(-0.45, 0.45);
-                        if (Math.random() < 0.08) {
-                            unlockState.x = randInt(0, Math.max(0, ww - bw));
-                            unlockState.y = randInt(0, Math.max(0, wh - bh));
-                            burstTrail(unlockState.x + bw / 2, unlockState.y + bh / 2, randInt(6, 12));
-                        }
+                for (var j = 0; j < flagNodes.length; j++) {
+                    var f = flagNodes[j];
+                    if (!f.node || !f.node.isConnected) continue;
+                    f.x += f.vx;
+                    f.y += f.vy;
+                    f.rot += f.vr;
+                    f.node.style.left = f.x + 'px';
+                    f.node.style.top = f.y + 'px';
+                    f.node.style.transform = 'rotate(' + f.rot.toFixed(2) + 'deg) scale(' + f.scale.toFixed(2) + ')';
+                    if (f.y > wh + 140) {
+                        f.y = rand(-180, -20);
+                        f.x = rand(-80, ww + 80);
                     }
                 }
-
-                if (unlockState.teleportCountdown <= 0 || Math.random() < 0.008) {
-                    unlockState.x = randInt(safeMargin, Math.max(safeMargin, ww - bw - safeMargin));
-                    unlockState.y = randInt(safeMargin, Math.max(safeMargin, wh - bh - safeMargin));
-                    unlockState.vx = rand(-9, 9);
-                    unlockState.vy = rand(-8, 8);
-                    unlockState.vrot = rand(-2.5, 2.5);
-                    unlockState.teleportCountdown = randInt(40, 120);
-                    burstTrail(unlockState.x + bw / 2, unlockState.y + bh / 2, randInt(10, 18));
-                }
-
-                unlockState.x = Math.max(safeMargin, Math.min(unlockState.x, ww - bw - safeMargin));
-                unlockState.y = Math.max(safeMargin, Math.min(unlockState.y, wh - bh - safeMargin));
-
-                if (unlockState.frame % 2 === 0) {
-                    addTrailCard(
-                        unlockState.x + rand(-35, bw - 15),
-                        unlockState.y + rand(-35, bh - 15),
-                        1
-                    );
-                }
-                if (Math.random() < 0.22) {
-                    spawnHintNearUnlock();
-                }
-                if (Math.random() < 0.08) {
-                    spawnUnlockDecoy();
-                }
-
-                unlockBox.style.left = unlockState.x + 'px';
-                unlockBox.style.top = unlockState.y + 'px';
-                unlockBox.style.transform = 'rotate(' + unlockState.rot + 'deg) scale(' + rand(0.9, 1.15).toFixed(2) + ')';
-                if (unlockState.frame % 2 === 0) {
-                    addCometTail(unlockState.x + (bw / 2), unlockState.y + (bh / 2), unlockState.vx, unlockState.vy, bw, bh);
-                }
+                updateUnlock();
+                rafId = window.requestAnimationFrame(tick);
             }
 
             function clearTimers() {
-                for (var i = 0; i < spawnTimers.length; i++) {
-                    window.clearTimeout(spawnTimers[i]);
-                }
-                spawnTimers = [];
+                timers.forEach(function (t) { window.clearTimeout(t); window.clearInterval(t); });
+                timers = [];
                 if (unlockTimer) {
                     window.clearTimeout(unlockTimer);
                     unlockTimer = null;
@@ -2599,85 +1835,25 @@
             function stopBrainrot() {
                 active = false;
                 document.body.classList.remove('brainrot-active');
-                document.body.classList.remove('brainrot-inverted');
-                document.body.classList.remove('brainrot-flip');
                 clearTimers();
                 if (rafId) {
                     window.cancelAnimationFrame(rafId);
                     rafId = null;
                 }
-                chaosObjects.forEach(function (item) {
-                    try {
-                        item.node.pause();
-                        item.node.removeAttribute('src');
-                        item.node.load();
-                        item.node.remove();
-                    } catch (_err) {}
-                });
-                chaosObjects = [];
-                audioOnlyNodes.forEach(function (n) {
-                    try {
-                        n.pause();
-                        n.remove();
-                    } catch (_err) {}
-                });
-                audioOnlyNodes = [];
-                trailNodes.forEach(function (node) {
-                    if (node && node.isConnected) {
-                        node.remove();
-                    }
-                });
-                trailNodes = [];
-                cometTailNodes.forEach(function (node) {
-                    if (node && node.isConnected) {
-                        node.remove();
-                    }
-                });
-                cometTailNodes = [];
-                stormFlags.forEach(function (item) {
-                    if (item && item.node && item.node.isConnected) {
-                        item.node.remove();
-                    }
-                });
-                stormFlags = [];
-                overlay.classList.remove('active');
-                unlockBox.classList.remove('active');
-                unlockBox.setAttribute('aria-hidden', 'true');
-                promptReadout.classList.remove('active');
+                visualNodes.forEach(function (n) { try { n.pause(); n.remove(); } catch (_e) {} });
+                audioNodes.forEach(function (n) { try { n.pause(); n.remove(); } catch (_e) {} });
+                flagNodes.forEach(function (f) { try { if (f.node && f.node.isConnected) f.node.remove(); } catch (_e) {} });
+                visualNodes = [];
+                visualState = [];
+                audioNodes = [];
+                flagNodes = [];
                 unlockState = null;
+                overlay.classList.remove('active');
+                unlock.classList.remove('active');
+                unlock.setAttribute('aria-hidden', 'true');
+                prompt.classList.remove('active');
                 errorEl.textContent = '';
                 passwordInput.value = '';
-                if (idleTimer) {
-                    window.clearTimeout(idleTimer);
-                    idleTimer = null;
-                }
-                if (wheelNode) {
-                    wheelNode.style.display = 'none';
-                }
-                effectsHandles.forEach(function (h) {
-                    window.clearTimeout(h);
-                    window.clearInterval(h);
-                });
-                effectsHandles = [];
-                effectListeners.forEach(function (l) {
-                    l.target.removeEventListener(l.eventName, l.handler, l.options);
-                });
-                effectListeners = [];
-                dvdWords = [];
-                effectNodes.forEach(function (n) {
-                    if (n && n.isConnected) n.remove();
-                });
-                effectNodes = [];
-                wheelNode = null;
-                subtitleNode = null;
-                eqNode = null;
-                bossNode = null;
-                vortexNode = null;
-                calibrationNode = null;
-                sportsWallNode = null;
-                decoyBoxes = [];
-                redactionNodes = [];
-                audioCarrier = null;
             }
 
             function startBrainrot() {
@@ -2685,106 +1861,44 @@
                 started = true;
                 active = true;
                 document.body.classList.add('brainrot-active');
-                document.body.classList.add('brainrot-inverted');
                 overlay.classList.add('active');
-                videoSources.filter(function (v) { return v.audioOnly; }).forEach(makeChaosVideo);
-                showCalibrationModal();
-                initDvdWords();
-                initEq();
-                initVortex();
-                initSportsWall();
-                registerEffectListeners();
-                triggerBossLevel();
-                videoSources.filter(function (v) { return v.fastTrack; }).forEach(function (videoSpec) {
-                    makeChaosVideo(videoSpec);
-                    var dupTimer = window.setTimeout(function () {
-                        if (active) { makeChaosVideo(videoSpec); }
-                    }, randInt(Math.max(300, 1200 - annoyanceLevel * 60), Math.max(1200, 6200 - annoyanceLevel * 380)));
-                    spawnTimers.push(dupTimer);
-                });
-                videoSources.filter(function (v) { return !v.fastTrack; }).forEach(scheduleSource);
-                var repeatEvery = Math.max(600, Math.floor((3400 - (annoyanceLevel * 220)) * PERF_SCALE));
-                var repeatTimer = window.setInterval(function () {
-                    if (!active) return;
-                    var visualPool = videoSources.filter(function (v) { return !v.audioOnly; });
-                    if (visualPool.length === 0) return;
-                    var pick = visualPool[randInt(0, visualPool.length - 1)];
-                    makeChaosVideo(pick);
-                }, repeatEvery);
-                spawnTimers.push(repeatTimer);
-                for (var i = 0; i < Math.min(maxStormFlags, 80 + (annoyanceLevel * 36)); i++) {
-                    spawnStormFlag();
-                }
-                trackTimer(window.setInterval(spawnWordPopup, Math.max(700, Math.floor((1300 - annoyanceLevel * 52) * PERF_SCALE))));
-                trackTimer(window.setInterval(spawnWordRain, Math.max(250, Math.floor((520 - annoyanceLevel * 20) * PERF_SCALE))));
-                trackTimer(window.setInterval(spawnFakeLoader, Math.max(1200, Math.floor((2600 - annoyanceLevel * 120) * PERF_SCALE))));
-                trackTimer(window.setInterval(spawnPronouncePopup, Math.max(1600, Math.floor((3900 - annoyanceLevel * 170) * PERF_SCALE))));
-                trackTimer(window.setInterval(flashPhraseCard, Math.max(2600, Math.floor((7600 - annoyanceLevel * 240) * PERF_SCALE))));
-                trackTimer(window.setInterval(spawnSportsKaleido, Math.max(1800, Math.floor((5400 - annoyanceLevel * 180) * PERF_SCALE))));
-                trackTimer(window.setInterval(desyncSportsWall, Math.max(420, Math.floor((860 - annoyanceLevel * 25) * PERF_SCALE))));
-                trackTimer(window.setInterval(spawnRedactionBar, Math.max(520, Math.floor((950 - annoyanceLevel * 30) * PERF_SCALE))));
-                trackTimer(window.setInterval(spawnUnlockDecoy, Math.max(1300, Math.floor((2600 - annoyanceLevel * 80) * PERF_SCALE))));
-                trackTimer(window.setInterval(freezeFramePulse, Math.max(2000, Math.floor((5200 - annoyanceLevel * 120) * PERF_SCALE))));
-                trackTimer(window.setInterval(audioWobbleTick, Math.max(750, Math.floor(520 * PERF_SCALE))));
+                spawnAudioLayers();
+                visualSources.forEach(spawnVisualVideo);
+                for (var i = 0; i < 40; i++) spawnFlag();
+                trackTimer(window.setInterval(spawnFlag, 520));
+                trackTimer(window.setInterval(function () { spawnInterrupt('translate'); }, 6200));
+                trackTimer(window.setInterval(function () { spawnInterrupt('pronounce'); }, 8800));
                 trackTimer(window.setInterval(function () {
-                    showGlitchSubtitle(glitchCaptions[randInt(0, glitchCaptions.length - 1)]);
-                }, Math.max(1300, Math.floor((2900 - annoyanceLevel * 90) * PERF_SCALE))));
-                trackTimer(window.setInterval(function () {
-                    document.body.classList.add('brainrot-flip');
-                    window.setTimeout(function () {
-                        document.body.classList.remove('brainrot-flip');
-                    }, randInt(2000, 5000));
-                }, Math.max(7000, Math.floor((14000 - annoyanceLevel * 260) * PERF_SCALE))));
-                rafId = window.requestAnimationFrame(tickChaos);
-                unlockTimer = window.setTimeout(showUnlockBox, 60000);
+                    spawnVisualVideo(visualSources[randInt(0, visualSources.length - 1)]);
+                    if (visualNodes.length > 6) {
+                        var old = visualNodes.shift();
+                        var oldState = visualState.shift();
+                        if (old && old.isConnected) old.remove();
+                        if (oldState && oldState.node && oldState.node.isConnected) oldState.node.remove();
+                    }
+                }, 12000));
+                rafId = window.requestAnimationFrame(tick);
+                unlockTimer = window.setTimeout(showUnlock, 60000);
             }
 
             function tryPassword() {
-                if (passwordInput.value.trim().toLowerCase() === BRAINROT_PASSWORD) {
+                if (passwordInput.value.trim().toLowerCase() === PASSWORD) {
                     stopBrainrot();
-                    return;
+                } else {
+                    errorEl.textContent = 'Incorrect password.';
+                    passwordInput.select();
                 }
-                errorEl.textContent = 'Incorrect password.';
-                unlockBox.classList.remove('brainrot-shake');
-                void unlockBox.offsetWidth;
-                unlockBox.classList.add('brainrot-shake');
-                spawnConfettiBurst(unlockState ? unlockState.x + 140 : randInt(0, window.innerWidth), unlockState ? unlockState.y + 60 : randInt(0, window.innerHeight), randInt(44, 90));
-                burstTrail(
-                    unlockState ? unlockState.x + 120 : rand(0, window.innerWidth),
-                    unlockState ? unlockState.y + 70 : rand(0, window.innerHeight),
-                    randInt(20, 46)
-                );
-                showGlitchSubtitle('wrong password. try faster.');
-                passwordInput.select();
             }
 
             document.addEventListener('keydown', function () {
                 startBrainrot();
-            });
-            window.setTimeout(startBrainrot, 150);
-
+            }, { once: true });
             submitBtn.addEventListener('click', tryPassword);
             passwordInput.addEventListener('keydown', function (event) {
                 if (event.key === 'Enter') {
                     event.preventDefault();
                     tryPassword();
                 }
-            });
-            document.addEventListener('mousemove', function (event) {
-                lastPointerX = event.clientX;
-                lastPointerY = event.clientY;
-                if (active && Math.random() < 0.22) {
-                    spawnMouseFlag(event.clientX, event.clientY);
-                }
-            });
-            unlockBox.addEventListener('mouseenter', function () {
-                if (!unlockState || !unlockState.active) return;
-                unlockState.x += rand(-120, 120);
-                unlockState.y += rand(-90, 90);
-                unlockState.vx += rand(-4.6, 4.6);
-                unlockState.vy += rand(-4.2, 4.2);
-                unlockState.vrot += rand(-1.2, 1.2);
-                burstTrail(unlockState.x, unlockState.y, randInt(8, 14));
             });
             window.addEventListener('beforeunload', stopBrainrot);
         })();
@@ -2915,3 +2029,5 @@
     <script src="{{ url_for('static', filename='js/onboarding.js') }}" defer></script>
 </body>
 </html>
+
+

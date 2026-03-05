@@ -59,6 +59,7 @@
                                     <th>ALA</th>
                                     <th>Pro-Am</th>
                                     <th>Left-Hand</th>
+                                    <th>SB Slow</th>
                                     <th>Events</th>
                                     <th>Status</th>
                                     <th>Actions</th>
@@ -91,6 +92,13 @@
                                     <td>
                                         {% if c.is_left_handed_springboard %}
                                             <span class="badge bg-info">Yes</span>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if c.springboard_slow_heat %}
+                                            <span class="badge bg-warning text-dark">Yes</span>
                                         {% else %}
                                             <span class="text-muted">-</span>
                                         {% endif %}

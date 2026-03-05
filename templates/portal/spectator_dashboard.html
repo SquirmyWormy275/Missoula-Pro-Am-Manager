@@ -10,10 +10,15 @@
                     title="How to use this page">
                 <i class="bi bi-question-circle"></i>
             </button>
-            <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
-               href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id, view='desktop' if mobile_view else 'mobile') }}">
-                Switch to {{ 'Desktop' if mobile_view else 'Mobile' }} View
-            </a>
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    View
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id, view='mobile') }}">Mobile</a></li>
+                    <li><a class="dropdown-item" href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id, view='desktop') }}">Desktop</a></li>
+                </ul>
+            </div>
         </div>
     </div>
 

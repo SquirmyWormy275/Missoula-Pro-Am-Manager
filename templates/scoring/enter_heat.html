@@ -166,9 +166,9 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/offline_queue_shared.js') }}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
-        const QUEUE_KEY = 'proam_heat_score_queue_v1';
         const form = document.getElementById('heatEntryForm');
         const saveBtn = form.querySelector('button[type="submit"]');
         const syncBtn = document.getElementById('syncPendingBtn');
@@ -189,16 +189,11 @@
         };
 
         function readQueue() {
-            try {
-                const parsed = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
-                return Array.isArray(parsed) ? parsed : [];
-            } catch (err) {
-                return [];
-            }
+            return window.ProAmOfflineQueue.read();
         }
 
         function writeQueue(queue) {
-            localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+            window.ProAmOfflineQueue.write(queue);
             refreshStatusBanner();
         }
 
@@ -234,17 +229,13 @@
         }
 
         function removeEntry(entry) {
-            writeQueue(readQueue().filter(function (item) {
-                return !(item.heat_id === entry.heat_id && item.url === entry.url);
-            }));
+            window.ProAmOfflineQueue.remove(entry.url, entry.heat_id);
+            refreshStatusBanner();
         }
 
         function upsertEntry(entry) {
-            const filtered = readQueue().filter(function (item) {
-                return !(item.heat_id === entry.heat_id && item.url === entry.url);
-            });
-            filtered.push(entry);
-            writeQueue(filtered);
+            window.ProAmOfflineQueue.upsert(entry);
+            refreshStatusBanner();
         }
 
         function prefillFromQueue() {

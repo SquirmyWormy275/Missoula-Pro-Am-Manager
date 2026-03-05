@@ -4,7 +4,8 @@ Preflight checks for scheduling and registration consistency.
 from __future__ import annotations
 
 from models import Event, Flight, Heat, HeatAssignment, Tournament
-from models.competitor import ProCompetitor
+from models.competitor import CollegeCompetitor, ProCompetitor
+from services.gear_sharing import event_matches_gear_key, normalize_person_name
 
 
 def _signed_up_pro_count(event: Event) -> int:
@@ -57,6 +58,87 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                 'detail': f'{event.display_name}: {entered} entrants, one competitor will remain unmatched.',
                 'autofix': True,
             })
+
+    # 2b) Gear-sharing integrity (college + pro)
+    all_events = tournament.events.all()
+    pro_events = [e for e in all_events if e.event_type == 'pro']
+    college_events = [e for e in all_events if e.event_type == 'college']
+    pro_names = {
+        normalize_person_name(c.name)
+        for c in ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all()
+    }
+    college_names = {
+        normalize_person_name(c.name)
+        for c in CollegeCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all()
+    }
+
+    unknown_partner_rows = 0
+    unresolved_event_key_rows = 0
+    unresolved_details_rows = 0
+    self_reference_rows = 0
+
+    def _scan_rows(rows, relevant_events, known_names):
+        nonlocal unknown_partner_rows, unresolved_event_key_rows, unresolved_details_rows, self_reference_rows
+        for competitor in rows:
+            gear = competitor.get_gear_sharing() if hasattr(competitor, 'get_gear_sharing') else {}
+            if not isinstance(gear, dict):
+                continue
+
+            details = str(getattr(competitor, 'gear_sharing_details', '') or '').strip()
+            if details and not gear:
+                unresolved_details_rows += 1
+
+            self_name = normalize_person_name(competitor.name)
+            for key, partner in gear.items():
+                if not any(event_matches_gear_key(event, key) for event in relevant_events):
+                    unresolved_event_key_rows += 1
+                partner_text = str(partner or '').strip()
+                partner_norm = normalize_person_name(partner_text)
+                if not partner_text:
+                    unknown_partner_rows += 1
+                    continue
+                if partner_text.startswith('group:'):
+                    continue
+                if partner_norm == self_name:
+                    self_reference_rows += 1
+                if partner_norm and partner_norm not in known_names:
+                    unknown_partner_rows += 1
+
+    _scan_rows(ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(), pro_events, pro_names)
+    _scan_rows(CollegeCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(), college_events, college_names)
+
+    if unresolved_details_rows:
+        issues.append({
+            'severity': 'medium',
+            'code': 'gear_details_not_parsed',
+            'title': 'Gear-sharing details not structured',
+            'detail': f'{unresolved_details_rows} competitor(s) have free-text gear details but no structured gear-sharing map.',
+            'autofix': False,
+        })
+    if unresolved_event_key_rows:
+        issues.append({
+            'severity': 'high',
+            'code': 'gear_unmapped_event_keys',
+            'title': 'Gear-sharing event keys not mapped',
+            'detail': f'{unresolved_event_key_rows} gear-sharing key(s) do not map to configured events/categories.',
+            'autofix': False,
+        })
+    if unknown_partner_rows:
+        issues.append({
+            'severity': 'high',
+            'code': 'gear_unknown_partner_names',
+            'title': 'Gear-sharing partner names unresolved',
+            'detail': f'{unknown_partner_rows} gear-sharing entry(s) reference blank or unknown partner names.',
+            'autofix': False,
+        })
+    if self_reference_rows:
+        issues.append({
+            'severity': 'high',
+            'code': 'gear_self_reference',
+            'title': 'Self-referenced gear-sharing entries',
+            'detail': f'{self_reference_rows} gear-sharing entry(s) reference the same competitor as partner.',
+            'autofix': False,
+        })
 
     # 3) Saturday spillover integration
     if saturday_ids:
@@ -112,4 +194,3 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
         'severity': by_severity,
         'has_autofixable': any(i.get('autofix') for i in issues),
     }
-

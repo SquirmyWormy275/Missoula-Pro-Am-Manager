@@ -11,7 +11,7 @@
                     <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro</a></li>
-                    <li class="breadcrumb-item"><a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}">Competitors</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Competitors</a></li>
                     <li class="breadcrumb-item active">{{ competitor.name }}</li>
                 </ol>
             </nav>
@@ -33,6 +33,9 @@
                         {% endif %}
                         {% if competitor.is_left_handed_springboard %}
                             <span class="badge bg-info">Left-Handed Springboard</span>
+                        {% endif %}
+                        {% if competitor.springboard_slow_heat %}
+                            <span class="badge bg-warning text-dark">Springboard Slow Heat</span>
                         {% endif %}
                     </p>
                 </div>
@@ -236,6 +239,22 @@
                                     {% endfor %}
                                 </tbody>
                             </table>
+                        </div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="left_handed" name="left_handed"
+                                           {% if competitor.is_left_handed_springboard %}checked{% endif %}>
+                                    <label class="form-check-label" for="left_handed">Left-handed Springboard Cutter</label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="springboard_slow_heat" name="springboard_slow_heat"
+                                           {% if competitor.springboard_slow_heat %}checked{% endif %}>
+                                    <label class="form-check-label" for="springboard_slow_heat">Relegate to Springboard Slow Heat</label>
+                                </div>
+                            </div>
                         </div>
                         <button type="submit" class="btn btn-proam btn-sm">Save Changes</button>
                     </form>

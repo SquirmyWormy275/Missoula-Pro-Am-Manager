@@ -9,6 +9,7 @@ import strings as text
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
 from services.upload_security import malware_scan, save_upload, validate_excel_upload
+from services.gear_sharing import build_name_index, normalize_person_name, resolve_partner_name
 
 registration_bp = Blueprint('registration', __name__)
 
@@ -30,6 +31,7 @@ def college_registration(tournament_id):
 
     return render_template('college/registration.html',
                            tournament=tournament,
+                           all_teams=all_teams,
                            teams=valid_teams,
                            invalid_teams=invalid_teams)
 
@@ -320,13 +322,9 @@ def set_competitor_partner(tournament_id, competitor_id):
 
 @registration_bp.route('/<int:tournament_id>/pro')
 def pro_registration(tournament_id):
-    """Professional competitor registration page."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    competitors = tournament.pro_competitors.all()
-
-    return render_template('pro/registration.html',
-                           tournament=tournament,
-                           competitors=competitors)
+    """Legacy pro registration route now merged into the Pro dashboard."""
+    Tournament.query.get_or_404(tournament_id)
+    return redirect(url_for('main.pro_dashboard', tournament_id=tournament_id))
 
 
 @registration_bp.route('/<int:tournament_id>/pro/new', methods=['GET', 'POST'])
@@ -345,7 +343,8 @@ def new_pro_competitor(tournament_id):
             shirt_size=request.form.get('shirt_size'),
             is_ala_member=request.form.get('is_ala_member') == 'on',
             pro_am_lottery_opt_in=request.form.get('pro_am_lottery') == 'on',
-            is_left_handed_springboard=request.form.get('left_handed') == 'on'
+            is_left_handed_springboard=request.form.get('left_handed') == 'on',
+            springboard_slow_heat=request.form.get('springboard_slow_heat') == 'on',
         )
 
         db.session.add(competitor)
@@ -408,8 +407,12 @@ def update_pro_events(tournament_id, competitor_id):
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
 
     pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
+    all_pro_names = [c.name for c in ProCompetitor.query.filter_by(tournament_id=tournament.id).all()]
+    name_index = build_name_index(all_pro_names)
     selected_ids = set(request.form.getlist('event_ids'))
     competitor.set_events_entered(list(selected_ids))
+    competitor.is_left_handed_springboard = request.form.get('left_handed') == 'on'
+    competitor.springboard_slow_heat = request.form.get('springboard_slow_heat') == 'on'
 
     new_fees = {}
     new_paid = {}
@@ -424,15 +427,17 @@ def update_pro_events(tournament_id, competitor_id):
         except (TypeError, ValueError):
             fee = 0.0
         paid = request.form.get(f'paid_{eid}') == 'on'
-        gear = (request.form.get(f'gear_{eid}') or '').strip()
-        partner = (request.form.get(f'partner_{eid}') or '').strip()
+        gear_raw = (request.form.get(f'gear_{eid}') or '').strip()
+        partner_raw = (request.form.get(f'partner_{eid}') or '').strip()
+        gear = resolve_partner_name(gear_raw, name_index)
+        partner = resolve_partner_name(partner_raw, name_index)
 
         if eid in selected_ids or fee > 0:
             new_fees[eid] = fee
             new_paid[eid] = paid
-        if gear:
+        if gear and normalize_person_name(gear) != normalize_person_name(competitor.name):
             new_gear_sharing[eid] = gear
-        if partner:
+        if partner and normalize_person_name(partner) != normalize_person_name(competitor.name):
             new_partners[eid] = partner
 
     competitor.entry_fees = json.dumps(new_fees)

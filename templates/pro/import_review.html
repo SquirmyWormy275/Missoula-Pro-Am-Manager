@@ -47,6 +47,7 @@
                             <th>Events</th>
                             <th>Fees</th>
                             <th>Relay</th>
+                            <th>SB Slow</th>
                             <th>Partner Issues</th>
                             <th>Gear Sharing</th>
                             <th>Waiver</th>
@@ -102,6 +103,14 @@
                                     <span class="badge bg-primary">In</span>
                                 {% else %}
                                     <span class="badge bg-secondary">Out</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {% if e.springboard_slow_heat %}
+                                    <span class="badge bg-warning text-dark">Yes</span>
+                                {% else %}
+                                    <span class="text-muted">-</span>
                                 {% endif %}
                             </td>
 
