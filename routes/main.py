@@ -134,6 +134,7 @@ def tournament_detail(tournament_id):
     """Tournament detail and management page."""
     tournament = Tournament.query.get_or_404(tournament_id)
 
+    from models.wood_config import WoodConfig
     # Get summary statistics
     stats = {
         'college_teams': tournament.college_team_count,
@@ -142,6 +143,7 @@ def tournament_detail(tournament_id):
         'events': tournament.events.count(),
         'completed_events': tournament.events.filter_by(status='completed').count(),
         'heats_generated': Heat.query.join(Event).filter(Event.tournament_id == tournament_id).count(),
+        'wood_configured': WoodConfig.query.filter_by(tournament_id=tournament_id).first() is not None,
     }
 
     return render_template('tournament_detail.html',

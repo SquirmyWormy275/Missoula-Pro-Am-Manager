@@ -194,6 +194,46 @@
         </div>
     </div>
 
+    <!-- Virtual Woodboss featured card -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card" style="border-left: 4px solid var(--sx-amber);">
+                <div class="card-body py-3">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
+                        <div>
+                            <div class="fw-bold mb-1">
+                                <i class="bi bi-tools text-warning me-1"></i>
+                                Virtual Woodboss
+                                {% if stats.wood_configured %}
+                                <span class="badge bg-success ms-2" style="font-size:0.7rem;">Configured</span>
+                                {% else %}
+                                <span class="badge bg-warning text-dark ms-2" style="font-size:0.7rem;">Not configured</span>
+                                {% endif %}
+                            </div>
+                            <div class="text-muted small">
+                                Block prep planner — calculates chopping blocks and saw log material needed for the show
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap flex-shrink-0">
+                            <a href="{{ url_for('woodboss.config_form', tid=tournament.id) }}"
+                               class="btn btn-outline-secondary btn-sm">
+                                <i class="bi bi-sliders"></i> Wood Specs
+                            </a>
+                            <a href="{{ url_for('woodboss.lottery', tid=tournament.id) }}"
+                               class="btn btn-outline-warning btn-sm">
+                                <i class="bi bi-shuffle"></i> Block Lottery
+                            </a>
+                            <a href="{{ url_for('woodboss.report', tid=tournament.id) }}"
+                               class="btn btn-warning btn-sm">
+                                <i class="bi bi-clipboard-data"></i> Wood Count Report
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Quick Actions (grouped) -->
     <div class="card">
         <div class="card-body">
@@ -206,12 +246,6 @@
                     <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}"
                        class="btn btn-outline-primary w-100">
                         <i class="bi bi-calendar-plus"></i> Configure Events
-                    </a>
-                </div>
-                <div class="col-md-3 col-sm-6">
-                    <a href="{{ url_for('woodboss.dashboard', tid=tournament.id) }}"
-                       class="btn btn-outline-warning w-100">
-                        <i class="bi bi-stack"></i> Virtual Woodboss
                     </a>
                 </div>
             </div>
