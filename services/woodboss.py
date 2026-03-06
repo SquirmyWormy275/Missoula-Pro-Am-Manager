@@ -68,19 +68,24 @@ BLOCK_EVENT_GROUPS = [
 RELAY_BLOCK_KEYS = {'block_relay_underhand', 'block_relay_standing'}
 
 # Ordered dict of all config_keys → human labels (includes relay entries)
+# Ordered: College blocks first, then Pro blocks, then Relay.
+# Templates use this order to render section headers.
 BLOCK_CONFIG_LABELS = {
+    # College
     'block_underhand_college_M':   'Underhand — College Men',
     'block_underhand_college_F':   'Underhand — College Women',
-    'block_underhand_pro_M':       'Underhand — Pro Men',
-    'block_underhand_pro_F':       'Underhand — Pro Women',
     'block_standing_college_M':    'Standing Block — College Men',
     'block_standing_college_F':    'Standing Block — College Women',
-    'block_standing_pro_M':        'Standing Block — Pro Men',
-    'block_standing_pro_F':        'Standing Block — Pro Women',
     'block_springboard_college_M': 'Springboard — College Men',
     'block_springboard_college_F': 'Springboard — College Women',
+    # Pro
+    'block_underhand_pro_M':       'Underhand — Pro Men',
+    'block_underhand_pro_F':       'Underhand — Pro Women',
+    'block_standing_pro_M':        'Standing Block — Pro Men',
+    'block_standing_pro_F':        'Standing Block — Pro Women',
     'block_springboard_pro':       'Springboard — Pro',
     'block_3board_pro':            '3-Board Jigger — Pro',
+    # Relay
     'block_relay_underhand':       'Pro-Am Relay — Underhand Butcher Block',
     'block_relay_standing':        'Pro-Am Relay — Standing Butcher Block',
 }
@@ -521,9 +526,15 @@ def _group_by_species(blocks, saw_wood):
         block_groups[key]['species'] = b['species'] or '(not set)'
         block_groups[key]['size_display'] = b['size_display'] or '—'
 
-    log_groups = defaultdict(lambda: {'events': [], 'total_inches': 0.0, 'total_log_count': 0})
+    # OP and Cookie Stack use independent log specs — never merge them with general saw logs
+    # even if species/size happens to match. Include category_bucket in the grouping key.
+    log_groups = defaultdict(lambda: {'events': [], 'total_inches': 0.0, 'total_log_count': 0,
+                                      'category_bucket': 'general'})
     for s in saw_wood:
+        cat = s['category']
+        bucket = 'op' if cat == 'op' else ('cookie' if cat == 'cookie' else 'general')
         key = (
+            bucket,
             (s['species'] or '').lower().strip(),
             s['size_value'],
             s['size_unit'],
@@ -535,9 +546,13 @@ def _group_by_species(blocks, saw_wood):
             log_groups[key]['total_log_count'] += s['log_count']
         log_groups[key]['species'] = s['species'] or '(not set)'
         log_groups[key]['size_display'] = s['size_display'] or '—'
+        log_groups[key]['category_bucket'] = bucket
 
     block_list = sorted(block_groups.values(), key=lambda x: x['total_count'], reverse=True)
-    log_list = sorted(log_groups.values(), key=lambda x: x['total_inches'], reverse=True)
+    # Sort: general first, then OP, then cookie; within each bucket descending by linear footage
+    bucket_order = {'general': 0, 'op': 1, 'cookie': 2}
+    log_list = sorted(log_groups.values(),
+                      key=lambda x: (bucket_order.get(x['category_bucket'], 9), -x['total_inches']))
     return {'blocks': block_list, 'logs': log_list}
 
 
@@ -574,13 +589,15 @@ def get_ordering_summary(blocks, saw_wood):
             'events': g['events'],
         })
 
-    # --- Saw logs ---
+    # --- Saw logs: OP and Cookie Stack are independent categories, never merged with general ---
     log_grps = defaultdict(lambda: {'events': [], 'total_inches': 0.0, 'total_logs': 0,
-                                    'species': '', 'size_display': ''})
+                                    'species': '', 'size_display': '', 'log_category': 'general'})
     for s in saw_wood:
         if s['competitor_count'] == 0:
             continue
-        k = ((s['species'] or '').lower().strip(), s['size_value'], s['size_unit'])
+        cat = s['category']
+        bucket = 'op' if cat == 'op' else ('cookie' if cat == 'cookie' else 'general')
+        k = (bucket, (s['species'] or '').lower().strip(), s['size_value'], s['size_unit'])
         log_grps[k]['events'].append(s['event_label'])
         if s['total_inches'] is not None:
             log_grps[k]['total_inches'] += s['total_inches']
@@ -588,10 +605,14 @@ def get_ordering_summary(blocks, saw_wood):
             log_grps[k]['total_logs'] += s['log_count']
         log_grps[k]['species'] = s['species'] or '(species not set)'
         log_grps[k]['size_display'] = s['size_display'] or '?'
+        log_grps[k]['log_category'] = bucket
 
-    for _k, g in sorted(log_grps.items(), key=lambda x: -x[1]['total_inches']):
+    bucket_order = {'general': 0, 'op': 1, 'cookie': 2}
+    for _k, g in sorted(log_grps.items(),
+                         key=lambda x: (bucket_order.get(x[1]['log_category'], 9), -x[1]['total_inches'])):
         items.append({
             'category': 'log',
+            'log_category': g['log_category'],
             'species': g['species'],
             'size_display': g['size_display'],
             'quantity': None,
@@ -779,7 +800,15 @@ def get_wood_report(tournament_id):
     springboard = calculate_springboard_dummies(blocks)
 
     total_blocks = sum(b['competitor_count'] for b in blocks)
-    total_saw_inches = sum(s['total_inches'] for s in saw_wood if s['total_inches'] is not None)
+    # OP and Cookie Stack are independent categories — never fold into general saw total
+    total_saw_inches = sum(
+        s['total_inches'] for s in saw_wood
+        if s['total_inches'] is not None and s['category'] not in ('op', 'cookie')
+    )
+    total_op_inches = sum(
+        s['total_inches'] for s in saw_wood
+        if s['total_inches'] is not None and s['category'] == 'op'
+    )
     total_cookie_logs = sum(s['log_count'] for s in saw_wood if s['log_count'] is not None)
 
     return {
@@ -791,6 +820,7 @@ def get_wood_report(tournament_id):
         'is_configured': bool(configs),
         'total_blocks': total_blocks,
         'total_saw_inches': total_saw_inches,
+        'total_op_inches': total_op_inches,
         'total_cookie_logs': total_cookie_logs,
         'springboard': springboard,
     }
@@ -831,7 +861,12 @@ def get_history_report():
             'tournament': t,
             'total_blocks': sum(b['competitor_count'] for b in blocks),
             'total_saw_inches': sum(
-                s['total_inches'] for s in saw_wood if s['total_inches'] is not None
+                s['total_inches'] for s in saw_wood
+                if s['total_inches'] is not None and s['category'] not in ('op', 'cookie')
+            ),
+            'total_op_inches': sum(
+                s['total_inches'] for s in saw_wood
+                if s['total_inches'] is not None and s['category'] == 'op'
             ),
             'total_cookie_logs': sum(
                 s['log_count'] for s in saw_wood if s['log_count'] is not None

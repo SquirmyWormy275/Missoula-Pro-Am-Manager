@@ -2,6 +2,106 @@
 
 {% block title %}Heats - {{ event.display_name }}{% endblock %}
 
+{% block extra_css %}
+<style>
+/* ── Heat card grid ───────────────────────────────────────── */
+.heat-card {
+    background: var(--sx-surface);
+    border: 1px solid var(--sx-border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 3px 14px rgba(0,0,0,0.30);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* Pending header */
+.heat-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--sx-surface-2);
+    border-bottom: 1px solid var(--sx-border);
+}
+/* Completed header — green accent */
+.heat-card-header.completed {
+    background: rgba(45,168,94,0.12);
+    border-bottom-color: rgba(45,168,94,0.35);
+}
+/* Active/in-progress header — amber accent */
+.heat-card-header.in-progress {
+    background: rgba(232,144,18,0.12);
+    border-bottom-color: rgba(232,144,18,0.35);
+}
+
+.heat-card-title {
+    font-weight: 700;
+    font-size: 0.88rem;
+    color: var(--sx-text);
+    letter-spacing: 0.03em;
+}
+.heat-card-title small {
+    font-weight: 400;
+    color: var(--sx-text-2);
+}
+
+/* Competitor list items */
+.heat-card .list-group-item {
+    padding: 7px 14px;
+    border-color: var(--sx-border);
+    background: transparent;
+}
+.heat-card .list-group-item:hover { background: rgba(255,255,255,0.03); }
+
+/* Stand badge inside competitor rows */
+.stand-badge {
+    display: inline-block;
+    min-width: 24px;
+    text-align: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--sx-text-2);
+    background: var(--sx-surface-3);
+    border: 1px solid var(--sx-border);
+    border-radius: 4px;
+    padding: 1px 4px;
+    margin-right: 6px;
+}
+
+/* Competitor name */
+.comp-name {
+    font-size: 0.87rem;
+    color: var(--sx-text);
+}
+
+/* Card footer */
+.heat-card-footer {
+    padding: 10px 14px;
+    border-top: 1px solid var(--sx-border);
+    background: rgba(0,0,0,0.15);
+    margin-top: auto;
+}
+
+/* Edit assignments <details> */
+.heat-assign-details {
+    margin-top: 10px;
+}
+.heat-assign-details summary {
+    font-size: 0.80rem;
+    color: var(--sx-text-2);
+    cursor: pointer;
+    user-select: none;
+    padding: 4px 0;
+}
+.heat-assign-details summary:hover { color: var(--sx-text); }
+.heat-assign-details .form-select-sm {
+    font-size: 0.80rem;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
     <div class="row mb-4">
@@ -79,42 +179,46 @@
         </div>
     </div>
     {% elif heats %}
-    <div class="row">
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-xl-4 g-3">
         {% for heat in heats %}
-        <div class="col-md-4 col-lg-3 mb-4">
-            <div class="card h-100 {% if heat.status == 'completed' %}border-success{% endif %}">
-                <div class="card-header d-flex justify-content-between align-items-center
-                            {% if heat.status == 'completed' %}bg-success text-white{% else %}bg-light{% endif %}">
-                    <span>
-                        <strong>Heat {{ heat.heat_number }}</strong>
+        {% set competitors = heat.get_competitors() %}
+        {% set assignments = heat.get_stand_assignments() %}
+        <div class="col">
+            <div class="heat-card">
+                {# Header #}
+                <div class="heat-card-header {% if heat.status == 'completed' %}completed{% elif heat.status == 'in_progress' %}in-progress{% endif %}">
+                    <span class="heat-card-title">
+                        Heat {{ heat.heat_number }}
                         {% if event.requires_dual_runs %}
-                            <small>- Run {{ heat.run_number }}</small>
+                            <small>&nbsp;Run {{ heat.run_number }}</small>
                         {% endif %}
                     </span>
                     {% if heat.status == 'completed' %}
-                        <i class="bi bi-check-circle-fill"></i>
+                        <i class="bi bi-check-circle-fill text-success"></i>
                     {% elif heat.status == 'in_progress' %}
-                        <span class="badge bg-primary">Active</span>
+                        <span class="badge bg-warning">Active</span>
                     {% endif %}
                 </div>
+
+                {# Competitor list #}
                 <ul class="list-group list-group-flush">
-                    {% set competitors = heat.get_competitors() %}
-                    {% set assignments = heat.get_stand_assignments() %}
                     {% for comp_id in competitors %}
                         {% if event.event_type == 'college' %}
                             {% set comp = tournament.college_competitors.filter_by(id=comp_id).first() %}
                         {% else %}
                             {% set comp = tournament.pro_competitors.filter_by(id=comp_id).first() %}
                         {% endif %}
-                        <li class="list-group-item d-flex justify-content-between align-items-center py-2">
-                            <span>
-                                <span class="badge bg-secondary me-1">{{ assignments.get(comp_id|string, '?') }}</span>
-                                {{ comp.name if comp else 'Unknown' }}
-                            </span>
+                        <li class="list-group-item d-flex align-items-center">
+                            <span class="stand-badge">{{ assignments.get(comp_id|string, '?') }}</span>
+                            <span class="comp-name">{{ comp.name if comp else 'Unknown' }}</span>
                         </li>
+                    {% else %}
+                        <li class="list-group-item text-muted fst-italic" style="font-size:0.82rem;">No competitors</li>
                     {% endfor %}
                 </ul>
-                <div class="card-footer">
+
+                {# Footer — score button + move form #}
+                <div class="heat-card-footer">
                     <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}"
                        class="btn btn-sm {% if heat.status == 'completed' %}btn-outline-success{% else %}btn-proam{% endif %} w-100">
                         {% if heat.status == 'completed' %}
@@ -124,14 +228,14 @@
                         {% endif %}
                     </a>
                     {% if not event.requires_dual_runs or heat.run_number == 1 %}
-                    <details class="mt-2">
-                        <summary class="small text-muted">Edit Heat Assignments</summary>
+                    <details class="heat-assign-details">
+                        <summary>Move Competitor</summary>
                         <form action="{{ url_for('scheduling.move_competitor_between_heats', tournament_id=tournament.id, event_id=event.id) }}"
                               method="POST" class="mt-2">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="from_heat_id" value="{{ heat.id }}">
                             <div class="mb-2">
-                                <label class="form-label small mb-1">Competitor</label>
+                                <label class="form-label mb-1">Competitor</label>
                                 <select class="form-select form-select-sm" name="competitor_id" required>
                                     <option value="">Select...</option>
                                     {% for cid in competitors %}
@@ -147,9 +251,9 @@
                                 </select>
                             </div>
                             <div class="mb-2">
-                                <label class="form-label small mb-1">Move To</label>
+                                <label class="form-label mb-1">Move To</label>
                                 <select class="form-select form-select-sm" name="to_heat_id" required>
-                                    <option value="">Select destination heat...</option>
+                                    <option value="">Select heat...</option>
                                     {% for destination in heats %}
                                         {% if destination.id != heat.id and destination.run_number == heat.run_number %}
                                         <option value="{{ destination.id }}">Heat {{ destination.heat_number }}</option>
@@ -157,7 +261,7 @@
                                     {% endfor %}
                                 </select>
                             </div>
-                            <button type="submit" class="btn btn-sm btn-outline-primary w-100">Move Competitor</button>
+                            <button type="submit" class="btn btn-sm btn-outline-primary w-100">Move</button>
                         </form>
                     </details>
                     {% endif %}

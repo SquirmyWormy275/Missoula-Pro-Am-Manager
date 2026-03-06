@@ -41,7 +41,7 @@ def generate_event_heats(event: Event) -> int:
 
     # OPEN/CLOSED-list events are tracked as signups only, without heats.
     if _is_list_only_event(event):
-        Heat.query.filter_by(event_id=event.id).delete()
+        _delete_event_heats(event.id)
         event.status = 'in_progress'
         db.session.commit()
         return 0
@@ -54,7 +54,7 @@ def generate_event_heats(event: Event) -> int:
     num_heats = math.ceil(len(competitors) / max_per_heat)
 
     # Clear existing heats
-    Heat.query.filter_by(event_id=event.id).delete()
+    _delete_event_heats(event.id)
 
     # Apply special constraints
     if event.stand_type == 'springboard':
@@ -463,6 +463,14 @@ def _competitors_share_gear_for_event(comp1: dict, comp2: dict, event: Event) ->
         comp2.get('gear_sharing', {}) or {},
         event,
     )
+
+
+def _delete_event_heats(event_id: int) -> None:
+    """Delete all heats for an event, clearing HeatAssignment rows first to satisfy FK constraints."""
+    heat_ids = [h.id for h in Heat.query.filter_by(event_id=event_id).with_entities(Heat.id).all()]
+    if heat_ids:
+        HeatAssignment.query.filter(HeatAssignment.heat_id.in_(heat_ids)).delete(synchronize_session=False)
+    Heat.query.filter_by(event_id=event_id).delete(synchronize_session=False)
 
 
 def check_gear_sharing_conflicts(heats: list) -> list:

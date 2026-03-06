@@ -53,8 +53,10 @@
     {% endif %}
 
     <div class="row">
-        <!-- Team Stats -->
+        <!-- LEFT COLUMN -->
         <div class="col-md-4 mb-4">
+
+            <!-- Team Stats -->
             <div class="card">
                 <div class="card-header card-header-proam">
                     <h6 class="mb-0"><i class="bi bi-bar-chart"></i> Team Stats</h6>
@@ -67,13 +69,13 @@
                     <li class="list-group-item d-flex justify-content-between align-items-center">
                         <span>Men</span>
                         <span class="badge {% if team.male_count >= 2 %}bg-success{% else %}bg-danger{% endif %} rounded-pill">
-                            {{ team.male_count }} {% if team.male_count < 2 %}(need 2){% endif %}
+                            {{ team.male_count }}{% if team.male_count < 2 %} (need 2){% endif %}
                         </span>
                     </li>
                     <li class="list-group-item d-flex justify-content-between align-items-center">
                         <span>Women</span>
                         <span class="badge {% if team.female_count >= 2 %}bg-success{% else %}bg-danger{% endif %} rounded-pill">
-                            {{ team.female_count }} {% if team.female_count < 2 %}(need 2){% endif %}
+                            {{ team.female_count }}{% if team.female_count < 2 %} (need 2){% endif %}
                         </span>
                     </li>
                     <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -83,72 +85,98 @@
                 </ul>
             </div>
 
+            <!-- Requirements (full list) -->
             <div class="card mt-3">
                 <div class="card-header">
                     <h6 class="mb-0"><i class="bi bi-info-circle"></i> Requirements</h6>
                 </div>
-                <div class="card-body">
-                    <ul class="list-unstyled mb-0">
-                        <li>
-                            <i class="bi bi-{% if team.male_count >= 2 %}check-circle text-success{% else %}x-circle text-danger{% endif %}"></i>
+                <div class="card-body pb-2">
+                    <p class="small fw-semibold text-muted text-uppercase mb-1" style="font-size:0.7rem;letter-spacing:.05em;">Team Roster</p>
+                    <ul class="list-unstyled mb-3">
+                        <li class="mb-1">
+                            <i class="bi bi-{% if team.male_count >= 2 %}check-circle text-success{% else %}x-circle text-danger{% endif %} me-1"></i>
                             Minimum 2 men
                         </li>
-                        <li>
-                            <i class="bi bi-{% if team.female_count >= 2 %}check-circle text-success{% else %}x-circle text-danger{% endif %}"></i>
+                        <li class="mb-1">
+                            <i class="bi bi-{% if team.female_count >= 2 %}check-circle text-success{% else %}x-circle text-danger{% endif %} me-1"></i>
                             Minimum 2 women
                         </li>
-                        <li>
-                            <i class="bi bi-{% if team.member_count <= 8 %}check-circle text-success{% else %}x-circle text-danger{% endif %}"></i>
+                        <li class="mb-1">
+                            <i class="bi bi-{% if team.member_count <= 8 %}check-circle text-success{% else %}x-circle text-danger{% endif %} me-1"></i>
                             Maximum 8 members total
                         </li>
+                    </ul>
+                    <p class="small fw-semibold text-muted text-uppercase mb-1" style="font-size:0.7rem;letter-spacing:.05em;">Per-Competitor Rules</p>
+                    <ul class="list-unstyled mb-3 small text-muted">
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Max 6 CLOSED events per competitor</li>
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Max 2 same-gender entries per event</li>
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Max 2 pairs per partnered event</li>
+                    </ul>
+                    <p class="small fw-semibold text-muted text-uppercase mb-1" style="font-size:0.7rem;letter-spacing:.05em;">Partner Rules</p>
+                    <ul class="list-unstyled mb-0 small text-muted">
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Partners must be on this team</li>
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Both athletes must enter the same event</li>
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Partner assignments must be reciprocal (A lists B and B lists A)</li>
+                        <li class="mb-0"><i class="bi bi-dash me-1"></i>Mixed-gender events require one man and one woman</li>
                     </ul>
                 </div>
             </div>
 
-            {% if team.status == 'invalid' %}
-            <div class="card mt-3 border-warning">
+            <!-- Re-upload Corrected Excel -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-upload"></i> Re-upload Corrected Excel</h6>
+                </div>
                 <div class="card-body">
-                    <form action="{{ url_for('registration.revalidate_team', tournament_id=tournament.id, team_id=team.id) }}" method="POST">
+                    <p class="small text-muted mb-2">
+                        Fix your entry spreadsheet and re-upload. All teams found in the file will be updated.
+                    </p>
+                    <form action="{{ url_for('registration.upload_college_entry', tournament_id=tournament.id) }}"
+                          method="POST" enctype="multipart/form-data">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-2">
+                            <input type="file" name="file" class="form-control form-control-sm"
+                                   accept=".xlsx,.xls" required>
+                        </div>
                         <div class="d-grid">
-                            <button type="submit" class="btn btn-warning">
-                                <i class="bi bi-arrow-repeat"></i> Re-validate Team
+                            <button type="submit" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-upload"></i> Upload and Re-import
                             </button>
                         </div>
                     </form>
-                    <p class="small text-muted mt-2 mb-0">
-                        After fixing errors below, click here to re-check. If all errors are resolved the team becomes active.
-                    </p>
                 </div>
             </div>
-            {% endif %}
+
         </div>
 
-        <!-- Team Members -->
+        <!-- RIGHT COLUMN -->
         <div class="col-md-8">
+
+            <!-- Team Members with inline event editors -->
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h6 class="mb-0"><i class="bi bi-person-lines-fill"></i> Team Members</h6>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" role="switch" id="toggleMemberEvents">
-                        <label class="form-check-label small" for="toggleMemberEvents">Show signed-up events</label>
-                    </div>
+                    <span class="small text-muted">Click event count to view and edit events</span>
                 </div>
-                <div class="card-body">
+                <div class="card-body p-0">
                     <div class="table-responsive">
-                        <table class="table table-hover">
+                        <table class="table table-hover align-middle mb-0">
                             <thead class="table-proam">
                                 <tr>
                                     <th>Name</th>
                                     <th>Gender</th>
                                     <th>Events</th>
-                                    <th>Individual Points</th>
+                                    <th>Points</th>
                                     <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for member in members %}
+                                {% set ev_details = member_event_details.get(member.id, []) %}
+                                {% set already_entered_keys = ev_details | map(attribute='key') | list %}
+
+                                <!-- Member row -->
                                 <tr class="{{ 'table-secondary' if member.status == 'scratched' else '' }}">
                                     <td><strong>{{ member.name }}</strong></td>
                                     <td>
@@ -158,7 +186,19 @@
                                             <span class="badge bg-info">F</span>
                                         {% endif %}
                                     </td>
-                                    <td>{{ member.get_events_entered()|length }}</td>
+                                    <td>
+                                        {% if member.status == 'active' %}
+                                        <button class="btn btn-sm btn-link p-0 text-decoration-none fw-semibold"
+                                                data-bs-toggle="collapse"
+                                                data-bs-target="#ev-editor-{{ member.id }}"
+                                                aria-expanded="false">
+                                            {{ ev_details|length }} event{% if ev_details|length != 1 %}s{% endif %}
+                                            <i class="bi bi-pencil-square ms-1" style="font-size:.75rem;"></i>
+                                        </button>
+                                        {% else %}
+                                            {{ ev_details|length }} event{% if ev_details|length != 1 %}s{% endif %}
+                                        {% endif %}
+                                    </td>
                                     <td>
                                         <span class="badge bg-warning text-dark">{{ member.individual_points }} pts</span>
                                     </td>
@@ -180,31 +220,89 @@
                                             </button>
                                         </form>
                                         {% endif %}
-                                        <form action="{{ url_for('registration.delete_college_competitor', tournament_id=tournament.id, competitor_id=member.id) }}"
-                                              method="POST" class="d-inline"
-                                              data-confirm="Delete {{ member.name }} permanently? This cannot be undone.">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                            <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                <i class="bi bi-trash"></i> Delete
-                                            </button>
-                                        </form>
                                     </td>
                                 </tr>
-                                <tr class="member-events-row d-none {{ 'table-secondary' if member.status == 'scratched' else '' }}">
-                                    <td colspan="6">
-                                        {% set signed_up_events = member_event_labels.get(member.id, []) %}
-                                        {% if signed_up_events %}
-                                            <div class="small">
-                                                <span class="text-muted me-2">Signed-up events:</span>
-                                                {% for event_name in signed_up_events %}
-                                                    <span class="badge bg-light text-dark border me-1 mb-1">{{ event_name }}</span>
-                                                {% endfor %}
+
+                                <!-- Inline event editor row (active members only) -->
+                                {% if member.status == 'active' %}
+                                <tr class="collapse" id="ev-editor-{{ member.id }}">
+                                    <td colspan="6" class="p-0 border-top-0">
+                                        <div class="p-3 bg-light border-top">
+                                            <div class="row g-3">
+
+                                                <!-- Current events with remove buttons -->
+                                                <div class="col-md-6">
+                                                    <p class="small fw-semibold mb-2">Current Events for {{ member.name }}</p>
+                                                    {% if ev_details %}
+                                                    <table class="table table-sm table-bordered bg-white mb-0">
+                                                        <tbody>
+                                                            {% for ev in ev_details %}
+                                                            <tr>
+                                                                <td class="small py-1 align-middle">
+                                                                    {{ ev.display }}
+                                                                    {% if ev.partner %}
+                                                                    <br><span class="text-muted" style="font-size:.75rem;">Partner: {{ ev.partner }}</span>
+                                                                    {% endif %}
+                                                                </td>
+                                                                <td class="py-1 text-end align-middle" style="width:1%;white-space:nowrap;">
+                                                                    <form action="{{ url_for('registration.remove_competitor_event', tournament_id=tournament.id, competitor_id=member.id) }}"
+                                                                          method="POST" class="d-inline"
+                                                                          data-confirm="Remove {{ ev.display }} from {{ member.name }}?">
+                                                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                                        <input type="hidden" name="event_name" value="{{ ev.key }}">
+                                                                        <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-1" title="Remove this event">
+                                                                            <i class="bi bi-x-lg"></i>
+                                                                        </button>
+                                                                    </form>
+                                                                </td>
+                                                            </tr>
+                                                            {% endfor %}
+                                                        </tbody>
+                                                    </table>
+                                                    {% else %}
+                                                    <p class="small text-muted mb-0">No events entered yet.</p>
+                                                    {% endif %}
+                                                </div>
+
+                                                <!-- Add event form -->
+                                                <div class="col-md-6">
+                                                    <p class="small fw-semibold mb-2">Add Event</p>
+                                                    <form action="{{ url_for('registration.add_competitor_event', tournament_id=tournament.id, competitor_id=member.id) }}"
+                                                          method="POST">
+                                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                        <div class="mb-2">
+                                                            <select name="event_name" class="form-select form-select-sm"
+                                                                    onchange="proamTogglePartner(this, '{{ member.id }}')" required>
+                                                                <option value="">-- select event --</option>
+                                                                {% for ev in college_events %}
+                                                                {%- if ev.name not in already_entered_keys and (ev.id | string) not in already_entered_keys %}
+                                                                {%- if ev.gender is none or ev.gender == member.gender or (ev.is_partnered and ev.partner_gender_requirement == 'mixed') %}
+                                                                <option value="{{ ev.name }}"
+                                                                        data-partnered="{{ 'true' if ev.is_partnered else 'false' }}">
+                                                                    {{ ev.display_name }}{% if ev.gender %} ({{ ev.gender }}){% endif %}
+                                                                </option>
+                                                                {%- endif %}
+                                                                {%- endif %}
+                                                                {% endfor %}
+                                                            </select>
+                                                        </div>
+                                                        <div id="partner-field-{{ member.id }}" class="mb-2 d-none">
+                                                            <input type="text" name="partner_name"
+                                                                   class="form-control form-control-sm"
+                                                                   placeholder="Partner's full name">
+                                                        </div>
+                                                        <button type="submit" class="btn btn-sm btn-success">
+                                                            <i class="bi bi-plus-circle"></i> Add Event
+                                                        </button>
+                                                    </form>
+                                                </div>
+
                                             </div>
-                                        {% else %}
-                                            <span class="small text-muted">No events entered.</span>
-                                        {% endif %}
+                                        </div>
                                     </td>
                                 </tr>
+                                {% endif %}
+
                                 {% else %}
                                 <tr>
                                     <td colspan="6" class="text-center text-muted py-4">
@@ -253,7 +351,7 @@
                             <div id="errFix{{ ei }}" class="accordion-collapse collapse">
                                 <div class="accordion-body bg-light">
 
-                                    {# --- too_many_events: show competitor's events with remove buttons --- #}
+                                    {# --- too_many_events --- #}
                                     {% if err.type == 'too_many_events' %}
                                     {% set comp = member_by_id.get(err.competitor_id) %}
                                     {% if comp %}
@@ -274,7 +372,7 @@
                                     </div>
                                     {% endif %}
 
-                                    {# --- too_many_chopping: show chopping events with remove buttons --- #}
+                                    {# --- too_many_chopping --- #}
                                     {% elif err.type == 'too_many_chopping' %}
                                     {% set comp = member_by_id.get(err.competitor_id) %}
                                     {% if comp %}
@@ -295,7 +393,7 @@
                                     </div>
                                     {% endif %}
 
-                                    {# --- too_many_per_event: show over-limit competitors with remove-event buttons --- #}
+                                    {# --- too_many_per_event --- #}
                                     {% elif err.type == 'too_many_per_event' %}
                                     <p class="small text-muted mb-2">
                                         At most {{ err.max }} {{ err.gender }} competitor(s) may enter "{{ err.event_name }}".
@@ -314,7 +412,7 @@
                                         {% endfor %}
                                     </div>
 
-                                    {# --- too_many_pairs: show pair members with remove partner buttons --- #}
+                                    {# --- too_many_pairs --- #}
                                     {% elif err.type == 'too_many_pairs' %}
                                     <p class="small text-muted mb-2">
                                         At most {{ err.max }} pair(s) may enter "{{ err.event_name }}".
@@ -333,7 +431,7 @@
                                         {% endfor %}
                                     </div>
 
-                                    {# --- missing_partner: text input to enter partner name --- #}
+                                    {# --- missing_partner --- #}
                                     {% elif err.type == 'missing_partner' %}
                                     <p class="small text-muted mb-2">
                                         Enter the partner's name for <strong>{{ err.competitor_name }}</strong>
@@ -353,7 +451,7 @@
                                         </button>
                                     </form>
 
-                                    {# --- partner_not_on_team: dropdown of team members --- #}
+                                    {# --- partner_not_on_team --- #}
                                     {% elif err.type == 'partner_not_on_team' %}
                                     <p class="small text-muted mb-2">
                                         <strong>{{ err.competitor_name }}</strong> listed "{{ err.partner_name }}" as partner
@@ -392,7 +490,7 @@
                                         </form>
                                     </div>
 
-                                    {# --- partner_not_in_event: fix by removing event or clearing partner --- #}
+                                    {# --- partner_not_in_event --- #}
                                     {% elif err.type == 'partner_not_in_event' %}
                                     <p class="small text-muted mb-2">
                                         <strong>{{ err.competitor_name }}</strong> listed
@@ -422,7 +520,7 @@
                                                 Remove {{ err.competitor_name }} from "{{ err.event_name }}"
                                             </button>
                                         </form>
-                                        {# Option 3: Add the partner to this event (set-partner on the partner) #}
+                                        {# Option 3: Add the partner to this event #}
                                         {% if err.partner_id %}
                                         <form action="{{ url_for('registration.set_competitor_partner', tournament_id=tournament.id, competitor_id=err.partner_id) }}"
                                               method="POST" class="d-inline">
@@ -438,7 +536,7 @@
                                         {% endif %}
                                     </div>
 
-                                    {# --- partner_mismatch: fix both sides' partner fields --- #}
+                                    {# --- partner_mismatch --- #}
                                     {% elif err.type == 'partner_mismatch' %}
                                     <p class="small text-muted mb-2">
                                         <strong>{{ err.competitor_name }}</strong> and
@@ -552,19 +650,27 @@
                 </div>
             </div>
             {% endif %}
+
         </div>
     </div>
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function () {
-    const toggle = document.getElementById('toggleMemberEvents');
-    const eventRows = document.querySelectorAll('.member-events-row');
-    if (!toggle || eventRows.length === 0) return;
+function proamTogglePartner(select, memberId) {
+    var opt = select.options[select.selectedIndex];
+    var partnered = opt.getAttribute('data-partnered') === 'true';
+    var field = document.getElementById('partner-field-' + memberId);
+    if (field) {
+        field.classList.toggle('d-none', !partnered);
+    }
+}
 
-    toggle.addEventListener('change', function () {
-        eventRows.forEach(function (row) {
-            row.classList.toggle('d-none', !toggle.checked);
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('form[data-confirm]').forEach(function (form) {
+        form.addEventListener('submit', function (e) {
+            if (!confirm(form.dataset.confirm)) {
+                e.preventDefault();
+            }
         });
     });
 });

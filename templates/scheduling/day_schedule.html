@@ -2,6 +2,90 @@
 
 {% block title %}Day Schedule - {{ tournament.name }} {{ tournament.year }}{% endblock %}
 
+{% block extra_css %}
+<style>
+/* ── Schedule list items ──────────────────────────────────── */
+.schedule-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--sx-border);
+    background: transparent;
+    transition: background 0.12s;
+}
+.schedule-item:last-child { border-bottom: none; }
+.schedule-item:hover { background: rgba(255,255,255,0.02); }
+
+.slot-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    height: 26px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--sx-text-2);
+    background: var(--sx-surface-3);
+    border: 1px solid var(--sx-border);
+    border-radius: 5px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.schedule-item-body { flex: 1; min-width: 0; }
+
+.schedule-item-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--sx-text);
+    line-height: 1.3;
+}
+
+.schedule-item-meta {
+    font-size: 0.75rem;
+    color: var(--sx-text-2);
+    margin-top: 2px;
+}
+
+/* Expandable heat breakdown */
+.heat-details {
+    margin-top: 6px;
+}
+.heat-details summary {
+    font-size: 0.78rem;
+    color: var(--sx-text-2);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.heat-details summary::before {
+    content: "▶";
+    font-size: 0.55rem;
+    transition: transform 0.15s;
+}
+.heat-details[open] summary::before { transform: rotate(90deg); }
+.heat-details summary:hover { color: var(--sx-text); }
+
+.heat-breakdown {
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: var(--sx-surface-3);
+    border: 1px solid var(--sx-border);
+    border-radius: 6px;
+    font-size: 0.78rem;
+    color: var(--sx-text-2);
+    line-height: 1.6;
+}
+.heat-breakdown .heat-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.heat-breakdown .heat-label { font-weight: 700; color: var(--sx-text); white-space: nowrap; }
+.heat-breakdown a { color: var(--sx-info); font-size: 0.72rem; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
     <div class="row mb-2">
@@ -150,117 +234,115 @@
         </div>
     </div>
 
-    <div class="row">
-        <div class="col-lg-4 mb-4">
+    <div class="row g-3">
+        {# ── Friday Day / College ─────────────────────────────── #}
+        <div class="col-lg-4">
             <div class="card h-100">
                 <div class="card-header bg-primary text-white">
                     <h5 class="mb-0">{{ 'Friday Day Show' if has_schedule_overrides else 'College Events' }}</h5>
                 </div>
-                <ul class="list-group list-group-flush">
-                    {% for item in detailed_schedule.friday_day %}
-                    <li class="list-group-item">
-                        <strong>{{ item.slot }}.</strong> {{ item.label }}
-                        <small class="text-muted d-block">{{ item.event_type|title }} | {{ item.stand_type }}</small>
+                {% for item in detailed_schedule.friday_day %}
+                <div class="schedule-item">
+                    <span class="slot-num">{{ item.slot }}</span>
+                    <div class="schedule-item-body">
+                        <div class="schedule-item-label">{{ item.label }}</div>
+                        <div class="schedule-item-meta">{{ item.event_type|title }}&nbsp;·&nbsp;{{ item.stand_type }}</div>
                         {% if item.heats %}
-                            <details class="mt-1">
-                                <summary class="small">Heats / Stands</summary>
-                                <div class="small mt-1">
-                                    {% for heat in item.heats %}
-                                        <div>
-                                            H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}:
-                                            {% for comp in heat.competitors %}
-                                                <span class="me-1">S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>
-                                            {% endfor %}
-                                            <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}"
-                                               class="ms-1">Score</a>
-                                        </div>
-                                    {% endfor %}
+                        <details class="heat-details">
+                            <summary>Heats &amp; Stands</summary>
+                            <div class="heat-breakdown">
+                                {% for heat in item.heats %}
+                                <div class="heat-row">
+                                    <span class="heat-label">H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}:</span>
+                                    {% for comp in heat.competitors %}<span>S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>{% endfor %}
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}">Score</a>
                                 </div>
-                            </details>
+                                {% endfor %}
+                            </div>
+                        </details>
                         {% endif %}
-                    </li>
-                    {% else %}
-                    <li class="list-group-item text-muted">No events in this block.</li>
-                    {% endfor %}
-                </ul>
+                    </div>
+                </div>
+                {% else %}
+                <div class="schedule-item"><span class="text-muted" style="font-size:0.85rem;">No events in this block.</span></div>
+                {% endfor %}
             </div>
         </div>
 
-        <div class="col-lg-4 mb-4">
+        {# ── Friday Showcase / Pro ────────────────────────────── #}
+        <div class="col-lg-4">
             <div class="card h-100">
                 <div class="card-header bg-secondary text-white">
                     <h5 class="mb-0">{{ 'Friday Showcase' if has_schedule_overrides else 'Pro Events' }}</h5>
                 </div>
-                <ul class="list-group list-group-flush">
-                    {% for item in detailed_schedule.friday_feature %}
-                    <li class="list-group-item">
-                        <strong>{{ item.slot }}.</strong> {{ item.label }}
-                        <small class="text-muted d-block">{{ item.event_type|title }} | {{ item.stand_type }}</small>
+                {% for item in detailed_schedule.friday_feature %}
+                <div class="schedule-item">
+                    <span class="slot-num">{{ item.slot }}</span>
+                    <div class="schedule-item-body">
+                        <div class="schedule-item-label">{{ item.label }}</div>
+                        <div class="schedule-item-meta">{{ item.event_type|title }}&nbsp;·&nbsp;{{ item.stand_type }}</div>
                         {% if item.heats %}
-                            <details class="mt-1">
-                                <summary class="small">Heats / Stands</summary>
-                                <div class="small mt-1">
-                                    {% for heat in item.heats %}
-                                        <div>
-                                            H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}:
-                                            {% for comp in heat.competitors %}
-                                                <span class="me-1">S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>
-                                            {% endfor %}
-                                            <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}"
-                                               class="ms-1">Score</a>
-                                        </div>
-                                    {% endfor %}
+                        <details class="heat-details">
+                            <summary>Heats &amp; Stands</summary>
+                            <div class="heat-breakdown">
+                                {% for heat in item.heats %}
+                                <div class="heat-row">
+                                    <span class="heat-label">H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}:</span>
+                                    {% for comp in heat.competitors %}<span>S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>{% endfor %}
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}">Score</a>
                                 </div>
-                            </details>
+                                {% endfor %}
+                            </div>
+                        </details>
                         {% endif %}
-                    </li>
-                    {% else %}
-                    <li class="list-group-item text-muted">No events in this block.</li>
-                    {% endfor %}
-                </ul>
+                    </div>
+                </div>
+                {% else %}
+                <div class="schedule-item"><span class="text-muted" style="font-size:0.85rem;">No events in this block.</span></div>
+                {% endfor %}
             </div>
         </div>
 
-        <div class="col-lg-4 mb-4">
+        {# ── Saturday Show ────────────────────────────────────── #}
+        <div class="col-lg-4">
             <div class="card h-100">
                 <div class="card-header bg-warning text-dark">
                     <h5 class="mb-0">{{ 'Saturday Show' if has_schedule_overrides else 'Pro + College Queue' }}</h5>
                 </div>
-                <div class="card-body py-2 border-bottom">
+                <div style="padding: 8px 14px; border-bottom: 1px solid var(--sx-border); font-size:0.8rem;">
                     {% if schedule.saturday_source == 'flights' %}
-                        <small class="text-success"><i class="bi bi-check-circle"></i> Using built pro flights</small>
+                        <span class="text-success"><i class="bi bi-check-circle"></i> Using built pro flights</span>
                     {% else %}
-                        <small class="text-danger"><i class="bi bi-exclamation-triangle"></i> No flights found. Using fallback event order.</small>
+                        <span class="text-danger"><i class="bi bi-exclamation-triangle"></i> No flights — using fallback order.</span>
                     {% endif %}
                 </div>
-                <ul class="list-group list-group-flush">
-                    {% for item in detailed_schedule.saturday_show %}
-                    <li class="list-group-item">
-                        <strong>{{ item.slot }}.</strong> {{ item.label }}
-                        <small class="text-muted d-block">
-                            {{ item.event_type|title }} | {{ item.stand_type }}
-                            {% if item.flight_number %}
-                                | Flight {{ item.flight_number }}
-                            {% endif %}
-                        </small>
+                {% for item in detailed_schedule.saturday_show %}
+                <div class="schedule-item">
+                    <span class="slot-num">{{ item.slot }}</span>
+                    <div class="schedule-item-body">
+                        <div class="schedule-item-label">{{ item.label }}</div>
+                        <div class="schedule-item-meta">
+                            {{ item.event_type|title }}&nbsp;·&nbsp;{{ item.stand_type }}
+                            {% if item.flight_number %}&nbsp;·&nbsp;Flight {{ item.flight_number }}{% endif %}
+                        </div>
                         {% if item.heats %}
-                            <div class="small mt-1">
+                        <details class="heat-details">
+                            <summary>Heats &amp; Stands</summary>
+                            <div class="heat-breakdown">
                                 {% for heat in item.heats %}
-                                    <div>
-                                        {% for comp in heat.competitors %}
-                                            <span class="me-1">S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>
-                                        {% endfor %}
-                                        <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}"
-                                           class="ms-1">Score</a>
-                                    </div>
+                                <div class="heat-row">
+                                    {% for comp in heat.competitors %}<span>S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>{% endfor %}
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}">Score</a>
+                                </div>
                                 {% endfor %}
                             </div>
+                        </details>
                         {% endif %}
-                    </li>
-                    {% else %}
-                    <li class="list-group-item text-muted">No events in this block.</li>
-                    {% endfor %}
-                </ul>
+                    </div>
+                </div>
+                {% else %}
+                <div class="schedule-item"><span class="text-muted" style="font-size:0.85rem;">No events in this block.</span></div>
+                {% endfor %}
             </div>
         </div>
     </div>

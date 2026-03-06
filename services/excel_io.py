@@ -608,10 +608,11 @@ def _validate_college_entry_constraints(team_ids: set) -> dict:
     if not team_ids:
         return {}
 
-    MAX_EVENTS_PER_COMPETITOR = 6
+    MAX_EVENTS_PER_COMPETITOR = 6  # Applies to CLOSED events only; OPEN events are uncapped
     MAX_PER_EVENT_PER_GENDER_PER_TEAM = 3
     MAX_PAIRS_PER_PARTNERED_EVENT = 3
     MAX_CHOPPING_EVENTS_PER_COMPETITOR = 2
+    CLOSED_EVENT_NAMES = {e['name'] for e in config.COLLEGE_CLOSED_EVENTS}
     CHOPPING_EVENTS = {
         'Underhand Hard Hit',
         'Underhand Speed',
@@ -646,15 +647,16 @@ def _validate_college_entry_constraints(team_ids: set) -> dict:
             events = sorted(set(events))
             member_name_norm = _normalize_person_name(member.name)
 
-            if len(events) > MAX_EVENTS_PER_COMPETITOR:
+            closed_events = [e for e in events if e in CLOSED_EVENT_NAMES]
+            if len(closed_events) > MAX_EVENTS_PER_COMPETITOR:
                 team_errors.append({
                     'type': 'too_many_events',
-                    'message': f'{member.name} entered {len(events)} events (max {MAX_EVENTS_PER_COMPETITOR})',
+                    'message': f'{member.name} entered {len(closed_events)} closed events (max {MAX_EVENTS_PER_COMPETITOR})',
                     'competitor_id': member.id,
                     'competitor_name': member.name,
-                    'count': len(events),
+                    'count': len(closed_events),
                     'max': MAX_EVENTS_PER_COMPETITOR,
-                    'events': events,
+                    'events': closed_events,
                 })
 
             chopping_count = sum(1 for e in events if e in CHOPPING_EVENTS)

@@ -59,11 +59,11 @@ models/
 
 routes/
     __init__.py
-    main.py             # Dashboard, tournament CRUD, college/pro dashboards
-    registration.py     # Excel upload for college; manual entry for pro
+    main.py             # Dashboard, tournament CRUD, college/pro dashboards; tournament_setup multi-tab GET; save_tournament_settings POST
+    registration.py     # Excel upload for college; manual entry for pro; gear sharing manager routes (15+ routes)
     scheduling.py       # Event setup, heat generation, flight building
     scoring.py          # Heat result entry, position calculation, payouts
-    reporting.py        # Standings, event results, payout summary + async export
+    reporting.py        # Standings, event results, payout summary + async export; fee_tracker route
     proam_relay.py      # Pro-Am Relay lottery and results
     partnered_axe.py    # Partnered Axe Throw prelims/finals flow
     validation.py       # Data integrity checks (teams, competitors, heats)
@@ -88,6 +88,7 @@ services/
     audit.py            # log_action() helper — writes AuditLog records best-effort
     background_jobs.py  # Thread-pool executor for async tasks (Excel export)
     report_cache.py     # In-memory TTL cache for report payloads
+    cache_invalidation.py  # invalidate_tournament_caches() — clears report/portal/API caches on mutation
     upload_security.py  # Magic-byte Excel validation, UUID safe filenames, scan hook
     logging_setup.py    # JSON structured log formatter; optional Sentry SDK init
     sms_notify.py       # Twilio SMS for flight start/complete; graceful no-op if not configured
@@ -96,13 +97,19 @@ services/
     handicap_export.py  # Chopping-event Excel export helpers (underhand, springboard, standing)
     partner_matching.py # Auto-partner matching for pro partnered events (bidirectional validation)
     preflight.py        # Pre-scheduling validation: heat/table sync, odd partner pools, Saturday overflow
+    gear_sharing.py     # Comprehensive gear-sharing service: parse/match/audit, bidirectional sync, group gear,
+                        #   free-text parser, parse review, heat conflict detection + auto-fix, batch operations
+    schedule_builder.py # Day schedule assembly: Friday day/feature blocks, Saturday show block from flights
 
 templates/
     base.html
     _tournament_tabs.html  # Shared 3-tab nav (Overview / College Day / Pro Day)
+    _sidebar.html          # Collapsible tournament sidebar: 5 sections, localStorage state, unscored badge; Fee Tracker link
     dashboard.html
-    role_entry.html     # Landing page: Judge / Competitor / Spectator selection
-    tournament_detail.html / tournament_new.html
+    role_entry.html        # Landing page: Judge / Competitor / Spectator selection
+    tournament_detail.html     # Phase-based 3-panel layout (Before/Game Day/After); workflow stepper; contextual banners
+    tournament_new.html
+    tournament_setup.html      # Consolidated setup: events + wood specs + settings tabs in one page
     auth/               login, bootstrap, users, audit_log
     portal/             landing, spectator_dashboard, spectator_college_standings,
                         spectator_pro_standings, spectator_event_results,
@@ -110,13 +117,15 @@ templates/
                         school_access, school_claim, school_dashboard, user_guide
     college/            dashboard, registration, team_detail
     pro/                dashboard, registration, new_competitor, competitor_detail,
-                        flights, build_flights, import_upload, import_review
+                        flights, build_flights, import_upload, import_review,
+                        gear_sharing, gear_sharing_print, gear_parse_review
     scheduling/         events, setup_events, heats, day_schedule (+ _print),
                         heat_sheets_print, friday_feature, preflight
-    scoring/            event_results, enter_heat, configure_payouts
+    scoring/            event_results, enter_heat, configure_payouts, offline_ops
     reports/            all_results, college_standings, event_results,
                         payout_summary (+ _print variants), export_status,
                         payout_settlement
+    reporting/          fee_tracker, payout_settlement
     proam_relay/        dashboard, teams, results, standings
     partnered_axe/      dashboard, prelims, finals, results
     validation/         dashboard, college, pro
@@ -244,7 +253,7 @@ Note: `closed_event_count` property currently counts all events entered, not jus
 
 ### ProCompetitor
 
-Fields: `id`, `tournament_id`, `name`, `gender`, `address`, `phone`, `email`, `shirt_size`, `is_ala_member`, `pro_am_lottery_opt_in`, `is_left_handed_springboard`, `events_entered` (JSON), `entry_fees` (JSON dict event_id → amount), `fees_paid` (JSON dict event_id → bool), `gear_sharing` (JSON dict event_id → partner_name), `partners` (JSON dict event_id → partner_name), `total_earnings`, `status`. Properties: `total_fees_owed`, `total_fees_paid`, `fees_balance`.
+Fields: `id`, `tournament_id`, `name`, `gender`, `address`, `phone`, `email`, `shirt_size`, `is_ala_member`, `pro_am_lottery_opt_in`, `is_left_handed_springboard`, `springboard_slow_heat` (Boolean — competitor should be grouped in the dedicated slow-cutter heat), `events_entered` (JSON), `entry_fees` (JSON dict event_id → amount), `fees_paid` (JSON dict event_id → bool), `gear_sharing` (JSON dict event_id → partner_name), `partners` (JSON dict event_id → partner_name), `total_earnings`, `payout_settled` (Boolean), `status`. Import tracking fields: `submission_timestamp`, `gear_sharing_details`, `waiver_accepted`, `waiver_signature`, `notes`, `total_fees`, `import_timestamp`. Properties: `total_fees_owed`, `total_fees_paid`, `fees_balance`.
 
 ### Event
 
@@ -258,7 +267,7 @@ Fields: `id`, `event_id`, `competitor_id` (integer, not FK), `competitor_type` (
 
 ### Heat
 
-Fields: `id`, `event_id`, `heat_number`, `run_number` (1 or 2), `competitors` (JSON list of competitor IDs), `stand_assignments` (JSON dict competitor_id → stand_number), `status`, `flight_id` (nullable FK to flights). Methods: `get_competitors()`, `set_competitors()`, `add_competitor()`, `remove_competitor()`, `get_stand_assignments()`, `set_stand_assignment()`.
+Fields: `id`, `event_id`, `heat_number`, `run_number` (1 or 2), `competitors` (JSON list of competitor IDs), `stand_assignments` (JSON dict competitor_id → stand_number), `status`, `flight_id` (nullable FK to flights), `flight_position` (nullable Integer — 1-based display order within a flight). Methods: `get_competitors()`, `set_competitors()`, `add_competitor()`, `remove_competitor()`, `get_stand_assignments()`, `set_stand_assignment()`.
 
 ### HeatAssignment
 
@@ -355,6 +364,10 @@ Flight
 - Preflight checks service (`services/preflight.py`, `templates/scheduling/preflight.html`): pre-scheduling validation — heat/table sync, odd partner pools, Saturday overflow
 - Partner matching service (`services/partner_matching.py`): auto-partner assignment logic for pro partnered events; bidirectional validation and gender matching (service exists; no UI route yet)
 - Handicap export helpers (`services/handicap_export.py`): chopping-event Excel export utilities
+- Gear Sharing Manager (`routes/registration.py`, `services/gear_sharing.py`, `templates/pro/gear_sharing.html`): comprehensive pro gear-sharing audit — verified pairs, unresolved entries, heat conflicts; free-text parse with review workflow; gear groups (multiple pairs sharing one saw); bidirectional sync; heat conflict auto-fix; auto-populate partners; cleanup scratched; college gear constraints view/edit; printable report
+- Fee Tracker (`routes/reporting.py`, `templates/reporting/fee_tracker.html`): entry fee collection checklist per pro competitor; per-event breakdown expandable rows; mark/unmark paid; outstanding-only filter; summary cards
+- Tournament Setup consolidated page (`routes/main.py`, `templates/tournament_setup.html`): single `/tournament/<tid>/setup` page with tabs for Events, Wood Specs, and Settings (name/year/dates); wood specs and copy-from now redirect back to setup when called from this page
+- Tournament Detail redesigned (`templates/tournament_detail.html`): 3-phase action panels (Before Show / Game Day / After Show); 6-step workflow stepper; contextual next-step banner per status; stats bar with actionable alerts; async validation status banner
 
 ### Known Gaps and Incomplete Features
 
@@ -366,7 +379,7 @@ Flight
 
 **Pro event fee configuration UI:** No route or template exists for setting fee amounts per event per tournament. `entry_fees` and `fees_paid` fields exist on `ProCompetitor` but fees must currently be set directly in the database or via the edit competitor form.
 
-**Auto-partner assignment UI:** `services/partner_matching.py` contains auto-partner assignment logic with bidirectional validation. However, no route or template exposes this to the judge. To activate, wire `match_partners(tournament_id, event_id)` into a registration or scheduling route.
+**Auto-partner assignment UI:** `services/partner_matching.py` contains auto-partner assignment logic with bidirectional validation. An "Auto-Assign Partners" button exists in the Gear Sharing Manager that calls `auto_assign_pro_partners_route` in `registration.py`. This wires `match_partners()` for partnered events per tournament.
 
 **Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
 

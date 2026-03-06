@@ -22,8 +22,14 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Friday Showcase Date</label>
-                            <input type="date" class="form-control" style="max-width:220px;" name="friday_feature_date"
-                                   value="{{ tournament.friday_feature_date.isoformat() if tournament.friday_feature_date else '' }}">
+                            <div class="form-control-plaintext fw-semibold">
+                                {% if tournament.college_date %}
+                                    {{ tournament.college_date.strftime('%B %d, %Y') }}
+                                {% else %}
+                                    <span class="text-muted">No college date set — update Tournament Settings first.</span>
+                                {% endif %}
+                            </div>
+                            <div class="form-text">Matches the College Day date (set in Tournament Settings).</div>
                         </div>
 
                         <div class="mb-3">

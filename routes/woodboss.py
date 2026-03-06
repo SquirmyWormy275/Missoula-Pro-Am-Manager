@@ -135,6 +135,8 @@ def save_config(tid):
     db.session.commit()
     log_action('wood_config_saved', 'tournament', tid, {'keys_saved': saved})
     flash(f'Wood specifications saved ({saved} entries updated).', 'success')
+    if request.form.get('return_to') == 'setup':
+        return redirect(url_for('main.tournament_setup', tournament_id=tid, tab='wood'))
     return redirect(url_for('woodboss.config_form', tid=tid))
 
 
@@ -184,6 +186,8 @@ def copy_from(tid):
     db.session.commit()
     log_action('wood_config_copied', 'tournament', tid, {'source_tid': source_tid, 'copied': copied})
     flash(f'Copied {copied} wood spec entries from {source.name} {source.year}.', 'success')
+    if request.form.get('return_to') == 'setup':
+        return redirect(url_for('main.tournament_setup', tournament_id=tid, tab='wood'))
     return redirect(url_for('woodboss.config_form', tid=tid))
 
 

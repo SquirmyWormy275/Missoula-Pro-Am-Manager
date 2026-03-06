@@ -169,21 +169,58 @@
             </div>
 
             <!-- Gear Sharing -->
-            {% if gear_sharing_labels %}
             <div class="card mt-3">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-tools"></i> Gear Sharing</h6>
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Gear Sharing</h6>
+                    <a href="{{ url_for('registration.pro_gear_manager', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary btn-sm">Manage All</a>
                 </div>
-                <ul class="list-group list-group-flush">
-                    {% for event_label, partner in gear_sharing_labels %}
-                    <li class="list-group-item">
-                        <strong>{{ event_label }}:</strong> Sharing with {{ partner }}
-                        <small class="text-muted">(Cannot be in same heat)</small>
-                    </li>
-                    {% endfor %}
-                </ul>
+                {% if gear_sharing_labels %}
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Event</th>
+                                <th>Partner</th>
+                                <th>Reciprocal</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for g in gear_sharing_labels %}
+                            <tr>
+                                <td>{{ g.event_label }}</td>
+                                <td>{{ g.partner if g.partner else '<span class="text-muted fst-italic">none</span>'|safe }}</td>
+                                <td>
+                                    {% if g.reciprocal %}
+                                    <span class="badge bg-success">Yes</span>
+                                    {% elif g.partner and g.partner.startswith('group:') %}
+                                    <span class="badge bg-secondary">Group</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">Not on roster</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="card-body text-muted small">No gear-sharing entries.</div>
+                {% endif %}
+                {% if gear_audit %}
+                <div class="card-footer">
+                    <h6 class="small text-muted mb-2">Recent Gear Activity</h6>
+                    <ul class="list-unstyled mb-0">
+                        {% for entry in gear_audit %}
+                        <li class="small text-muted">
+                            {{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else '' }}
+                            — {{ entry.action }}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
             </div>
-            {% endif %}
 
             <!-- Edit Event Enrollment -->
             {% if pro_events %}

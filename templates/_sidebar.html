@@ -69,9 +69,9 @@
             </a>
             <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}"
                class="nav-link sidebar-child {{ 'active' if request.endpoint == 'registration.college_registration' else '' }}"
-               title="Entry Import">
-                <i class="bi bi-upload sb-icon"></i>
-                <span class="sb-text ms-2">Entry Import</span>
+               title="College Operations">
+                <i class="bi bi-people sb-icon"></i>
+                <span class="sb-text ms-2">College Operations</span>
             </a>
             <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'main.pro_dashboard' else '' }}"
@@ -84,6 +84,12 @@
                title="Pro Operations">
                 <i class="bi bi-person-plus sb-icon"></i>
                 <span class="sb-text ms-2">Pro Operations</span>
+            </a>
+            <a href="{{ url_for('reporting.fee_tracker', tournament_id=tournament.id) }}"
+               class="nav-link sidebar-child {{ 'active' if request.endpoint == 'reporting.fee_tracker' else '' }}"
+               title="Fee Tracker">
+                <i class="bi bi-receipt sb-icon"></i>
+                <span class="sb-text ms-2">Fee Tracker</span>
             </a>
         </div>
 
@@ -102,9 +108,9 @@
             </a>
             <a href="{{ url_for('scheduling.friday_feature', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'scheduling.friday_feature' else '' }}"
-               title="Friday Showcase">
+               title="Fri Feature / Sat Overflow">
                 <i class="bi bi-stars sb-icon"></i>
-                <span class="sb-text ms-2">Friday Showcase</span>
+                <span class="sb-text ms-2">Fri Feature / Sat Overflow</span>
             </a>
             <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'scheduling.preflight_check' else '' }}"
@@ -120,37 +126,44 @@
             </a>
         </div>
 
-        <!-- ── 3. SCORING ────────────────────────────── -->
+        <!-- ── 3. RUN SHOW ────────────────────────────── -->
         <button class="sb-group-toggle" data-group="sb-scoring" title="Run Show">
             <i class="bi bi-pencil-square sb-icon" style="font-size:0.9rem;"></i>
             <span class="sb-text ms-2">Run Show</span>
             <i class="bi bi-chevron-down sb-chevron sb-text"></i>
         </button>
         <div id="sb-scoring" class="sb-group-body">
-            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
-               class="nav-link {{ 'active' if request.endpoint in ('scheduling.event_list', 'scheduling.event_detail', 'scheduling.day_schedule') else '' }}"
-               title="Events & Schedule"
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}?tab=build"
+               class="nav-link {{ 'active' if request.endpoint == 'scheduling.event_list' and request.args.get('tab', 'build') == 'build' else '' }}"
+               title="Build Schedule"
                style="display:flex; align-items:center;">
-                <i class="bi bi-calendar-event sb-icon"></i>
-                <span class="sb-text ms-2">Events &amp; Schedule</span>
+                <i class="bi bi-lightning-charge sb-icon"></i>
+                <span class="sb-text ms-2">Build Schedule</span>
+            </a>
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}?tab=friday"
+               class="nav-link {{ 'active' if request.endpoint == 'scheduling.event_list' and request.args.get('tab') == 'friday' else '' }}"
+               title="Friday Operations"
+               style="display:flex; align-items:center;">
+                <i class="bi bi-mortarboard sb-icon"></i>
+                <span class="sb-text ms-2">Friday Operations</span>
                 {% if unscored_heats > 0 %}
                 <span class="badge rounded-pill ms-auto" style="background:var(--sx-amber); color:#fff; font-size:0.62rem; padding:2px 6px; flex-shrink:0;">{{ unscored_heats }}</span>
                 {% endif %}
             </a>
-            <a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}"
-               class="nav-link {{ 'active' if request.endpoint in ('scheduling.flight_list', 'scheduling.flight_detail', 'scheduling.day_schedule') else '' }}"
-               title="Flights">
-                <i class="bi bi-layers sb-icon"></i>
-                <span class="sb-text ms-2">Flights</span>
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}?tab=saturday"
+               class="nav-link {{ 'active' if request.endpoint == 'scheduling.event_list' and request.args.get('tab') == 'saturday' else '' }}"
+               title="Saturday Operations">
+                <i class="bi bi-trophy sb-icon"></i>
+                <span class="sb-text ms-2">Saturday Operations</span>
             </a>
             <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
-               class="nav-link {{ 'active' if request.endpoint == 'scheduling.heat_sheets' else '' }}"
+               class="nav-link sidebar-child {{ 'active' if request.endpoint == 'scheduling.heat_sheets' else '' }}"
                title="Heat Sheets">
                 <i class="bi bi-printer sb-icon"></i>
                 <span class="sb-text ms-2">Heat Sheets</span>
             </a>
             <a href="{{ url_for('portal.kiosk', tournament_id=tournament.id) }}"
-               class="nav-link" target="_blank" rel="noopener"
+               class="nav-link sidebar-child" target="_blank" rel="noopener"
                title="Kiosk Display">
                 <i class="bi bi-display sb-icon"></i>
                 <span class="sb-text ms-2">Kiosk Display <i class="bi bi-box-arrow-up-right" style="font-size:0.65rem; opacity:0.5;"></i></span>

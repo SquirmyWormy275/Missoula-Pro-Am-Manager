@@ -28,7 +28,7 @@
 
                     <h6 class="mb-3">Events with Generated Heats</h6>
 
-                    {% if events %}
+                    {% if total_heats > 0 %}
                     <div class="table-responsive mb-4">
                         <table class="table table-sm">
                             <thead class="table-light">
@@ -57,14 +57,20 @@
                     <form method="POST">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">
-                            <label for="heats_per_flight" class="form-label">Target Heats per Flight</label>
-                            <select class="form-select" id="heats_per_flight" name="heats_per_flight">
-                                <option value="6">6 heats (shorter flights)</option>
-                                <option value="8" selected>8 heats (recommended)</option>
-                                <option value="10">10 heats (longer flights)</option>
-                                <option value="12">12 heats (extended flights)</option>
+                            <label for="num_flights" class="form-label">Number of Flights</label>
+                            <select class="form-select" id="num_flights" name="num_flights">
+                                {% for n in range(2, 11) %}
+                                <option value="{{ n }}" {% if n == 4 %}selected{% endif %}>{{ n }} flights</option>
+                                {% endfor %}
                             </select>
-                            <small class="text-muted">The system will distribute heats across flights for maximum event variety.</small>
+                            <div class="mt-2 p-2 rounded" style="background: var(--bs-secondary-bg, #f8f9fa);">
+                                <span class="text-muted small">Estimated heats per flight: </span>
+                                <strong id="heats_estimate">--</strong>
+                                <span class="text-muted small" id="total_heats_note">
+                                    {% if total_heats %}({{ total_heats }} total heats to distribute){% endif %}
+                                </span>
+                            </div>
+                            <small class="text-muted">Heats are distributed evenly. The system interleaves events for crowd variety.</small>
                         </div>
                         <div class="form-check mb-3">
                             <input class="form-check-input" type="checkbox" id="run_async" name="run_async" value="1">
@@ -84,13 +90,33 @@
                             </a>
                         </div>
                     </form>
+
+                    <script>
+                    (function () {
+                        var totalHeats = {{ total_heats | default(0) }};
+                        var select = document.getElementById('num_flights');
+                        var estimate = document.getElementById('heats_estimate');
+
+                        function update() {
+                            var n = parseInt(select.value, 10);
+                            if (!n || n < 1 || totalHeats === 0) {
+                                estimate.textContent = '--';
+                            } else {
+                                estimate.textContent = '~' + Math.ceil(totalHeats / n);
+                            }
+                        }
+
+                        select.addEventListener('change', update);
+                        update();
+                    })();
+                    </script>
                     {% else %}
                     <div class="text-center py-4 text-muted">
                         <i class="bi bi-calendar-x display-4"></i>
-                        <p class="mt-3">No pro events with heats yet.</p>
-                        <p class="small">Configure events and generate heats first.</p>
+                        <p class="mt-3">No pro heats have been generated yet.</p>
+                        <p class="small">Go to the Events &amp; Schedule page and generate heats for pro events first, then return here to build flights.</p>
                         <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="btn btn-primary">
-                            <i class="bi bi-calendar-plus"></i> Configure Events
+                            <i class="bi bi-calendar-plus"></i> Go to Events &amp; Schedule
                         </a>
                     </div>
                     {% endif %}

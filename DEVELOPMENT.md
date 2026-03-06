@@ -73,7 +73,9 @@ Missoula-Pro-Am-Manager/
 │   ├── woodboss.py        # Block/saw calculations, lottery view, history, HMAC share token
 │   ├── handicap_export.py # Chopping-event Excel export helpers
 │   ├── partner_matching.py# Auto-partner matching for pro partnered events
-│   └── preflight.py       # Pre-scheduling validation checks
+│   ├── preflight.py       # Pre-scheduling validation checks
+│   ├── gear_sharing.py    # Comprehensive gear-sharing: parse, audit, sync, conflict-fix, groups, batch ops
+│   └── schedule_builder.py# Day schedule assembly (Friday/Saturday blocks)
 ├── static/                # Static assets
 │   ├── js/onboarding.js   # First-time onboarding modal engine
 │   ├── sw.js              # Service worker (offline cache + Background Sync)
@@ -85,12 +87,14 @@ Missoula-Pro-Am-Manager/
     ├── auth/              # login, bootstrap, users, audit_log
     ├── portal/            # spectator, competitor, school_captain, user_guide
     ├── college/           # College competition templates
-    ├── pro/               # Pro competition templates (+ import flow)
+    ├── pro/               # Pro competition templates (+ import flow, gear_sharing, gear_parse_review, gear_sharing_print)
     ├── scoring/           # Score entry templates
     ├── scheduling/        # Heat/flight management; heat sheets print; friday feature; preflight
     ├── reports/           # Report templates (screen & print); payout settlement
+    ├── reporting/         # fee_tracker, payout_settlement
     ├── proam_relay/       # Pro-Am Relay templates
     ├── partnered_axe/     # Partnered Axe templates
+    ├── tournament_setup.html  # Consolidated setup: events + wood specs + settings tabs
     └── woodboss/          # Virtual Woodboss (dashboard, config, report, report_print, lottery, history)
 ```
 
@@ -350,6 +354,8 @@ event.payouts = {"1": 500, "2": 300, "3": 200, "4": 100}
 | `/` | Dashboard |
 | `/tournament/new` | Create tournament |
 | `/tournament/<id>` | Tournament detail |
+| `/tournament/<id>/setup` | Consolidated setup page (events/wood/settings tabs) |
+| `/tournament/<id>/setup/settings` | Save tournament name/year/dates |
 | `/tournament/<id>/college` | College dashboard |
 | `/tournament/<id>/pro` | Pro dashboard |
 
@@ -360,6 +366,21 @@ event.payouts = {"1": 500, "2": 300, "3": 200, "4": 100}
 | `/<id>/college/upload` | Upload Excel entry form |
 | `/<id>/pro` | Pro registration |
 | `/<id>/pro/new` | Add pro competitor |
+| `/<id>/pro/gear` | Gear Sharing Manager (audit dashboard) |
+| `/<id>/pro/gear/update` | Add/update a pro gear-sharing entry (POST) |
+| `/<id>/pro/gear/remove` | Remove a pro gear-sharing entry (POST) |
+| `/<id>/pro/gear/complete-pairs` | Write reciprocals for all one-sided pairs (POST) |
+| `/<id>/pro/gear/auto-partners` | Copy gear entries into partner fields (POST) |
+| `/<id>/pro/gear/cleanup-scratched` | Remove entries referencing scratched competitors (POST) |
+| `/<id>/pro/gear/sync-heats` | Auto-fix gear conflicts in heats (POST) |
+| `/<id>/pro/gear/parse-review` | Review proposed free-text parse results (GET) |
+| `/<id>/pro/gear/parse-confirm` | Commit selected parse results (POST) |
+| `/<id>/pro/gear/group/create` | Create a gear group (POST) |
+| `/<id>/pro/gear/group/remove` | Remove a gear group (POST) |
+| `/<id>/pro/gear/auto-assign-partners` | Auto-assign partners for partnered events (POST) |
+| `/<id>/pro/gear/print` | Printable gear sharing report (GET) |
+| `/<id>/college/gear/update` | Add/update a college gear-sharing entry (POST) |
+| `/<id>/college/gear/remove` | Remove a college gear-sharing entry (POST) |
 
 ### Scheduling (`/scheduling`)
 | Route | Description |
@@ -387,6 +408,7 @@ event.payouts = {"1": 500, "2": 300, "3": 200, "4": 100}
 | `/<id>/export-results/async` | Background Excel export job |
 | `/<id>/backup` | SQLite backup download (admin) |
 | `/<id>/restore` | SQLite restore upload (admin) |
+| `/<id>/pro/fee-tracker` | Pro entry fee collection tracker |
 | `*/print` | Printable versions |
 
 ### Public API (`/api/public`)
@@ -527,6 +549,36 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-03-06 (V1.7.0)
+
+**Gear Sharing Manager — complete pro gear-sharing management system:**
+- Expanded `services/gear_sharing.py`: `build_gear_report()` (audit), `parse_gear_sharing_details()` (free-text NLP), `build_parse_review()` (pre-commit review), `fix_heat_gear_conflicts()` (auto-fix heats), `sync_gear_bidirectional()`, `sync_all_gear_for_competitor()`, `create_gear_group()`, `get_gear_groups()`, `complete_one_sided_pairs()`, `cleanup_scratched_gear_entries()`, `auto_populate_partners_from_gear()`, `build_gear_completeness_check()`, `parse_all_gear_details()`
+- Added ~15 routes in `routes/registration.py`: `pro_gear_manager`, `pro_gear_update`, `pro_gear_remove`, `pro_gear_complete_pairs`, `pro_gear_auto_partners`, `pro_gear_cleanup_scratched`, `pro_gear_sync_heats`, `pro_gear_parse_review`, `pro_gear_parse_confirm`, `pro_gear_group_create`, `pro_gear_group_remove`, `auto_assign_pro_partners_route`, `college_gear_update`, `college_gear_remove`, `pro_gear_print`
+- New `templates/pro/gear_sharing.html`: full manager UI — verified pairs table, unresolved entries with edit/remove, gear groups, add/update form, college constraints section; all with inline Bootstrap modals
+- New `templates/pro/gear_parse_review.html`: review proposed gear maps from free-text details before committing; select/deselect per competitor
+- New `templates/pro/gear_sharing_print.html`: standalone print report grouped by equipment category (springboard/crosscut/chainsaw)
+
+**Tournament Setup consolidated page:**
+- New `GET /tournament/<tid>/setup` route in `routes/main.py` with tabs for Events, Wood Specs, and Settings
+- New `POST /tournament/<tid>/setup/settings` route: save tournament name, year, college/pro/Friday dates
+- New `templates/tournament_setup.html`: unified setup UI; wood specs tab reuses woodboss config form inline; `return_to=setup` redirect from woodboss save_config and copy_from routes
+- Tournament detail workflow stepper now links to `/tournament/<tid>/setup`
+
+**Fee Tracker:**
+- New `GET/POST /reporting/<tid>/pro/fee-tracker` route
+- New `templates/reporting/fee_tracker.html`: per-competitor fee table with expandable per-event breakdown; mark all paid / unmark; outstanding-only filter toggle; balance summary cards
+- Fee Tracker link added to sidebar Competitors section
+
+**Tournament Detail redesign:**
+- `templates/tournament_detail.html` fully rewritten: 3 phase-panels (Before Show / Game Day / After Show); 6-step workflow stepper with clickable links; context-sensitive next-step guidance banner; compact stats bar with alert badges; async validation status banner
+- All Phase 1 setup links now point to `tournament_setup`
+
+**Migration:**
+- `migrations/versions/b5f1e9cd7c50_merge_springboard_slow_heat_branch.py`: merge migration resolving `a9b8c7d6e5f4` + `c6d7e8f9a0b1` branch heads (no-op schema change)
+
+**Various template updates:**
+- Updated `pro/dashboard.html`, `pro/competitor_detail.html`, `pro/flights.html`, `pro/build_flights.html`, `scheduling/events.html`, `scheduling/heats.html`, `scheduling/day_schedule.html`, `scheduling/friday_feature.html`, `woodboss/config.html`, `woodboss/dashboard.html`, `woodboss/report.html`, `woodboss/report_print.html`, `college/team_detail.html`, `dashboard.html`
 
 ### 2026-03-04 (V1.6.0)
 

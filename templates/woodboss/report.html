@@ -124,9 +124,29 @@
                     </thead>
                     <tbody>
                         {% set block_total = namespace(n=0) %}
+                        {% set section_ns = namespace(current='') %}
                         {% for b in report.blocks %}
                         {% if b.competitor_count > 0 %}
                         {% set block_total.n = block_total.n + b.competitor_count %}
+                        {% set ck = b.config_key %}
+                        {% if ck in ('block_relay_underhand', 'block_relay_standing') %}
+                          {% set section = 'relay' %}
+                        {% elif 'pro' in ck %}
+                          {% set section = 'pro' %}
+                        {% else %}
+                          {% set section = 'college' %}
+                        {% endif %}
+                        {% if section != section_ns.current %}
+                          {% set section_ns.current = section %}
+                          <tr>
+                            <td colspan="5"
+                                style="background:var(--sx-surface-2);padding:0.3rem 0.75rem;font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--sx-text-2);border-top:2px solid var(--sx-border-bright);">
+                              {% if section == 'college' %}College Chopping Blocks
+                              {% elif section == 'pro' %}Pro Chopping Blocks
+                              {% else %}Pro-Am Relay Blocks{% endif %}
+                            </td>
+                          </tr>
+                        {% endif %}
                         <tr>
                             <td>
                                 {{ b.label }}
@@ -206,9 +226,14 @@
         <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
             <h5 class="mb-0"><i class="bi bi-bar-chart-steps"></i> Saw Log Material</h5>
             <div class="d-flex gap-2">
-                <span class="badge bg-primary fs-6">{{ '%.1f'|format(report.total_saw_inches) }}"</span>
+                {% if report.total_saw_inches > 0 %}
+                <span class="badge bg-primary fs-6" title="General saw logs (crosscut, stock saw, hot saw)">{{ '%.1f'|format(report.total_saw_inches) }}" general</span>
+                {% endif %}
+                {% if report.total_op_inches > 0 %}
+                <span class="badge bg-info fs-6" title="Obstacle Pole logs (independent spec)">{{ '%.1f'|format(report.total_op_inches) }}" OP</span>
+                {% endif %}
                 {% if report.total_cookie_logs > 0 %}
-                <span class="badge bg-success fs-6">{{ report.total_cookie_logs }} cookie logs</span>
+                <span class="badge bg-success fs-6" title="Cookie Stack logs (independent spec)">{{ report.total_cookie_logs }} cookie log{{ 's' if report.total_cookie_logs != 1 }}</span>
                 {% endif %}
             </div>
         </div>
@@ -226,11 +251,15 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% set saw_in = namespace(n=0.0) %}
+                        {% set gen_in = namespace(n=0.0) %}
+                        {% set op_in = namespace(n=0.0) %}
                         {% set saw_logs = namespace(n=0) %}
                         {% for s in report.saw_wood %}
                         {% if s.competitor_count > 0 %}
-                        {% if s.total_inches is not none %}{% set saw_in.n = saw_in.n + s.total_inches %}{% endif %}
+                        {% if s.total_inches is not none %}
+                          {% if s.category == 'op' %}{% set op_in.n = op_in.n + s.total_inches %}
+                          {% else %}{% set gen_in.n = gen_in.n + s.total_inches %}{% endif %}
+                        {% endif %}
                         {% if s.log_count is not none %}{% set saw_logs.n = saw_logs.n + s.log_count %}{% endif %}
                         <tr>
                             <td>{{ s.event_label }}</td>
@@ -247,21 +276,27 @@
                         </tr>
                         {% endif %}
                         {% endfor %}
-                        {% if saw_in.n == 0 and saw_logs.n == 0 %}
+                        {% if gen_in.n == 0 and op_in.n == 0 and saw_logs.n == 0 %}
                         <tr><td colspan="6" class="text-center text-muted fst-italic py-3">No competitors enrolled in saw events.</td></tr>
                         {% endif %}
                     </tbody>
-                    {% if saw_in.n > 0 or saw_logs.n > 0 %}
+                    {% if gen_in.n > 0 or op_in.n > 0 or saw_logs.n > 0 %}
                     <tfoot>
-                        {% if saw_in.n > 0 %}
+                        {% if gen_in.n > 0 %}
                         <tr>
-                            <td colspan="5" class="text-end">Total Saw Log Linear:</td>
-                            <td class="text-end total-highlight">{{ '%.1f'|format(saw_in.n) }}"</td>
+                            <td colspan="5" class="text-end">Total General Saw Log Linear (Crosscut / Stock Saw / Hot Saw):</td>
+                            <td class="text-end total-highlight">{{ '%.1f'|format(gen_in.n) }}"</td>
+                        </tr>
+                        {% endif %}
+                        {% if op_in.n > 0 %}
+                        <tr>
+                            <td colspan="5" class="text-end">Total Obstacle Pole Log Linear (independent spec):</td>
+                            <td class="text-end total-highlight">{{ '%.1f'|format(op_in.n) }}"</td>
                         </tr>
                         {% endif %}
                         {% if saw_logs.n > 0 %}
                         <tr>
-                            <td colspan="5" class="text-end">Total Cookie Stack Logs:</td>
+                            <td colspan="5" class="text-end">Total Cookie Stack Logs (independent spec):</td>
                             <td class="text-end total-highlight">{{ saw_logs.n }}</td>
                         </tr>
                         {% endif %}
@@ -310,11 +345,20 @@
             <div class="table-responsive">
                 <table class="table report-table mb-0">
                     <thead>
-                        <tr><th>Species</th><th>Size</th><th>Events</th><th class="text-end">Total Linear</th><th class="text-end">Cookie Logs</th></tr>
+                        <tr><th>Category</th><th>Species</th><th>Size</th><th>Events</th><th class="text-end">Total Linear</th><th class="text-end">Cookie Logs</th></tr>
                     </thead>
                     <tbody>
                         {% for grp in report.by_species.logs %}
                         <tr>
+                            <td>
+                                {% if grp.category_bucket == 'op' %}
+                                <span class="badge bg-info text-dark">Obstacle Pole</span>
+                                {% elif grp.category_bucket == 'cookie' %}
+                                <span class="badge bg-success">Cookie Stack</span>
+                                {% else %}
+                                <span class="badge bg-secondary">General Saw</span>
+                                {% endif %}
+                            </td>
                             <td><span class="species-pill">{{ grp.species }}</span></td>
                             <td>{{ grp.size_display }}</td>
                             <td><small class="text-muted">{{ grp.events | join(', ') }}</small></td>
@@ -322,7 +366,7 @@
                             <td class="text-end fw-bold">{% if grp.total_log_count > 0 %}{{ grp.total_log_count }}{% else %}—{% endif %}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="5" class="text-center text-muted fst-italic py-3">No log data — configure species/size first.</td></tr>
+                        <tr><td colspan="6" class="text-center text-muted fst-italic py-3">No log data — configure species/size first.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -341,9 +385,15 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <span class="species-pill">{{ item.species }}</span>
-                        <span class="badge {{ 'bg-warning' if item.category == 'block' else 'bg-primary' }}">
-                            {{ 'Blocks' if item.category == 'block' else 'Saw Log' }}
-                        </span>
+                        {% if item.category == 'block' %}
+                        <span class="badge bg-warning text-dark">Blocks</span>
+                        {% elif item.log_category == 'op' %}
+                        <span class="badge bg-info text-dark">Obstacle Pole Log</span>
+                        {% elif item.log_category == 'cookie' %}
+                        <span class="badge bg-success">Cookie Stack Log</span>
+                        {% else %}
+                        <span class="badge bg-primary">General Saw Log</span>
+                        {% endif %}
                     </div>
                     <div class="fw-bold" style="font-size:1rem; color:var(--sx-text);">
                         {{ item.size_display }}

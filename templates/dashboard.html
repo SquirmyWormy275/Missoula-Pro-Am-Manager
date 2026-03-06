@@ -109,60 +109,6 @@
         margin-bottom: 0;
     }
 
-    .hero-powered-by {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.45rem;
-        margin-top: 1rem;
-        background: linear-gradient(180deg, rgba(12,14,20,0.96), rgba(7,8,13,0.96));
-        border: 1px solid rgba(239,43,22,0.35);
-        border-radius: 999px;
-        padding: 0.24rem 0.72rem 0.24rem 0.45rem;
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
-    }
-    .hero-powered-by img {
-        height: 16px;
-        width: auto;
-        max-width: 110px;
-        object-fit: contain;
-    }
-    .hero-powered-by span {
-        font-family: "Orbitron", sans-serif;
-        font-size: 0.52rem;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: #ffd8bf;
-        font-weight: 700;
-    }
-
-    /* Feature pills */
-    .feature-pills {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        align-items: flex-end;
-    }
-
-    .feature-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid var(--sx-border-bright);
-        border-radius: 999px;
-        padding: 0.38rem 0.85rem;
-        font-size: 0.8rem;
-        color: var(--sx-text-2);
-        white-space: nowrap;
-        transition: background 0.15s, border-color 0.15s, color 0.15s;
-    }
-    .feature-pill:hover {
-        background: rgba(232,57,31,0.08);
-        border-color: rgba(232,57,31,0.3);
-        color: var(--sx-text);
-    }
-    .feature-pill i { color: var(--sx-fire); font-size: 0.9rem; }
-
     /* ── ACTIVE TOURNAMENT CARD ──────────────────────────────────── */
     .active-tourn-card {
         border-left: 3px solid var(--sx-fire) !important;
@@ -249,7 +195,6 @@
         .hero-logo-lockup { gap: 0.75rem; margin-bottom: 1rem; }
         .hero-badge, .hero-badge-strathex { width: 68px; height: 68px; }
         .hero-lockup-separator { height: 44px; }
-        .feature-pills { align-items: flex-start; width: 100%; }
     }
 
     @media (max-width: 575px) {
@@ -258,7 +203,6 @@
         .hero-badge-strathex { padding: 8px; }
         .hero-title { font-size: 1.25rem; }
         .hero-subtitle { font-size: 0.8rem; }
-        .hero-powered-by img { height: 14px; max-width: 92px; }
     }
 </style>
 {% endblock %}
@@ -270,7 +214,7 @@
     <div class="row mb-4">
         <div class="col-12">
             <div class="cmd-hero p-4 p-lg-5">
-                <div class="cmd-hero-inner d-flex flex-wrap align-items-center justify-content-between gap-4">
+                <div class="cmd-hero-inner d-flex flex-wrap align-items-center gap-4">
 
                     <!-- Left: logos + title -->
                     <div>
@@ -293,20 +237,6 @@
                             Operations Command Center &mdash; Friday &amp; Saturday Show Control
                         </p>
 
-                        <div class="hero-powered-by">
-                            <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
-                                 alt="STRATHEX"
-                                 onerror="this.style.display='none';">
-                            <span>Flagship product by STRATHEX</span>
-                        </div>
-                    </div>
-
-                    <!-- Right: feature pills -->
-                    <div class="feature-pills">
-                        <span class="feature-pill"><i class="bi bi-calendar2-week"></i> Day 1 College Competition</span>
-                        <span class="feature-pill"><i class="bi bi-trophy"></i> Day 2 Pro Flights &amp; Payouts</span>
-                        <span class="feature-pill"><i class="bi bi-bar-chart-line"></i> Live Heat Scoring</span>
-                        <span class="feature-pill"><i class="bi bi-people"></i> Pro-Am Relay Lottery</span>
                     </div>
 
                 </div>

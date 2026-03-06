@@ -3,7 +3,7 @@ Preflight checks for scheduling and registration consistency.
 """
 from __future__ import annotations
 
-from models import Event, Flight, Heat, HeatAssignment, Tournament
+from models import Event, Flight, HeatAssignment, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.gear_sharing import event_matches_gear_key, normalize_person_name
 
@@ -76,6 +76,11 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
     unresolved_event_key_rows = 0
     unresolved_details_rows = 0
     self_reference_rows = 0
+    # Collect names for detailed issue messages.
+    unresolved_details_names: list[str] = []
+    unresolved_event_key_names: list[str] = []
+    unknown_partner_names: list[str] = []
+    self_reference_names: list[str] = []
 
     def _scan_rows(rows, relevant_events, known_names):
         nonlocal unknown_partner_rows, unresolved_event_key_rows, unresolved_details_rows, self_reference_rows
@@ -87,40 +92,61 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
             details = str(getattr(competitor, 'gear_sharing_details', '') or '').strip()
             if details and not gear:
                 unresolved_details_rows += 1
+                if competitor.name not in unresolved_details_names:
+                    unresolved_details_names.append(competitor.name)
 
             self_name = normalize_person_name(competitor.name)
             for key, partner in gear.items():
                 if not any(event_matches_gear_key(event, key) for event in relevant_events):
                     unresolved_event_key_rows += 1
+                    if competitor.name not in unresolved_event_key_names:
+                        unresolved_event_key_names.append(competitor.name)
                 partner_text = str(partner or '').strip()
                 partner_norm = normalize_person_name(partner_text)
                 if not partner_text:
                     unknown_partner_rows += 1
+                    if competitor.name not in unknown_partner_names:
+                        unknown_partner_names.append(competitor.name)
                     continue
                 if partner_text.startswith('group:'):
                     continue
                 if partner_norm == self_name:
                     self_reference_rows += 1
+                    if competitor.name not in self_reference_names:
+                        self_reference_names.append(competitor.name)
                 if partner_norm and partner_norm not in known_names:
                     unknown_partner_rows += 1
+                    if competitor.name not in unknown_partner_names:
+                        unknown_partner_names.append(competitor.name)
 
     _scan_rows(ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(), pro_events, pro_names)
     _scan_rows(CollegeCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(), college_events, college_names)
+
+    def _name_list(names: list[str], limit: int = 5) -> str:
+        shown = names[:limit]
+        suffix = f' (+{len(names) - limit} more)' if len(names) > limit else ''
+        return ', '.join(shown) + suffix
 
     if unresolved_details_rows:
         issues.append({
             'severity': 'medium',
             'code': 'gear_details_not_parsed',
             'title': 'Gear-sharing details not structured',
-            'detail': f'{unresolved_details_rows} competitor(s) have free-text gear details but no structured gear-sharing map.',
-            'autofix': False,
+            'detail': (
+                f'{unresolved_details_rows} competitor(s) have free-text gear details but no structured gear-sharing map'
+                f': {_name_list(unresolved_details_names)}.'
+            ),
+            'autofix': True,
         })
     if unresolved_event_key_rows:
         issues.append({
             'severity': 'high',
             'code': 'gear_unmapped_event_keys',
             'title': 'Gear-sharing event keys not mapped',
-            'detail': f'{unresolved_event_key_rows} gear-sharing key(s) do not map to configured events/categories.',
+            'detail': (
+                f'{unresolved_event_key_rows} gear-sharing key(s) do not map to configured events/categories'
+                f': {_name_list(unresolved_event_key_names)}.'
+            ),
             'autofix': False,
         })
     if unknown_partner_rows:
@@ -128,7 +154,10 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
             'severity': 'high',
             'code': 'gear_unknown_partner_names',
             'title': 'Gear-sharing partner names unresolved',
-            'detail': f'{unknown_partner_rows} gear-sharing entry(s) reference blank or unknown partner names.',
+            'detail': (
+                f'{unknown_partner_rows} gear-sharing entry(s) reference blank or unknown partner names'
+                f': {_name_list(unknown_partner_names)}.'
+            ),
             'autofix': False,
         })
     if self_reference_rows:
@@ -136,22 +165,17 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
             'severity': 'high',
             'code': 'gear_self_reference',
             'title': 'Self-referenced gear-sharing entries',
-            'detail': f'{self_reference_rows} gear-sharing entry(s) reference the same competitor as partner.',
+            'detail': (
+                f'{self_reference_rows} gear-sharing entry(s) reference the same competitor as partner'
+                f': {_name_list(self_reference_names)}.'
+            ),
             'autofix': False,
         })
 
     # 3) Saturday spillover integration
     if saturday_ids:
         flights = Flight.query.filter_by(tournament_id=tournament.id).all()
-        if not flights:
-            issues.append({
-                'severity': 'high',
-                'code': 'spillover_no_flights',
-                'title': 'No flights for spillover integration',
-                'detail': 'Saturday spillover events selected but pro flights are not built yet.',
-                'autofix': False,
-            })
-        else:
+        if flights:
             for event in tournament.events.filter(Event.id.in_(saturday_ids)).all():
                 spillover_heats = event.heats.filter_by(run_number=2).all() if event.name == "Chokerman's Race" else event.heats.all()
                 if not spillover_heats:
@@ -172,17 +196,6 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                         'detail': f'{event.display_name}: {len(unassigned)} heat(s) are not assigned to a Saturday flight.',
                         'autofix': True,
                     })
-
-    # Always enforce mandatory Chokerman run 2 awareness.
-    chokerman = tournament.events.filter_by(event_type='college', name="Chokerman's Race").first()
-    if chokerman and chokerman.id not in saturday_ids:
-        issues.append({
-            'severity': 'medium',
-            'code': 'mandatory_chokerman_not_selected',
-            'title': 'Mandatory Saturday Chokerman Run 2 not selected',
-            'detail': "Chokerman's Race exists but is not selected for Saturday spillover integration.",
-            'autofix': True,
-        })
 
     by_severity = {'high': 0, 'medium': 0, 'low': 0}
     for item in issues:

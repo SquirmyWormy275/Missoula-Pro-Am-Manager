@@ -158,6 +158,89 @@ def tournament_detail(tournament_id):
                            stats=stats)
 
 
+@main_bp.route('/tournament/<int:tournament_id>/setup', methods=['GET'])
+def tournament_setup(tournament_id):
+    """Consolidated setup page: events, wood specs, and tournament dates."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    active_tab = request.args.get('tab', 'events')
+
+    # Events tab data — helpers live in scheduling.py
+    from routes.scheduling import _with_field_key, _get_existing_event_config
+    import config as app_config
+    college_open_events = [_with_field_key(e) for e in app_config.COLLEGE_OPEN_EVENTS]
+    college_closed_events = [_with_field_key(e) for e in app_config.COLLEGE_CLOSED_EVENTS]
+    pro_events = [_with_field_key(e) for e in app_config.PRO_EVENTS]
+    existing_config = _get_existing_event_config(tournament)
+
+    # Wood specs tab data
+    import services.woodboss as woodboss_svc
+    configs = woodboss_svc._get_configs(tournament_id)
+    block_rows = woodboss_svc.calculate_blocks(tournament_id, configs=configs)
+    general_cfg = configs.get(woodboss_svc.LOG_GENERAL_KEY)
+    stock_cfg = configs.get(woodboss_svc.LOG_STOCK_KEY)
+    op_cfg = configs.get(woodboss_svc.LOG_OP_KEY)
+    cookie_cfg = configs.get(woodboss_svc.LOG_COOKIE_KEY)
+    all_tournaments = Tournament.query.order_by(Tournament.year.desc(), Tournament.name).all()
+    other_tournaments = [t for t in all_tournaments if t.id != tournament_id]
+
+    return render_template(
+        'tournament_setup.html',
+        tournament=tournament,
+        active_tab=active_tab,
+        # events
+        college_open_events=college_open_events,
+        college_closed_events=college_closed_events,
+        pro_events=pro_events,
+        existing_config=existing_config,
+        stand_configs=app_config.STAND_CONFIGS,
+        # wood
+        block_rows=block_rows,
+        general_cfg=general_cfg,
+        stock_cfg=stock_cfg,
+        op_cfg=op_cfg,
+        cookie_cfg=cookie_cfg,
+        configs=configs,
+        other_tournaments=other_tournaments,
+    )
+
+
+@main_bp.route('/tournament/<int:tournament_id>/setup/settings', methods=['POST'])
+def save_tournament_settings(tournament_id):
+    """Save tournament name, year, and dates."""
+    from datetime import date as date_type
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    name = request.form.get('name', '').strip()
+    if name:
+        tournament.name = name
+
+    try:
+        year_raw = request.form.get('year', '').strip()
+        if year_raw:
+            tournament.year = int(year_raw)
+    except (ValueError, TypeError):
+        flash('Invalid year value.', 'error')
+        return redirect(url_for('main.tournament_setup', tournament_id=tournament_id, tab='settings'))
+
+    for field in ('college_date', 'pro_date'):
+        raw = request.form.get(field, '').strip()
+        if raw:
+            try:
+                setattr(tournament, field, date_type.fromisoformat(raw))
+            except ValueError:
+                flash(f'Invalid date for {field.replace("_", " ")}.', 'error')
+                return redirect(url_for('main.tournament_setup', tournament_id=tournament_id, tab='settings'))
+        else:
+            setattr(tournament, field, None)
+
+    # Friday Night Feature always occurs on the same day as the college day
+    tournament.friday_feature_date = tournament.college_date
+
+    db.session.commit()
+    flash('Tournament settings saved.', 'success')
+    return redirect(url_for('main.tournament_setup', tournament_id=tournament_id, tab='settings'))
+
+
 @main_bp.route('/tournament/<int:tournament_id>/activate/<competition_type>')
 def activate_competition(tournament_id, competition_type):
     """Activate college or pro competition for a tournament."""

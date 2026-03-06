@@ -24,41 +24,23 @@ LIST_ONLY_EVENT_NAMES = {
 @scheduling_bp.route('/<int:tournament_id>/events', methods=['GET', 'POST'])
 def event_list(tournament_id):
     """Unified Events & Schedule page — heat status, schedule options, generation actions."""
-    from services.schedule_builder import build_day_schedule, COLLEGE_SATURDAY_PRIORITY
     from services.heat_generator import generate_event_heats
     from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
 
     tournament = Tournament.query.get_or_404(tournament_id)
     session_key = f'schedule_options_{tournament_id}'
 
-    # ── Eligible option lists (FNF pro events, Saturday college overflow) ──
-    friday_feature_names = set(config.FRIDAY_NIGHT_EVENTS)
     all_pro = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
-    fnf_eligible = [e for e in all_pro if e.name in friday_feature_names]
-
-    priority_index = {p: i for i, p in enumerate(COLLEGE_SATURDAY_PRIORITY)}
     all_college = tournament.events.filter_by(event_type='college').all()
-    sat_eligible = sorted(
-        [e for e in all_college if (e.name, e.gender) in priority_index],
-        key=lambda e: priority_index[(e.name, e.gender)]
-    )
-
     saved = session.get(session_key, {})
 
-    # ── POST: handle schedule option actions ──────────────────────────────
+    # ── POST: handle schedule generation actions ──────────────────────────
+    # Fri/Sat options are managed exclusively by the friday_feature page.
+    # This handler reads them from session; it never overwrites them.
     if request.method == 'POST':
         action = request.form.get('action', '')
-        try:
-            friday_pro_event_ids = [int(eid) for eid in request.form.getlist('friday_pro_event_ids') if str(eid).strip()]
-            saturday_college_event_ids = [int(eid) for eid in request.form.getlist('saturday_college_event_ids') if str(eid).strip()]
-        except (TypeError, ValueError):
-            flash('Invalid event ID in schedule submission.', 'error')
-            return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
-
-        saved = {'friday_pro_event_ids': friday_pro_event_ids,
-                 'saturday_college_event_ids': saturday_college_event_ids}
-        session[session_key] = saved
-        session.modified = True
+        # Use session-stored spillover selections (set by Fri Feature / Sat Overflow page)
+        saturday_college_event_ids = [int(i) for i in saved.get('saturday_college_event_ids', [])]
 
         if action == 'generate_all':
             _generate_all_heats(tournament, generate_event_heats)
@@ -86,7 +68,7 @@ def event_list(tournament_id):
 
         return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
-    # ── GET: normalise saved options ──────────────────────────────────────
+    # ── Normalise saved options ───────────────────────────────────────────
     saved = {
         'friday_pro_event_ids': [int(i) for i in saved.get('friday_pro_event_ids', [])],
         'saturday_college_event_ids': [int(i) for i in saved.get('saturday_college_event_ids', [])],
@@ -109,14 +91,9 @@ def event_list(tournament_id):
     ).count() > 0
     pro_heats_exist = any(event_progress[e.id]['heat_count'] > 0 for e in pro_events)
 
-    # ── Schedule preview (for collapsed accordion) ─────────────────────
-    schedule = build_day_schedule(
-        tournament,
-        friday_pro_event_ids=saved['friday_pro_event_ids'],
-        saturday_college_event_ids=saved['saturday_college_event_ids'],
-    )
-    detailed_schedule = _hydrate_schedule_for_display(tournament, schedule)
-    has_schedule_overrides = bool(saved['friday_pro_event_ids'] or saved['saturday_college_event_ids'])
+    # ── Saturday spillover config summary ────────────────────────────────
+    sat_spillover_count = len(saved['saturday_college_event_ids'])
+    fnf_count = len(saved['friday_pro_event_ids'])
 
     return render_template('scheduling/events.html',
                            tournament=tournament,
@@ -128,13 +105,8 @@ def event_list(tournament_id):
                            college_heats_total=college_heats_total,
                            flights_built=flights_built,
                            pro_heats_exist=pro_heats_exist,
-                           fnf_eligible=fnf_eligible,
-                           sat_eligible=sat_eligible,
-                           selected_friday_pro_event_ids=saved['friday_pro_event_ids'],
-                           selected_saturday_college_event_ids=saved['saturday_college_event_ids'],
-                           has_schedule_overrides=has_schedule_overrides,
-                           schedule=schedule,
-                           detailed_schedule=detailed_schedule)
+                           sat_spillover_count=sat_spillover_count,
+                           fnf_count=fnf_count)
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])
@@ -170,6 +142,8 @@ def setup_events(tournament_id):
             flash('Pro event configuration saved.', 'success')
         else:
             flash('College and pro event configurations saved.', 'success')
+        if request.form.get('return_to') == 'setup':
+            return redirect(url_for('main.tournament_setup', tournament_id=tournament_id, tab='events'))
         return redirect(url_for('scheduling.setup_events', tournament_id=tournament_id))
 
     existing_config = _get_existing_event_config(tournament)
@@ -286,7 +260,7 @@ def _upsert_event(tournament, event_config, event_type, gender, is_open, max_sta
         db.session.add(event)
 
     event.scoring_type = event_config['scoring_type']
-    event.scoring_order = 'highest_wins' if event_config['scoring_type'] in ['score', 'distance'] else 'lowest_wins'
+    event.scoring_order = 'highest_wins' if event_config['scoring_type'] in ['score', 'distance', 'hits'] else 'lowest_wins'
     event.is_open = is_open
     event.is_partnered = event_config.get('is_partnered', False)
     event.partner_gender_requirement = event_config.get('partner_gender')
@@ -816,9 +790,8 @@ def generate_college_heats(tournament_id):
     if parts:
         flash('. '.join(parts) + '.', 'success')
 
-    log_action('generate_college_heats', f'Bulk college heat generation: {generated} generated, '
-               f'{skipped_open} skipped open, {errors} errors',
-               tournament_id=tournament_id)
+    log_action('generate_college_heats', 'tournament', tournament_id,
+               {'generated': generated, 'skipped_open': skipped_open, 'errors': errors})
     return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
 
@@ -1056,18 +1029,37 @@ def build_flights(tournament_id):
     if request.method == 'POST':
         from services.flight_builder import build_pro_flights
 
+        try:
+            num_flights = int(request.form.get('num_flights', 0))
+            if num_flights < 1:
+                num_flights = None
+        except (TypeError, ValueError):
+            num_flights = None
+
+        # Guard: abort if no pro heats have been generated yet
+        pro_heat_count = Heat.query.join(Event).filter(
+            Event.tournament_id == tournament_id,
+            Event.event_type == 'pro',
+            Heat.run_number == 1
+        ).count()
+        if pro_heat_count == 0:
+            flash('No pro heats found. Generate heats for pro events first, then build flights.', 'warning')
+            return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+
         if request.form.get('run_async') == '1':
-            job_id = submit_job('build_pro_flights', build_pro_flights, tournament)
+            from functools import partial
+            fn = partial(build_pro_flights, num_flights=num_flights)
+            job_id = submit_job('build_pro_flights', fn, tournament)
             log_action('flight_build_job_started', 'tournament', tournament_id, {'job_id': job_id})
             db.session.commit()
             flash('Flight build started in the background.', 'success')
             return redirect(url_for('reporting.export_results_job_status', tournament_id=tournament_id, job_id=job_id))
 
         try:
-            num_flights = build_pro_flights(tournament)
-            log_action('flights_built', 'tournament', tournament_id, {'count': num_flights})
+            built = build_pro_flights(tournament, num_flights=num_flights)
+            log_action('flights_built', 'tournament', tournament_id, {'count': built})
             db.session.commit()
-            flash(text.FLASH['flights_built'].format(num_flights=num_flights), 'success')
+            flash(text.FLASH['flights_built'].format(num_flights=built), 'success')
         except Exception as e:
             flash(text.FLASH['flights_error'].format(error=str(e)), 'error')
 
@@ -1075,10 +1067,16 @@ def build_flights(tournament_id):
 
     # Get available heats
     pro_events = tournament.events.filter_by(event_type='pro').all()
+    total_heats = sum(
+        e.heats.filter_by(run_number=1).count()
+        for e in pro_events
+        if e.name != 'Partnered Axe Throw'
+    )
 
     return render_template('pro/build_flights.html',
                            tournament=tournament,
-                           events=pro_events)
+                           events=pro_events,
+                           total_heats=total_heats)
 
 
 # ---------------------------------------------------------------------------
@@ -1140,16 +1138,6 @@ def friday_feature(tournament_id):
     if request.method == 'POST':
         selected_ids = [int(x) for x in request.form.getlist('event_ids') if x.isdigit()]
         notes = (request.form.get('notes') or '').strip()
-
-        # Update tournament Friday Night Feature date if provided
-        date_str = (request.form.get('friday_feature_date') or '').strip()
-        if date_str:
-            from datetime import date as date_type
-            try:
-                yr, mo, dy = (int(p) for p in date_str.split('-'))
-                tournament.friday_feature_date = date_type(yr, mo, dy)
-            except (TypeError, ValueError):
-                flash('Invalid date format. Use YYYY-MM-DD.', 'error')
 
         _save_fnf_config(tournament_id, {'event_ids': selected_ids, 'notes': notes})
 

@@ -254,11 +254,15 @@
             </tr>
         </thead>
         <tbody>
-            {% set saw_total_in = namespace(n=0.0) %}
+            {% set saw_gen_in = namespace(n=0.0) %}
+            {% set saw_op_in = namespace(n=0.0) %}
             {% set saw_total_logs = namespace(n=0) %}
             {% for s in report.saw_wood %}
             {% if s.competitor_count > 0 %}
-            {% if s.total_inches is not none %}{% set saw_total_in.n = saw_total_in.n + s.total_inches %}{% endif %}
+            {% if s.total_inches is not none %}
+              {% if s.category == 'op' %}{% set saw_op_in.n = saw_op_in.n + s.total_inches %}
+              {% else %}{% set saw_gen_in.n = saw_gen_in.n + s.total_inches %}{% endif %}
+            {% endif %}
             {% if s.log_count is not none %}{% set saw_total_logs.n = saw_total_logs.n + s.log_count %}{% endif %}
             <tr>
                 <td class="fw-bold">{{ s.event_label }}</td>
@@ -277,24 +281,31 @@
             </tr>
             {% endif %}
             {% endfor %}
-            {% if saw_total_in.n == 0 and saw_total_logs.n == 0 %}
+            {% if saw_gen_in.n == 0 and saw_op_in.n == 0 and saw_total_logs.n == 0 %}
             <tr>
                 <td colspan="7" class="text-center text-muted">No competitors enrolled in saw events.</td>
             </tr>
             {% endif %}
         </tbody>
-        {% if saw_total_in.n > 0 or saw_total_logs.n > 0 %}
+        {% if saw_gen_in.n > 0 or saw_op_in.n > 0 or saw_total_logs.n > 0 %}
         <tfoot>
-            {% if saw_total_in.n > 0 %}
+            {% if saw_gen_in.n > 0 %}
             <tr class="total-row">
-                <td colspan="5" class="text-end">TOTAL SAW LOG MATERIAL:</td>
-                <td class="text-end">{{ '%.1f'|format(saw_total_in.n) }}"</td>
+                <td colspan="5" class="text-end">TOTAL GENERAL SAW LOG MATERIAL (Crosscut / Stock Saw / Hot Saw):</td>
+                <td class="text-end">{{ '%.1f'|format(saw_gen_in.n) }}"</td>
+                <td></td>
+            </tr>
+            {% endif %}
+            {% if saw_op_in.n > 0 %}
+            <tr class="total-row">
+                <td colspan="5" class="text-end">TOTAL OBSTACLE POLE LOG MATERIAL (independent spec):</td>
+                <td class="text-end">{{ '%.1f'|format(saw_op_in.n) }}"</td>
                 <td></td>
             </tr>
             {% endif %}
             {% if saw_total_logs.n > 0 %}
             <tr class="total-row">
-                <td colspan="5" class="text-end">TOTAL COOKIE STACK LOGS:</td>
+                <td colspan="5" class="text-end">TOTAL COOKIE STACK LOGS (independent spec):</td>
                 <td class="text-end">{{ saw_total_logs.n }}</td>
                 <td></td>
             </tr>
@@ -342,6 +353,7 @@
             <table>
                 <thead>
                     <tr>
+                        <th>Category</th>
                         <th>Species</th>
                         <th>Size</th>
                         <th class="text-end">Linear</th>
@@ -352,6 +364,11 @@
                     {% if report.by_species.logs %}
                     {% for grp in report.by_species.logs %}
                     <tr>
+                        <td>
+                            {% if grp.category_bucket == 'op' %}Obstacle Pole
+                            {% elif grp.category_bucket == 'cookie' %}Cookie Stack
+                            {% else %}General Saw{% endif %}
+                        </td>
                         <td>{{ grp.species }}</td>
                         <td>{{ grp.size_display }}</td>
                         <td class="text-end fw-bold">
@@ -363,7 +380,7 @@
                     </tr>
                     {% endfor %}
                     {% else %}
-                    <tr><td colspan="4" class="text-muted">No data</td></tr>
+                    <tr><td colspan="5" class="text-muted">No data</td></tr>
                     {% endif %}
                 </tbody>
             </table>

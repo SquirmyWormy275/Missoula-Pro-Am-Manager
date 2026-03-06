@@ -122,9 +122,28 @@
                             </tr>
                         </thead>
                         <tbody>
+                            {% set section_ns = namespace(current='') %}
                             {% for row in block_rows %}
                             {% set ck = row.config_key %}
                             {% set is_relay = ck in ('block_relay_underhand', 'block_relay_standing') %}
+                            {% if is_relay %}
+                              {% set section = 'relay' %}
+                            {% elif 'pro' in ck %}
+                              {% set section = 'pro' %}
+                            {% else %}
+                              {% set section = 'college' %}
+                            {% endif %}
+                            {% if section != section_ns.current %}
+                              {% set section_ns.current = section %}
+                              <tr>
+                                <td colspan="7"
+                                    style="background:var(--sx-surface-2);padding:0.35rem 0.75rem;font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--sx-text-2);border-top:2px solid var(--sx-border-bright);">
+                                  {% if section == 'college' %}College Chopping Blocks
+                                  {% elif section == 'pro' %}Pro Chopping Blocks
+                                  {% else %}Pro-Am Relay Blocks{% endif %}
+                                </td>
+                              </tr>
+                            {% endif %}
                             <tr {% if is_relay %}class="relay-row"{% endif %}>
                                 <td>
                                     <div class="event-group-label">{{ row.label }}</div>

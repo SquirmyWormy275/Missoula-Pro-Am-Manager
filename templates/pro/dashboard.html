@@ -41,6 +41,9 @@
             <a href="{{ url_for('registration.new_pro_competitor', tournament_id=tournament.id) }}" class="btn btn-warning btn-sm">
                 <i class="bi bi-plus"></i> Add Competitor
             </a>
+            <a href="{{ url_for('registration.pro_gear_manager', tournament_id=tournament.id) }}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-tools"></i> Gear Sharing
+            </a>
             <a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}" class="btn btn-outline-warning btn-sm">
                 <i class="bi bi-layers"></i> Flights
             </a>

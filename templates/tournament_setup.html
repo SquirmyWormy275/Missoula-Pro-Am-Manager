@@ -1,0 +1,788 @@
+{% extends "base.html" %}
+
+{% block title %}Tournament Setup — {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .wood-table th {
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--sx-text-2);
+        border-bottom: 1px solid var(--sx-border-bright);
+        padding: 0.55rem 0.75rem;
+    }
+    .wood-table td {
+        padding: 0.5rem 0.75rem;
+        vertical-align: middle;
+        border-color: var(--sx-border);
+    }
+    .wood-table .form-control,
+    .wood-table .form-select {
+        background: var(--sx-surface-3);
+        border-color: var(--sx-border-bright);
+        color: var(--sx-text);
+        font-size: 0.875rem;
+    }
+    .wood-table .form-control:focus {
+        border-color: var(--sx-info);
+        box-shadow: 0 0 0 0.2rem rgba(59,142,232,0.2);
+        background: var(--sx-surface-3);
+        color: var(--sx-text);
+    }
+    .unit-group label { font-size: 0.8rem; padding: 0.3rem 0.55rem; }
+    .relay-row { background: rgba(232,144,18,0.06); }
+    .relay-row td:first-child { border-left: 3px solid rgba(232,144,18,0.5); }
+    .event-group-label { font-weight: 600; font-size: 0.9rem; }
+    .manual-badge {
+        font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em;
+        text-transform: uppercase; color: var(--sx-amber);
+        border: 1px solid rgba(232,144,18,0.4);
+        border-radius: 4px; padding: 0.1em 0.4em;
+        display: inline-block; margin-top: 2px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+            <li class="breadcrumb-item">
+                <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
+                    {{ tournament.name }} {{ tournament.year }}
+                </a>
+            </li>
+            <li class="breadcrumb-item active">Setup</li>
+        </ol>
+    </nav>
+
+    <div class="row mb-4 align-items-center">
+        <div class="col">
+            <h1><i class="bi bi-gear text-primary"></i> Tournament Setup</h1>
+            <p class="text-muted mb-0">{{ tournament.name }} {{ tournament.year }}</p>
+        </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <ul class="nav nav-tabs mb-4" id="setupTab" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-btn-events" data-bs-toggle="tab"
+                    data-bs-target="#tab-events" type="button" role="tab"
+                    data-tab="events">
+                <i class="bi bi-calendar-plus me-1"></i> Events
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-btn-wood" data-bs-toggle="tab"
+                    data-bs-target="#tab-wood" type="button" role="tab"
+                    data-tab="wood">
+                <i class="bi bi-tools me-1"></i> Wood Specs
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-btn-settings" data-bs-toggle="tab"
+                    data-bs-target="#tab-settings" type="button" role="tab"
+                    data-tab="settings">
+                <i class="bi bi-sliders me-1"></i> Dates &amp; Settings
+            </button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="setupTabContent">
+
+        <!-- ═══════════════════════════════════════════════════════════════
+             TAB 1: EVENTS
+             ═══════════════════════════════════════════════════════════════ -->
+        <div class="tab-pane fade" id="tab-events" role="tabpanel">
+
+            <form method="POST" action="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="return_to" value="setup">
+
+                <div class="row">
+                    <!-- College Events -->
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0"><i class="bi bi-mortarboard"></i> College Events (Friday)</h5>
+                            </div>
+                            <div class="card-body">
+                                <h6 class="text-muted mb-3">Traditionally OPEN Events</h6>
+                                <p class="small text-muted">These events can be run as OPEN (anyone can participate) or CLOSED (counts against 6-event limit).</p>
+
+                                {% for event in college_open_events %}
+                                <div class="card mb-2">
+                                    <div class="card-body py-2">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <strong>{{ event.name }}</strong>
+                                                {% if event.get('is_partnered') %}
+                                                    <span class="badge bg-info">Partnered</span>
+                                                {% endif %}
+                                            </div>
+                                            <div>
+                                                <div class="btn-group btn-group-sm" role="group">
+                                                    <input type="radio" class="btn-check" name="open_{{ event.field_key }}"
+                                                           id="setup_open_{{ event.field_key }}_open" value="open"
+                                                           {% if existing_config.college_open_state.get(event.name, True) %}checked{% endif %}>
+                                                    <label class="btn btn-outline-success" for="setup_open_{{ event.field_key }}_open">OPEN</label>
+
+                                                    <input type="radio" class="btn-check" name="open_{{ event.field_key }}"
+                                                           id="setup_open_{{ event.field_key }}_closed" value="closed"
+                                                           {% if not existing_config.college_open_state.get(event.name, True) %}checked{% endif %}>
+                                                    <label class="btn btn-outline-warning" for="setup_open_{{ event.field_key }}_closed">CLOSED</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+
+                                <h6 class="text-muted mb-3 mt-4">CLOSED Events</h6>
+                                <p class="small text-muted">These events count against each athlete's 6-event limit.</p>
+                                <div class="row">
+                                    {% for event in college_closed_events %}
+                                    <div class="col-md-6 mb-2">
+                                        <div class="form-check">
+                                            <input type="checkbox" class="form-check-input"
+                                                   name="enable_{{ event.field_key }}"
+                                                   id="setup_college_{{ event.field_key }}"
+                                                   {% if existing_config.college_closed_enabled.get(event.name, True) %}checked{% endif %}>
+                                            <label class="form-check-label" for="setup_college_{{ event.field_key }}">
+                                                {{ event.name }}
+                                                {% if event.name == 'Birling' %}
+                                                    <small class="text-muted">(double elimination bracket)</small>
+                                                {% endif %}
+                                            </label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+
+                                <hr>
+                                <button type="submit" class="btn btn-primary w-100" name="action_scope" value="college">
+                                    <i class="bi bi-check-circle"></i> Save College Events
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pro Events -->
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header bg-warning text-dark">
+                                <h5 class="mb-0"><i class="bi bi-trophy"></i> Pro Events (Saturday)</h5>
+                            </div>
+                            <div class="card-body">
+                                <p class="small text-muted">Select which events to include and whether to run men's/women's divisions.</p>
+
+                                {% for event in pro_events %}
+                                <div class="card mb-2">
+                                    <div class="card-body py-2">
+                                        <div class="row align-items-center">
+                                            <div class="col-md-5">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input"
+                                                           name="enable_{{ event.field_key }}"
+                                                           id="setup_pro_{{ event.field_key }}"
+                                                           {% if existing_config.pro_enabled.get(event.name, False) %}checked{% endif %}>
+                                                    <label class="form-check-label" for="setup_pro_{{ event.field_key }}">
+                                                        <strong>{{ event.name }}</strong>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-7">
+                                                {% if event.get('is_gendered', False) %}
+                                                <div class="form-check form-check-inline">
+                                                    <input type="checkbox" class="form-check-input"
+                                                           name="enable_{{ event.field_key }}_M"
+                                                           id="setup_pro_{{ event.field_key }}_M"
+                                                           {% if existing_config.pro_gender.get(event.name, {}).get('M', False) %}checked{% endif %}>
+                                                    <label class="form-check-label" for="setup_pro_{{ event.field_key }}_M">Men's</label>
+                                                </div>
+                                                <div class="form-check form-check-inline">
+                                                    <input type="checkbox" class="form-check-input"
+                                                           name="enable_{{ event.field_key }}_F"
+                                                           id="setup_pro_{{ event.field_key }}_F"
+                                                           {% if existing_config.pro_gender.get(event.name, {}).get('F', False) %}checked{% endif %}>
+                                                    <label class="form-check-label" for="setup_pro_{{ event.field_key }}_F">Women's</label>
+                                                </div>
+                                                {% else %}
+                                                <span class="text-muted small">
+                                                    {% if event.name == '1-Board Springboard' %}
+                                                        Intermediate/Masters/Women
+                                                    {% else %}
+                                                        Open event
+                                                    {% endif %}
+                                                </span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+
+                                <hr>
+                                <button type="submit" class="btn btn-warning w-100" name="action_scope" value="pro">
+                                    <i class="bi bi-check-circle"></i> Save Pro Events
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stand Configuration -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header" id="standsHeading">
+                                <h5 class="mb-0">
+                                    <button class="btn btn-link text-decoration-none p-0 text-dark"
+                                            type="button" data-bs-toggle="collapse"
+                                            data-bs-target="#standsCollapse" aria-expanded="false"
+                                            aria-controls="standsCollapse">
+                                        <i class="bi bi-layout-split text-secondary"></i>
+                                        Stand Count Configuration
+                                        <small class="text-muted ms-2">(optional — overrides defaults per event type)</small>
+                                    </button>
+                                </h5>
+                            </div>
+                            <div id="standsCollapse" class="collapse">
+                                <div class="card-body">
+                                    <p class="small text-muted mb-3">
+                                        Set how many stands are available for each event type at this venue.
+                                        Affects heat size and stand assignments. Leave at default unless your venue differs.
+                                    </p>
+                                    <div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 g-3">
+                                        {% for stand_type, scfg in stand_configs.items() %}
+                                        <div class="col">
+                                            <label class="form-label small fw-semibold mb-1">
+                                                {{ stand_type.replace('_', ' ').title() }}
+                                                <span class="text-muted">(default: {{ scfg.total }})</span>
+                                            </label>
+                                            <input type="number"
+                                                   class="form-control form-control-sm"
+                                                   name="stands_{{ stand_type }}"
+                                                   min="1" max="20"
+                                                   value="{{ existing_config.stand_counts.get(stand_type, scfg.total) }}">
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-proam w-100" name="action_scope" value="both">
+                            <i class="bi bi-save2"></i> Save All Events (College + Pro)
+                        </button>
+                    </div>
+                </div>
+
+            </form>
+        </div><!-- /tab-events -->
+
+
+        <!-- ═══════════════════════════════════════════════════════════════
+             TAB 2: WOOD SPECS
+             ═══════════════════════════════════════════════════════════════ -->
+        <div class="tab-pane fade" id="tab-wood" role="tabpanel">
+
+            <div class="d-flex align-items-end justify-content-between mb-4 flex-wrap gap-3">
+                <div>
+                    <h4 class="mb-1"><i class="bi bi-stack text-warning"></i> Wood Specifications</h4>
+                    <p class="text-muted mb-0 small">
+                        Set species and diameter for each event group.
+                        Pro-Am Relay rows use a manual team count (lottery-determined).
+                    </p>
+                </div>
+                <div class="d-flex gap-2 flex-wrap">
+                    {% if other_tournaments %}
+                    <form method="POST" action="{{ url_for('woodboss.copy_from', tid=tournament.id) }}"
+                          onsubmit="return confirm('This will overwrite all current wood specs with specs from the selected tournament. Continue?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="return_to" value="setup">
+                        <div class="input-group">
+                            <select name="source_tid" class="form-select form-select-sm"
+                                    style="background:var(--sx-surface-3);border-color:var(--sx-border-bright);color:var(--sx-text);">
+                                {% for t in other_tournaments %}
+                                <option value="{{ t.id }}">{{ t.name }} {{ t.year }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-outline-info">
+                                <i class="bi bi-clipboard-arrow-up"></i> Copy Specs From
+                            </button>
+                        </div>
+                    </form>
+                    {% endif %}
+                    <a href="{{ url_for('woodboss.report', tid=tournament.id) }}"
+                       class="btn btn-sm btn-outline-warning">
+                        <i class="bi bi-clipboard-data"></i> View Wood Report
+                    </a>
+                </div>
+            </div>
+
+            <form method="POST" action="{{ url_for('woodboss.save_config', tid=tournament.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="return_to" value="setup">
+
+                <!-- Chopping Blocks -->
+                <div class="card mb-4">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="mb-0">
+                            <i class="bi bi-stack"></i> Chopping Blocks
+                            <small class="fw-normal ms-2 text-muted" style="font-size:0.78rem;">
+                                1 block per enrolled competitor · relay uses manual team count
+                            </small>
+                        </h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table wood-table mb-0">
+                                <thead>
+                                    <tr>
+                                        <th style="min-width:230px;">Event Group</th>
+                                        <th style="min-width:155px;">Species / Wood Type</th>
+                                        <th style="min-width:85px;">Diameter</th>
+                                        <th style="min-width:95px;">Unit</th>
+                                        <th style="min-width:90px;">Count Override</th>
+                                        <th style="min-width:150px;">Notes</th>
+                                        <th class="text-end" style="min-width:75px;">Blocks</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% set section_ns = namespace(current='') %}
+                                    {% for row in block_rows %}
+                                    {% set ck = row.config_key %}
+                                    {% set is_relay = ck in ('block_relay_underhand', 'block_relay_standing') %}
+                                    {% if is_relay %}
+                                      {% set section = 'relay' %}
+                                    {% elif 'pro' in ck %}
+                                      {% set section = 'pro' %}
+                                    {% else %}
+                                      {% set section = 'college' %}
+                                    {% endif %}
+                                    {% if section != section_ns.current %}
+                                      {% set section_ns.current = section %}
+                                      <tr>
+                                        <td colspan="7"
+                                            style="background:var(--sx-surface-2);padding:0.35rem 0.75rem;font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--sx-text-2);border-top:2px solid var(--sx-border-bright);">
+                                          {% if section == 'college' %}College Chopping Blocks
+                                          {% elif section == 'pro' %}Pro Chopping Blocks
+                                          {% else %}Pro-Am Relay Blocks{% endif %}
+                                        </td>
+                                      </tr>
+                                    {% endif %}
+                                    <tr {% if is_relay %}class="relay-row"{% endif %}>
+                                        <td>
+                                            <div class="event-group-label">{{ row.label }}</div>
+                                            {% if is_relay %}
+                                            <div class="manual-badge">Manual Count</div>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="species_{{ ck }}"
+                                                   value="{{ configs[ck].species if ck in configs and configs[ck].species else '' }}"
+                                                   placeholder="e.g. Douglas Fir" maxlength="100">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control form-control-sm"
+                                                   name="size_value_{{ ck }}"
+                                                   value="{{ configs[ck].size_value if ck in configs and configs[ck].size_value is not none else '' }}"
+                                                   step="0.5" min="0" placeholder="e.g. 12">
+                                        </td>
+                                        <td>
+                                            <div class="btn-group unit-group" role="group">
+                                                <input type="radio" class="btn-check" name="size_unit_{{ ck }}"
+                                                       id="s_uin_{{ ck }}" value="in"
+                                                       {% if ck not in configs or configs[ck].size_unit == 'in' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_uin_{{ ck }}">in</label>
+                                                <input type="radio" class="btn-check" name="size_unit_{{ ck }}"
+                                                       id="s_umm_{{ ck }}" value="mm"
+                                                       {% if ck in configs and configs[ck].size_unit == 'mm' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_umm_{{ ck }}">mm</label>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control form-control-sm"
+                                                   name="count_override_{{ ck }}"
+                                                   value="{{ configs[ck].count_override if ck in configs and configs[ck].count_override is not none else '' }}"
+                                                   min="0" step="1"
+                                                   placeholder="{{ 'teams' if is_relay else 'auto' }}"
+                                                   title="{% if is_relay %}Number of relay teams (lottery result){% else %}Override auto-calculated block count{% endif %}">
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="notes_{{ ck }}"
+                                                   value="{{ configs[ck].notes if ck in configs and configs[ck].notes else '' }}"
+                                                   placeholder="Optional" maxlength="200">
+                                        </td>
+                                        <td class="text-end">
+                                            {% if row.is_manual %}
+                                            <span class="badge bg-warning" title="Manual override">{{ row.competitor_count }}</span>
+                                            {% elif row.competitor_count > 0 %}
+                                            <span class="badge bg-success">{{ row.competitor_count }}</span>
+                                            {% else %}
+                                            <span class="badge bg-secondary">0</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Saw Logs -->
+                <div class="card mb-4">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="bi bi-bar-chart-steps"></i> Saw Logs</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table wood-table mb-0">
+                                <thead>
+                                    <tr>
+                                        <th style="min-width:260px;">Log Category</th>
+                                        <th style="min-width:155px;">Species / Wood Type</th>
+                                        <th style="min-width:85px;">Diameter</th>
+                                        <th style="min-width:95px;">Unit</th>
+                                        <th style="min-width:90px;">Cut Count</th>
+                                        <th style="min-width:150px;">Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- General Saw Log -->
+                                    <tr>
+                                        <td>
+                                            <div class="event-group-label">General Saw Log</div>
+                                            <div class="text-muted" style="font-size:0.75rem;">
+                                                Single Buck &middot; Double Buck &middot; Jack &amp; Jill &middot; Hot Saw
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="species_log_general"
+                                                   value="{{ general_cfg.species if general_cfg and general_cfg.species else '' }}"
+                                                   placeholder="e.g. White Pine">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control form-control-sm"
+                                                   name="size_value_log_general"
+                                                   value="{{ general_cfg.size_value if general_cfg and general_cfg.size_value is not none else '' }}"
+                                                   step="0.5" min="0" placeholder="e.g. 8">
+                                        </td>
+                                        <td>
+                                            <div class="btn-group unit-group" role="group">
+                                                <input type="radio" class="btn-check" name="size_unit_log_general"
+                                                       id="s_uin_log_general" value="in"
+                                                       {% if not general_cfg or general_cfg.size_unit == 'in' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_uin_log_general">in</label>
+                                                <input type="radio" class="btn-check" name="size_unit_log_general"
+                                                       id="s_umm_log_general" value="mm"
+                                                       {% if general_cfg and general_cfg.size_unit == 'mm' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_umm_log_general">mm</label>
+                                            </div>
+                                        </td>
+                                        <td><!-- auto --></td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="notes_log_general"
+                                                   value="{{ general_cfg.notes if general_cfg and general_cfg.notes else '' }}"
+                                                   placeholder="Optional">
+                                        </td>
+                                    </tr>
+                                    <!-- Stock Saw Log -->
+                                    <tr>
+                                        <td>
+                                            <div class="event-group-label">Stock Saw Log</div>
+                                            <div class="text-muted" style="font-size:0.75rem;">
+                                                Stock Saw only — leave blank to use General Saw Log species/size
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="species_log_stock"
+                                                   value="{{ stock_cfg.species if stock_cfg and stock_cfg.species else '' }}"
+                                                   placeholder="e.g. Sitka Spruce">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control form-control-sm"
+                                                   name="size_value_log_stock"
+                                                   value="{{ stock_cfg.size_value if stock_cfg and stock_cfg.size_value is not none else '' }}"
+                                                   step="0.5" min="0" placeholder="e.g. 6">
+                                        </td>
+                                        <td>
+                                            <div class="btn-group unit-group" role="group">
+                                                <input type="radio" class="btn-check" name="size_unit_log_stock"
+                                                       id="s_uin_log_stock" value="in"
+                                                       {% if not stock_cfg or stock_cfg.size_unit == 'in' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_uin_log_stock">in</label>
+                                                <input type="radio" class="btn-check" name="size_unit_log_stock"
+                                                       id="s_umm_log_stock" value="mm"
+                                                       {% if stock_cfg and stock_cfg.size_unit == 'mm' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_umm_log_stock">mm</label>
+                                            </div>
+                                        </td>
+                                        <td><!-- auto --></td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="notes_log_stock"
+                                                   value="{{ stock_cfg.notes if stock_cfg and stock_cfg.notes else '' }}"
+                                                   placeholder="Optional">
+                                        </td>
+                                    </tr>
+                                    <!-- Obstacle Pole Log -->
+                                    <tr>
+                                        <td>
+                                            <div class="event-group-label">Obstacle Pole Log</div>
+                                            <div class="text-muted" style="font-size:0.75rem;">
+                                                Obstacle Pole only — independent species/size from all other log categories
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="species_log_op"
+                                                   value="{{ op_cfg.species if op_cfg and op_cfg.config_key == 'log_op' and op_cfg.species else '' }}"
+                                                   placeholder="e.g. White Pine">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control form-control-sm"
+                                                   name="size_value_log_op"
+                                                   value="{{ op_cfg.size_value if op_cfg and op_cfg.config_key == 'log_op' and op_cfg.size_value is not none else '' }}"
+                                                   step="0.5" min="0" placeholder="e.g. 10">
+                                        </td>
+                                        <td>
+                                            <div class="btn-group unit-group" role="group">
+                                                <input type="radio" class="btn-check" name="size_unit_log_op"
+                                                       id="s_uin_log_op" value="in"
+                                                       {% if not op_cfg or op_cfg.config_key != 'log_op' or op_cfg.size_unit == 'in' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_uin_log_op">in</label>
+                                                <input type="radio" class="btn-check" name="size_unit_log_op"
+                                                       id="s_umm_log_op" value="mm"
+                                                       {% if op_cfg and op_cfg.config_key == 'log_op' and op_cfg.size_unit == 'mm' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_umm_log_op">mm</label>
+                                            </div>
+                                        </td>
+                                        <td><!-- auto --></td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="notes_log_op"
+                                                   value="{{ op_cfg.notes if op_cfg and op_cfg.config_key == 'log_op' and op_cfg.notes else '' }}"
+                                                   placeholder="Optional">
+                                        </td>
+                                    </tr>
+                                    <!-- Cookie Stack Log -->
+                                    <tr>
+                                        <td>
+                                            <div class="event-group-label">Cookie Stack Log</div>
+                                            <div class="text-muted" style="font-size:0.75rem;">
+                                                Cookie Stack only — independent species/size from all other log categories
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="species_log_cookie"
+                                                   value="{{ cookie_cfg.species if cookie_cfg and cookie_cfg.config_key == 'log_cookie' and cookie_cfg.species else '' }}"
+                                                   placeholder="e.g. White Pine">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control form-control-sm"
+                                                   name="size_value_log_cookie"
+                                                   value="{{ cookie_cfg.size_value if cookie_cfg and cookie_cfg.config_key == 'log_cookie' and cookie_cfg.size_value is not none else '' }}"
+                                                   step="0.5" min="0" placeholder="e.g. 10">
+                                        </td>
+                                        <td>
+                                            <div class="btn-group unit-group" role="group">
+                                                <input type="radio" class="btn-check" name="size_unit_log_cookie"
+                                                       id="s_uin_log_cookie" value="in"
+                                                       {% if not cookie_cfg or cookie_cfg.config_key != 'log_cookie' or cookie_cfg.size_unit == 'in' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_uin_log_cookie">in</label>
+                                                <input type="radio" class="btn-check" name="size_unit_log_cookie"
+                                                       id="s_umm_log_cookie" value="mm"
+                                                       {% if cookie_cfg and cookie_cfg.config_key == 'log_cookie' and cookie_cfg.size_unit == 'mm' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_umm_log_cookie">mm</label>
+                                            </div>
+                                        </td>
+                                        <td><!-- auto --></td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="notes_log_cookie"
+                                                   value="{{ cookie_cfg.notes if cookie_cfg and cookie_cfg.config_key == 'log_cookie' and cookie_cfg.notes else '' }}"
+                                                   placeholder="Optional">
+                                        </td>
+                                    </tr>
+                                    <!-- Pro-Am Relay Double Buck -->
+                                    {% set relay_db_cfg = configs.get('log_relay_doublebuck') %}
+                                    <tr class="relay-row">
+                                        <td>
+                                            <div class="event-group-label">Pro-Am Relay — Double Buck</div>
+                                            <div class="manual-badge">Manual Count</div>
+                                            <div class="text-muted mt-1" style="font-size:0.72rem;">
+                                                Relay participants aren't in standard Double Buck enrollment — enter team count after lottery.
+                                                Falls back to General Saw Log species/size if left blank.
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="species_log_relay_doublebuck"
+                                                   value="{{ relay_db_cfg.species if relay_db_cfg and relay_db_cfg.species else '' }}"
+                                                   placeholder="e.g. White Pine">
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control form-control-sm"
+                                                   name="size_value_log_relay_doublebuck"
+                                                   value="{{ relay_db_cfg.size_value if relay_db_cfg and relay_db_cfg.size_value is not none else '' }}"
+                                                   step="0.5" min="0" placeholder="e.g. 10">
+                                        </td>
+                                        <td>
+                                            <div class="btn-group unit-group" role="group">
+                                                <input type="radio" class="btn-check" name="size_unit_log_relay_doublebuck"
+                                                       id="s_uin_log_relay_doublebuck" value="in"
+                                                       {% if not relay_db_cfg or relay_db_cfg.size_unit == 'in' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_uin_log_relay_doublebuck">in</label>
+                                                <input type="radio" class="btn-check" name="size_unit_log_relay_doublebuck"
+                                                       id="s_umm_log_relay_doublebuck" value="mm"
+                                                       {% if relay_db_cfg and relay_db_cfg.size_unit == 'mm' %}checked{% endif %}>
+                                                <label class="btn btn-outline-secondary btn-sm" for="s_umm_log_relay_doublebuck">mm</label>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <input type="number" class="form-control form-control-sm"
+                                                   name="count_override_log_relay_doublebuck"
+                                                   value="{{ relay_db_cfg.count_override if relay_db_cfg and relay_db_cfg.count_override is not none else '' }}"
+                                                   min="0" step="1" placeholder="teams"
+                                                   title="Number of relay teams (lottery result) — each team = 1 double buck cut = 2&quot;">
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   name="notes_log_relay_doublebuck"
+                                                   value="{{ relay_db_cfg.notes if relay_db_cfg and relay_db_cfg.notes else '' }}"
+                                                   placeholder="Optional">
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex gap-2 mb-4">
+                    <button type="submit" class="btn btn-primary px-4">
+                        <i class="bi bi-floppy"></i> Save Wood Specs
+                    </button>
+                </div>
+
+            </form>
+        </div><!-- /tab-wood -->
+
+
+        <!-- ═══════════════════════════════════════════════════════════════
+             TAB 3: DATES & SETTINGS
+             ═══════════════════════════════════════════════════════════════ -->
+        <div class="tab-pane fade" id="tab-settings" role="tabpanel">
+
+            <div class="row">
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-calendar3 text-primary"></i> Tournament Info &amp; Dates</h5>
+                        </div>
+                        <div class="card-body">
+                            <form method="POST" action="{{ url_for('main.save_tournament_settings', tournament_id=tournament.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Tournament Name</label>
+                                    <input type="text" class="form-control" name="name"
+                                           value="{{ tournament.name }}" required maxlength="200">
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Year</label>
+                                    <input type="number" class="form-control" name="year"
+                                           value="{{ tournament.year }}" required min="2000" max="2100">
+                                </div>
+
+                                <hr>
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">College Day (Friday)</label>
+                                    <input type="date" class="form-control" name="college_date"
+                                           value="{{ tournament.college_date.isoformat() if tournament.college_date else '' }}">
+                                    <div class="form-text">Leave blank if date not yet confirmed.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Pro Day (Saturday)</label>
+                                    <input type="date" class="form-control" name="pro_date"
+                                           value="{{ tournament.pro_date.isoformat() if tournament.pro_date else '' }}">
+                                </div>
+
+                                <button type="submit" class="btn btn-primary w-100">
+                                    <i class="bi bi-floppy"></i> Save Settings
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-info-circle text-secondary"></i> What to do next</h5>
+                        </div>
+                        <div class="card-body">
+                            <ol class="mb-0 ps-3" style="line-height: 2;">
+                                <li>Configure <strong>Events</strong> (first tab)</li>
+                                <li>Set <strong>Wood Specs</strong> (second tab)</li>
+                                <li>
+                                    Import registrations:<br>
+                                    <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}" class="small">College Entry Import</a>
+                                    &middot;
+                                    <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}" class="small">Pro Operations</a>
+                                </li>
+                                <li>
+                                    <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Build heats &amp; flights</a>
+                                </li>
+                                <li>
+                                    <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}">Run Preflight Check</a>
+                                </li>
+                                <li>
+                                    <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}">Print heat sheets</a>
+                                </li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /tab-settings -->
+
+    </div><!-- /tab-content -->
+
+</div>
+
+{% block extra_js %}
+<script>
+(function () {
+    // Activate the correct tab from ?tab= query param
+    var params = new URLSearchParams(window.location.search);
+    var target = params.get('tab') || 'events';
+    var btn = document.querySelector('#setupTab button[data-tab="' + target + '"]');
+    if (btn) {
+        bootstrap.Tab.getOrCreateInstance(btn).show();
+    }
+})();
+</script>
+{% endblock %}
+{% endblock %}

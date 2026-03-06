@@ -129,11 +129,30 @@ def team_detail(tournament_id, team_id):
                 labels.append(event_name_lookup.get(event_key.lower(), event_key))
         member_event_labels[member.id] = list(dict.fromkeys(labels))
 
+    # Build per-member event details for the inline event editor
+    member_event_details = {}
+    for member in members:
+        partners = member.get_partners()
+        details = []
+        for entered_event in member.get_events_entered():
+            event_key = str(entered_event).strip()
+            if not event_key:
+                continue
+            if event_key in event_name_by_id:
+                display = event_name_by_id[event_key]
+            else:
+                display = event_name_lookup.get(event_key.lower(), event_key)
+            partner = partners.get(event_key, '') or partners.get(display, '')
+            details.append({'key': event_key, 'display': display, 'partner': partner})
+        member_event_details[member.id] = details
+
     return render_template('college/team_detail.html',
                            tournament=tournament,
                            team=team,
                            members=members,
-                           member_event_labels=member_event_labels)
+                           college_events=college_events,
+                           member_event_labels=member_event_labels,
+                           member_event_details=member_event_details)
 
 
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/scratch', methods=['POST'])
@@ -285,6 +304,45 @@ def remove_competitor_event(tournament_id, competitor_id):
     return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
 
 
+@registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/add-event', methods=['POST'])
+def add_competitor_event(tournament_id, competitor_id):
+    """Add a single event to a competitor's entry and re-validate the team."""
+    from services.excel_io import _validate_college_entry_constraints
+    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    event_name = (request.form.get('event_name') or '').strip()
+    partner_name = (request.form.get('partner_name') or '').strip()
+
+    if not event_name:
+        flash('No event specified.', 'error')
+        return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
+
+    current_events = competitor.get_events_entered()
+    if event_name not in current_events:
+        current_events.append(event_name)
+        competitor.set_events_entered(current_events)
+
+    if partner_name:
+        competitor.set_partner(event_name, partner_name)
+
+    db.session.flush()
+
+    # Re-validate team
+    errors_by_team = _validate_college_entry_constraints({competitor.team_id})
+    team = Team.query.get(competitor.team_id)
+    if team:
+        team_errors = errors_by_team.get(competitor.team_id, [])
+        team.set_validation_errors(team_errors)
+
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    flash(f'Event "{event_name}" added to {competitor.name}.', 'info')
+    return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
+
+
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/set-partner', methods=['POST'])
 def set_competitor_partner(tournament_id, competitor_id):
     """Set or clear a competitor's partner for a specific event, then re-validate the team."""
@@ -383,10 +441,35 @@ def pro_competitor_detail(tournament_id, competitor_id):
         else:
             event_labels.append((event_key, event_name_lookup.get(event_key.lower(), event_key)))
 
+    # Build gear_sharing_labels with reciprocal status.
+    from services.gear_sharing import normalize_person_name as _norm_name
+    all_pro_comps_active = {
+        _norm_name(c.name): c
+        for c in ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all()
+    }
     gear_sharing_labels = []
     for event_key, partner in competitor.get_gear_sharing().items():
         label = event_name_by_id.get(str(event_key), event_name_lookup.get(str(event_key).strip().lower(), str(event_key)))
-        gear_sharing_labels.append((label, partner))
+        partner_text = str(partner or '').strip()
+        partner_on_roster = _norm_name(partner_text) in all_pro_comps_active if partner_text else False
+        # Reciprocal is always Yes if the partner is on the active roster.
+        gear_sharing_labels.append({
+            'event_label': label,
+            'event_key': event_key,
+            'partner': partner_text,
+            'reciprocal': partner_on_roster,
+        })
+
+    # Last 10 gear-related audit log entries for this competitor.
+    from models.audit_log import AuditLog
+    gear_audit = (
+        AuditLog.query
+        .filter_by(entity_type='pro_competitor', entity_id=competitor.id)
+        .filter(AuditLog.action.like('gear%'))
+        .order_by(AuditLog.created_at.desc())
+        .limit(10)
+        .all()
+    )
 
     return render_template('pro/competitor_detail.html',
                            tournament=tournament,
@@ -394,6 +477,7 @@ def pro_competitor_detail(tournament_id, competitor_id):
                            pro_events=pro_events,
                            event_labels=event_labels,
                            gear_sharing_labels=gear_sharing_labels,
+                           gear_audit=gear_audit,
                            partner_map=competitor.get_partners())
 
 
@@ -440,10 +524,17 @@ def update_pro_events(tournament_id, competitor_id):
         if partner and normalize_person_name(partner) != normalize_person_name(competitor.name):
             new_partners[eid] = partner
 
+    old_gear = competitor.get_gear_sharing()
     competitor.entry_fees = json.dumps(new_fees)
     competitor.fees_paid = json.dumps(new_paid)
     competitor.gear_sharing = json.dumps(new_gear_sharing)
     competitor.partners = json.dumps(new_partners)
+
+    # Write reciprocals and clear removed gear entries on partner competitors.
+    from services.gear_sharing import sync_all_gear_for_competitor
+    all_pro_comps = ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all()
+    pro_comps_by_norm = {normalize_person_name(c.name): c for c in all_pro_comps}
+    sync_all_gear_for_competitor(competitor, pro_comps_by_norm, old_gear=old_gear)
 
     log_action('pro_events_updated', 'pro_competitor', competitor.id, {
         'tournament_id': tournament_id,
@@ -453,6 +544,190 @@ def update_pro_events(tournament_id, competitor_id):
     invalidate_tournament_caches(tournament_id)
     flash(f'Events updated for {competitor.name}.', 'success')
     return redirect(url_for('registration.pro_competitor_detail', tournament_id=tournament_id, competitor_id=competitor_id))
+
+
+# ---------------------------------------------------------------------------
+# Pro gear-sharing manager
+# ---------------------------------------------------------------------------
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing')
+def pro_gear_manager(tournament_id):
+    """Gear-sharing audit and management dashboard for pro competitors."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import build_gear_report, get_gear_groups
+    report = build_gear_report(tournament)
+    gear_groups = get_gear_groups(tournament)
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament_id, status='active'
+    ).order_by(ProCompetitor.name).all()
+    pro_events = Event.query.filter_by(
+        tournament_id=tournament_id, event_type='pro'
+    ).order_by(Event.name, Event.gender).all()
+    college_events = Event.query.filter_by(
+        tournament_id=tournament_id, event_type='college'
+    ).order_by(Event.name, Event.gender).all()
+    return render_template(
+        'pro/gear_sharing.html',
+        tournament=tournament,
+        report=report,
+        gear_groups=gear_groups,
+        pro_comps=pro_comps,
+        pro_events=pro_events,
+        college_events=college_events,
+    )
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/parse', methods=['POST'])
+def pro_gear_parse(tournament_id):
+    """Parse free-text gear_sharing_details fields into structured gear_sharing maps."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import parse_all_gear_details
+    try:
+        result = parse_all_gear_details(tournament)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        msg = f'Gear parser complete: {result["parsed"]} competitor(s) structured'
+        if result['skipped']:
+            msg += f', {result["skipped"]} skipped (already structured)'
+        if result['warnings']:
+            msg += f', {len(result["warnings"])} warning(s)'
+        msg += '.'
+        flash(msg, 'success' if result['parsed'] > 0 else 'info')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Gear parser error: {e}', 'error')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/sync-heats', methods=['POST'])
+def pro_gear_sync_heats(tournament_id):
+    """Detect and auto-fix gear-sharing conflicts in existing pro heats."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import fix_heat_gear_conflicts
+    try:
+        result = fix_heat_gear_conflicts(tournament)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        msg = f'Heat sync complete: {result["fixed"]} conflict(s) resolved.'
+        if result['failed']:
+            msg += (
+                f' {len(result["failed"])} conflict(s) could not be auto-resolved'
+                ' — no compatible target heat was available.'
+            )
+        flash(msg, 'warning' if result['failed'] else 'success')
+        log_action('gear_heat_sync', 'tournament', tournament_id, {
+            'fixed': result['fixed'],
+            'failed': len(result['failed']),
+        })
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Heat sync error: {e}', 'error')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/update', methods=['POST'])
+def pro_gear_update(tournament_id):
+    """Set or clear a single gear-sharing entry for a pro competitor."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    try:
+        competitor_id = int(request.form.get('competitor_id', ''))
+    except (TypeError, ValueError):
+        flash('Invalid competitor ID.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    raw_event_key = (request.form.get('event_key') or '').strip()
+    partner_name = (request.form.get('partner_name') or '').strip()
+
+    if not raw_event_key:
+        flash('No event key specified.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    from services.gear_sharing import (
+        normalize_gear_key_to_event_id, sync_gear_bidirectional,
+        normalize_person_name,
+    )
+    pro_events = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
+    event_key = normalize_gear_key_to_event_id(raw_event_key, pro_events)
+
+    sharing = competitor.get_gear_sharing()
+    if partner_name:
+        partner_norm = normalize_person_name(partner_name)
+        # Find partner on active roster for bidirectional sync.
+        partner_comp = next(
+            (c for c in ProCompetitor.query.filter_by(
+                tournament_id=tournament_id, status='active').all()
+             if normalize_person_name(c.name) == partner_norm),
+            None,
+        )
+        if partner_comp and partner_comp.id != competitor.id:
+            sync_gear_bidirectional(competitor, partner_comp, event_key)
+            flash(
+                f'Gear sharing set: {competitor.name} + {partner_comp.name}'
+                f' (key "{event_key}") — reciprocal written.',
+                'success',
+            )
+        else:
+            sharing[event_key] = partner_name
+            competitor.gear_sharing = json.dumps(sharing)
+            flash(
+                f'Gear sharing set: {competitor.name} + {partner_name}'
+                f' (key "{event_key}").',
+                'success',
+            )
+        # Warn when heats already exist for the affected event.
+        event_obj = next((e for e in pro_events if str(e.id) == str(event_key)), None)
+        if event_obj and event_obj.heats.count() > 0:
+            flash(
+                f'Note: heats already exist for {event_obj.display_name}. '
+                'Run "Sync Heat Conflicts" to update gear-conflict placement.',
+                'warning',
+            )
+    else:
+        sharing.pop(event_key, None)
+        competitor.gear_sharing = json.dumps(sharing)
+        flash(f'Gear sharing entry removed for {competitor.name} (key "{event_key}").', 'info')
+
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    log_action('gear_sharing_updated', 'pro_competitor', competitor_id, {
+        'event_key': event_key,
+        'partner': partner_name,
+    })
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/remove', methods=['POST'])
+def pro_gear_remove(tournament_id):
+    """Remove a gear-sharing entry from a pro competitor."""
+    Tournament.query.get_or_404(tournament_id)
+    try:
+        competitor_id = int(request.form.get('competitor_id', ''))
+    except (TypeError, ValueError):
+        flash('Invalid competitor ID.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        flash('Competitor not found.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    event_key = (request.form.get('event_key') or '').strip()
+    sharing = competitor.get_gear_sharing()
+    if event_key in sharing:
+        del sharing[event_key]
+        competitor.gear_sharing = json.dumps(sharing)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('gear_sharing_removed', 'pro_competitor', competitor_id, {'event_key': event_key})
+        flash(f'Gear sharing entry removed for {competitor.name}.', 'info')
+    else:
+        flash('Entry not found — nothing removed.', 'warning')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
 
 
 @registration_bp.route('/<int:tournament_id>/pro/auto-assign-partners', methods=['POST'])
@@ -473,18 +748,329 @@ def auto_assign_pro_partners_route(tournament_id):
     return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
 
 
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/complete-pairs', methods=['POST'])
+def pro_gear_complete_pairs(tournament_id):
+    """Write reciprocal gear-sharing entries for all one-sided pairs."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import complete_one_sided_pairs
+    try:
+        result = complete_one_sided_pairs(tournament)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('gear_complete_pairs', 'tournament', tournament_id, result)
+        flash(f'Reciprocals written for {result["completed"]} one-sided gear pair(s).', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error completing pairs: {e}', 'error')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/cleanup-scratched', methods=['POST'])
+def pro_gear_cleanup_scratched(tournament_id):
+    """Remove gear-sharing entries referencing scratched competitors."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import cleanup_scratched_gear_entries
+    try:
+        result = cleanup_scratched_gear_entries(tournament)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('gear_cleanup_scratched', 'tournament', tournament_id, {
+            'cleaned': result['cleaned'],
+            'affected': result['affected'],
+        })
+        if result['cleaned']:
+            flash(
+                f'Cleaned {result["cleaned"]} stale gear reference(s) from'
+                f' {len(result["affected"])} competitor(s).',
+                'success',
+            )
+        else:
+            flash('No stale gear references found.', 'info')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error cleaning up scratched entries: {e}', 'error')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/auto-partners', methods=['POST'])
+def pro_gear_auto_partners(tournament_id):
+    """Copy gear_sharing entries into partners for partnered events."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import auto_populate_partners_from_gear
+    try:
+        result = auto_populate_partners_from_gear(tournament)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('gear_auto_partners', 'tournament', tournament_id, result)
+        flash(
+            f'Partner fields auto-populated from gear sharing for {result["updated"]} competitor(s).',
+            'success',
+        )
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error auto-populating partners: {e}', 'error')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/parse-review')
+def pro_gear_parse_review(tournament_id):
+    """Show proposed gear-sharing parse results for review before committing."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import build_parse_review
+    rows = build_parse_review(tournament)
+    return render_template(
+        'pro/gear_parse_review.html',
+        tournament=tournament,
+        rows=rows,
+    )
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/parse-confirm', methods=['POST'])
+def pro_gear_parse_confirm(tournament_id):
+    """Commit approved parse rows from the parse-review page."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import (
+        build_parse_review, sync_all_gear_for_competitor, normalize_person_name,
+    )
+    all_pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament_id, status='active'
+    ).all()
+    pro_comps_by_norm = {normalize_person_name(c.name): c for c in all_pro_comps}
+
+    try:
+        rows = build_parse_review(tournament)
+        confirmed = 0
+        for row in rows:
+            comp = row['competitor']
+            field_name = f'confirm_{comp.id}'
+            if request.form.get(field_name) != 'on':
+                continue
+            old_gear = comp.get_gear_sharing()
+            # Merge proposed gear into existing map (don't wipe existing entries).
+            merged = dict(old_gear)
+            merged.update(row['proposed_gear_map'])
+            comp.gear_sharing = json.dumps(merged)
+            sync_all_gear_for_competitor(comp, pro_comps_by_norm, old_gear=old_gear)
+            log_action('gear_parse_confirmed', 'pro_competitor', comp.id, {
+                'proposed': row['proposed_gear_map'],
+            })
+            confirmed += 1
+
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        flash(f'Gear parse confirmed for {confirmed} competitor(s).', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error confirming parse: {e}', 'error')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/group-create', methods=['POST'])
+def pro_gear_group_create(tournament_id):
+    """Create or update a gear-sharing group (multiple pairs sharing one piece of equipment)."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    group_name = (request.form.get('group_name') or '').strip()
+    event_key = (request.form.get('event_key') or '').strip()
+    competitor_ids_raw = request.form.getlist('competitor_ids')
+
+    if not group_name or not event_key:
+        flash('Group name and event key are required.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    try:
+        comp_ids = [int(v) for v in competitor_ids_raw if str(v).strip()]
+    except (TypeError, ValueError):
+        flash('Invalid competitor ID in group selection.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    if len(comp_ids) < 2:
+        flash('Select at least 2 competitors to form a gear group.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    comps = ProCompetitor.query.filter(
+        ProCompetitor.id.in_(comp_ids),
+        ProCompetitor.tournament_id == tournament_id,
+        ProCompetitor.status == 'active',
+    ).all()
+    if len(comps) < 2:
+        flash('Could not find the selected competitors.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    from services.gear_sharing import create_gear_group, normalize_gear_key_to_event_id
+    pro_events = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
+    resolved_key = normalize_gear_key_to_event_id(event_key, pro_events)
+
+    try:
+        count = create_gear_group(comps, resolved_key, group_name)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('gear_group_created', 'tournament', tournament_id, {
+            'group_name': group_name,
+            'event_key': resolved_key,
+            'competitor_ids': comp_ids,
+        })
+        flash(f'Gear group "{group_name}" set for {count} competitor(s).', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error creating gear group: {e}', 'error')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/group-remove', methods=['POST'])
+def pro_gear_group_remove(tournament_id):
+    """Remove a gear-sharing group entry from one or all members."""
+    Tournament.query.get_or_404(tournament_id)
+    group_name = (request.form.get('group_name') or '').strip()
+    event_key = (request.form.get('event_key') or '').strip()
+    remove_all = request.form.get('remove_all') == 'on'
+
+    try:
+        competitor_id = int(request.form.get('competitor_id', '') or 0)
+    except (TypeError, ValueError):
+        competitor_id = 0
+
+    group_value = f'group:{group_name}'
+    removed = 0
+    if remove_all:
+        targets = ProCompetitor.query.filter_by(
+            tournament_id=tournament_id, status='active'
+        ).all()
+        for comp in targets:
+            gear = comp.get_gear_sharing()
+            if gear.get(event_key) == group_value:
+                del gear[event_key]
+                comp.gear_sharing = json.dumps(gear)
+                removed += 1
+    elif competitor_id:
+        comp = ProCompetitor.query.get(competitor_id)
+        if comp and comp.tournament_id == tournament_id:
+            gear = comp.get_gear_sharing()
+            if gear.get(event_key) == group_value:
+                del gear[event_key]
+                comp.gear_sharing = json.dumps(gear)
+                removed += 1
+
+    if removed:
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('gear_group_removed', 'tournament', tournament_id, {
+            'group_name': group_name,
+            'event_key': event_key,
+            'competitor_id': competitor_id,
+            'remove_all': remove_all,
+        })
+        flash(f'Removed {removed} competitor(s) from gear group "{group_name}".', 'info')
+    else:
+        flash('No matching gear group entries found.', 'warning')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/college/gear-sharing/update', methods=['POST'])
+def college_gear_update(tournament_id):
+    """Set a gear-sharing entry for a college competitor."""
+    Tournament.query.get_or_404(tournament_id)
+    from models.competitor import CollegeCompetitor
+    try:
+        competitor_id = int(request.form.get('competitor_id', ''))
+    except (TypeError, ValueError):
+        flash('Invalid competitor ID.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    comp = CollegeCompetitor.query.get_or_404(competitor_id)
+    if comp.tournament_id != tournament_id:
+        flash('Competitor not found.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    event_key = (request.form.get('event_key') or '').strip()
+    partner_name = (request.form.get('partner_name') or '').strip()
+
+    if not event_key:
+        flash('No event key specified.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    gear = comp.get_gear_sharing()
+    if partner_name:
+        gear[event_key] = partner_name
+        comp.gear_sharing = json.dumps(gear)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('college_gear_updated', 'college_competitor', competitor_id, {
+            'event_key': event_key, 'partner': partner_name,
+        })
+        flash(f'College gear sharing set: {comp.name} + {partner_name}.', 'success')
+    else:
+        flash('No partner name — use Remove to delete the entry.', 'warning')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/college/gear-sharing/remove', methods=['POST'])
+def college_gear_remove(tournament_id):
+    """Remove a gear-sharing entry from a college competitor."""
+    Tournament.query.get_or_404(tournament_id)
+    from models.competitor import CollegeCompetitor
+    try:
+        competitor_id = int(request.form.get('competitor_id', ''))
+    except (TypeError, ValueError):
+        flash('Invalid competitor ID.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    comp = CollegeCompetitor.query.get_or_404(competitor_id)
+    if comp.tournament_id != tournament_id:
+        flash('Competitor not found.', 'error')
+        return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+    event_key = (request.form.get('event_key') or '').strip()
+    gear = comp.get_gear_sharing()
+    if event_key in gear:
+        del gear[event_key]
+        comp.gear_sharing = json.dumps(gear)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('college_gear_removed', 'college_competitor', competitor_id, {'event_key': event_key})
+        flash(f'College gear sharing entry removed for {comp.name}.', 'info')
+    else:
+        flash('Entry not found.', 'warning')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/print')
+def pro_gear_print(tournament_id):
+    """Printable gear-sharing report grouped by equipment category."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import build_gear_report, get_gear_groups
+    report = build_gear_report(tournament)
+    gear_groups = get_gear_groups(tournament)
+    pro_events = Event.query.filter_by(
+        tournament_id=tournament_id, event_type='pro'
+    ).order_by(Event.name, Event.gender).all()
+    return render_template(
+        'pro/gear_sharing_print.html',
+        tournament=tournament,
+        report=report,
+        gear_groups=gear_groups,
+        pro_events=pro_events,
+    )
+
+
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/scratch', methods=['POST'])
 def scratch_pro_competitor(tournament_id, competitor_id):
     """Scratch a professional competitor."""
+    tournament = Tournament.query.get_or_404(tournament_id)
     competitor = ProCompetitor.query.get_or_404(competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
     competitor.status = 'scratched'
+    # Remove gear-sharing entries on active competitors that reference this person.
+    from services.gear_sharing import cleanup_scratched_gear_entries
+    result = cleanup_scratched_gear_entries(tournament, scratched_competitor=competitor)
     db.session.commit()
     invalidate_tournament_caches(tournament_id)
 
-    flash(text.FLASH['competitor_scratched'].format(name=competitor.name), 'warning')
+    msg = text.FLASH['competitor_scratched'].format(name=competitor.name)
+    if result['cleaned']:
+        msg += f' Removed {result["cleaned"]} gear-sharing reference(s) from {len(result["affected"])} competitor(s).'
+    flash(msg, 'warning')
     return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
 
 

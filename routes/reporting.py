@@ -398,6 +398,83 @@ def payout_settlement(tournament_id):
 
 
 # ---------------------------------------------------------------------------
+# Fee tracker — entry fee collection checklist
+# ---------------------------------------------------------------------------
+
+@reporting_bp.route('/<int:tournament_id>/pro/fee-tracker', methods=['GET', 'POST'])
+def fee_tracker(tournament_id):
+    """Consolidated view for tracking entry fee collection from pro competitors."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from models.competitor import ProCompetitor
+
+    if request.method == 'POST':
+        try:
+            comp_id = int(request.form.get('competitor_id', ''))
+        except (TypeError, ValueError):
+            flash('Invalid request.', 'error')
+            return redirect(url_for('reporting.fee_tracker', tournament_id=tournament_id))
+
+        action = request.form.get('action', 'mark_all_paid')
+        competitor = ProCompetitor.query.filter_by(id=comp_id, tournament_id=tournament_id).first_or_404()
+
+        if action == 'unmark_all':
+            competitor.fees_paid = '{}'
+        else:
+            # Mark every enrolled event as paid
+            entered = [str(eid) for eid in competitor.get_events_entered()]
+            competitor.fees_paid = json.dumps({eid: True for eid in entered})
+
+        db.session.commit()
+        log_action('fee_payment_updated', 'pro_competitor', comp_id, {
+            'action': action,
+            'name': competitor.name,
+        })
+        return redirect(url_for('reporting.fee_tracker', tournament_id=tournament_id))
+
+    # Build event id → display name lookup
+    pro_events = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
+    event_map = {str(e.id): e.display_name for e in pro_events}
+
+    competitors = tournament.pro_competitors.filter_by(status='active').all()
+
+    competitor_data = []
+    for c in competitors:
+        fees = c.get_entry_fees()
+        paid = c.get_fees_paid()
+        entered = [str(eid) for eid in c.get_events_entered()]
+
+        event_rows = []
+        for eid in entered:
+            event_rows.append({
+                'event_id': eid,
+                'name': event_map.get(eid, f'Event {eid}'),
+                'fee': fees.get(eid, 0),
+                'paid': paid.get(eid, False),
+            })
+
+        competitor_data.append({
+            'competitor': c,
+            'events': event_rows,
+        })
+
+    # Sort: outstanding balance descending (those who owe most shown first)
+    competitor_data.sort(key=lambda x: x['competitor'].fees_balance, reverse=True)
+
+    total_owed = sum(d['competitor'].total_fees_owed for d in competitor_data)
+    total_paid = sum(d['competitor'].total_fees_paid for d in competitor_data)
+    total_outstanding = total_owed - total_paid
+
+    return render_template(
+        'reporting/fee_tracker.html',
+        tournament=tournament,
+        competitor_data=competitor_data,
+        total_owed=total_owed,
+        total_paid=total_paid,
+        total_outstanding=total_outstanding,
+    )
+
+
+# ---------------------------------------------------------------------------
 # #25 — Cloud / local backup
 # ---------------------------------------------------------------------------
 

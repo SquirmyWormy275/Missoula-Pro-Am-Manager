@@ -1,622 +1,788 @@
 {% extends "base.html" %}
 
-{% block title %}Events & Schedule - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+{% block title %}Run Show - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Operations tab nav ─────────────────────────────────── */
+.ops-tabs { border-bottom: 2px solid var(--sx-border-bright); gap: 0; }
+.ops-tabs .nav-link {
+    color: var(--sx-text-2);
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    padding: 0.6rem 1.3rem;
+    font-weight: 600;
+    font-size: 0.88rem;
+    letter-spacing: 0.02em;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -2px;
+    white-space: nowrap;
+}
+.ops-tabs .nav-link:hover {
+    color: var(--sx-text);
+    border-bottom-color: var(--sx-border-bright);
+}
+.ops-tabs .nav-link.active {
+    color: var(--sx-gold);
+    border-bottom-color: var(--sx-gold);
+}
+
+/* ── Quick action strip ─────────────────────────────────── */
+.quick-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: var(--sx-surface-2);
+    border: 1px solid var(--sx-border);
+    border-radius: 8px;
+    margin-bottom: 1.25rem;
+}
+
+/* ── Event table rows ──────────────────────────────────── */
+.event-row-complete { background: rgba(45,168,94,0.06); }
+.event-row-warning  { background: rgba(255,193,7,0.07); }
+
+/* ── Status dot ────────────────────────────────────────── */
+.status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+/* ── Generate card ─────────────────────────────────────── */
+.gen-card {
+    border-left: 4px solid rgba(59,142,232,0.6) !important;
+    background: linear-gradient(135deg, rgba(59,142,232,0.05) 0%, transparent 60%) !important;
+}
+.gen-card.ready {
+    border-left-color: rgba(45,168,94,0.6) !important;
+    background: linear-gradient(135deg, rgba(45,168,94,0.05) 0%, transparent 60%) !important;
+}
+
+/* ── Special event card (Relay / Axe) ─────────────────── */
+.special-card {
+    border: 1px solid var(--sx-border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.special-card .sc-header {
+    padding: 0.55rem 0.9rem;
+    border-bottom: 1px solid var(--sx-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--sx-surface-2);
+    font-weight: 600;
+    font-size: 0.82rem;
+}
+.special-card .sc-body {
+    padding: 0.65rem 0.9rem;
+    font-size: 0.83rem;
+    color: var(--sx-text-2);
+}
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-4">
 
-    {# ── Breadcrumb + header ─────────────────────────────────────────── #}
+    {# ── Breadcrumb ─────────────────────────────────────────────────────── #}
     <div class="row mb-3">
         <div class="col-12">
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
                     <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
                     <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
-                    <li class="breadcrumb-item active">Events &amp; Schedule</li>
+                    <li class="breadcrumb-item active">Run Show</li>
                 </ol>
             </nav>
             <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <h1 class="mb-0">
-                    <i class="bi bi-calendar-event text-primary"></i>
-                    Events &amp; Schedule
+                    <i class="bi bi-play-circle text-warning"></i>
+                    Run Show
                 </h1>
                 <div class="d-flex gap-2 flex-wrap">
-                    <a href="{{ url_for('scheduling.day_schedule_print', tournament_id=tournament.id) }}"
-                       class="btn btn-outline-secondary btn-sm" target="_blank">
-                        <i class="bi bi-calendar-week"></i> Print Day Schedule
+                    <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-warning btn-sm">
+                        <i class="bi bi-shield-check"></i> Preflight Check
                     </a>
                     <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
                        class="btn btn-outline-secondary btn-sm" target="_blank">
                         <i class="bi bi-printer"></i> Print Heat Sheets
                     </a>
-                    <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
-                       class="btn btn-outline-warning btn-sm">
-                        <i class="bi bi-shield-check"></i> Preflight Check
-                    </a>
-                    <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}"
-                       class="btn btn-outline-secondary btn-sm">
-                        <i class="bi bi-sliders"></i> Configure Events
+                    <a href="{{ url_for('portal.kiosk', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary btn-sm" target="_blank">
+                        <i class="bi bi-display"></i> Kiosk
                     </a>
                 </div>
             </div>
         </div>
     </div>
 
-    {# ── Contextual CTA ──────────────────────────────────────────────── #}
-    {% if college_heats_total == 0 %}
-    {# No events configured — nothing to do yet #}
-    {% elif college_with_heats == 0 %}
-    <div class="alert d-flex align-items-center gap-3 mb-4"
-         style="background:rgba(59,142,232,0.09); border:1px solid rgba(59,142,232,0.3); border-left:4px solid #3b8ee8;">
-        <i class="bi bi-arrow-right-circle-fill text-primary" style="font-size:1.4rem; flex-shrink:0;"></i>
-        <div class="flex-grow-1">
-            <div class="fw-bold" style="color:#4a9fe8;">Next: Generate College Heats</div>
-            <div class="small text-muted">No heats have been generated yet. Use the button below, or pick your Friday/Saturday options first and click Generate All.</div>
-        </div>
-        <form method="POST" action="{{ url_for('scheduling.generate_college_heats', tournament_id=tournament.id) }}" class="flex-shrink-0">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-primary btn-sm">
-                <i class="bi bi-shuffle me-1"></i>Generate College Heats
+    {# ── Tab Navigation ─────────────────────────────────────────────────── #}
+    <ul class="nav ops-tabs mb-4 no-print" id="runShowTabs">
+        <li class="nav-item">
+            <button class="nav-link" id="tab-btn-build" data-bs-toggle="tab"
+                    data-bs-target="#tab-build" type="button" data-tab="build">
+                <i class="bi bi-lightning-charge me-1"></i> Build Schedule
             </button>
-        </form>
-    </div>
-    {% elif not flights_built and pro_heats_exist %}
-    <div class="alert d-flex align-items-center gap-3 mb-4"
-         style="background:rgba(255,193,7,0.09); border:1px solid rgba(255,193,7,0.35); border-left:4px solid #ffc107;">
-        <i class="bi bi-shuffle text-warning" style="font-size:1.4rem; flex-shrink:0;"></i>
-        <div class="flex-grow-1">
-            <div class="fw-bold" style="color:#cc9a06;">Next: Build Pro Flights</div>
-            <div class="small text-muted">College heats are ready. Build Saturday flight groupings from the pro heats.</div>
-        </div>
-        <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
-           class="btn btn-warning btn-sm flex-shrink-0">
-            <i class="bi bi-shuffle me-1"></i>Build Pro Flights
-        </a>
-    </div>
-    {% elif flights_built %}
-    <div class="alert d-flex align-items-center gap-3 mb-4"
-         style="background:rgba(45,168,94,0.08); border:1px solid rgba(45,168,94,0.3); border-left:4px solid #2da85e;">
-        <i class="bi bi-check-circle-fill text-success" style="font-size:1.4rem; flex-shrink:0;"></i>
-        <div class="flex-grow-1">
-            <div class="fw-bold text-success">Heats &amp; flights are ready</div>
-            <div class="small text-muted">Run a Preflight Check to verify everything, then print heat sheets for game day.</div>
-        </div>
-        <div class="d-flex gap-2 flex-shrink-0">
-            <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
-               class="btn btn-outline-success btn-sm">Preflight Check</a>
-            <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
-               class="btn btn-success btn-sm" target="_blank">
-                <i class="bi bi-printer me-1"></i>Print Heat Sheets
-            </a>
-        </div>
-    </div>
-    {% endif %}
-
-
-    {# ══════════════════════════════════════════════════════════════════
-       SCHEDULE OPTIONS  (Friday Showcase + Saturday Spillover)
-    ══════════════════════════════════════════════════════════════════ #}
-    <div class="card mb-4">
-        <div class="card-header d-flex align-items-center justify-content-between py-2">
-            <h5 class="mb-0">
-                <i class="bi bi-calendar2-week me-2 text-secondary"></i>
-                Friday &amp; Saturday Options
-            </h5>
-            {% if has_schedule_overrides %}
-            <span class="badge bg-primary">Options saved</span>
-            {% else %}
-            <span class="badge bg-secondary">Default (all college = Friday, all pro = Saturday)</span>
-            {% endif %}
-        </div>
-        <div class="card-body">
-            <form method="POST" action="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" data-loading>
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-                <div class="row g-4 mb-4">
-                    {# Left: Friday Showcase #}
-                    <div class="col-md-6">
-                        <div class="fw-semibold mb-2">
-                            <i class="bi bi-stars text-warning me-1"></i>
-                            Friday Showcase
-                            <span class="text-muted fw-normal small ms-1">(optional — pro events to run Friday)</span>
-                        </div>
-                        {% if fnf_eligible %}
-                        {% for event in fnf_eligible %}
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox"
-                                   name="friday_pro_event_ids" value="{{ event.id }}"
-                                   id="fnf_{{ event.id }}"
-                                   {% if event.id in selected_friday_pro_event_ids %}checked{% endif %}>
-                            <label class="form-check-label" for="fnf_{{ event.id }}">
-                                {{ event.display_name }}
-                                {% if event.gender %}<small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}
-                            </label>
-                        </div>
-                        {% endfor %}
-                        {% else %}
-                        <p class="text-muted small mb-0">No pro events are configured as Friday Showcase events.</p>
-                        {% endif %}
-                    </div>
-
-                    {# Right: Saturday Spillover #}
-                    <div class="col-md-6">
-                        <div class="fw-semibold mb-2">
-                            <i class="bi bi-arrow-right-circle text-primary me-1"></i>
-                            Saturday Spillover
-                            <span class="text-muted fw-normal small ms-1">(college events that run Saturday morning)</span>
-                        </div>
-                        {% if sat_eligible %}
-                        {% for event in sat_eligible %}
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox"
-                                   name="saturday_college_event_ids" value="{{ event.id }}"
-                                   id="sat_{{ event.id }}"
-                                   {% if event.id in selected_saturday_college_event_ids %}checked{% endif %}>
-                            <label class="form-check-label" for="sat_{{ event.id }}">
-                                {{ event.display_name }}
-                                {% if event.gender %}<small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}
-                            </label>
-                        </div>
-                        {% endfor %}
-                        {% else %}
-                        <p class="text-muted small mb-0">No college events are eligible for Saturday spillover.</p>
-                        {% endif %}
-                    </div>
-                </div>
-
-                {# Guided action flow #}
-                {% set recommended_action = 'generate_all' %}
-                {% set recommended_label = 'Generate All Heats + Build Flights' %}
-                {% set recommended_help = 'Build a full schedule from current registrations and options.' %}
-                {% if pro_heats_exist and not flights_built %}
-                    {% set recommended_action = 'rebuild_flights' %}
-                    {% set recommended_label = 'Build Pro Flights' %}
-                    {% set recommended_help = 'Pro heats already exist. Build Saturday flights without touching heats.' %}
-                {% elif flights_built and selected_saturday_college_event_ids %}
-                    {% set recommended_action = 'integrate_spillover' %}
-                    {% set recommended_label = 'Integrate Saturday Spillover' %}
-                    {% set recommended_help = 'Apply selected college spillover events into built flights.' %}
+        </li>
+        <li class="nav-item">
+            <button class="nav-link" id="tab-btn-friday" data-bs-toggle="tab"
+                    data-bs-target="#tab-friday" type="button" data-tab="friday">
+                <i class="bi bi-mortarboard me-1"></i> Friday Operations
+                {% if college_with_heats < college_heats_total and college_heats_total > 0 %}
+                <span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;">{{ college_heats_total - college_with_heats }} missing</span>
                 {% endif %}
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link" id="tab-btn-saturday" data-bs-toggle="tab"
+                    data-bs-target="#tab-saturday" type="button" data-tab="saturday">
+                <i class="bi bi-trophy me-1"></i> Saturday Operations
+                {% if not flights_built and pro_heats_exist %}
+                <span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;">No flights</span>
+                {% endif %}
+            </button>
+        </li>
+    </ul>
 
-                <div class="pt-3 border-top">
-                    <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
-                        <div>
-                            <div class="fw-semibold mb-1">Recommended Next Step</div>
-                            <div class="small text-muted">{{ recommended_help }}</div>
+    <div class="tab-content">
+
+        {# ══════════════════════════════════════════════════════════════════
+           TAB 1: BUILD SCHEDULE
+        ══════════════════════════════════════════════════════════════════ #}
+        <div class="tab-pane fade" id="tab-build" role="tabpanel">
+
+            {# Overall status banner #}
+            {% if college_heats_total == 0 %}
+            <div class="alert alert-info d-flex align-items-center gap-2 mb-4">
+                <i class="bi bi-info-circle-fill"></i>
+                <div>No events configured yet. <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}">Configure events first</a>, then come back to generate heats.</div>
+            </div>
+            {% elif college_with_heats == 0 and not pro_heats_exist %}
+            <div class="alert d-flex align-items-center gap-3 mb-4"
+                 style="background:rgba(59,142,232,0.09); border:1px solid rgba(59,142,232,0.3); border-left:4px solid #3b8ee8;">
+                <i class="bi bi-arrow-right-circle-fill text-primary" style="font-size:1.3rem; flex-shrink:0;"></i>
+                <div class="flex-grow-1">
+                    <div class="fw-bold" style="color:#4a9fe8;">Ready to generate — no heats built yet</div>
+                    <div class="small text-muted">Generate all heats and build pro flights in one click below.</div>
+                </div>
+            </div>
+            {% elif flights_built %}
+            <div class="alert d-flex align-items-center gap-3 mb-4"
+                 style="background:rgba(45,168,94,0.08); border:1px solid rgba(45,168,94,0.3); border-left:4px solid #2da85e;">
+                <i class="bi bi-check-circle-fill text-success" style="font-size:1.3rem; flex-shrink:0;"></i>
+                <div class="flex-grow-1">
+                    <div class="fw-bold text-success">Heats and flights are ready</div>
+                    <div class="small text-muted">Run a Preflight Check to verify, then print heat sheets for game day.</div>
+                </div>
+                <div class="d-flex gap-2 flex-shrink-0">
+                    <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-success btn-sm">Preflight Check</a>
+                    <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
+                       class="btn btn-success btn-sm" target="_blank">
+                        <i class="bi bi-printer me-1"></i>Print Heat Sheets
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="row g-4 mb-4">
+
+                {# ── Generate Heats & Flights ────────────────────────────── #}
+                <div class="col-lg-6">
+                    <div class="card gen-card {{ 'ready' if flights_built else '' }} h-100">
+                        <div class="card-header py-2 d-flex align-items-center justify-content-between">
+                            <h5 class="mb-0 fw-bold" style="font-size:0.95rem;">
+                                <i class="bi bi-layers me-2 text-primary"></i>Heats &amp; Flights
+                            </h5>
+                            {% if flights_built %}
+                            <span class="badge bg-success">Built</span>
+                            {% elif pro_heats_exist %}
+                            <span class="badge bg-warning text-dark">Flights pending</span>
+                            {% elif college_with_heats > 0 %}
+                            <span class="badge bg-info">Partial</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Not started</span>
+                            {% endif %}
                         </div>
-                        <button type="submit" name="action" value="{{ recommended_action }}" class="btn btn-primary"
-                                data-confirm="Proceed with {{ recommended_label|lower }}?">
-                            <i class="bi bi-lightning-charge me-1"></i>{{ recommended_label }}
-                        </button>
-                    </div>
+                        <div class="card-body">
 
-                    <div class="accordion mt-3" id="advancedActions">
-                        <div class="accordion-item">
-                            <h2 class="accordion-header" id="advancedActionsHead">
-                                <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
-                                        data-bs-target="#advancedActionsBody" aria-expanded="false" aria-controls="advancedActionsBody">
-                                    Advanced Actions
-                                </button>
-                            </h2>
-                            <div id="advancedActionsBody" class="accordion-collapse collapse" aria-labelledby="advancedActionsHead">
-                                <div class="accordion-body">
-                                    <div class="d-flex flex-wrap gap-2">
-                                        <button type="submit" name="action" value="generate_all" class="btn btn-outline-secondary btn-sm"
-                                                data-confirm="Generate heats for all events and build pro flights? Existing heats will be regenerated.">
-                                            <i class="bi bi-lightning-charge me-1"></i>Generate All
-                                        </button>
-                                        <button type="submit" name="action" value="rebuild_flights" class="btn btn-outline-secondary btn-sm"
-                                                data-confirm="Rebuild pro flights from existing pro heats?">
-                                            <i class="bi bi-shuffle me-1"></i>Rebuild Flights Only
-                                        </button>
-                                        <button type="submit" name="action" value="integrate_spillover" class="btn btn-outline-secondary btn-sm"
-                                                data-confirm="Integrate selected Saturday college events into existing flights?">
-                                            <i class="bi bi-link-45deg me-1"></i>Integrate Spillover
-                                        </button>
-                                        <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}" class="btn btn-outline-warning btn-sm">
-                                            <i class="bi bi-shield-check me-1"></i>Open Preflight
-                                        </a>
-                                    </div>
+                            {# Status summary #}
+                            <div class="d-flex gap-4 mb-3" style="font-size:0.83rem;">
+                                <div>
+                                    <div class="fw-semibold">{{ college_with_heats }}<span class="text-muted fw-normal"> / {{ college_heats_total }}</span></div>
+                                    <div class="text-muted" style="font-size:0.75rem;">College events with heats</div>
                                 </div>
+                                <div>
+                                    <div class="fw-semibold {% if flights_built %}text-success{% else %}text-muted{% endif %}">
+                                        {% if flights_built %}Yes{% else %}No{% endif %}
+                                    </div>
+                                    <div class="text-muted" style="font-size:0.75rem;">Pro flights built</div>
+                                </div>
+                                {% if sat_spillover_count > 0 %}
+                                <div>
+                                    <div class="fw-semibold text-primary">{{ sat_spillover_count }}</div>
+                                    <div class="text-muted" style="font-size:0.75rem;">Saturday spillover events</div>
+                                </div>
+                                {% endif %}
+                                {% if fnf_count > 0 %}
+                                <div>
+                                    <div class="fw-semibold text-warning">{{ fnf_count }}</div>
+                                    <div class="text-muted" style="font-size:0.75rem;">Friday showcase events</div>
+                                </div>
+                                {% endif %}
+                            </div>
+
+                            {# Fri/Sat options note #}
+                            <div class="d-flex align-items-center gap-2 mb-3 p-2 rounded"
+                                 style="background:rgba(255,255,255,0.04); border:1px solid var(--sx-border); font-size:0.8rem;">
+                                <i class="bi bi-stars text-warning"></i>
+                                <span class="text-muted">Friday Showcase &amp; Saturday Spillover options are configured on the
+                                    <a href="{{ url_for('scheduling.friday_feature', tournament_id=tournament.id) }}" class="text-warning">Fri Feature / Sat Overflow</a> page.
+                                </span>
+                            </div>
+
+                            {# Primary action #}
+                            <form method="POST" action="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" data-loading>
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="d-grid mb-2">
+                                    <button type="submit" name="action" value="generate_all" class="btn btn-primary"
+                                            data-confirm="Generate heats for all events and build pro flights? Existing heats will be regenerated.">
+                                        <i class="bi bi-lightning-charge me-1"></i>Generate All Heats + Build Flights
+                                    </button>
+                                </div>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="submit" name="action" value="rebuild_flights" class="btn btn-outline-warning btn-sm"
+                                            data-confirm="Rebuild pro flights from existing heats?">
+                                        <i class="bi bi-shuffle me-1"></i>Rebuild Flights Only
+                                    </button>
+                                    <button type="submit" name="action" value="integrate_spillover" class="btn btn-outline-primary btn-sm"
+                                            data-confirm="Integrate Saturday spillover events into existing flights?">
+                                        <i class="bi bi-link-45deg me-1"></i>Integrate Spillover
+                                    </button>
+                                </div>
+                            </form>
+
+                            {% if college_heats_total > 0 and not pro_heats_exist %}
+                            <hr class="my-3">
+                            <form method="POST" action="{{ url_for('scheduling.generate_college_heats', tournament_id=tournament.id) }}" data-loading>
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-outline-primary btn-sm">
+                                    <i class="bi bi-mortarboard me-1"></i>Generate College Heats Only
+                                </button>
+                            </form>
+                            {% endif %}
+
+                            <hr class="my-3">
+                            <div class="d-flex flex-wrap gap-2">
+                                <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-warning btn-sm">
+                                    <i class="bi bi-shield-check me-1"></i>Preflight Check
+                                </a>
+                                <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-secondary btn-sm" target="_blank">
+                                    <i class="bi bi-printer me-1"></i>Print Heat Sheets
+                                </a>
+                                <a href="{{ url_for('scheduling.day_schedule_print', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-secondary btn-sm" target="_blank">
+                                    <i class="bi bi-calendar-week me-1"></i>Print Day Schedule
+                                </a>
                             </div>
                         </div>
                     </div>
                 </div>
-            </form>
-        </div>
-    </div>
+
+                {# ── Pro-Am Relay + Axe Throw ────────────────────────────── #}
+                <div class="col-lg-6">
+                    <div class="d-flex flex-column gap-3 h-100">
+
+                        {# Pro-Am Relay #}
+                        <div class="special-card">
+                            <div class="sc-header">
+                                <span><i class="bi bi-shuffle me-2 text-warning"></i>Pro-Am Relay</span>
+                                <a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-warning btn-sm" style="font-size:0.75rem;">
+                                    Open <i class="bi bi-arrow-right ms-1"></i>
+                                </a>
+                            </div>
+                            <div class="sc-body">
+                                <p class="mb-2">Random lottery draw — 3 college + 3 pro competitors per team. Winners share in pro purse.</p>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}"
+                                       class="btn btn-warning btn-sm">
+                                        <i class="bi bi-dice-3 me-1"></i>Run Lottery Draw
+                                    </a>
+                                    <a href="{{ url_for('proam_relay.view_teams', tournament_id=tournament.id) }}"
+                                       class="btn btn-outline-secondary btn-sm">
+                                        View Teams
+                                    </a>
+                                    <a href="{{ url_for('proam_relay.enter_results', tournament_id=tournament.id) }}"
+                                       class="btn btn-outline-secondary btn-sm">
+                                        Enter Results
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+
+                        {# Partnered Axe Throw #}
+                        <div class="special-card">
+                            <div class="sc-header">
+                                <span><i class="bi bi-bullseye me-2 text-danger"></i>Partnered Axe Throw</span>
+                                <a href="{{ url_for('partnered_axe.dashboard', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-danger btn-sm" style="font-size:0.75rem;">
+                                    Open <i class="bi bi-arrow-right ms-1"></i>
+                                </a>
+                            </div>
+                            <div class="sc-body">
+                                <p class="mb-2">Pre-show prelims — all registered pairs throw. Top 4 advance to finals during the show.</p>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <a href="{{ url_for('partnered_axe.prelims', tournament_id=tournament.id) }}"
+                                       class="btn btn-danger btn-sm">
+                                        <i class="bi bi-pencil-fill me-1"></i>Enter Prelim Results
+                                    </a>
+                                    <a href="{{ url_for('partnered_axe.finals', tournament_id=tournament.id) }}"
+                                       class="btn btn-outline-secondary btn-sm">
+                                        Finals
+                                    </a>
+                                    <a href="{{ url_for('partnered_axe.results', tournament_id=tournament.id) }}"
+                                       class="btn btn-outline-secondary btn-sm">
+                                        Standings
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+
+                        {# Block Lottery #}
+                        <div class="special-card">
+                            <div class="sc-header">
+                                <span><i class="bi bi-dice-3 me-2 text-info"></i>Block Lottery</span>
+                                <a href="{{ url_for('woodboss.lottery', tid=tournament.id) }}"
+                                   class="btn btn-outline-info btn-sm" style="font-size:0.75rem;">
+                                    Open <i class="bi bi-arrow-right ms-1"></i>
+                                </a>
+                            </div>
+                            <div class="sc-body">
+                                <p class="mb-0">Draw and assign chopping blocks to competitors for the show.</p>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>{# /row #}
+
+        </div>{# /tab-build #}
 
 
-    {# ══════════════════════════════════════════════════════════════════
-       COLLEGE EVENTS
-    ══════════════════════════════════════════════════════════════════ #}
-    <div class="card mb-4">
-        <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between py-2">
-            <h5 class="mb-0"><i class="bi bi-mortarboard me-2"></i>College Events (Friday)</h5>
-            {% if college_heats_total > 0 %}
-            <span class="badge bg-white text-primary">
-                {{ college_with_heats }}/{{ college_heats_total }} events have heats
-            </span>
-            {% endif %}
-        </div>
+        {# ══════════════════════════════════════════════════════════════════
+           TAB 2: FRIDAY OPERATIONS
+        ══════════════════════════════════════════════════════════════════ #}
+        <div class="tab-pane fade" id="tab-friday" role="tabpanel">
 
-        {# Inline heat-status banner #}
-        {% if college_heats_total == 0 %}
-        <div class="px-3 py-2 border-bottom bg-light">
-            <small class="text-muted">No closed college events configured yet.
-                <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}">Configure events first.</a>
-            </small>
-        </div>
-        {% elif college_with_heats == 0 %}
-        <div class="d-flex align-items-center gap-3 px-3 py-3 border-bottom"
-             style="background:rgba(59,142,232,0.07);">
-            <i class="bi bi-layers text-primary" style="font-size:1.3rem; flex-shrink:0;"></i>
-            <div class="flex-grow-1">
-                <div class="fw-semibold text-primary">No college heats generated yet</div>
-                <div class="text-muted small">One click distributes competitors across stands using snake draft.</div>
+            {# Quick actions #}
+            <div class="quick-actions">
+                <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary btn-sm" target="_blank">
+                    <i class="bi bi-printer me-1"></i>Print Heat Sheets
+                </a>
+                <a href="{{ url_for('scheduling.day_schedule_print', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary btn-sm" target="_blank">
+                    <i class="bi bi-calendar-week me-1"></i>Print Day Schedule
+                </a>
+                <a href="{{ url_for('reporting.college_standings', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-bar-chart me-1"></i>College Standings
+                </a>
+                <a href="{{ url_for('woodboss.lottery', tid=tournament.id) }}"
+                   class="btn btn-outline-info btn-sm">
+                    <i class="bi bi-dice-3 me-1"></i>Block Lottery
+                </a>
+                <a href="{{ url_for('portal.kiosk', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary btn-sm" target="_blank">
+                    <i class="bi bi-display me-1"></i>Kiosk Display
+                </a>
             </div>
-            <form method="POST" action="{{ url_for('scheduling.generate_college_heats', tournament_id=tournament.id) }}" class="flex-shrink-0">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-primary btn-sm">
-                    <i class="bi bi-shuffle me-1"></i>Generate All College Heats
-                </button>
-            </form>
-        </div>
-        {% elif college_with_heats < college_heats_total %}
-        <div class="d-flex align-items-center gap-3 px-3 py-3 border-bottom"
-             style="background:rgba(255,193,7,0.07);">
-            <i class="bi bi-exclamation-circle text-warning" style="font-size:1.3rem; flex-shrink:0;"></i>
-            <div class="flex-grow-1">
-                <div class="fw-semibold">{{ college_heats_total - college_with_heats }} event(s) still need heats</div>
-                <div class="progress mt-1" style="height:5px; max-width:180px;">
-                    <div class="progress-bar bg-warning"
-                         style="width:{{ (college_with_heats / college_heats_total * 100)|round|int }}%"></div>
+
+            {# College day header #}
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <h5 class="mb-0"><i class="bi bi-mortarboard text-primary me-2"></i>College Events (Friday)</h5>
+                {% if tournament.college_date %}
+                <span class="text-muted small"><i class="bi bi-calendar3 me-1"></i>{{ tournament.college_date.strftime('%B %d, %Y') }}</span>
+                {% endif %}
+            </div>
+
+            {# Heat generation status strip #}
+            {% if college_heats_total == 0 %}
+            <div class="px-3 py-2 border rounded mb-3 bg-light">
+                <small class="text-muted">No college events configured yet.
+                    <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}">Configure events first.</a>
+                </small>
+            </div>
+            {% elif college_with_heats == 0 %}
+            <div class="d-flex align-items-center gap-3 px-3 py-3 rounded mb-3"
+                 style="background:rgba(59,142,232,0.07); border:1px solid rgba(59,142,232,0.25);">
+                <i class="bi bi-layers text-primary" style="font-size:1.2rem; flex-shrink:0;"></i>
+                <div class="flex-grow-1">
+                    <div class="fw-semibold text-primary small">No college heats generated yet</div>
+                    <div class="text-muted" style="font-size:0.78rem;">Go to the Build Schedule tab to generate heats.</div>
+                </div>
+                <form method="POST" action="{{ url_for('scheduling.generate_college_heats', tournament_id=tournament.id) }}" class="flex-shrink-0">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-shuffle me-1"></i>Generate Now
+                    </button>
+                </form>
+            </div>
+            {% elif college_with_heats < college_heats_total %}
+            <div class="d-flex align-items-center gap-3 px-3 py-2 rounded mb-3"
+                 style="background:rgba(255,193,7,0.07); border:1px solid rgba(255,193,7,0.3);">
+                <i class="bi bi-exclamation-circle text-warning"></i>
+                <div class="flex-grow-1 small">{{ college_heats_total - college_with_heats }} event(s) still need heats</div>
+                <div class="progress flex-shrink-0" style="height:5px; width:100px;">
+                    <div class="progress-bar bg-warning" style="width:{{ (college_with_heats / college_heats_total * 100)|round|int }}%"></div>
                 </div>
             </div>
-            <form method="POST" action="{{ url_for('scheduling.generate_college_heats', tournament_id=tournament.id) }}" class="flex-shrink-0">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-warning btn-sm">
-                    <i class="bi bi-arrow-repeat me-1"></i>Generate Missing Heats
-                </button>
-            </form>
-        </div>
-        {% else %}
-        <div class="d-flex align-items-center gap-3 px-3 py-2 border-bottom"
-             style="background:rgba(45,168,94,0.06);">
-            <i class="bi bi-check-circle-fill text-success"></i>
-            <div class="flex-grow-1 small text-success fw-semibold">All college heats ready</div>
-        </div>
-        {% endif %}
+            {% else %}
+            <div class="d-flex align-items-center gap-2 px-3 py-2 rounded mb-3"
+                 style="background:rgba(45,168,94,0.06); border:1px solid rgba(45,168,94,0.25);">
+                <i class="bi bi-check-circle-fill text-success small"></i>
+                <span class="text-success fw-semibold small">All college heats ready</span>
+            </div>
+            {% endif %}
 
-        <div class="card-body p-0">
+            {# College events table #}
             {% if college_events %}
-            <div class="table-responsive">
-                <table class="table table-hover mb-0 align-middle">
-                    <thead class="table-light">
-                        <tr>
-                            <th class="ps-3">Event</th>
-                            <th>Type</th>
-                            <th class="text-center">Competitors</th>
-                            <th class="text-center">Heats</th>
-                            <th>Status</th>
-                            <th class="text-end pe-3">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for e in college_events %}
-                        {% set progress = event_progress.get(e.id, {}) %}
-                        <tr class="{% if e.status == 'completed' %}table-success{% elif progress.ready_to_finalize %}table-warning{% endif %}">
-                            <td class="ps-3"><strong>{{ e.display_name }}</strong></td>
-                            <td>
-                                {% if e.is_open %}<span class="badge bg-success">OPEN</span>
-                                {% else %}<span class="badge bg-warning text-dark">CLOSED</span>{% endif %}
-                                {% if e.is_partnered %}<span class="badge bg-info">Partnered</span>{% endif %}
-                                {% if e.requires_dual_runs %}<span class="badge bg-secondary">Dual Run</span>{% endif %}
-                            </td>
-                            <td class="text-center">{{ entrant_counts.get(e.id, 0) }}</td>
-                            <td class="text-center">
-                                {% if progress.heat_count %}
-                                <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
-                                   class="text-decoration-none fw-semibold">{{ progress.heat_count }}</a>
-                                {% else %}0{% endif %}
-                            </td>
-                            <td>
-                                {% if e.status == 'completed' %}
-                                    <span class="badge bg-success">Completed</span>
-                                {% elif progress.ready_to_finalize %}
-                                    <span class="badge bg-warning text-dark">Ready to Finalize</span>
-                                {% elif progress.heat_count and progress.heat_count > 0 %}
-                                    <div class="small text-muted">{{ progress.completed_heats }}/{{ progress.heat_count }} heats scored</div>
-                                    <div class="progress mt-1" style="height:4px; max-width:100px;">
-                                        <div class="progress-bar" style="width:{{ progress.heat_pct }}%"></div>
-                                    </div>
-                                {% elif e.is_open %}
-                                    <span class="badge bg-dark">Signup List</span>
-                                {% else %}
-                                    <span class="badge bg-secondary">No Heats</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-end pe-3">
-                                <div class="btn-group btn-group-sm">
-                                    <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
-                                       class="btn btn-outline-primary" title="View / Manage Heats">
-                                        <i class="bi bi-layers"></i> Heats
-                                    </a>
-                                    {% if progress.heat_count and progress.heat_count > 0 and e.status != 'completed' %}
-                                    <a href="{{ url_for('scoring.next_unscored_heat', tournament_id=tournament.id, event_id=e.id) }}"
-                                       class="btn btn-warning" title="Score Next Heat">
-                                        <i class="bi bi-pencil-fill"></i> Score
-                                    </a>
-                                    {% endif %}
-                                    {% if e.status == 'completed' %}
-                                    <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=e.id) }}"
-                                       class="btn btn-outline-success" title="View Results">
-                                        <i class="bi bi-clipboard-data"></i>
-                                    </a>
-                                    {% endif %}
-                                </div>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <div class="card mb-4">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-3">Event</th>
+                                    <th>Type</th>
+                                    <th class="text-center">Competitors</th>
+                                    <th class="text-center">Heats</th>
+                                    <th>Status</th>
+                                    <th class="text-end pe-3">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for e in college_events %}
+                                {% set progress = event_progress.get(e.id, {}) %}
+                                <tr class="{% if e.status == 'completed' %}event-row-complete{% elif progress.ready_to_finalize %}event-row-warning{% endif %}">
+                                    <td class="ps-3">
+                                        <strong>{{ e.display_name }}</strong>
+                                    </td>
+                                    <td>
+                                        {% if e.is_open %}<span class="badge bg-success">OPEN</span>
+                                        {% else %}<span class="badge bg-warning text-dark">CLOSED</span>{% endif %}
+                                        {% if e.is_partnered %}<span class="badge bg-info ms-1">Partnered</span>{% endif %}
+                                        {% if e.requires_dual_runs %}<span class="badge bg-secondary ms-1">Dual Run</span>{% endif %}
+                                    </td>
+                                    <td class="text-center">{{ entrant_counts.get(e.id, 0) }}</td>
+                                    <td class="text-center">
+                                        {% if progress.heat_count %}
+                                        <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
+                                           class="text-decoration-none fw-semibold">{{ progress.heat_count }}</a>
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td>
+                                        {% if e.status == 'completed' %}
+                                            <span class="badge bg-success">Completed</span>
+                                        {% elif progress.ready_to_finalize %}
+                                            <span class="badge bg-warning text-dark">Ready to Finalize</span>
+                                        {% elif progress.heat_count and progress.heat_count > 0 %}
+                                            <div class="small text-muted">{{ progress.completed_heats }}/{{ progress.heat_count }} scored</div>
+                                            <div class="progress mt-1" style="height:4px; max-width:90px;">
+                                                <div class="progress-bar" style="width:{{ progress.heat_pct }}%"></div>
+                                            </div>
+                                        {% elif e.is_open %}
+                                            <span class="badge bg-dark">Sign-up List</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">No Heats</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end pe-3">
+                                        <div class="btn-group btn-group-sm">
+                                            <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="btn btn-outline-primary" title="View / Manage Heats">
+                                                <i class="bi bi-layers"></i> Heats
+                                            </a>
+                                            {% if progress.heat_count and progress.heat_count > 0 and e.status != 'completed' %}
+                                            <a href="{{ url_for('scoring.next_unscored_heat', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="btn btn-warning" title="Score Next Heat">
+                                                <i class="bi bi-pencil-fill"></i> Score
+                                            </a>
+                                            {% endif %}
+                                            {% if e.status == 'completed' %}
+                                            <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="btn btn-outline-success" title="View Results">
+                                                <i class="bi bi-clipboard-data"></i>
+                                            </a>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
             {% else %}
             <div class="text-center py-5 text-muted">
                 <i class="bi bi-calendar-x display-4"></i>
                 <p class="mt-3">No college events configured yet.</p>
                 <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}" class="btn btn-primary">
-                    <i class="bi bi-plus-circle"></i> Configure College Events
+                    <i class="bi bi-plus-circle me-1"></i>Configure College Events
                 </a>
             </div>
             {% endif %}
-        </div>
-    </div>
+
+        </div>{# /tab-friday #}
 
 
-    {# ══════════════════════════════════════════════════════════════════
-       PRO EVENTS
-    ══════════════════════════════════════════════════════════════════ #}
-    <div class="card mb-4">
-        <div class="card-header bg-warning text-dark d-flex align-items-center justify-content-between py-2">
-            <h5 class="mb-0"><i class="bi bi-trophy me-2"></i>Pro Events (Saturday)</h5>
-        </div>
+        {# ══════════════════════════════════════════════════════════════════
+           TAB 3: SATURDAY OPERATIONS
+        ══════════════════════════════════════════════════════════════════ #}
+        <div class="tab-pane fade" id="tab-saturday" role="tabpanel">
 
-        {# Flights status banner #}
-        {% if pro_events %}
-            {% if not pro_heats_exist %}
-            <div class="d-flex align-items-center gap-3 px-3 py-2 border-bottom"
-                 style="background:rgba(255,193,7,0.07);">
-                <i class="bi bi-info-circle text-warning"></i>
-                <div class="text-muted small flex-grow-1">Pro heats are generated by <strong>Generate All Heats + Build Flights</strong> above, or you can generate each event individually below.</div>
-            </div>
-            {% elif not flights_built %}
-            <div class="d-flex align-items-center gap-3 px-3 py-3 border-bottom"
-                 style="background:rgba(255,193,7,0.08);">
-                <i class="bi bi-shuffle text-warning" style="font-size:1.3rem; flex-shrink:0;"></i>
-                <div class="flex-grow-1">
-                    <div class="fw-semibold">Pro heats ready — flights not built yet</div>
-                    <div class="text-muted small">Build Saturday flight groupings from existing pro heats.</div>
-                </div>
-                <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
-                   class="btn btn-warning btn-sm flex-shrink-0">
-                    <i class="bi bi-shuffle me-1"></i>Build Pro Flights
-                </a>
-            </div>
-            {% else %}
-            <div class="d-flex align-items-center gap-3 px-3 py-2 border-bottom"
-                 style="background:rgba(45,168,94,0.07);">
-                <i class="bi bi-check-circle-fill text-success"></i>
-                <div class="flex-grow-1 small text-success fw-semibold">Pro flights built</div>
+            {# Quick actions #}
+            <div class="quick-actions">
                 <a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}"
-                   class="btn btn-outline-success btn-sm flex-shrink-0">
-                    View Flights <i class="bi bi-arrow-right ms-1"></i>
+                   class="btn btn-outline-warning btn-sm">
+                    <i class="bi bi-layers me-1"></i>View Flights
+                </a>
+                <a href="{{ url_for('scheduling.day_schedule_print', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary btn-sm" target="_blank">
+                    <i class="bi bi-calendar-week me-1"></i>Print Day Schedule
+                </a>
+                <a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-warning btn-sm">
+                    <i class="bi bi-shuffle me-1"></i>Pro-Am Relay
+                </a>
+                <a href="{{ url_for('partnered_axe.dashboard', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-danger btn-sm">
+                    <i class="bi bi-bullseye me-1"></i>Axe Throw
+                </a>
+                <a href="{{ url_for('reporting.pro_payout_summary', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-success btn-sm">
+                    <i class="bi bi-cash-stack me-1"></i>Payouts
+                </a>
+                <a href="{{ url_for('portal.kiosk', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary btn-sm" target="_blank">
+                    <i class="bi bi-display me-1"></i>Kiosk Display
                 </a>
             </div>
-            {% endif %}
-        {% endif %}
 
-        <div class="card-body p-0">
-            {% if pro_events %}
-            <div class="table-responsive">
-                <table class="table table-hover mb-0 align-middle">
-                    <thead class="table-light">
-                        <tr>
-                            <th class="ps-3">Event</th>
-                            <th>Type</th>
-                            <th class="text-center">Competitors</th>
-                            <th class="text-center">Heats</th>
-                            <th>Payouts</th>
-                            <th>Status</th>
-                            <th class="text-end pe-3">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for e in pro_events %}
-                        {% set progress = event_progress.get(e.id, {}) %}
-                        <tr class="{% if e.status == 'completed' %}table-success{% elif progress.ready_to_finalize %}table-warning{% endif %}">
-                            <td class="ps-3"><strong>{{ e.display_name }}</strong></td>
-                            <td>
-                                {% if e.is_partnered %}<span class="badge bg-info">Partnered</span>{% endif %}
-                                {% if e.has_prelims %}<span class="badge bg-secondary">Prelims</span>{% endif %}
-                            </td>
-                            <td class="text-center">{{ entrant_counts.get(e.id, 0) }}</td>
-                            <td class="text-center">
-                                {% if progress.heat_count %}
-                                <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
-                                   class="text-decoration-none fw-semibold">{{ progress.heat_count }}</a>
-                                {% else %}0{% endif %}
-                            </td>
-                            <td>
-                                {% set payouts = e.get_payouts() %}
-                                {% if payouts %}
-                                    <span class="text-success small">${{ payouts.get('1', 0) }} 1st</span>
-                                {% else %}
-                                    <span class="text-muted small">Not set</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if e.status == 'completed' %}
-                                    <span class="badge bg-success">Completed</span>
-                                {% elif progress.ready_to_finalize %}
-                                    <span class="badge bg-warning text-dark">Ready to Finalize</span>
-                                {% elif progress.heat_count and progress.heat_count > 0 %}
-                                    <div class="small text-muted">{{ progress.completed_heats }}/{{ progress.heat_count }} heats scored</div>
-                                    <div class="progress mt-1" style="height:4px; max-width:100px;">
-                                        <div class="progress-bar bg-warning" style="width:{{ progress.heat_pct }}%"></div>
-                                    </div>
-                                {% else %}
-                                    <span class="badge bg-secondary">No Heats</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-end pe-3">
-                                <div class="btn-group btn-group-sm">
-                                    <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
-                                       class="btn btn-outline-primary" title="View / Manage Heats">
-                                        <i class="bi bi-layers"></i> Heats
-                                    </a>
-                                    <a href="{{ url_for('scoring.configure_payouts', tournament_id=tournament.id, event_id=e.id) }}"
-                                       class="btn btn-outline-warning" title="Configure Payouts">
-                                        <i class="bi bi-cash"></i>
-                                    </a>
-                                    {% if progress.heat_count and progress.heat_count > 0 and e.status != 'completed' %}
-                                    <a href="{{ url_for('scoring.next_unscored_heat', tournament_id=tournament.id, event_id=e.id) }}"
-                                       class="btn btn-warning" title="Score Next Heat">
-                                        <i class="bi bi-pencil-fill"></i> Score
-                                    </a>
-                                    {% endif %}
-                                    {% if e.status == 'completed' %}
-                                    <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=e.id) }}"
-                                       class="btn btn-outline-success" title="View Results">
-                                        <i class="bi bi-clipboard-data"></i>
-                                    </a>
-                                    {% endif %}
-                                </div>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            {# Pro day header + flights status #}
+            <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+                <h5 class="mb-0"><i class="bi bi-trophy text-warning me-2"></i>Pro Events (Saturday)</h5>
+                {% if tournament.pro_date %}
+                <span class="text-muted small"><i class="bi bi-calendar3 me-1"></i>{{ tournament.pro_date.strftime('%B %d, %Y') }}</span>
+                {% endif %}
+                {% if flights_built %}
+                <a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-success btn-sm ms-auto">
+                    <i class="bi bi-check-circle-fill text-success me-1"></i>View Flights
+                </a>
+                {% elif pro_heats_exist %}
+                <div class="ms-auto">
+                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
+                       class="btn btn-warning btn-sm">
+                        <i class="bi bi-shuffle me-1"></i>Build Pro Flights
+                    </a>
+                </div>
+                {% endif %}
             </div>
+
+            {# Flights not built warning #}
+            {% if pro_events and not flights_built %}
+            <div class="d-flex align-items-center gap-3 px-3 py-2 rounded mb-3"
+                 style="background:rgba(255,193,7,0.08); border:1px solid rgba(255,193,7,0.35);">
+                <i class="bi bi-info-circle text-warning"></i>
+                <div class="text-muted small flex-grow-1">
+                    Pro flights have not been built yet.
+                    {% if pro_heats_exist %}
+                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}">Build flights</a> to group heats into the Saturday show order.
+                    {% else %}
+                    Go to the Build Schedule tab to generate heats and build flights.
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            {# Pro events table #}
+            {% if pro_events %}
+            <div class="card mb-4">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-3">Event</th>
+                                    <th>Type</th>
+                                    <th class="text-center">Competitors</th>
+                                    <th class="text-center">Heats</th>
+                                    <th>Payouts</th>
+                                    <th>Status</th>
+                                    <th class="text-end pe-3">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for e in pro_events %}
+                                {% set progress = event_progress.get(e.id, {}) %}
+                                <tr class="{% if e.status == 'completed' %}event-row-complete{% elif progress.ready_to_finalize %}event-row-warning{% endif %}">
+                                    <td class="ps-3"><strong>{{ e.display_name }}</strong></td>
+                                    <td>
+                                        {% if e.is_partnered %}<span class="badge bg-info">Partnered</span>{% endif %}
+                                        {% if e.has_prelims %}<span class="badge bg-secondary ms-1">Prelims</span>{% endif %}
+                                    </td>
+                                    <td class="text-center">{{ entrant_counts.get(e.id, 0) }}</td>
+                                    <td class="text-center">
+                                        {% if progress.heat_count %}
+                                        <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
+                                           class="text-decoration-none fw-semibold">{{ progress.heat_count }}</a>
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td>
+                                        {% set payouts = e.get_payouts() %}
+                                        {% if payouts %}
+                                            <span class="text-success small">${{ payouts.get('1', 0) }} 1st</span>
+                                        {% else %}
+                                            <a href="{{ url_for('scoring.configure_payouts', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="small text-muted text-decoration-none">Not set</a>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if e.status == 'completed' %}
+                                            <span class="badge bg-success">Completed</span>
+                                        {% elif progress.ready_to_finalize %}
+                                            <span class="badge bg-warning text-dark">Ready to Finalize</span>
+                                        {% elif progress.heat_count and progress.heat_count > 0 %}
+                                            <div class="small text-muted">{{ progress.completed_heats }}/{{ progress.heat_count }} scored</div>
+                                            <div class="progress mt-1" style="height:4px; max-width:90px;">
+                                                <div class="progress-bar bg-warning" style="width:{{ progress.heat_pct }}%"></div>
+                                            </div>
+                                        {% else %}
+                                            <span class="badge bg-secondary">No Heats</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end pe-3">
+                                        <div class="btn-group btn-group-sm">
+                                            <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="btn btn-outline-primary" title="View / Manage Heats">
+                                                <i class="bi bi-layers"></i> Heats
+                                            </a>
+                                            <a href="{{ url_for('scoring.configure_payouts', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="btn btn-outline-warning" title="Configure Payouts">
+                                                <i class="bi bi-cash"></i>
+                                            </a>
+                                            {% if progress.heat_count and progress.heat_count > 0 and e.status != 'completed' %}
+                                            <a href="{{ url_for('scoring.next_unscored_heat', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="btn btn-warning" title="Score Next Heat">
+                                                <i class="bi bi-pencil-fill"></i> Score
+                                            </a>
+                                            {% endif %}
+                                            {% if e.status == 'completed' %}
+                                            <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=e.id) }}"
+                                               class="btn btn-outline-success" title="View Results">
+                                                <i class="bi bi-clipboard-data"></i>
+                                            </a>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            {# Special events row: Relay + Axe Throw #}
+            <div class="row g-3 mb-4">
+                <div class="col-md-6">
+                    <div class="special-card">
+                        <div class="sc-header">
+                            <span><i class="bi bi-shuffle me-2 text-warning"></i>Pro-Am Relay</span>
+                            <a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}"
+                               class="btn btn-outline-warning btn-sm" style="font-size:0.75rem;">
+                                Manage <i class="bi bi-arrow-right ms-1"></i>
+                            </a>
+                        </div>
+                        <div class="sc-body">
+                            <div class="d-flex gap-2 flex-wrap mt-1">
+                                <a href="{{ url_for('proam_relay.view_teams', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-warning btn-sm">Teams</a>
+                                <a href="{{ url_for('proam_relay.enter_results', tournament_id=tournament.id) }}"
+                                   class="btn btn-warning btn-sm">
+                                    <i class="bi bi-pencil-fill me-1"></i>Enter Results
+                                </a>
+                                <a href="{{ url_for('proam_relay.standings', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-secondary btn-sm">Standings</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="special-card">
+                        <div class="sc-header">
+                            <span><i class="bi bi-bullseye me-2 text-danger"></i>Partnered Axe Throw</span>
+                            <a href="{{ url_for('partnered_axe.dashboard', tournament_id=tournament.id) }}"
+                               class="btn btn-outline-danger btn-sm" style="font-size:0.75rem;">
+                                Manage <i class="bi bi-arrow-right ms-1"></i>
+                            </a>
+                        </div>
+                        <div class="sc-body">
+                            <div class="d-flex gap-2 flex-wrap mt-1">
+                                <a href="{{ url_for('partnered_axe.prelims', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-danger btn-sm">Prelims</a>
+                                <a href="{{ url_for('partnered_axe.finals', tournament_id=tournament.id) }}"
+                                   class="btn btn-danger btn-sm">
+                                    <i class="bi bi-pencil-fill me-1"></i>Enter Finals
+                                </a>
+                                <a href="{{ url_for('partnered_axe.results', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-secondary btn-sm">Standings</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {% else %}
             <div class="text-center py-5 text-muted">
                 <i class="bi bi-calendar-x display-4"></i>
                 <p class="mt-3">No pro events configured yet.</p>
                 <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}" class="btn btn-warning">
-                    <i class="bi bi-plus-circle"></i> Configure Pro Events
+                    <i class="bi bi-plus-circle me-1"></i>Configure Pro Events
                 </a>
             </div>
             {% endif %}
-        </div>
-    </div>
 
+        </div>{# /tab-saturday #}
 
-    {# ══════════════════════════════════════════════════════════════════
-       SCHEDULE PREVIEW (collapsed by default)
-    ══════════════════════════════════════════════════════════════════ #}
-    {% if detailed_schedule %}
-    <div class="accordion mb-4" id="schedulePreviewAccordion">
-        <div class="accordion-item">
-            <h2 class="accordion-header" id="schedPreviewHead">
-                <button class="accordion-button collapsed" type="button"
-                        data-bs-toggle="collapse" data-bs-target="#schedPreviewBody"
-                        aria-expanded="false" aria-controls="schedPreviewBody">
-                    <i class="bi bi-layout-three-columns me-2"></i>
-                    Schedule Preview
-                    <span class="text-muted fw-normal ms-2" style="font-size:0.8rem;">
-                        Friday Day &middot; Friday Showcase &middot; Saturday Show
-                    </span>
-                    <span class="badge {{ 'bg-success' if schedule.saturday_source == 'flights' else 'bg-secondary' }} ms-2" style="font-size:0.7rem;">
-                        {{ 'Using flights' if schedule.saturday_source == 'flights' else 'No flights yet' }}
-                    </span>
-                    {% if has_schedule_overrides %}
-                    <span class="badge bg-primary ms-1" style="font-size:0.7rem;">Custom options applied</span>
-                    {% endif %}
-                </button>
-            </h2>
-            <div id="schedPreviewBody" class="accordion-collapse collapse"
-                 aria-labelledby="schedPreviewHead">
-                <div class="accordion-body p-0">
-                    <div class="row g-0">
-                        {# Friday Day #}
-                        <div class="col-lg-4 border-end">
-                            <div class="px-3 py-2 border-bottom bg-primary text-white small fw-bold text-uppercase">
-                                <i class="bi bi-mortarboard me-1"></i>
-                                {{ 'Friday Day Show' if has_schedule_overrides else 'College Events (Friday)' }}
-                            </div>
-                            <ol class="list-group list-group-flush list-group-numbered">
-                                {% for item in detailed_schedule.friday_day %}
-                                <li class="list-group-item py-1 px-3">
-                                    <span class="small">
-                                        {{ item.label }}
-                                        {% if item.heats %}
-                                        <details class="d-inline">
-                                            <summary class="text-muted" style="cursor:pointer; font-size:0.75rem;">heats</summary>
-                                            <div class="text-muted" style="font-size:0.75rem;">
-                                                {% for h in item.heats %}
-                                                H{{ h.heat_number }}{% if h.run_number > 1 %}-R{{ h.run_number }}{% endif %}:
-                                                {% for c in h.competitors %}{{ c.name }}{% if not loop.last %}, {% endif %}{% endfor %}<br>
-                                                {% endfor %}
-                                            </div>
-                                        </details>
-                                        {% endif %}
-                                    </span>
-                                </li>
-                                {% else %}
-                                <li class="list-group-item py-2 px-3 text-muted small fst-italic">No events in this block.</li>
-                                {% endfor %}
-                            </ol>
-                        </div>
-                        {# Friday Showcase #}
-                        <div class="col-lg-4 border-end">
-                            <div class="px-3 py-2 border-bottom bg-secondary text-white small fw-bold text-uppercase">
-                                <i class="bi bi-stars me-1"></i>
-                                {{ 'Friday Showcase' if has_schedule_overrides else 'Pro Events' }}
-                            </div>
-                            <ol class="list-group list-group-flush list-group-numbered">
-                                {% for item in detailed_schedule.friday_feature %}
-                                <li class="list-group-item py-1 px-3 small">{{ item.label }}</li>
-                                {% else %}
-                                <li class="list-group-item py-2 px-3 text-muted small fst-italic">No events in this block.</li>
-                                {% endfor %}
-                            </ol>
-                        </div>
-                        {# Saturday #}
-                        <div class="col-lg-4">
-                            <div class="px-3 py-2 border-bottom bg-warning text-dark small fw-bold text-uppercase">
-                                <i class="bi bi-trophy me-1"></i>
-                                {{ 'Saturday Show' if has_schedule_overrides else 'Pro + College Queue' }}
-                            </div>
-                            <div class="px-3 py-1 border-bottom">
-                                {% if schedule.saturday_source == 'flights' %}
-                                <small class="text-success"><i class="bi bi-check-circle"></i> Using built flights</small>
-                                {% else %}
-                                <small class="text-danger"><i class="bi bi-exclamation-triangle"></i> No flights — fallback order</small>
-                                {% endif %}
-                            </div>
-                            <ol class="list-group list-group-flush list-group-numbered">
-                                {% for item in detailed_schedule.saturday_show %}
-                                <li class="list-group-item py-1 px-3 small">
-                                    {{ item.label }}
-                                    {% if item.flight_number %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;">F{{ item.flight_number }}</span>{% endif %}
-                                </li>
-                                {% else %}
-                                <li class="list-group-item py-2 px-3 text-muted small fst-italic">No events in this block.</li>
-                                {% endfor %}
-                            </ol>
-                        </div>
-                    </div>
-                    <div class="p-2 border-top text-end">
-                        <a href="{{ url_for('scheduling.day_schedule_print', tournament_id=tournament.id) }}"
-                           class="btn btn-outline-secondary btn-sm" target="_blank">
-                            <i class="bi bi-printer"></i> Print Day Schedule
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    {% endif %}
+    </div>{# /tab-content #}
 
 </div>
+
+{% block extra_js %}
+<script>
+(function () {
+    // Activate tab from ?tab= param; default to 'build'
+    var params = new URLSearchParams(window.location.search);
+    var target = params.get('tab') || 'build';
+    var btn = document.querySelector('#runShowTabs button[data-tab="' + target + '"]');
+    if (btn) {
+        bootstrap.Tab.getOrCreateInstance(btn).show();
+    }
+})();
+</script>
+{% endblock %}
 {% endblock %}

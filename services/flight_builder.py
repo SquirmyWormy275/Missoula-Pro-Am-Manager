@@ -17,7 +17,7 @@ PARTNERED_AXE_EVENT_NAME = 'Partnered Axe Throw'
 PARTNERED_AXE_SHOW_TEAM_COUNT = 4
 
 
-def build_pro_flights(tournament: Tournament, heats_per_flight: int = 8) -> int:
+def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
     """
     Build flights for pro competition with event variety and competitor spacing.
 
@@ -26,13 +26,22 @@ def build_pro_flights(tournament: Tournament, heats_per_flight: int = 8) -> int:
 
     Args:
         tournament: Tournament to build flights for
-        heats_per_flight: Target number of heats per flight
+        num_flights: Total number of flights to create. When provided, heats are
+                     distributed evenly across that many flights. When omitted,
+                     defaults to distributing in blocks of 8 heats per flight.
 
     Returns:
         Number of flights created
     """
-    # Clear existing flights
-    Flight.query.filter_by(tournament_id=tournament.id).delete()
+    # Clear existing flights (null out Heat.flight_id first to satisfy FK constraints)
+    existing_flight_ids = [
+        f.id for f in Flight.query.filter_by(tournament_id=tournament.id).with_entities(Flight.id).all()
+    ]
+    if existing_flight_ids:
+        Heat.query.filter(Heat.flight_id.in_(existing_flight_ids)).update(
+            {'flight_id': None, 'flight_position': None}, synchronize_session=False
+        )
+    Flight.query.filter_by(tournament_id=tournament.id).delete(synchronize_session=False)
 
     # Get all pro event heats
     pro_events = tournament.events.filter_by(event_type='pro').all()
@@ -60,24 +69,30 @@ def build_pro_flights(tournament: Tournament, heats_per_flight: int = 8) -> int:
 
     # Build optimized heat order using competitor spacing algorithm
     ordered_heats = _optimize_heat_order(all_heats)
+    total_heats = len(ordered_heats)
+
+    # Derive heats_per_flight from caller-supplied num_flights, or fall back to default of 8.
+    if num_flights and num_flights > 0 and total_heats > 0:
+        target_flights = int(num_flights)
+        heats_per_flight = math.ceil(total_heats / target_flights)
+    else:
+        heats_per_flight = 8
+        target_flights = math.ceil(total_heats / heats_per_flight) if total_heats else 0
 
     # Promote the first pro springboard heat in each flight block to position 0
     # of that block so every flight opens with a springboard cut.
     ordered_heats = _promote_springboard_to_flight_start(ordered_heats, heats_per_flight)
 
-    # Calculate number of flights needed.
     # Partnered axe requires one heat per flight, so ensure enough flights.
-    total_heats = len(ordered_heats)
-    num_flights = math.ceil(total_heats / heats_per_flight) if total_heats else 0
-    if num_flights == 0 and partnered_axe_heats:
-        num_flights = 1
+    if target_flights == 0 and partnered_axe_heats:
+        target_flights = 1
 
     # Create flights and assign non-axe heats
     flights_created = 0
     heat_index = 0
     created_flights: list[Flight] = []
 
-    for flight_num in range(1, num_flights + 1):
+    for flight_num in range(1, target_flights + 1):
         flight = Flight(
             tournament_id=tournament.id,
             flight_number=flight_num
@@ -117,7 +132,10 @@ def _prepare_partnered_axe_show_heats(event: Event | None) -> list[Heat]:
     if not qualifier_pairs:
         return event.heats.filter_by(run_number=1).order_by(Heat.heat_number).all()
 
-    Heat.query.filter_by(event_id=event.id).delete()
+    heat_ids = [h.id for h in Heat.query.filter_by(event_id=event.id).with_entities(Heat.id).all()]
+    if heat_ids:
+        HeatAssignment.query.filter(HeatAssignment.heat_id.in_(heat_ids)).delete(synchronize_session=False)
+    Heat.query.filter_by(event_id=event.id).delete(synchronize_session=False)
 
     created = []
     for idx, pair in enumerate(qualifier_pairs, start=1):
