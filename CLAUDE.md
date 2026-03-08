@@ -56,6 +56,8 @@ models/
     audit_log.py        # AuditLog — immutable audit trail for sensitive actions
     school_captain.py   # SchoolCaptain — one PIN account per school per tournament
     wood_config.py      # WoodConfig — per-tournament wood species/size config for block prep
+    pro_event_rank.py   # ProEventRank — per-tournament ability ranking for pro competitors (7 event categories)
+    payout_template.py  # PayoutTemplate — reusable payout structure templates (tournament-independent)
 
 routes/
     __init__.py
@@ -100,6 +102,8 @@ services/
     gear_sharing.py     # Comprehensive gear-sharing service: parse/match/audit, bidirectional sync, group gear,
                         #   free-text parser, parse review, heat conflict detection + auto-fix, batch operations
     schedule_builder.py # Day schedule assembly: Friday day/feature blocks, Saturday show block from flights
+    scoring_engine.py   # Centralized scoring engine: position calculation, tiebreak logic, tie/throwoff management,
+                        #   outlier flagging, individual/team standings, payout template CRUD, bulk CSV import
 
 templates/
     base.html
@@ -120,7 +124,8 @@ templates/
                         flights, build_flights, import_upload, import_review,
                         gear_sharing, gear_sharing_print, gear_parse_review
     scheduling/         events, setup_events, heats, day_schedule (+ _print),
-                        heat_sheets_print, friday_feature, preflight
+                        heat_sheets_print, friday_feature, preflight,
+                        ability_rankings, show_day
     scoring/            event_results, enter_heat, configure_payouts, offline_ops
     reports/            all_results, college_standings, event_results,
                         payout_summary (+ _print variants), export_status,
@@ -237,9 +242,7 @@ The Friday Night Feature is an optional overflow or special events session run a
 
 ### Tournament
 
-Root entity for one year's competition. Fields: `id`, `name`, `year`, `college_date`, `pro_date`, `friday_feature_date`, `status` (setup/college_active/pro_active/completed), `created_at`, `updated_at`. Relationships: teams, college_competitors, pro_competitors, events (all cascade delete).
-
-Missing field: the Tournament model has no `providing_shirts` boolean. Whether the show provides shirts is determined before entry forms are sent out and should control whether shirt size is collected during pro competitor registration. Currently, `ProCompetitor.shirt_size` is always collected regardless. This is a known gap (see Section 5).
+Root entity for one year's competition. Fields: `id`, `name`, `year`, `college_date`, `pro_date`, `friday_feature_date`, `status` (setup/college_active/pro_active/completed), `providing_shirts` (Boolean — whether the show provides shirts; controls shirt_size collection on pro entry forms), `schedule_config` (TEXT — JSON schedule config persisted to DB; helpers `get_schedule_config()` / `set_schedule_config()`), `created_at`, `updated_at`. Relationships: teams, college_competitors, pro_competitors, events (all cascade delete).
 
 ### Team
 
@@ -257,17 +260,17 @@ Fields: `id`, `tournament_id`, `name`, `gender`, `address`, `phone`, `email`, `s
 
 ### Event
 
-Fields: `id`, `tournament_id`, `name`, `event_type` (college/pro), `gender` (M/F/None), `scoring_type` (time/score/distance/hits/bracket), `scoring_order` (lowest_wins/highest_wins), `is_open` (college OPEN/CLOSED flag), `is_partnered`, `partner_gender_requirement` (same/mixed/any), `requires_dual_runs`, `stand_type`, `max_stands`, `has_prelims`, `payouts` (JSON dict position → amount), `status` (pending/in_progress/completed). Relationships: heats, results.
+Fields: `id`, `tournament_id`, `name`, `event_type` (college/pro), `gender` (M/F/None), `scoring_type` (time/score/distance/hits/bracket), `scoring_order` (lowest_wins/highest_wins), `is_open` (college OPEN/CLOSED flag), `is_partnered`, `partner_gender_requirement` (same/mixed/any), `requires_dual_runs`, `requires_triple_runs` (Boolean — event uses 3-run cumulative scoring format), `stand_type`, `max_stands`, `has_prelims`, `payouts` (JSON dict position → amount), `status` (pending/in_progress/completed), `is_finalized` (Boolean — scoring locked; payouts distributed; prevents further edits). Relationships: heats, results.
 
 The `payouts` JSON field is repurposed by `ProAmRelay` and `PartneredAxeThrow` to store their state, and by `BirlingBracket` to store bracket data. This is a deliberate design decision to avoid extra tables.
 
 ### EventResult
 
-Fields: `id`, `event_id`, `competitor_id` (integer, not FK), `competitor_type` (college/pro), `competitor_name`, `partner_name`, `result_value`, `result_unit`, `run1_value`, `run2_value`, `best_run`, `final_position`, `points_awarded`, `payout_amount`, `status` (pending/completed/scratched/dnf). Method `calculate_best_run()` sets `best_run` and `result_value` to the lower of run1/run2.
+Fields: `id`, `event_id`, `competitor_id` (integer, not FK), `competitor_type` (college/pro), `competitor_name`, `partner_name`, `result_value`, `result_unit`, `run1_value`, `run2_value`, `best_run`, `run3_value` (Float, nullable — third run for triple-run events), `tiebreak_value` (Float, nullable — result from a throwoff run to break a tie), `throwoff_pending` (Boolean — two or more tied competitors need a throwoff before positions can be finalized), `handicap_factor` (Float, default 1.0 — placeholder for STRATHMARK-adjusted scoring; currently unused), `final_position`, `points_awarded`, `payout_amount`, `is_flagged` (Boolean — score flagged as statistical outlier by `_flag_score_outliers()`), `status` (pending/completed/scratched/dnf), `version_id` (Integer — optimistic locking). Methods: `calculate_best_run()` sets `best_run` and `result_value` to the lower of run1/run2; `calculate_cumulative_score()` sums all run values for triple-run events.
 
 ### Heat
 
-Fields: `id`, `event_id`, `heat_number`, `run_number` (1 or 2), `competitors` (JSON list of competitor IDs), `stand_assignments` (JSON dict competitor_id → stand_number), `status`, `flight_id` (nullable FK to flights), `flight_position` (nullable Integer — 1-based display order within a flight). Methods: `get_competitors()`, `set_competitors()`, `add_competitor()`, `remove_competitor()`, `get_stand_assignments()`, `set_stand_assignment()`.
+Fields: `id`, `event_id`, `heat_number`, `run_number` (1 or 2), `competitors` (JSON list of competitor IDs), `stand_assignments` (JSON dict competitor_id → stand_number), `status`, `version_id` (Integer — optimistic locking), `locked_by_user_id` (FK→users, nullable — exclusive lock held by a scorer), `locked_at` (DateTime, nullable — timestamp when lock was acquired), `flight_id` (nullable FK to flights), `flight_position` (nullable Integer — 1-based display order within a flight). Methods: `get_competitors()`, `set_competitors()`, `add_competitor()`, `remove_competitor()`, `get_stand_assignments()`, `set_stand_assignment()`, `is_locked()`, `acquire_lock(user_id)`, `release_lock()`.
 
 ### HeatAssignment
 
@@ -293,6 +296,14 @@ Config key conventions:
 - Stock Saw falls back to general log species/size if `log_stock` is not configured
 - `log_relay_doublebuck` falls back to `log_general` species/size if not set explicitly
 
+### ProEventRank
+
+Per-tournament ability ranking for pro competitors. Used by heat generation to group competitors by predicted performance. Fields: `id`, `tournament_id`, `competitor_id` (FK to pro_competitors), `event_category` (TEXT), `rank` (Integer, 1 = best). Unique constraint on `(tournament_id, competitor_id, event_category)`. Seven ranked categories: `springboard`, `underhand`, `standing_block`, `obstacle_pole`, `singlebuck`, `doublebuck`, `jack_jill`. Unranked competitors are placed after ranked ones during heat generation. Managed via `/scheduling/<tid>/ability-rankings`.
+
+### PayoutTemplate
+
+Reusable payout configuration templates for quick event setup. Tournament-independent — one template can be applied to events across any tournament. Fields: `id`, `name` (TEXT, unique), `payouts` (JSON TEXT — dict mapping position int → dollar amount), `created_at`. Methods: `get_payouts()` returns the dict; `set_payouts(d)` stores it; `total_purse()` returns sum of all payout values.
+
 ### Key Relationships Summary
 
 ```
@@ -301,6 +312,7 @@ Tournament
   │     └── CollegeCompetitor (1:many, via team_id)
   ├── CollegeCompetitor (1:many, cascade delete)
   ├── ProCompetitor (1:many, cascade delete)
+  │     └── ProEventRank (1:many, via competitor_id + tournament_id)
   ├── SchoolCaptain (1:many, cascade delete via tournament_id)
   ├── WoodConfig (1:many, cascade delete-orphan via wood_configs relationship)
   └── Event (1:many, cascade delete)
@@ -311,6 +323,8 @@ Tournament
 Flight
   ├── tournament_id (FK to tournaments)
   └── Heat.flight_id (FK, optional)
+
+PayoutTemplate  (tournament-independent, standalone)
 ```
 
 ### College Excel Import
@@ -368,6 +382,11 @@ Flight
 - Fee Tracker (`routes/reporting.py`, `templates/reporting/fee_tracker.html`): entry fee collection checklist per pro competitor; per-event breakdown expandable rows; mark/unmark paid; outstanding-only filter; summary cards
 - Tournament Setup consolidated page (`routes/main.py`, `templates/tournament_setup.html`): single `/tournament/<tid>/setup` page with tabs for Events, Wood Specs, and Settings (name/year/dates); wood specs and copy-from now redirect back to setup when called from this page
 - Tournament Detail redesigned (`templates/tournament_detail.html`): 3-phase action panels (Before Show / Game Day / After Show); 6-step workflow stepper; contextual next-step banner per status; stats bar with actionable alerts; async validation status banner
+- Show Day Dashboard (`/scheduling/<tid>/show-day`, `templates/scheduling/show_day.html`): flight status cards (live/completed/pending), current heat CTA, upcoming heats, college event progress bars; 60s auto-refresh
+- Scoring Engine (`services/scoring_engine.py`): centralized position calculation with per-type tiebreak strategies (hard-hit, axe throw, default); tie detection; throwoff workflow (`throwoff_pending` flag, `record_throwoff_result()`); triple-run cumulative scoring (`Event.requires_triple_runs`, `EventResult.run3_value`); `Event.is_finalized` lock; `EventResult.handicap_factor` placeholder for STRATHMARK; payout template CRUD (`models/payout_template.py`); bulk CSV result import; live spectator poll data
+- Pro Ability Rankings (`/scheduling/<tid>/ability-rankings`, `templates/scheduling/ability_rankings.html`): assign rank 1-N per competitor per event category (7 categories: springboard, underhand, standing_block, obstacle_pole, singlebuck, doublebuck, jack_jill); rank-ordered heat grouping for improved competitive balance
+- Heat locking for concurrent score entry: `Heat.locked_by_user_id` + `Heat.locked_at`; `acquire_lock()` / `release_lock()` / `is_locked()` methods prevent simultaneous edits by multiple scorers
+- Heat sheet enhancements (V1.8.0): per-flight pill filter tabs; two-column print layout with event color bands (pro=blue, college=mauve); drag-and-drop heat reordering (SortableJS); judge annotation notes-lines toggle; Cookie Stack / Standing Block conflict warning badges; competitor spacing heatmap; stand-assignment color coding (8 distinct colors); dual-run side-by-side layout; flight build progress overlay; flight build diff summary modal; 4-step scheduling wizard indicator
 
 ### Known Gaps and Incomplete Features
 
@@ -375,11 +394,7 @@ Flight
 
 **Friday Night Feature heat generation and flight integration:** The Friday Night Feature has a route, config storage, and UI template. However, no heat generation logic or flight integration exists for it. Heats and flights for Friday Night Feature events must be managed manually or via the standard event/heat flow.
 
-**Tournament model missing `providing_shirts` boolean:** The show decides before entry forms go out whether it provides shirts. `ProCompetitor.shirt_size` is always collected regardless. Adding this field requires a schema migration.
-
 **Pro event fee configuration UI:** No route or template exists for setting fee amounts per event per tournament. `entry_fees` and `fees_paid` fields exist on `ProCompetitor` but fees must currently be set directly in the database or via the edit competitor form.
-
-**Auto-partner assignment UI:** `services/partner_matching.py` contains auto-partner assignment logic with bidirectional validation. An "Auto-Assign Partners" button exists in the Gear Sharing Manager that calls `auto_assign_pro_partners_route` in `registration.py`. This wires `match_partners()` for partnered events per tournament.
 
 **Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
 
@@ -450,9 +465,7 @@ The following features remain as planned or implied by the codebase and requirem
 **Remaining gaps (from Section 5):**
 - Friday Night Feature heat generation and flight integration
 - Excel results export direct download route
-- Auto-partner assignment for pro events
 - Pro event fee configuration UI
-- Tournament `providing_shirts` boolean field
 - Pro entry form redesign (noted in EntryFormReqs.md)
 
 **Technical debt:**

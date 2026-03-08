@@ -550,6 +550,49 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-03-07 (V1.9.0)
+
+**Scoring Engine Overhaul — centralized, comprehensive scoring service:**
+- Added `services/scoring_engine.py` (566 lines): centralized position calculation with per-type tiebreak strategies (hard-hit, axe throw, default/time); tie detection and throwoff workflow; triple-run cumulative scoring; score outlier flagging; individual/team standings; payout template CRUD; bulk CSV result import; live spectator poll data
+- Added `models/payout_template.py` (`PayoutTemplate`): reusable payout configuration templates; tournament-independent; `get_payouts()`, `set_payouts()`, `total_purse()` helpers
+- Added `payout_templates` table via migration `i6j7k8l9m0n1` (down_revision: `h5i6j7k8l9m0`)
+- Added `Event.is_finalized` (Boolean): locks scoring when finalized; prevents further edits; triggers payout distribution
+- Added `Event.requires_triple_runs` (Boolean): enables 3-run cumulative scoring format
+- Added `EventResult.run3_value` (Float): third run for triple-run events
+- Added `EventResult.tiebreak_value` (Float): result from a throwoff run
+- Added `EventResult.throwoff_pending` (Boolean): two+ tied competitors waiting on throwoff before positions finalize
+- Added `EventResult.handicap_factor` (Float, default 1.0): placeholder column for STRATHMARK-adjusted scoring (currently unused)
+- Added `Heat.locked_by_user_id` (FK→users) + `Heat.locked_at` (DateTime): exclusive locking for concurrent score entry; `acquire_lock()`, `release_lock()`, `is_locked()` methods on Heat model
+
+**Pro Ability Rankings:**
+- Added `models/pro_event_rank.py` (`ProEventRank`): per-tournament ability ranking for pro competitors per event category; 7 categories: springboard, underhand, standing_block, obstacle_pole, singlebuck, doublebuck, jack_jill; rank 1 = best; unranked placed after ranked
+- Added `templates/scheduling/ability_rankings.html`: judge UI to assign ability ranks before heat generation
+- Added `/scheduling/<tid>/ability-rankings` route in `routes/scheduling.py`
+
+**Show Day Dashboard:**
+- Added `templates/scheduling/show_day.html` and `show_day` route in `routes/scheduling.py`: flight status cards (live/completed/pending), current heat CTA, upcoming heats, college event progress bars; 60s auto-refresh; linked from the 4-step scheduling wizard
+
+---
+
+### 2026-03-07 (V1.8.0)
+
+**Heat Sheet & Flight Generation UI/UX Enhancements (14 features):**
+- Added 4-step unified scheduling wizard indicator in `events.html` (Configure → Heats → Generate & Build → Show Day)
+- Added `Tournament.schedule_config` TEXT column (migration `h5i6j7k8l9m0`, down_revision: `e8f9a0b1c2d3`); `get_schedule_config()` / `set_schedule_config()` helpers; `event_list` and `friday_feature` routes persist config to DB on save and load from DB on open
+- Added inline preflight panel to `events.html`: `preflight_json` GET route returns JSON; JS auto-loads on page open; panel shows severity, issue list with type badges
+- Added per-flight heat sheet filter pill tabs in `heat_sheets_print.html`: filter visible flight blocks; "Print This Flight" button when a single flight is selected
+- Added competitor spacing heatmap to `heats.html`: server-computed `spacing_data`; collapsible section with inline CSS bars; red if gap < 4, blue otherwise
+- Added stand-assignment color coding: 8 distinct colors for stands 1-8; applied in both `heats.html` and `heat_sheets_print.html`; print-safe via `print-color-adjust: exact`
+- Rewrote `heats.html` to display dual-run heats side-by-side: `{% set ns = namespace(shown_heat_numbers=[]) %}` tracks rendered heat numbers; Run 1 left / Run 2 right two-column Bootstrap grid
+- Added flight build progress bar overlay: full-screen loading overlay with animated step labels; triggered by `[data-loading]` attribute on build forms in `events.html`
+- Added flight build diff summary modal: snapshot taken before/after build; stored in session, popped on next GET; Bootstrap modal auto-opens with flight counts and total heats
+- Added drag-and-drop heat reordering: SortableJS CDN in `heat_sheets_print.html`; drag handles on heat card headers; `reorder_flight_heats` POST route updates `Heat.flight_position`; CSRF via `X-CSRFToken` header
+- Rewrote `heat_sheets_print.html` with two-column print layout: `.heat-card-head.head-pro` (blue band), `.head-college` (mauve band); `print-color-adjust: exact`
+- Added judge annotation mode: notes-lines toggle checkbox in `heat_sheets_print.html`; `.notes-mode .heat-card::after` adds ruled dashed lines; hidden in print when not checked
+- Added Cookie Stack / Standing Block conflict warning badges: server-side detection via `_STAND_CONFLICT_GAP`; `stand_conflicts` per flight dict; warning badges in `heat_sheets_print.html`
+
+---
+
 ### 2026-03-06 (V1.7.0)
 
 **Gear Sharing Manager — complete pro gear-sharing management system:**

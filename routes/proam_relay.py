@@ -82,7 +82,7 @@ def view_teams(tournament_id):
 
 @bp.route('/results', methods=['GET', 'POST'])
 def enter_results(tournament_id):
-    """Enter relay event results."""
+    """Enter relay total times per team."""
     tournament = Tournament.query.get_or_404(tournament_id)
     relay = get_proam_relay(tournament)
 
@@ -93,26 +93,23 @@ def enter_results(tournament_id):
             flash('Invalid team number.', 'error')
             return redirect(url_for('proam_relay.enter_results', tournament_id=tournament_id))
 
-        event_name = request.form.get('event_name')
-
         # Parse time input (MM:SS.ms or just seconds)
         time_input = request.form.get('time_seconds', '').strip()
 
         try:
             if ':' in time_input:
-                # MM:SS.ms format
                 parts = time_input.split(':')
                 minutes = int(parts[0])
                 seconds = float(parts[1])
-                time_seconds = minutes * 60 + seconds
+                total_seconds = minutes * 60 + seconds
             else:
-                time_seconds = float(time_input)
+                total_seconds = float(time_input)
 
-            relay.record_event_result(team_number, event_name, time_seconds)
+            relay.record_total_time(team_number, total_seconds)
             invalidate_tournament_caches(tournament_id)
-            flash(f'Result recorded for Team {team_number} - {event_name}', 'success')
+            flash(f'Time recorded for Team {team_number}.', 'success')
         except ValueError:
-            flash('Invalid time format. Use seconds or MM:SS.ms', 'danger')
+            flash('Invalid time format. Use seconds (45.67) or MM:SS.ms (1:23.45).', 'danger')
 
         return redirect(url_for('proam_relay.enter_results', tournament_id=tournament_id))
 

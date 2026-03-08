@@ -21,6 +21,29 @@ LIST_ONLY_EVENT_NAMES = {
 }
 
 
+def _event_rank_category(event) -> str | None:
+    """Return the ProEventRank category string for an event, or None if unranked."""
+    if event is None:
+        return None
+    st = getattr(event, 'stand_type', None)
+    if st == 'springboard':
+        return 'springboard'
+    if st == 'underhand':
+        return 'underhand'
+    if st == 'standing_block':
+        return 'standing_block'
+    if st == 'obstacle_pole':
+        return 'obstacle_pole'
+    if st == 'saw_hand':
+        if not getattr(event, 'is_partnered', False):
+            return 'singlebuck'
+        pg = getattr(event, 'partner_gender', None)
+        if pg == 'mixed':
+            return 'jack_jill'
+        return 'doublebuck'
+    return None
+
+
 @scheduling_bp.route('/<int:tournament_id>/events', methods=['GET', 'POST'])
 def event_list(tournament_id):
     """Unified Events & Schedule page — heat status, schedule options, generation actions."""
@@ -32,18 +55,29 @@ def event_list(tournament_id):
 
     all_pro = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
     all_college = tournament.events.filter_by(event_type='college').all()
-    saved = session.get(session_key, {})
+    # Load schedule config: prefer DB (persists across sessions), fall back to session
+    db_config = tournament.get_schedule_config()
+    saved = db_config if db_config else session.get(session_key, {})
 
     # ── POST: handle schedule generation actions ──────────────────────────
     # Fri/Sat options are managed exclusively by the friday_feature page.
-    # This handler reads them from session; it never overwrites them.
+    # This handler reads them from session/DB; it never overwrites them.
     if request.method == 'POST':
         action = request.form.get('action', '')
-        # Use session-stored spillover selections (set by Fri Feature / Sat Overflow page)
+        # Use stored spillover selections (set by Fri Feature / Sat Overflow page)
         saturday_college_event_ids = [int(i) for i in saved.get('saturday_college_event_ids', [])]
+
+        def _snapshot_flights():
+            """Capture pre/post build metrics for the diff modal."""
+            snapshot = {}
+            for fl in Flight.query.filter_by(tournament_id=tournament_id).all():
+                ordered = fl.get_heats_ordered()
+                snapshot[fl.flight_number] = len(ordered)
+            return snapshot
 
         if action == 'generate_all':
             _generate_all_heats(tournament, generate_event_heats)
+            pre_snap = _snapshot_flights()
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
                 flash(f'Built {flights} pro flight(s).', 'success')
@@ -51,7 +85,15 @@ def event_list(tournament_id):
                 if integration['integrated_heats'] > 0:
                     db.session.commit()
                     flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
+                post_snap = _snapshot_flights()
+                session[f'build_diff_{tournament_id}'] = {
+                    'before_flight_count': len(pre_snap),
+                    'after_flight_count': len(post_snap),
+                    'total_heats': sum(post_snap.values()),
+                }
+                session.modified = True
         elif action == 'rebuild_flights':
+            pre_snap = _snapshot_flights()
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
                 flash(f'Rebuilt {flights} pro flight(s).', 'success')
@@ -59,6 +101,13 @@ def event_list(tournament_id):
                 if integration['integrated_heats'] > 0:
                     db.session.commit()
                     flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
+                post_snap = _snapshot_flights()
+                session[f'build_diff_{tournament_id}'] = {
+                    'before_flight_count': len(pre_snap),
+                    'after_flight_count': len(post_snap),
+                    'total_heats': sum(post_snap.values()),
+                }
+                session.modified = True
         elif action == 'integrate_spillover':
             integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
             db.session.commit()
@@ -95,6 +144,10 @@ def event_list(tournament_id):
     sat_spillover_count = len(saved['saturday_college_event_ids'])
     fnf_count = len(saved['friday_pro_event_ids'])
 
+    build_diff = session.pop(f'build_diff_{tournament_id}', None)
+    if build_diff:
+        session.modified = True
+
     return render_template('scheduling/events.html',
                            tournament=tournament,
                            college_events=college_events,
@@ -106,7 +159,8 @@ def event_list(tournament_id):
                            flights_built=flights_built,
                            pro_heats_exist=pro_heats_exist,
                            sat_spillover_count=sat_spillover_count,
-                           fnf_count=fnf_count)
+                           fnf_count=fnf_count,
+                           build_diff=build_diff)
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])
@@ -557,6 +611,9 @@ def _day_schedule_legacy(tournament_id):
         }
         session[session_key] = saved
         session.modified = True
+        # Persist to DB so config survives session expiry
+        tournament.set_schedule_config(saved)
+        db.session.commit()
         if action == 'generate_schedule':
             integration = integrate_college_spillover_into_flights(tournament, saved['saturday_college_event_ids'])
             if integration['integrated_heats'] > 0:
@@ -636,6 +693,8 @@ def preflight_check(tournament_id):
     if request.method == 'POST':
         action = request.form.get('action', 'autofix')
         if action == 'autofix':
+            from services.gear_sharing import complete_one_sided_pairs, parse_all_gear_details
+
             # 1) Heat assignment sync for all events
             heats_fixed = 0
             for event in tournament.events.all():
@@ -652,20 +711,37 @@ def preflight_check(tournament_id):
                         ))
                     heats_fixed += 1
 
-            # 2) Auto-partner assignments
+            # 2) Parse unstructured gear-sharing details into structured maps
+            gear_parse_result = parse_all_gear_details(tournament)
+
+            # 3) Write reciprocals for all one-sided gear pairs
+            pairs_result = complete_one_sided_pairs(tournament)
+
+            # 4) Auto-partner assignments
             partner_summary = auto_assign_pro_partners(tournament)
 
-            # 3) Saturday spillover integration
+            # 5) Saturday spillover integration
             integration = integrate_college_spillover_into_flights(tournament, saturday_ids)
 
             db.session.commit()
             log_action('preflight_autofix_applied', 'tournament', tournament_id, {
                 'heats_fixed': heats_fixed,
+                'gear_parsed': gear_parse_result,
+                'gear_pairs_completed': pairs_result['completed'],
                 'partner_summary': partner_summary,
                 'spillover': integration,
             })
+            gear_msg = (
+                f" parsed {gear_parse_result['parsed']} gear detail(s),"
+                if gear_parse_result['parsed'] else ''
+            )
+            pairs_msg = (
+                f" completed {pairs_result['completed']} one-sided gear pair(s),"
+                if pairs_result['completed'] else ''
+            )
             flash(
-                f"Auto-fix complete: synced {heats_fixed} heats, assigned {partner_summary['assigned_pairs']} pairs, "
+                f"Auto-fix complete: synced {heats_fixed} heats,{gear_msg}{pairs_msg} "
+                f"assigned {partner_summary['assigned_pairs']} pairs, "
                 f"integrated {integration['integrated_heats']} spillover heats.",
                 'success'
             )
@@ -718,12 +794,40 @@ def event_heats(tournament_id, event_id):
     signup_list_mode = _is_list_only_event(event)
     signup_rows = _build_signup_rows(event) if signup_list_mode else []
 
+    # Build competitor spacing heatmap data (run-1 heats only)
+    spacing_data = {}
+    if not signup_list_mode and heats:
+        run1_heats = [h for h in heats if h.run_number == 1] or heats
+        comp_appearances: dict[int, list[int]] = {}
+        for h in run1_heats:
+            for cid in h.get_competitors():
+                comp_appearances.setdefault(int(cid), []).append(h.heat_number)
+        all_cids = list(comp_appearances.keys())
+        if all_cids:
+            if event.event_type == 'college':
+                from models.competitor import CollegeCompetitor
+                name_map = {c.id: c.name for c in CollegeCompetitor.query.filter(
+                    CollegeCompetitor.id.in_(all_cids)).all()}
+            else:
+                from models.competitor import ProCompetitor
+                name_map = {c.id: c.name for c in ProCompetitor.query.filter(
+                    ProCompetitor.id.in_(all_cids)).all()}
+            spacing_data = {
+                'total_heats': len(run1_heats),
+                'competitors': sorted(
+                    [{'name': name_map.get(cid, f'ID:{cid}'), 'appearances': sorted(app)}
+                     for cid, app in comp_appearances.items()],
+                    key=lambda x: x['name'].lower(),
+                ),
+            }
+
     return render_template('scheduling/heats.html',
                            tournament=tournament,
                            event=event,
                            heats=heats,
                            signup_rows=signup_rows,
-                           signup_list_mode=signup_list_mode)
+                           signup_list_mode=signup_list_mode,
+                           spacing_data=spacing_data)
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/generate-heats', methods=['POST'])
@@ -732,6 +836,40 @@ def generate_heats(tournament_id, event_id):
     event = Event.query.get_or_404(event_id)
     if event.tournament_id != tournament_id:
         abort(404)
+
+    # Gear-sharing integrity gate for pro events: block generation when any enrolled
+    # competitor has unstructured gear details but no structured gear_sharing map.
+    # This prevents silently building heats with unresolved gear conflicts.
+    if event.event_type == 'pro':
+        from models import EventResult
+        from models.competitor import ProCompetitor
+        enrolled_ids = {
+            r.competitor_id
+            for r in EventResult.query.filter_by(event_id=event.id, competitor_type='pro').all()
+        }
+        if enrolled_ids:
+            unresolved_gear = [
+                c for c in ProCompetitor.query.filter(
+                    ProCompetitor.id.in_(enrolled_ids),
+                    ProCompetitor.tournament_id == tournament_id,
+                    ProCompetitor.status == 'active',
+                ).all()
+                if str(getattr(c, 'gear_sharing_details', '') or '').strip()
+                and not c.get_gear_sharing()
+            ]
+            if unresolved_gear:
+                names = ', '.join(c.name for c in unresolved_gear[:5])
+                extra = f' (+{len(unresolved_gear) - 5} more)' if len(unresolved_gear) > 5 else ''
+                flash(
+                    f'Heat generation blocked: {len(unresolved_gear)} competitor(s) in '
+                    f'{event.display_name} have unstructured gear-sharing notes — '
+                    f'{names}{extra}. '
+                    'Parse gear details in the Gear Sharing Manager first, or run Preflight Auto-Fix.',
+                    'error'
+                )
+                return redirect(url_for('scheduling.event_heats',
+                                        tournament_id=tournament_id,
+                                        event_id=event_id))
 
     # Import heat generation service
     from services.heat_generator import generate_event_heats
@@ -1136,6 +1274,7 @@ def friday_feature(tournament_id):
     saved_opts = session.get(session_key, {})
 
     if request.method == 'POST':
+        action = request.form.get('action', 'save')
         selected_ids = [int(x) for x in request.form.getlist('event_ids') if x.isdigit()]
         notes = (request.form.get('notes') or '').strip()
 
@@ -1153,13 +1292,45 @@ def friday_feature(tournament_id):
         saved_opts['saturday_college_event_ids'] = saturday_college_event_ids
         session[session_key] = saved_opts
         session.modified = True
-
-        log_action('friday_feature_configured', 'tournament', tournament_id, {
-            'fnf_event_count': len(selected_ids),
-            'sat_spillover_count': len(saturday_college_event_ids),
-        })
+        # Also persist to DB
+        tournament.set_schedule_config(saved_opts)
         db.session.commit()
-        flash('Friday Showcase & Saturday spillover saved.', 'success')
+
+        if action == 'generate_heats' and selected_ids:
+            # Generate heats for each Friday Night Feature event using the
+            # standard heat generator.  Existing heats for these events are
+            # cleared first; only events already created in the DB are processed.
+            from services.heat_generator import generate_event_heats
+            generated = 0
+            errors = []
+            for event_id in selected_ids:
+                event = Event.query.filter_by(id=event_id, tournament_id=tournament_id).first()
+                if not event:
+                    continue
+                try:
+                    heat_count = generate_event_heats(event)
+                    generated += heat_count
+                except Exception as exc:
+                    errors.append(f'{event.display_name}: {exc}')
+            db.session.commit()
+            if errors:
+                for err in errors:
+                    flash(f'Heat generation error — {err}', 'error')
+            if generated > 0:
+                flash(f'Generated {generated} Friday Night Feature heat(s).', 'success')
+            elif not errors:
+                flash('No heats generated (check that competitors are enrolled in the selected events).', 'warning')
+            log_action('fnf_heats_generated', 'tournament', tournament_id, {
+                'event_ids': selected_ids,
+                'heats_generated': generated,
+            })
+        else:
+            log_action('friday_feature_configured', 'tournament', tournament_id, {
+                'fnf_event_count': len(selected_ids),
+                'sat_spillover_count': len(saturday_college_event_ids),
+            })
+            db.session.commit()
+            flash('Friday Showcase & Saturday spillover saved.', 'success')
         return redirect(url_for('scheduling.friday_feature', tournament_id=tournament_id))
 
     selected_saturday_ids = set(int(i) for i in saved_opts.get('saturday_college_event_ids', []))
@@ -1242,6 +1413,9 @@ def heat_sync_fix(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/heat-sheets')
 def heat_sheets(tournament_id):
     """Print-ready heat sheets for all flights and events."""
+    from datetime import datetime
+    from services.flight_builder import _STAND_CONFLICT_GAP
+
     tournament = Tournament.query.get_or_404(tournament_id)
 
     # Build ordered heat data: flights first, then ungrouped events
@@ -1275,7 +1449,22 @@ def heat_sheets(tournament_id):
                 ],
             })
         if heat_rows:
-            flight_data.append({'flight': flight, 'heats': heat_rows})
+            # Detect Cookie Stack / Standing Block conflicts within this flight
+            conflicts = []
+            indexed = [(i, row['heat'], row['event'].stand_type) for i, row in enumerate(heat_rows)]
+            conflict_pairs = [('cookie_stack', 'standing_block')]
+            for i, _h, st_i in indexed:
+                if not st_i:
+                    continue
+                for pair_a, pair_b in conflict_pairs:
+                    if st_i not in (pair_a, pair_b):
+                        continue
+                    conflict_type = pair_b if st_i == pair_a else pair_a
+                    for j, _h2, st_j in indexed:
+                        if st_j == conflict_type and abs(i - j) < _STAND_CONFLICT_GAP and i != j:
+                            conflicts.append({'pos_a': i + 1, 'pos_b': j + 1, 'gap': abs(i - j)})
+                            break
+            flight_data.append({'flight': flight, 'heats': heat_rows, 'stand_conflicts': conflicts})
 
     # Also gather heats with no flight (college events, standalone)
     no_flight_heats = []
@@ -1312,6 +1501,138 @@ def heat_sheets(tournament_id):
         tournament=tournament,
         flight_data=flight_data,
         no_flight_heats=no_flight_heats,
+        now=datetime.utcnow(),
+        stand_conflict_gap=_STAND_CONFLICT_GAP,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Preflight JSON — inline checklist for events page
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/preflight-json')
+def preflight_json(tournament_id):
+    """JSON endpoint: inline preflight status for the events page."""
+    from services.preflight import build_preflight_report
+    from flask import jsonify
+    tournament = Tournament.query.get_or_404(tournament_id)
+    session_key = f'schedule_options_{tournament_id}'
+    saved = tournament.get_schedule_config() or session.get(session_key, {})
+    saturday_ids = [int(eid) for eid in saved.get('saturday_college_event_ids', [])]
+    report = build_preflight_report(tournament, saturday_ids)
+    return jsonify({
+        'issue_count': report['issue_count'],
+        'severity': report['severity'],
+        'issues': [
+            {
+                'severity': i['severity'],
+                'title': i['title'],
+                'detail': i.get('detail', ''),
+                'autofix': i.get('autofix', False),
+            }
+            for i in report['issues']
+        ],
+    })
+
+
+# ---------------------------------------------------------------------------
+# Flight heat reorder — drag-and-drop endpoint
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/flights/<int:flight_id>/reorder', methods=['POST'])
+def reorder_flight_heats(tournament_id, flight_id):
+    """Reorder heats within a flight. Expects JSON {heat_ids: [int, ...]}."""
+    from flask import jsonify
+    tournament = Tournament.query.get_or_404(tournament_id)
+    flight = Flight.query.filter_by(id=flight_id, tournament_id=tournament_id).first_or_404()
+    try:
+        data = request.get_json(force=True)
+        heat_ids = [int(hid) for hid in data.get('heat_ids', [])]
+    except (TypeError, ValueError, AttributeError):
+        return jsonify({'ok': False, 'error': 'Invalid heat_ids'}), 400
+
+    existing = {h.id: h for h in flight.get_heats_ordered()}
+    if set(heat_ids) != set(existing.keys()):
+        return jsonify({'ok': False, 'error': 'Heat set mismatch — refresh and try again'}), 400
+
+    for position, hid in enumerate(heat_ids, start=1):
+        existing[hid].flight_position = position
+    db.session.commit()
+    log_action('flight_heats_reordered', 'flight', flight_id, {'order': heat_ids})
+    return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Show Day — live operations dashboard
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/show-day')
+def show_day(tournament_id):
+    """Live operations dashboard for show day."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    flights = Flight.query.filter_by(tournament_id=tournament_id).order_by(Flight.flight_number).all()
+
+    flight_data = []
+    for flight in flights:
+        heats_ordered = flight.get_heats_ordered()
+        total = len(heats_ordered)
+        completed = sum(1 for h in heats_ordered if h.status == 'completed')
+        in_progress = sum(1 for h in heats_ordered if h.status == 'in_progress')
+
+        current_heat = next((h for h in heats_ordered if h.status == 'in_progress'), None)
+        if current_heat is None:
+            current_heat = next((h for h in heats_ordered if h.status not in ('completed',)), None)
+
+        current_event = Event.query.get(current_heat.event_id) if current_heat else None
+
+        upcoming_pairs = []
+        for h in heats_ordered:
+            if h.status != 'completed' and h is not current_heat:
+                ev = Event.query.get(h.event_id)
+                if ev:
+                    upcoming_pairs.append((h, ev))
+                if len(upcoming_pairs) >= 2:
+                    break
+
+        pct = int(completed / total * 100) if total else 0
+        if completed == total and total > 0:
+            status = 'completed'
+        elif in_progress > 0:
+            status = 'in_progress'
+        elif completed == 0:
+            status = 'pending'
+        else:
+            status = 'partial'
+
+        flight_data.append({
+            'flight': flight,
+            'total': total,
+            'completed': completed,
+            'in_progress': in_progress,
+            'pct': pct,
+            'status': status,
+            'current_heat': current_heat,
+            'current_event': current_event,
+            'upcoming': upcoming_pairs,
+        })
+
+    college_events_data = []
+    for event in tournament.events.filter_by(event_type='college').order_by(Event.name, Event.gender).all():
+        heats = event.heats.order_by(Heat.heat_number).all()
+        total = len(heats)
+        completed = sum(1 for h in heats if h.status == 'completed')
+        college_events_data.append({
+            'event': event,
+            'total': total,
+            'completed': completed,
+            'pct': int(completed / total * 100) if total else 0,
+        })
+
+    return render_template(
+        'scheduling/show_day.html',
+        tournament=tournament,
+        flight_data=flight_data,
+        college_events_data=college_events_data,
     )
 
 
@@ -1455,3 +1776,136 @@ def _send_upcoming_heat_sms(tournament_id: int, current_flight_number: int) -> N
     )
     for phone, name in sms_targets:
         submit_job(f'sms:{name}', send_sms, phone, msg)
+
+
+# ---------------------------------------------------------------------------
+# Ability Rankings — per-event judge-assigned ranks for heat snake-draft sort
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/pro/ability-rankings', methods=['GET', 'POST'])
+def ability_rankings(tournament_id):
+    """View and set per-event ability rankings for pro competitors."""
+    from models.pro_event_rank import (
+        ProEventRank, RANKED_CATEGORIES, CATEGORY_DISPLAY_NAMES, CATEGORY_DESCRIPTIONS
+    )
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    if request.method == 'POST':
+        # Parse rank_{category}_{competitor_id} fields and upsert ProEventRank rows.
+        saved_count = 0
+        deleted_count = 0
+        for key, raw_val in request.form.items():
+            if not key.startswith('rank_'):
+                continue
+            parts = key.split('_', 2)
+            if len(parts) != 3:
+                continue
+            _, category, comp_id_str = parts
+            if category not in RANKED_CATEGORIES:
+                continue
+            try:
+                competitor_id = int(comp_id_str)
+            except (TypeError, ValueError):
+                continue
+
+            raw_val = raw_val.strip()
+            if not raw_val:
+                # Blank field — delete existing rank if present.
+                existing = ProEventRank.query.filter_by(
+                    tournament_id=tournament_id,
+                    competitor_id=competitor_id,
+                    event_category=category,
+                ).first()
+                if existing:
+                    db.session.delete(existing)
+                    deleted_count += 1
+                continue
+
+            try:
+                rank = int(raw_val)
+                if rank < 1:
+                    raise ValueError
+            except (TypeError, ValueError):
+                flash(f'Invalid rank value "{raw_val}" for category {category} — must be a positive integer.', 'error')
+                continue
+
+            existing = ProEventRank.query.filter_by(
+                tournament_id=tournament_id,
+                competitor_id=competitor_id,
+                event_category=category,
+            ).first()
+            if existing:
+                existing.rank = rank
+            else:
+                db.session.add(ProEventRank(
+                    tournament_id=tournament_id,
+                    competitor_id=competitor_id,
+                    event_category=category,
+                    rank=rank,
+                ))
+            saved_count += 1
+
+        db.session.commit()
+        log_action('ability_rankings_saved', 'tournament', tournament_id, {
+            'saved': saved_count,
+            'cleared': deleted_count,
+        })
+        flash(f'Ability rankings saved ({saved_count} set, {deleted_count} cleared).', 'success')
+        return redirect(url_for('scheduling.ability_rankings', tournament_id=tournament_id))
+
+    # GET — build display data.
+    # Find which ranked categories have at least one pro event for this tournament.
+    pro_events = tournament.events.filter_by(event_type='pro').all()
+    category_event_map: dict[str, list] = {}
+    for event in pro_events:
+        cat = _event_rank_category(event)
+        if cat:
+            category_event_map.setdefault(cat, []).append(event)
+
+    # Load existing ranks for this tournament.
+    existing_ranks = ProEventRank.query.filter_by(tournament_id=tournament_id).all()
+    rank_map: dict[tuple, int] = {
+        (r.competitor_id, r.event_category): r.rank for r in existing_ranks
+    }
+
+    # Build category_groups: {category: {'M': [...], 'F': [...], 'open': [...]}}
+    # Each entry is {competitor, rank (or None)}.
+    category_groups: dict[str, dict] = {}
+    for category, cat_events in category_event_map.items():
+        genders_seen: dict[str, set] = {}  # gender -> set of competitor ids already added
+        group: dict[str, list] = {}
+        for event in cat_events:
+            gender_key = event.gender if event.gender else 'open'
+            seen = genders_seen.setdefault(gender_key, set())
+            comps = ProCompetitor.query.filter_by(
+                tournament_id=tournament_id,
+                status='active',
+            )
+            if event.gender:
+                comps = comps.filter_by(gender=event.gender)
+            comps = comps.order_by(ProCompetitor.name).all()
+            for comp in comps:
+                if comp.id in seen:
+                    continue
+                seen.add(comp.id)
+                group.setdefault(gender_key, []).append({
+                    'competitor': comp,
+                    'rank': rank_map.get((comp.id, category)),
+                })
+        # Sort each gender group by current rank (ranked first, then unranked alphabetically).
+        for gk in group:
+            group[gk].sort(key=lambda e: (
+                e['rank'] if e['rank'] is not None else float('inf'),
+                e['competitor'].name,
+            ))
+        if group:
+            category_groups[category] = group
+
+    return render_template(
+        'scheduling/ability_rankings.html',
+        tournament=tournament,
+        category_groups=category_groups,
+        category_display_names=CATEGORY_DISPLAY_NAMES,
+        category_descriptions=CATEGORY_DESCRIPTIONS,
+    )

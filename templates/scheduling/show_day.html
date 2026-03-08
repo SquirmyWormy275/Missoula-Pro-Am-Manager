@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block title %}Show Day - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Flight status cards ─────────────────────────────────── */
+.sd-flight-card {
+    background: var(--sx-surface);
+    border: 1px solid var(--sx-border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+.sd-flight-card.is-completed {
+    border-color: rgba(45,168,94,0.4);
+    background: rgba(45,168,94,0.04);
+}
+.sd-flight-card.is-live {
+    border-color: rgba(232,184,75,0.6);
+    background: rgba(232,184,75,0.05);
+    box-shadow: 0 0 0 3px rgba(232,184,75,0.18), 0 2px 10px rgba(0,0,0,0.25);
+}
+
+.sd-flight-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1rem;
+    background: var(--sx-surface-2);
+    border-bottom: 1px solid var(--sx-border);
+    font-weight: 700;
+    font-size: 0.88rem;
+}
+.sd-flight-card.is-live .sd-flight-header {
+    background: rgba(232,184,75,0.12);
+    border-bottom-color: rgba(232,184,75,0.3);
+}
+.sd-flight-card.is-completed .sd-flight-header {
+    background: rgba(45,168,94,0.10);
+    border-bottom-color: rgba(45,168,94,0.25);
+}
+
+.sd-progress-bar-wrap { height: 4px; background: var(--sx-surface-3); }
+.sd-progress-bar { height: 100%; transition: width 0.4s ease; }
+
+.sd-heat-count {
+    padding: 0.4rem 1rem;
+    font-size: 0.75rem;
+    color: var(--sx-text-2);
+    border-bottom: 1px solid var(--sx-border);
+}
+
+.sd-current {
+    padding: 0.55rem 1rem;
+    border-bottom: 1px solid var(--sx-border);
+    background: rgba(232,184,75,0.07);
+}
+.sd-current-label {
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--sx-gold);
+    margin-bottom: 2px;
+}
+.sd-current-event { font-weight: 700; font-size: 0.92rem; color: var(--sx-text); }
+.sd-current-heat  { font-size: 0.78rem; color: var(--sx-text-2); margin-bottom: 6px; }
+
+.sd-upcoming {
+    padding: 0.3rem 1rem;
+    font-size: 0.78rem;
+    color: var(--sx-text-2);
+    border-bottom: 1px solid var(--sx-border);
+}
+.sd-upcoming:last-child { border-bottom: none; }
+
+.sd-card-footer {
+    margin-top: auto;
+    padding: 0.5rem 1rem;
+    border-top: 1px solid var(--sx-border);
+    background: rgba(0,0,0,0.10);
+}
+
+/* ── College event rows ─────────────────────────────────── */
+.sd-college-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.45rem 0;
+    border-bottom: 1px solid var(--sx-border);
+    font-size: 0.84rem;
+}
+.sd-college-row:last-child { border-bottom: none; }
+.sd-college-name {
+    width: 190px;
+    flex-shrink: 0;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sd-college-bar-wrap {
+    flex: 1;
+    height: 6px;
+    background: var(--sx-surface-3);
+    border-radius: 3px;
+    overflow: hidden;
+    min-width: 60px;
+}
+.sd-college-bar { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+.sd-college-count { font-size: 0.76rem; color: var(--sx-text-2); flex-shrink: 0; width: 40px; text-align: right; }
+
+/* ── Section headers ────────────────────────────────────── */
+.sd-section-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--sx-text-2);
+    margin-bottom: 0.75rem;
+}
+
+#refresh-countdown { font-size: 0.72rem; color: var(--sx-text-2); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    {# ── Breadcrumb + Header ─────────────────────────────────────────────── #}
+    <div class="row mb-3">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Run Show</a></li>
+                    <li class="breadcrumb-item active">Show Day</li>
+                </ol>
+            </nav>
+
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                <div>
+                    <h1 class="mb-0">
+                        <i class="bi bi-broadcast text-warning me-2"></i>Show Day
+                    </h1>
+                    <p class="text-muted mb-0 small">{{ tournament.name }} {{ tournament.year }} &mdash; Live Operations</p>
+                </div>
+                <div class="d-flex gap-2 flex-wrap align-items-center">
+                    <span id="refresh-countdown">Refreshing in <span id="rc-num">60</span>s</span>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh Now
+                    </button>
+                    <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary btn-sm" target="_blank">
+                        <i class="bi bi-printer me-1"></i>Heat Sheets
+                    </a>
+                    <a href="{{ url_for('portal.kiosk', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary btn-sm" target="_blank">
+                        <i class="bi bi-display me-1"></i>Kiosk
+                    </a>
+                    <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-arrow-left me-1"></i>Back to Schedule
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if not flight_data and not college_events_data %}
+    <div class="alert alert-info">No flights or events configured for this tournament yet.</div>
+    {% endif %}
+
+    {# ══════════════════════════════════════════════════════════════════════
+       PRO FLIGHTS
+    ══════════════════════════════════════════════════════════════════════ #}
+    {% if flight_data %}
+    <p class="sd-section-title"><i class="bi bi-trophy me-1"></i>Pro Flights</p>
+
+    <div class="row g-3 mb-4">
+        {% for fd in flight_data %}
+        <div class="col-sm-6 col-lg-4 col-xl-3">
+            <div class="sd-flight-card {% if fd.status == 'completed' %}is-completed{% elif fd.status == 'in_progress' %}is-live{% endif %}">
+
+                {# Header #}
+                <div class="sd-flight-header">
+                    <span>Flight {{ fd.flight.flight_number }}{% if fd.flight.name %} &mdash; {{ fd.flight.name }}{% endif %}</span>
+                    {% if fd.status == 'completed' %}
+                        <span class="badge bg-success">Done</span>
+                    {% elif fd.status == 'in_progress' %}
+                        <span class="badge bg-warning text-dark">Live</span>
+                    {% elif fd.status == 'partial' %}
+                        <span class="badge bg-info">{{ fd.completed }}/{{ fd.total }}</span>
+                    {% else %}
+                        <span class="badge bg-secondary">Pending</span>
+                    {% endif %}
+                </div>
+
+                {# Progress bar #}
+                <div class="sd-progress-bar-wrap">
+                    <div class="sd-progress-bar {% if fd.status == 'completed' %}bg-success{% elif fd.status == 'in_progress' %}bg-warning{% else %}bg-primary{% endif %}"
+                         style="width:{{ fd.pct }}%;"></div>
+                </div>
+
+                {# Heat count #}
+                <div class="sd-heat-count">{{ fd.completed }}/{{ fd.total }} heats complete</div>
+
+                {# Current heat #}
+                {% if fd.current_event and fd.current_heat %}
+                <div class="sd-current">
+                    <div class="sd-current-label">Up Now</div>
+                    <div class="sd-current-event">{{ fd.current_event.display_name }}</div>
+                    <div class="sd-current-heat">Heat {{ fd.current_heat.heat_number }}{% if fd.current_heat.run_number > 1 %} &mdash; Run {{ fd.current_heat.run_number }}{% endif %}</div>
+                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=fd.current_heat.id) }}"
+                       class="btn btn-sm btn-warning w-100">
+                        <i class="bi bi-play-fill me-1"></i>Enter Results
+                    </a>
+                </div>
+                {% elif fd.status == 'completed' %}
+                <div class="sd-current" style="background:rgba(45,168,94,0.07);">
+                    <span class="text-success fw-semibold" style="font-size:0.85rem;">
+                        <i class="bi bi-check-circle-fill me-1"></i>Flight complete
+                    </span>
+                </div>
+                {% endif %}
+
+                {# Next 2 upcoming heats #}
+                {% for next_heat, next_event in fd.upcoming %}
+                <div class="sd-upcoming">
+                    <i class="bi bi-chevron-right me-1" style="font-size:0.70rem;"></i>
+                    {{ next_event.display_name }} &mdash; Heat {{ next_heat.heat_number }}
+                    {% if next_heat.run_number > 1 %}<span class="text-muted">(Run {{ next_heat.run_number }})</span>{% endif %}
+                </div>
+                {% endfor %}
+
+                {# Footer: Start / Complete controls #}
+                <div class="sd-card-footer">
+                    <div class="d-flex gap-2">
+                        {% if fd.status in ('pending', 'partial') %}
+                        <form action="{{ url_for('scheduling.start_flight', tournament_id=tournament.id, flight_id=fd.flight.id) }}"
+                              method="POST" style="flex:1;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-primary btn-sm w-100">
+                                <i class="bi bi-play me-1"></i>Start
+                            </button>
+                        </form>
+                        {% endif %}
+                        {% if fd.status == 'in_progress' %}
+                        <form action="{{ url_for('scheduling.complete_flight', tournament_id=tournament.id, flight_id=fd.flight.id) }}"
+                              method="POST" style="flex:1;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-success btn-sm w-100"
+                                    onclick="return confirm('Mark Flight {{ fd.flight.flight_number }} as completed?')">
+                                <i class="bi bi-check me-1"></i>Complete
+                            </button>
+                        </form>
+                        {% endif %}
+                        <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                           class="btn btn-outline-secondary btn-sm flex-shrink-0"
+                           title="Back to schedule"><i class="bi bi-layers"></i></a>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ══════════════════════════════════════════════════════════════════════
+       COLLEGE EVENTS
+    ══════════════════════════════════════════════════════════════════════ #}
+    {% if college_events_data %}
+    <p class="sd-section-title"><i class="bi bi-mortarboard me-1"></i>College Events</p>
+    <div class="card">
+        <div class="card-body py-2 px-3">
+            {% for ed in college_events_data %}
+            <div class="sd-college-row">
+                <div class="sd-college-name" title="{{ ed.event.display_name }}">{{ ed.event.display_name }}</div>
+                <div class="sd-college-bar-wrap">
+                    <div class="sd-college-bar {% if ed.pct == 100 %}bg-success{% else %}bg-primary{% endif %}"
+                         style="width:{{ ed.pct }}%;"></div>
+                </div>
+                <div class="sd-college-count">{{ ed.completed }}/{{ ed.total }}</div>
+                <div class="flex-shrink-0" style="width:60px; text-align:right;">
+                    {% if ed.pct == 100 %}
+                        <span class="badge bg-success">Done</span>
+                    {% elif ed.completed > 0 %}
+                        <span class="badge bg-info">Partial</span>
+                    {% else %}
+                        <span class="badge bg-secondary">Pending</span>
+                    {% endif %}
+                </div>
+                <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=ed.event.id) }}"
+                   class="btn btn-outline-secondary btn-sm flex-shrink-0" style="font-size:0.75rem; padding:2px 8px;">Heats</a>
+                <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=ed.event.id) }}"
+                   class="btn btn-outline-success btn-sm flex-shrink-0" style="font-size:0.75rem; padding:2px 8px;">Score</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    var secs = 60;
+    var el = document.getElementById('rc-num');
+    var iv = setInterval(function() {
+        secs -= 1;
+        if (el) el.textContent = secs;
+        if (secs <= 0) { clearInterval(iv); location.reload(); }
+    }, 1000);
+})();
+</script>
+{% endblock %}

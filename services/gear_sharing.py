@@ -42,7 +42,14 @@ def build_name_index(names: Iterable[str]) -> dict[str, str]:
 
 
 def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: float = 0.86) -> str:
-    """Resolve raw partner text to the closest known competitor name when possible."""
+    """Resolve raw partner text to the closest known competitor name when possible.
+
+    Matching order:
+    1. Exact normalized match
+    2. difflib fuzzy match at `cutoff`
+    3. Last-name-only match (e.g. "Smith") — only when unambiguous
+    4. First-initial + last-name match (e.g. "J. Smith" or "J Smith") — only when unambiguous
+    """
     candidate = str(raw_name or '').strip()
     if not candidate:
         return ''
@@ -62,6 +69,28 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
     close = difflib.get_close_matches(wanted, keys, n=1, cutoff=cutoff)
     if close:
         return name_index[close[0]]
+
+    # Last-name-only fallback: "Smith" → matches "John Smith" when unambiguous.
+    candidate_tokens = candidate.strip().split()
+    if candidate_tokens:
+        last_norm = normalize_person_name(candidate_tokens[-1])
+        if len(last_norm) >= 3:
+            last_matches = [k for k in keys if k.endswith(last_norm)]
+            if len(last_matches) == 1:
+                return name_index[last_matches[0]]
+
+    # Initials fallback: "J. Smith" or "J Smith" → matches "John Smith" when unambiguous.
+    if len(candidate_tokens) == 2:
+        first_initial = normalize_person_name(candidate_tokens[0])[:1]
+        last_norm = normalize_person_name(candidate_tokens[1])
+        if first_initial and len(last_norm) >= 3:
+            initial_matches = [
+                k for k in keys
+                if k.startswith(first_initial) and k.endswith(last_norm)
+            ]
+            if len(initial_matches) == 1:
+                return name_index[initial_matches[0]]
+
     return candidate
 
 
@@ -436,15 +465,22 @@ def complete_one_sided_pairs(tournament) -> dict:
     return {'completed': completed}
 
 
-def cleanup_scratched_gear_entries(tournament, scratched_competitor=None) -> dict:
+def cleanup_scratched_gear_entries(tournament, scratched_competitor=None, competitor_type: str = 'pro') -> dict:
     """
     Remove gear-sharing entries from active competitors that reference scratched
     (or a specific given) competitor.
+
+    competitor_type: 'pro' (default) or 'college' — selects which competitor
+    table to scan for active/scratched rows.
+
     Caller must commit.  Returns {cleaned: int, affected: list[str]}.
     """
-    from models.competitor import ProCompetitor
+    if competitor_type == 'college':
+        from models.competitor import CollegeCompetitor as CompModel
+    else:
+        from models.competitor import ProCompetitor as CompModel
 
-    active_comps = ProCompetitor.query.filter_by(
+    active_comps = CompModel.query.filter_by(
         tournament_id=tournament.id, status='active'
     ).all()
     if scratched_competitor:
@@ -452,7 +488,7 @@ def cleanup_scratched_gear_entries(tournament, scratched_competitor=None) -> dic
     else:
         scratched_norms = {
             normalize_person_name(s.name)
-            for s in ProCompetitor.query.filter_by(tournament_id=tournament.id, status='scratched').all()
+            for s in CompModel.query.filter_by(tournament_id=tournament.id, status='scratched').all()
         }
 
     cleaned = 0
@@ -610,10 +646,14 @@ def build_gear_report(tournament) -> dict:
 
     def _resolve_pro_event_label(key):
         label = event_display_pro.get(str(key))
-        if not label:
-            ev = next((e for e in pro_events if event_matches_gear_key(e, key)), None)
-            label = ev.display_name if ev else str(key)
-        return label
+        if label:
+            return label
+        # For category keys, join all matching event display names.
+        if str(key).startswith('category:'):
+            matching = [e.display_name for e in pro_events if event_matches_gear_key(e, key)]
+            return ', '.join(matching) if matching else str(key)
+        ev = next((e for e in pro_events if event_matches_gear_key(e, key)), None)
+        return ev.display_name if ev else str(key)
 
     # --- Pro gear-sharing analysis ---
     pro_pairs = []
@@ -710,6 +750,35 @@ def build_gear_report(tournament) -> dict:
         if pk in conflict_pair_ids:
             pair['heat_conflict'] = True
 
+    # --- Gear group size validation ---
+    # For partnered events a gear group should have exactly 2 members (one pair per saw).
+    # Warn when a group for a partnered event has 1 or 3+ members.
+    partnered_event_ids = {str(e.id) for e in pro_events if getattr(e, 'is_partnered', False)}
+    group_warnings: list[dict] = []
+    raw_groups: dict[str, dict] = {}  # group_name -> {event_key, members}
+    for comp in pro_comps:
+        for key, value in comp.get_gear_sharing().items():
+            v = str(value or '').strip()
+            if not v.startswith('group:'):
+                continue
+            gname = v[len('group:'):]
+            if gname not in raw_groups:
+                raw_groups[gname] = {'event_key': key, 'members': []}
+            raw_groups[gname]['members'].append(comp.name)
+    for gname, gdata in raw_groups.items():
+        key = gdata['event_key']
+        members = gdata['members']
+        is_partnered_key = key in partnered_event_ids or key.startswith('category:crosscut')
+        if is_partnered_key and len(members) != 2:
+            group_warnings.append({
+                'group_name': gname,
+                'event_key': key,
+                'event_label': _resolve_pro_event_label(key),
+                'member_count': len(members),
+                'members': members,
+                'issue': f'Expected 2 members (one pair per saw), found {len(members)}.',
+            })
+
     # --- Unparsed free-text details ---
     unparsed_count = sum(
         1 for c in pro_comps
@@ -741,6 +810,7 @@ def build_gear_report(tournament) -> dict:
         'pro_pairs': pro_pairs,
         'pro_unresolved': pro_unresolved,
         'pro_conflicts': pro_conflicts,
+        'group_warnings': group_warnings,
         'unparsed_count': unparsed_count,
         'college_constraints': college_constraints,
         'stats': {
@@ -748,6 +818,7 @@ def build_gear_report(tournament) -> dict:
             'unresolved': len(pro_unresolved),
             'conflicts': len(pro_conflicts),
             'college': len(college_constraints),
+            'group_warnings': len(group_warnings),
         },
     }
 

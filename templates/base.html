@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}{{ COMPETITION.app_title }}{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1281,6 +1282,58 @@
         }
 
         /* ═══════════════════════════════════════════════════════════
+           SKIP LINK (accessibility)
+        ═══════════════════════════════════════════════════════════ */
+        .skip-to-main {
+            position: absolute;
+            top: -60px;
+            left: 0;
+            background: var(--sx-fire);
+            color: #fff;
+            padding: 0.5rem 1.2rem;
+            z-index: 99999;
+            border-radius: 0 0 8px 0;
+            font-weight: 700;
+            font-size: 0.875rem;
+            text-decoration: none;
+            transition: top 0.18s ease;
+            white-space: nowrap;
+        }
+        .skip-to-main:focus {
+            top: 0;
+            color: #fff;
+        }
+
+        /* ═══════════════════════════════════════════════════════════
+           FOCUS VISIBLE — consistent keyboard navigation ring
+        ═══════════════════════════════════════════════════════════ */
+        :focus-visible {
+            outline: 2px solid var(--sx-fire);
+            outline-offset: 2px;
+        }
+        /* Suppress focus ring on mouse-click for non-form elements */
+        a:focus:not(:focus-visible),
+        button:focus:not(:focus-visible) {
+            outline: none;
+            box-shadow: none;
+        }
+        /* Form controls keep their fire-glow box-shadow on any focus */
+        .form-control:focus,
+        .form-select:focus,
+        .form-check-input:focus {
+            outline: none;
+        }
+
+        /* ═══════════════════════════════════════════════════════════
+           NAVBAR TOGGLER
+        ═══════════════════════════════════════════════════════════ */
+        .navbar-toggler { color: var(--sx-text-2); }
+        .navbar-toggler:focus { box-shadow: 0 0 0 2px var(--sx-fire-glow); outline: none; }
+        .navbar-toggler-icon {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28140%2C149%2C170%2C0.9%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+        }
+
+        /* ═══════════════════════════════════════════════════════════
            PRINT
         ═══════════════════════════════════════════════════════════ */
         @media print {
@@ -1343,6 +1396,9 @@
 </head>
 <body class="{% if CURRENT_LANG == 'arp' %}lang-arp{% endif %}{% if mobile_view %} portal-mobile{% endif %}">
 
+    <!-- ── SKIP TO MAIN CONTENT (accessibility) ─────── -->
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
     <!-- ── OWNERSHIP / ATTRIBUTION BAR ───────────────── -->
     <div class="ownership-bar no-print">
         <div class="container-fluid ownership-inner">
@@ -1374,7 +1430,7 @@
 
             <button class="navbar-toggler border-0 shadow-none" type="button"
                     data-bs-toggle="collapse" data-bs-target="#navbarNav"
-                    style="color:var(--sx-text-2);">
+                    aria-controls="navbarNav" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
 
@@ -1530,7 +1586,7 @@
         {% if tournament is defined and tournament and current_user.is_authenticated and current_user.is_judge %}
         {% include '_sidebar.html' %}
         {% endif %}
-        <main class="flex-grow-1" style="min-width: 0; overflow-x: hidden;">
+        <main id="main-content" class="flex-grow-1" style="min-width: 0; overflow-x: hidden;">
             {% block content %}{% endblock %}
         </main>
     </div>
@@ -1970,6 +2026,19 @@
         document.querySelectorAll('#toastContainer .toast').forEach(function (el) {
             new bootstrap.Toast(el, { delay: 5000 }).show();
         });
+
+        // Navbar active-link detection — mark the link whose path matches current page
+        (function () {
+            var currentPath = window.location.pathname;
+            document.querySelectorAll('.navbar-proam .nav-link').forEach(function (link) {
+                var href = link.getAttribute('href');
+                if (!href || href === '#') return;
+                // Exact match, or path-prefix match for non-root links
+                if (href === currentPath || (href.length > 1 && currentPath.startsWith(href))) {
+                    link.classList.add('active');
+                }
+            });
+        }());
 
         // Universal confirm modal — intercepts forms with data-confirm AND submit buttons with data-confirm
         (function () {

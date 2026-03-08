@@ -117,9 +117,13 @@
 
         </div>{# /row #}
 
-        <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-proam">
-                <i class="bi bi-save me-1"></i>Save Friday Showcase &amp; Saturday Options
+        <div class="d-flex gap-2 flex-wrap">
+            <button type="submit" name="action" value="save" class="btn btn-proam">
+                Save Friday Showcase &amp; Saturday Options
+            </button>
+            <button type="submit" name="action" value="generate_heats" class="btn btn-outline-primary"
+                    title="Generate heats for the checked Friday Showcase events using enrolled competitors">
+                Generate Heats for Selected Events
             </button>
             <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
                class="btn btn-outline-secondary">Cancel</a>

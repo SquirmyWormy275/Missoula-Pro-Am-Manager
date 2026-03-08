@@ -106,6 +106,14 @@
                     Run Show
                 </h1>
                 <div class="d-flex gap-2 flex-wrap">
+                    <a href="{{ url_for('scheduling.show_day', tournament_id=tournament.id) }}"
+                       class="btn btn-warning btn-sm">
+                        <i class="bi bi-broadcast me-1"></i>Show Day
+                    </a>
+                    <a href="{{ url_for('scheduling.ability_rankings', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-primary btn-sm">
+                        <i class="bi bi-bar-chart-steps"></i> Ability Rankings
+                    </a>
                     <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
                        class="btn btn-outline-warning btn-sm">
                         <i class="bi bi-shield-check"></i> Preflight Check
@@ -122,6 +130,37 @@
             </div>
         </div>
     </div>
+
+    {# ── Workflow Step Indicator ─────────────────────────────────────────── #}
+    <ol class="d-flex flex-wrap gap-0 mb-3 list-unstyled no-print" id="schedWizard"
+        style="border:1px solid var(--sx-border); border-radius:8px; overflow:hidden; background:var(--sx-surface-2);">
+        {% set wizard_steps = [
+            ('1', 'Configure Events', url_for('scheduling.setup_events', tournament_id=tournament.id), 'bi-gear'),
+            ('2', 'Fri/Sat Options', url_for('scheduling.friday_feature', tournament_id=tournament.id), 'bi-calendar2-week'),
+            ('3', 'Generate & Build', '', 'bi-lightning-charge'),
+            ('4', 'Preflight & Print', url_for('scheduling.preflight_check', tournament_id=tournament.id), 'bi-printer'),
+        ] %}
+        {% for num, label, href, icon in wizard_steps %}
+        {% set is_active = (num == '3') %}
+        {% set is_done = (num in ('1', '2')) %}
+        <li style="flex:1; min-width:120px;">
+            {% if href and not is_active %}
+            <a href="{{ href }}"
+               style="display:flex; align-items:center; gap:8px; padding:8px 14px; text-decoration:none; border-right:1px solid var(--sx-border); {{ 'color:var(--sx-text-2);' if not is_active else '' }}{% if loop.last %}border-right:none;{% endif %}">
+            {% else %}
+            <span style="display:flex; align-items:center; gap:8px; padding:8px 14px; border-right:1px solid var(--sx-border); background:rgba(232,184,75,0.10); {% if loop.last %}border-right:none;{% endif %}">
+            {% endif %}
+                <span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; font-size:0.72rem; font-weight:800; flex-shrink:0;
+                    {% if is_active %}background:var(--sx-gold); color:#111;{% elif is_done %}background:rgba(45,168,94,0.25); color:#2da85e;{% else %}background:var(--sx-surface-3); color:var(--sx-text-2);{% endif %}">
+                    {{ num }}
+                </span>
+                <span style="font-size:0.80rem; font-weight:{% if is_active %}700{% else %}500{% endif %}; color:{% if is_active %}var(--sx-gold){% elif is_done %}var(--sx-text-2){% else %}var(--sx-text-2){% endif %}; white-space:nowrap;">
+                    <i class="bi {{ icon }} me-1"></i>{{ label }}
+                </span>
+            {% if href and not is_active %}</a>{% else %}</span>{% endif %}
+        </li>
+        {% endfor %}
+    </ol>
 
     {# ── Tab Navigation ─────────────────────────────────────────────────── #}
     <ul class="nav ops-tabs mb-4 no-print" id="runShowTabs">
@@ -191,6 +230,21 @@
                 </div>
             </div>
             {% endif %}
+
+            {# ── Inline Preflight Panel ── #}
+            <div id="preflight-panel" class="mb-4" style="display:none;">
+                <div class="card" style="border-left:4px solid var(--sx-border-bright);">
+                    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                        <span class="fw-semibold" style="font-size:0.88rem;"><i class="bi bi-shield-check me-1"></i>Preflight Status</span>
+                        <button type="button" class="btn btn-link btn-sm p-0 text-muted" onclick="loadPreflight()">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                    <div id="preflight-body" class="card-body py-2 px-3" style="font-size:0.83rem;">
+                        <span class="text-muted">Loading...</span>
+                    </div>
+                </div>
+            </div>
 
             <div class="row g-4 mb-4">
 
@@ -281,6 +335,10 @@
 
                             <hr class="my-3">
                             <div class="d-flex flex-wrap gap-2">
+                                <a href="{{ url_for('scheduling.ability_rankings', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-primary btn-sm">
+                                    <i class="bi bi-bar-chart-steps me-1"></i>Ability Rankings
+                                </a>
                                 <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
                                    class="btn btn-outline-warning btn-sm">
                                     <i class="bi bi-shield-check me-1"></i>Preflight Check
@@ -772,6 +830,48 @@
 
 </div>
 
+{# ── Build Diff Modal ── #}
+{% if build_diff %}
+<div class="modal fade" id="buildDiffModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-check-circle-fill text-success me-2"></i>Build Complete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row text-center g-3 mb-2">
+                    <div class="col-4">
+                        <div style="font-size:2rem; font-weight:800;">{{ build_diff.after_flight_count }}</div>
+                        <div class="text-muted small">Flights</div>
+                    </div>
+                    <div class="col-4">
+                        <div style="font-size:2rem; font-weight:800;">{{ build_diff.total_heats }}</div>
+                        <div class="text-muted small">Total Heats</div>
+                    </div>
+                    <div class="col-4">
+                        {% set added = build_diff.after_flight_count - build_diff.before_flight_count %}
+                        <div style="font-size:2rem; font-weight:800; color:{% if added > 0 %}#2da85e{% elif added < 0 %}#e74c3c{% else %}var(--sx-text-2){% endif %};">
+                            {% if added > 0 %}+{% endif %}{{ added }}
+                        </div>
+                        <div class="text-muted small">Flights {{ 'Added' if added >= 0 else 'Removed' }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer gap-2">
+                <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}" target="_blank" class="btn btn-primary">
+                    <i class="bi bi-printer me-1"></i>Print Heat Sheets
+                </a>
+                <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}" class="btn btn-outline-warning">
+                    Preflight Check
+                </a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% block extra_js %}
 <script>
 (function () {
@@ -782,7 +882,119 @@
     if (btn) {
         bootstrap.Tab.getOrCreateInstance(btn).show();
     }
+
+    // Auto-open build diff modal if present
+    {% if build_diff %}
+    var diffModal = document.getElementById('buildDiffModal');
+    if (diffModal) {
+        bootstrap.Modal.getOrCreateInstance(diffModal).show();
+    }
+    {% endif %}
 })();
+
+// ── Inline preflight checklist ────────────────────────────────────────────
+function loadPreflight() {
+    const url = "{{ url_for('scheduling.preflight_json', tournament_id=tournament.id) }}";
+    const panel = document.getElementById('preflight-panel');
+    const body = document.getElementById('preflight-body');
+    panel.style.display = '';
+    body.innerHTML = '<span class="text-muted">Loading...</span>';
+    fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.issue_count === 0) {
+                body.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>No preflight issues — ready to generate.</span>';
+            } else {
+                var html = '<div class="d-flex gap-3 mb-2">';
+                if (data.severity.high)   html += '<span class="text-danger fw-bold">' + data.severity.high + ' high</span>';
+                if (data.severity.medium) html += '<span class="text-warning fw-bold">' + data.severity.medium + ' medium</span>';
+                if (data.severity.low)    html += '<span class="text-muted">' + data.severity.low + ' low</span>';
+                html += '</div><ul class="mb-2 ps-3" style="font-size:0.82rem;">';
+                data.issues.forEach(function(i) {
+                    var cls = i.severity === 'high' ? 'text-danger' : (i.severity === 'medium' ? 'text-warning' : 'text-muted');
+                    html += '<li class="' + cls + '">' + i.title + '<span class="text-muted fw-normal">: ' + i.detail + '</span></li>';
+                });
+                html += '</ul>';
+                html += '<a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}" class="btn btn-outline-warning btn-sm">Full Preflight Report</a>';
+                body.innerHTML = html;
+            }
+        })
+        .catch(function() {
+            body.innerHTML = '<span class="text-danger">Preflight check failed to load.</span>';
+        });
+}
+
+// Auto-load preflight when on Build tab and heats/flights already exist
+{% if flights_built or pro_heats_exist %}
+document.addEventListener('DOMContentLoaded', function() {
+    var buildTabBtn = document.getElementById('tab-btn-build');
+    if (buildTabBtn) {
+        // Load on first activation of build tab
+        buildTabBtn.addEventListener('shown.bs.tab', function() {
+            loadPreflight();
+        });
+        // If build tab is already active on load, load immediately
+        if (buildTabBtn.classList.contains('active')) {
+            loadPreflight();
+        }
+    }
+});
+{% endif %}
+
+// Re-load preflight when switching back to build tab
+var buildTabBtn2 = document.getElementById('tab-btn-build');
+if (buildTabBtn2) {
+    buildTabBtn2.addEventListener('shown.bs.tab', function() {
+        loadPreflight();
+    });
+}
+
+// ── Loading overlay for build actions ────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('[data-loading]').forEach(function(form) {
+        form.addEventListener('submit', function(e) {
+            var clickedBtn = form.querySelector('button[type="submit"]:focus,button[type="submit"][data-clicked]');
+            if (!clickedBtn) clickedBtn = form.querySelector('button[type="submit"]');
+            var action = clickedBtn ? clickedBtn.value : 'build';
+
+            var stepSets = {
+                'generate_all': ['Generating college heats', 'Generating pro heats', 'Distributing competitors', 'Building pro flights', 'Enforcing spacing constraints', 'Inserting springboard openers', 'Integrating spillover', 'Finishing up'],
+                'rebuild_flights': ['Clearing existing flights', 'Re-queuing pro heats', 'Optimizing heat order', 'Enforcing spacing constraints', 'Inserting springboard openers', 'Integrating spillover', 'Finishing up'],
+            };
+            var steps = stepSets[action] || ['Processing', 'Finishing up'];
+
+            var overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.72);z-index:9999;display:flex;align-items:center;justify-content:center;';
+            overlay.innerHTML = '<div style="background:#1e2433;border-radius:12px;padding:2rem 2.5rem;max-width:340px;width:90%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,0.5);">' +
+                '<div style="font-size:1.6rem;margin-bottom:0.5rem;color:#e8b84b;"><i class="bi bi-shuffle"></i></div>' +
+                '<div style="font-weight:700;font-size:1rem;color:#fff;margin-bottom:1rem;">Building Schedule...</div>' +
+                '<div style="background:#111827;border-radius:8px;height:6px;overflow:hidden;margin-bottom:1rem;">' +
+                  '<div id="ol-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#3b8ee8,#e8b84b);border-radius:8px;transition:width 0.55s ease;"></div>' +
+                '</div>' +
+                '<div style="font-size:0.8rem;color:#9ca3af;" id="ol-step">Starting...</div>' +
+                '</div>';
+            document.body.appendChild(overlay);
+
+            var i = 0;
+            function tick() {
+                if (i >= steps.length) return;
+                document.getElementById('ol-step').textContent = steps[i];
+                document.getElementById('ol-bar').style.width = ((i + 1) / steps.length * 100) + '%';
+                i++;
+                if (i < steps.length) setTimeout(tick, 800 + Math.random() * 500);
+            }
+            tick();
+        });
+    });
+
+    // Track which submit button was clicked for overlay step selection
+    document.querySelectorAll('[data-loading] button[type="submit"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('[data-loading] button[type="submit"]').forEach(function(b) { delete b.dataset.clicked; });
+            btn.dataset.clicked = '1';
+        });
+    });
+});
 </script>
 {% endblock %}
 {% endblock %}

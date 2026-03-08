@@ -55,6 +55,7 @@
                                 <input type="email" class="form-control" id="email" name="email">
                             </div>
                         </div>
+                        {% if tournament.providing_shirts %}
                         <div class="mb-3">
                             <label for="shirt_size" class="form-label">Shirt Size</label>
                             <select class="form-select" id="shirt_size" name="shirt_size">
@@ -68,6 +69,7 @@
                                 <option value="3XL">3XL</option>
                             </select>
                         </div>
+                        {% endif %}
 
                         <!-- Competition Options -->
                         <h6 class="text-muted mb-3 mt-4">Competition Options</h6>
@@ -100,7 +102,7 @@
                             <div class="form-check">
                                 <input type="checkbox" class="form-check-input" id="springboard_slow_heat" name="springboard_slow_heat">
                                 <label class="form-check-label" for="springboard_slow_heat">
-                                    Relegate to Springboard Slow Heat
+                                    Slow heat flag (Springboard, Pro 1-Board, 3-Board Jigger)
                                 </label>
                             </div>
                         </div>

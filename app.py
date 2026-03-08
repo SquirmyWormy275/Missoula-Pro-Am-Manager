@@ -99,11 +99,10 @@ def create_app():
         from models.user import User
 
         @login_manager.user_loader
-        def load_user(user_id: str): 
-            
+        def load_user(user_id: str):
             if not user_id:
                 return None
-            return User.query.get(int(user_id))
+            return db.session.get(User, int(user_id))
 
     # Inject text constants into all templates
     @app.context_processor
@@ -169,6 +168,9 @@ def create_app():
         app.register_blueprint(auth_bp, url_prefix='/auth')
         app.register_blueprint(portal_bp, url_prefix='/portal')
         app.register_blueprint(api_bp, url_prefix='/api')
+        # Attach rate limiter to the app (no-op if flask-limiter not installed)
+        from routes.api import _init_limiter
+        _init_limiter(app)
 
     @sa_event.listens_for(Engine, 'connect')
     def _set_sqlite_pragma(dbapi_connection, connection_record):

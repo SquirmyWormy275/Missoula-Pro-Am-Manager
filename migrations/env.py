@@ -4,6 +4,7 @@ from logging.config import fileConfig
 from flask import current_app
 
 from alembic import context
+from sqlalchemy import text
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -97,6 +98,12 @@ def run_migrations_online():
     connectable = get_engine()
 
     with connectable.connect() as connection:
+        # SQLite requires FK checks to be disabled before batch_alter_table
+        # operations that recreate a table (DROP + CREATE), otherwise FK
+        # constraints on referencing tables block the DROP.
+        if connectable.dialect.name == 'sqlite':
+            connection.execute(text('PRAGMA foreign_keys=OFF'))
+
         context.configure(
             connection=connection,
             target_metadata=get_metadata(),
@@ -105,6 +112,9 @@ def run_migrations_online():
 
         with context.begin_transaction():
             context.run_migrations()
+
+        if connectable.dialect.name == 'sqlite':
+            connection.execute(text('PRAGMA foreign_keys=ON'))
 
 
 if context.is_offline_mode():

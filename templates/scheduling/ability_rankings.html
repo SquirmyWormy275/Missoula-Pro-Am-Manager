@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Ability Rankings — {{ tournament.name }} {{ tournament.year }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Ability Rankings</h4>
+            <p class="text-muted small mb-0 mt-1">
+                Rank competitors by ability within each event category.
+                Ranked competitors (rank 1 = best) are distributed via skill-balanced snake draft.
+                Unranked competitors are placed after all ranked competitors.
+                Leave a field blank to clear a competitor's rank.
+            </p>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm"
+           href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">
+            <i class="bi bi-arrow-left me-1"></i> Back to Events
+        </a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'error' else ('warning' if category == 'warning' else 'success') }} alert-dismissible fade show py-2" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endwith %}
+
+    {% if not category_groups %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-1"></i>
+            No rankable pro events are configured for this tournament.
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Configure events</a> first,
+            then return here to set ability rankings.
+        </div>
+    {% else %}
+
+    <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        {# Iterate categories in a fixed display order #}
+        {% set ordered_cats = ['springboard', 'underhand', 'standing_block', 'singlebuck', 'doublebuck', 'jack_jill', 'obstacle_pole'] %}
+        {% for category in ordered_cats %}
+        {% if category in category_groups %}
+        {% set genders = category_groups[category] %}
+        <div class="card shadow-sm mb-4">
+            <div class="card-header card-header-proam d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">
+                    <i class="bi bi-bar-chart-steps me-1"></i>
+                    {{ category_display_names[category] }}
+                </h6>
+                <span class="badge bg-secondary fw-normal small">{{ category_descriptions[category] }}</span>
+            </div>
+            <div class="card-body p-0">
+
+                {% for gender_key in ['M', 'F', 'open'] %}
+                {% if gender_key in genders and genders[gender_key] %}
+                {% set entries = genders[gender_key] %}
+                <div class="px-3 pt-3 pb-1 border-bottom">
+                    <h6 class="text-muted fw-semibold small mb-2 text-uppercase">
+                        {% if gender_key == 'M' %}Men
+                        {% elif gender_key == 'F' %}Women
+                        {% else %}Open
+                        {% endif %}
+                        <span class="badge bg-light text-dark fw-normal ms-1">{{ entries | length }} competitor{{ 's' if entries | length != 1 }}</span>
+                    </h6>
+                    <table class="table table-sm table-hover mb-2">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:90px">Rank</th>
+                                <th>Competitor</th>
+                                <th class="text-center" style="width:110px">Current Rank</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in entries %}
+                            <tr>
+                                <td>
+                                    <input type="number"
+                                           class="form-control form-control-sm"
+                                           name="rank_{{ category }}_{{ entry.competitor.id }}"
+                                           value="{{ entry.rank if entry.rank is not none else '' }}"
+                                           min="1"
+                                           placeholder="—"
+                                           style="width:75px;">
+                                </td>
+                                <td class="align-middle">
+                                    {{ entry.competitor.name }}
+                                    {% if entry.competitor.springboard_slow_heat and category == 'springboard' %}
+                                        <span class="badge bg-warning text-dark ms-1 small">Slow heat</span>
+                                    {% endif %}
+                                    {% if entry.competitor.is_left_handed_springboard and category == 'springboard' %}
+                                        <span class="badge bg-info text-dark ms-1 small">Left-handed</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center align-middle">
+                                    {% if entry.rank is not none %}
+                                        <span class="badge bg-primary">#{{ entry.rank }}</span>
+                                    {% else %}
+                                        <span class="text-muted small">Unranked</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+            </div>{# /card-body #}
+        </div>{# /card #}
+        {% endif %}
+        {% endfor %}
+
+        <div class="d-flex gap-2 mt-2 mb-5">
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-floppy me-1"></i> Save Rankings
+            </button>
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+               class="btn btn-outline-secondary">Cancel</a>
+        </div>
+
+    </form>
+    {% endif %}
+
+</div>
+{% endblock %}

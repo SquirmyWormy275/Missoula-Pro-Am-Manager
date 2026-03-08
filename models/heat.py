@@ -2,7 +2,10 @@
 Heat and Flight models for scheduling competition runs.
 """
 from database import db
+from datetime import datetime, timezone
 import json
+
+HEAT_LOCK_TTL_SECONDS = 300  # 5-minute lock expiry
 
 
 class HeatAssignment(db.Model):
@@ -48,6 +51,11 @@ class Heat(db.Model):
     __mapper_args__ = {
         'version_id_col': version_id,
     }
+
+    # Edit lock — prevents two judges on different devices from simultaneously entering the same heat.
+    # Acquired when the entry form is opened; auto-expires after HEAT_LOCK_TTL_SECONDS.
+    locked_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    locked_at = db.Column(db.DateTime, nullable=True)
 
     # Optional flight assignment (pro only)
     flight_id = db.Column(db.Integer, db.ForeignKey('flights.id'), nullable=True)
@@ -114,6 +122,30 @@ class Heat(db.Model):
     def competitor_count(self):
         """Return number of competitors in this heat."""
         return len(self.get_competitors())
+
+    def is_locked(self) -> bool:
+        """True if the heat is currently locked by another judge (non-expired)."""
+        if not self.locked_by_user_id or not self.locked_at:
+            return False
+        now = datetime.now(timezone.utc)
+        locked_at = self.locked_at
+        if locked_at.tzinfo is None:
+            locked_at = locked_at.replace(tzinfo=timezone.utc)
+        return (now - locked_at).total_seconds() < HEAT_LOCK_TTL_SECONDS
+
+    def acquire_lock(self, user_id: int) -> bool:
+        """Attempt to acquire the edit lock. Returns True if successful."""
+        if self.is_locked() and self.locked_by_user_id != user_id:
+            return False
+        self.locked_by_user_id = user_id
+        self.locked_at = datetime.now(timezone.utc)
+        return True
+
+    def release_lock(self, user_id: int) -> None:
+        """Release the lock if held by user_id."""
+        if self.locked_by_user_id == user_id:
+            self.locked_by_user_id = None
+            self.locked_at = None
 
 
 class Flight(db.Model):

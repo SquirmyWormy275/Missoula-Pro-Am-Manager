@@ -218,7 +218,7 @@
                             </div>
                             <div class="small {{ 'text-success fw-semibold' if step1_done else 'text-muted' }}" style="font-size: 0.7rem;">Setup</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ '#198754' if step1_done else '#dee2e6' }};"></div>
+                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step1_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}"
                            class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step2_done else 'bg-light border text-muted' }}"
@@ -227,7 +227,7 @@
                             </div>
                             <div class="small {{ 'text-success fw-semibold' if step2_done else 'text-muted' }}" style="font-size: 0.7rem;">Register</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ '#198754' if step2_done else '#dee2e6' }};"></div>
+                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step2_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('main.tournament_setup', tournament_id=tournament.id, tab='wood') }}"
                            class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step3_done else 'bg-light border text-muted' }}"
@@ -236,7 +236,7 @@
                             </div>
                             <div class="small {{ 'text-success fw-semibold' if step3_done else 'text-muted' }}" style="font-size: 0.7rem;">Wood Specs</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ '#198754' if step3_done else '#dee2e6' }};"></div>
+                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step3_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
                            class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step4_done else 'bg-light border text-muted' }}"
@@ -245,7 +245,7 @@
                             </div>
                             <div class="small {{ 'text-success fw-semibold' if step4_done else 'text-muted' }}" style="font-size: 0.7rem;">Heats &amp; Flights</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ '#198754' if step4_done else '#dee2e6' }};"></div>
+                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step4_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
                            class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step5_done else 'bg-light border text-muted' }}"
@@ -254,7 +254,7 @@
                             </div>
                             <div class="small {{ 'text-success fw-semibold' if step5_done else 'text-muted' }}" style="font-size: 0.7rem;">Preflight</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ '#198754' if step5_done else '#dee2e6' }};"></div>
+                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step5_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}"
                            class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step6_done else 'bg-primary text-white' }}"
@@ -503,7 +503,7 @@
                             <span class="pl-desc">Lottery draw, teams, and results</span>
                         </span>
                     </a>
-                    <a class="phase-link" href="{{ url_for('partnered_axe.axe_dashboard', tournament_id=tournament.id) }}">
+                    <a class="phase-link" href="{{ url_for('partnered_axe.dashboard', tournament_id=tournament.id) }}">
                         <i class="bi bi-bullseye pl-icon" style="color:var(--sx-amber);"></i>
                         <span>
                             <span class="pl-title">Partnered Axe Throw</span>

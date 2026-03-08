@@ -175,9 +175,17 @@ def scratch_college_competitor(tournament_id, competitor_id):
             EventResult.status != 'completed'
         ).update({EventResult.status: 'scratched'}, synchronize_session=False)
 
+    # Remove gear-sharing entries on active college competitors that reference this person.
+    from services.gear_sharing import cleanup_scratched_gear_entries
+    tournament = Tournament.query.get_or_404(tournament_id)
+    gear_result = cleanup_scratched_gear_entries(tournament, scratched_competitor=competitor, competitor_type='college')
+
     db.session.commit()
     invalidate_tournament_caches(tournament_id)
-    flash(text.FLASH['competitor_scratched'].format(name=competitor.name), 'warning')
+    msg = text.FLASH['competitor_scratched'].format(name=competitor.name)
+    if gear_result['cleaned']:
+        msg += f' Removed {gear_result["cleaned"]} gear-sharing reference(s) from {len(gear_result["affected"])} competitor(s).'
+    flash(msg, 'warning')
     return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
 
 
@@ -699,6 +707,64 @@ def pro_gear_update(tournament_id):
         'partner': partner_name,
     })
     return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/update-ajax', methods=['POST'])
+def pro_gear_update_ajax(tournament_id):
+    """AJAX JSON endpoint for inline gear-sharing edits in the dashboard unresolved table."""
+    from flask import jsonify
+    Tournament.query.get_or_404(tournament_id)
+    try:
+        competitor_id = int(request.form.get('competitor_id', ''))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'Invalid competitor ID'}), 400
+
+    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    if competitor.tournament_id != tournament_id:
+        return jsonify({'ok': False, 'error': 'Competitor not found in this tournament'}), 403
+
+    raw_event_key = (request.form.get('event_key') or '').strip()
+    partner_name = (request.form.get('partner_name') or '').strip()
+
+    if not raw_event_key:
+        return jsonify({'ok': False, 'error': 'No event key specified'}), 400
+
+    from services.gear_sharing import (
+        normalize_gear_key_to_event_id, normalize_person_name,
+        sync_gear_bidirectional,
+    )
+    pro_events = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
+    event_key = normalize_gear_key_to_event_id(raw_event_key, pro_events)
+
+    sharing = competitor.get_gear_sharing()
+    if partner_name:
+        partner_norm = normalize_person_name(partner_name)
+        partner_comp = ProCompetitor.query.filter_by(tournament_id=tournament_id, status='active').all()
+        partner_comp = next(
+            (c for c in partner_comp if normalize_person_name(c.name) == partner_norm),
+            None
+        )
+        if partner_comp and partner_comp.id != competitor.id:
+            sync_gear_bidirectional(competitor, partner_comp, event_key)
+        else:
+            sharing[event_key] = partner_name
+            competitor.gear_sharing = json.dumps(sharing)
+    else:
+        sharing.pop(event_key, None)
+        competitor.gear_sharing = json.dumps(sharing)
+
+    try:
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('gear_sharing_updated', 'pro_competitor', competitor_id, {
+            'event_key': event_key,
+            'partner': partner_name,
+            'via': 'ajax',
+        })
+        return jsonify({'ok': True, 'partner_saved': partner_name, 'event_key': event_key})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(exc)}), 500
 
 
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/remove', methods=['POST'])

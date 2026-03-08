@@ -79,8 +79,8 @@
                 <i class="bi bi-trophy sb-icon"></i>
                 <span class="sb-text ms-2">Pro Day</span>
             </a>
-            <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}"
-               class="nav-link sidebar-child {{ 'active' if request.endpoint in ('main.pro_dashboard', 'registration.pro_registration', 'import_pro.import_upload', 'import_pro.import_review') else '' }}"
+            <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}"
+               class="nav-link sidebar-child {{ 'active' if request.endpoint in ('registration.pro_registration', 'import_pro.import_upload', 'import_pro.import_review') else '' }}"
                title="Pro Operations">
                 <i class="bi bi-person-plus sb-icon"></i>
                 <span class="sb-text ms-2">Pro Operations</span>
@@ -371,7 +371,7 @@
     var toggleIcon = document.getElementById('sbToggleIcon');
 
     var savedCollapsed = localStorage.getItem(LS_COLLAPSED);
-    var isCollapsed = savedCollapsed === null ? true : savedCollapsed === '1';
+    var isCollapsed = savedCollapsed === null ? false : savedCollapsed === '1';
     var defaultOpen = {
         'sb-entries': false,
         'sb-config': true,
@@ -408,6 +408,20 @@
             groupState[body.id] = true;
         }
     });
+
+    /* Initialize Bootstrap tooltips for collapsed-mode icon labels */
+    function initSidebarTooltips() {
+        sidebar.querySelectorAll('.nav-link[title], .sb-group-toggle[title]').forEach(function (el) {
+            if (!el._sbTooltip) {
+                el.setAttribute('data-bs-toggle', 'tooltip');
+                el.setAttribute('data-bs-placement', 'right');
+                el._sbTooltip = new bootstrap.Tooltip(el, { trigger: 'hover', boundary: 'window' });
+            }
+        });
+    }
+    if (typeof bootstrap !== 'undefined' && bootstrap.Tooltip) {
+        initSidebarTooltips();
+    }
 
     /* Sidebar-wide toggle */
     toggleBtn.addEventListener('click', function () {

@@ -1,47 +1,81 @@
 {% extends "base.html" %}
 {% block title %}Select Access - {{ COMPETITION.app_title }}{% endblock %}
+{% block extra_css %}
+<style>
+    .role-card {
+        border-top: 3px solid var(--sx-fire);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .role-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.5) !important;
+    }
+    .role-icon {
+        width: 52px;
+        height: 52px;
+        border-radius: 12px;
+        background: rgba(239,43,22,0.12);
+        border: 1px solid rgba(239,43,22,0.25);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.4rem;
+        color: var(--sx-fire);
+        margin-bottom: 1rem;
+        flex-shrink: 0;
+    }
+    .role-card .card-body p {
+        font-size: 0.875rem;
+        color: var(--sx-text-2);
+        line-height: 1.55;
+    }
+</style>
+{% endblock %}
 {% block content %}
-<div class="container py-4">
-    <div class="text-center mb-4">
-        <h2 class="mb-1">{{ COMPETITION.app_title }}</h2>
-        <p class="text-muted mb-0">Choose how you want to enter the system.</p>
+<div class="container py-5">
+    <div class="text-center mb-5">
+        <h2 class="mb-2">{{ COMPETITION.app_title }}</h2>
+        <p class="text-muted mb-0" style="font-size:0.95rem;">Choose how you want to access the system.</p>
     </div>
 
-    <div class="row g-3">
-        <div class="col-lg-4">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header card-header-proam"><strong>Judge</strong></div>
-                <div class="card-body d-flex flex-column">
-                    <p>Full access to scheduling, registrations, scoring, and management tools.</p>
+    <div class="row g-3 justify-content-center" style="max-width:960px; margin:0 auto;">
+        <div class="col-lg-4 col-md-6">
+            <div class="card h-100 role-card">
+                <div class="card-body d-flex flex-column p-4">
+                    <div class="role-icon"><i class="bi bi-shield-lock-fill"></i></div>
+                    <h5 class="mb-2">Judge / Admin</h5>
+                    <p>Full access to scheduling, registrations, scoring, heat management, and all administrative tools.</p>
                     <a class="btn btn-proam mt-auto" href="{{ url_for('auth.login', next=url_for('main.judge_dashboard')) }}">
-                        Judge Login
+                        <i class="bi bi-box-arrow-in-right me-1"></i> Judge Login
                     </a>
                 </div>
             </div>
         </div>
-        <div class="col-lg-4">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header card-header-proam"><strong>Competitor</strong></div>
-                <div class="card-body d-flex flex-column">
-                    <p>Enter your full name to see your heats, flights, stand assignments, results, and payouts.</p>
+        <div class="col-lg-4 col-md-6">
+            <div class="card h-100 role-card">
+                <div class="card-body d-flex flex-column p-4">
+                    <div class="role-icon"><i class="bi bi-person-badge-fill"></i></div>
+                    <h5 class="mb-2">Competitor</h5>
+                    <p>Look up your personal schedule, heat assignments, stand numbers, results, and payout information.</p>
                     <a class="btn btn-proam mt-auto" href="{{ url_for('portal.competitor_access') }}">
-                        Find Competitor
+                        <i class="bi bi-search me-1"></i> Find My Profile
                     </a>
                 </div>
             </div>
         </div>
-        <div class="col-lg-4">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header card-header-proam"><strong>Spectator</strong></div>
-                <div class="card-body d-flex flex-column">
-                    <p>View standings, rankings, event results, and day-by-day college team points.</p>
+        <div class="col-lg-4 col-md-6">
+            <div class="card h-100 role-card">
+                <div class="card-body d-flex flex-column p-4">
+                    <div class="role-icon"><i class="bi bi-broadcast-pin"></i></div>
+                    <h5 class="mb-2">Spectator</h5>
+                    <p>View live standings, rankings, event results, and day-by-day college team and individual scores.</p>
                     {% if active_tournament %}
                     <a class="btn btn-proam mt-auto" href="{{ url_for('portal.spectator_dashboard', tournament_id=active_tournament.id) }}">
-                        Open Spectator Portal
+                        <i class="bi bi-eye me-1"></i> Open Spectator Portal
                     </a>
                     {% else %}
                     <a class="btn btn-outline-secondary mt-auto" href="{{ url_for('portal.index') }}">
-                        Select Tournament
+                        <i class="bi bi-list me-1"></i> Select Tournament
                     </a>
                     {% endif %}
                 </div>

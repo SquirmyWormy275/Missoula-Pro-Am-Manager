@@ -93,10 +93,20 @@ class CollegeCompetitor(db.Model):
 
     @property
     def closed_event_count(self):
-        """Return count of CLOSED events entered (max 6 allowed)."""
-        import config
-        closed_names = {e['name'] for e in config.COLLEGE_CLOSED_EVENTS}
-        return sum(1 for e in self.get_events_entered() if e in closed_names)
+        """Return count of CLOSED events entered (max 6 allowed).
+
+        events_entered stores integer event IDs, so we look up which event IDs
+        in this tournament are is_open=False (CLOSED) and count matches.
+        """
+        from models.event import Event
+        closed_ids = {
+            e.id for e in Event.query.filter_by(
+                tournament_id=self.tournament_id,
+                event_type='college',
+                is_open=False,
+            ).all()
+        }
+        return sum(1 for eid in self.get_events_entered() if eid in closed_ids)
 
     @property
     def has_portal_pin(self) -> bool:

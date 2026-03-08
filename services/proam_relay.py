@@ -228,6 +228,28 @@ class ProAmRelay:
         """Get the current lottery status."""
         return self.relay_data.get('status', 'not_drawn')
 
+    def record_total_time(self, team_number: int, total_time: float):
+        """
+        Record the total relay time for a team directly.
+
+        Args:
+            team_number: Team number
+            total_time: Total relay time in seconds
+        """
+        teams = self.relay_data.get('teams', [])
+
+        for team in teams:
+            if team['team_number'] == team_number:
+                team['total_time'] = total_time
+                self.relay_data['status'] = 'in_progress'
+                break
+
+        # Mark completed when all teams have a total time
+        if teams and all(t.get('total_time') is not None for t in teams):
+            self.relay_data['status'] = 'completed'
+
+        self._save_relay_data()
+
     def record_event_result(self, team_number: int, event_name: str, time_seconds: float):
         """
         Record a result for a team's event.

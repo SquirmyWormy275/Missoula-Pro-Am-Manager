@@ -76,14 +76,16 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
     unresolved_event_key_rows = 0
     unresolved_details_rows = 0
     self_reference_rows = 0
+    non_enrolled_gear_rows = 0
     # Collect names for detailed issue messages.
     unresolved_details_names: list[str] = []
     unresolved_event_key_names: list[str] = []
     unknown_partner_names: list[str] = []
     self_reference_names: list[str] = []
+    non_enrolled_gear_names: list[str] = []
 
     def _scan_rows(rows, relevant_events, known_names):
-        nonlocal unknown_partner_rows, unresolved_event_key_rows, unresolved_details_rows, self_reference_rows
+        nonlocal unknown_partner_rows, unresolved_event_key_rows, unresolved_details_rows, self_reference_rows, non_enrolled_gear_rows
         for competitor in rows:
             gear = competitor.get_gear_sharing() if hasattr(competitor, 'get_gear_sharing') else {}
             if not isinstance(gear, dict):
@@ -95,12 +97,29 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                 if competitor.name not in unresolved_details_names:
                     unresolved_details_names.append(competitor.name)
 
+            # Build a set of event IDs/names the competitor is actually enrolled in.
+            entered_vals = {str(v or '').strip() for v in competitor.get_events_entered() if str(v or '').strip()}
+
             self_name = normalize_person_name(competitor.name)
             for key, partner in gear.items():
                 if not any(event_matches_gear_key(event, key) for event in relevant_events):
                     unresolved_event_key_rows += 1
                     if competitor.name not in unresolved_event_key_names:
                         unresolved_event_key_names.append(competitor.name)
+                    continue
+
+                # Check the gear key actually matches an event the competitor is enrolled in.
+                key_events = [e for e in relevant_events if event_matches_gear_key(e, key)]
+                if key_events and entered_vals:
+                    enrolled_in_key_event = any(
+                        str(e.id) in entered_vals or e.name in entered_vals or e.display_name in entered_vals
+                        for e in key_events
+                    )
+                    if not enrolled_in_key_event:
+                        non_enrolled_gear_rows += 1
+                        if competitor.name not in non_enrolled_gear_names:
+                            non_enrolled_gear_names.append(competitor.name)
+
                 partner_text = str(partner or '').strip()
                 partner_norm = normalize_person_name(partner_text)
                 if not partner_text:
@@ -171,6 +190,44 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
             ),
             'autofix': False,
         })
+    if non_enrolled_gear_rows:
+        issues.append({
+            'severity': 'medium',
+            'code': 'gear_non_enrolled_event',
+            'title': 'Gear entries for events competitor is not enrolled in',
+            'detail': (
+                f'{non_enrolled_gear_rows} gear-sharing key(s) reference events the competitor is not enrolled in'
+                f': {_name_list(non_enrolled_gear_names)}. These entries have no effect on heat placement.'
+            ),
+            'autofix': False,
+        })
+
+    # 2c) Gear vs. partner field mismatch (pro only)
+    partner_mismatch_rows = 0
+    partner_mismatch_names: list[str] = []
+    for comp in ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all():
+        gear = comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {}
+        partners = comp.get_partners() if hasattr(comp, 'get_partners') else {}
+        if not isinstance(gear, dict) or not isinstance(partners, dict):
+            continue
+        for key, gear_partner in gear.items():
+            gp = normalize_person_name(str(gear_partner or '').strip())
+            pp = normalize_person_name(str(partners.get(key, '') or '').strip())
+            if gp and pp and gp != pp:
+                partner_mismatch_rows += 1
+                if comp.name not in partner_mismatch_names:
+                    partner_mismatch_names.append(comp.name)
+    if partner_mismatch_rows:
+        issues.append({
+            'severity': 'medium',
+            'code': 'gear_partner_mismatch',
+            'title': 'Gear-sharing and partner fields disagree',
+            'detail': (
+                f'{partner_mismatch_rows} entry(s) have different names in gear_sharing vs. partners for the same event'
+                f': {_name_list(partner_mismatch_names)}. Use Auto-Populate Partners in the Gear Sharing Manager to sync.'
+            ),
+            'autofix': False,
+        })
 
     # 3) Saturday spillover integration
     if saturday_ids:
@@ -196,6 +253,30 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                         'detail': f'{event.display_name}: {len(unassigned)} heat(s) are not assigned to a Saturday flight.',
                         'autofix': True,
                     })
+
+    # 4) Cookie Stack / Standing Block stand conflict — both have heats but no flights yet
+    # These events share 5 physical stands. The flight builder enforces the required
+    # 8-heat gap automatically, but only when flights are rebuilt after heat generation.
+    # Warn the judge if both events have heats but no flights exist yet.
+    cookie_events = [e for e in all_events if getattr(e, 'stand_type', '') == 'cookie_stack']
+    sb_events = [e for e in all_events if getattr(e, 'stand_type', '') == 'standing_block']
+    cs_has_heats = any(e.heats.count() > 0 for e in cookie_events)
+    sb_has_heats = any(e.heats.count() > 0 for e in sb_events)
+    if cs_has_heats and sb_has_heats:
+        flights_exist = Flight.query.filter_by(tournament_id=tournament.id).count() > 0
+        if not flights_exist:
+            issues.append({
+                'severity': 'medium',
+                'code': 'stand_conflict_no_flights',
+                'title': 'Cookie Stack / Standing Block — rebuild flights to enforce stand gap',
+                'detail': (
+                    'Both Cookie Stack and Standing Block have heats generated. '
+                    'These events share the same 5 physical stands. '
+                    'Run "Rebuild Flights" after heat generation so the flight builder enforces '
+                    'the required 8-heat gap between these event types.'
+                ),
+                'autofix': False,
+            })
 
     by_severity = {'high': 0, 'medium': 0, 'low': 0}
     for item in issues:

@@ -1,20 +1,54 @@
 """
 Flight builder service for pro competition scheduling.
 Builds flights with event variety for crowd engagement.
-Ensures competitors have maximum rest between their events (target: 5+ heats, minimum: 4).
+Ensures competitors have maximum rest between their events using tiered spacing:
+  Tier 1 (springboard):  min=6, target=8 heats between appearances
+  Tier 2 (saw_hand):     min=5, target=7 heats between appearances
+  Tier 3 (all others):   min=4, target=5 heats between appearances
 """
 from database import db
 from models import Tournament, Event, Heat, HeatAssignment, Flight
 import math
 import json
-import random
 
 
-# Minimum number of heats between a competitor's appearances
+# Global fallback spacing (used for unknown stand types and college heats)
 MIN_HEAT_SPACING = 4
 TARGET_HEAT_SPACING = 5
+
 PARTNERED_AXE_EVENT_NAME = 'Partnered Axe Throw'
 PARTNERED_AXE_SHOW_TEAM_COUNT = 4
+
+# How many independent greedy passes to run; best result is kept.
+N_OPTIMIZATION_PASSES = 5
+
+# Per-stand-type spacing tiers: (min_spacing, target_spacing).
+# Springboard is the most physically demanding (long axe strokes, 3 boards per cut).
+# Saw events are moderately demanding. Everything else uses the global minimum.
+EVENT_SPACING_TIERS: dict[str, tuple[int, int]] = {
+    'springboard':    (6, 8),
+    'saw_hand':       (5, 7),
+    'underhand':      (4, 5),
+    'standing_block': (4, 5),
+    'cookie_stack':   (4, 5),
+    'obstacle_pole':  (4, 5),
+    'hot_saw':        (4, 5),
+    'speed_climb':    (4, 5),
+    'stock_saw':      (4, 5),
+}
+
+_CONFLICTING_STANDS: dict[str, str] = {
+    'standing_block': 'cookie_stack',
+    'cookie_stack': 'standing_block',
+}
+# Minimum gap between conflicting stand types (approximately one flight block)
+_STAND_CONFLICT_GAP = 8
+
+
+def _get_spacing(event: Event | None) -> tuple[int, int]:
+    """Return (min_spacing, target_spacing) for this event's stand type."""
+    st = getattr(event, 'stand_type', None) or ''
+    return EVENT_SPACING_TIERS.get(st, (MIN_HEAT_SPACING, TARGET_HEAT_SPACING))
 
 
 def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
@@ -23,6 +57,10 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
 
     Flights mix heats from different events to keep crowd engaged while
     ensuring competitors have adequate rest between their events.
+
+    Springboard heats naturally open each flight via a large scoring bonus.
+    Hot Saw heats receive a bonus when placed as the flight closer.
+    The greedy algorithm runs N_OPTIMIZATION_PASSES times and keeps the best result.
 
     Args:
         tournament: Tournament to build flights for
@@ -67,21 +105,19 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
     if not all_heats and not partnered_axe_heats:
         return 0
 
-    # Build optimized heat order using competitor spacing algorithm
-    ordered_heats = _optimize_heat_order(all_heats)
-    total_heats = len(ordered_heats)
-
     # Derive heats_per_flight from caller-supplied num_flights, or fall back to default of 8.
-    if num_flights and num_flights > 0 and total_heats > 0:
+    total_non_axe = len(all_heats)
+    if num_flights and num_flights > 0 and total_non_axe > 0:
         target_flights = int(num_flights)
-        heats_per_flight = math.ceil(total_heats / target_flights)
+        heats_per_flight = math.ceil(total_non_axe / target_flights)
     else:
         heats_per_flight = 8
-        target_flights = math.ceil(total_heats / heats_per_flight) if total_heats else 0
+        target_flights = math.ceil(total_non_axe / heats_per_flight) if total_non_axe else 0
 
-    # Promote the first pro springboard heat in each flight block to position 0
-    # of that block so every flight opens with a springboard cut.
-    ordered_heats = _promote_springboard_to_flight_start(ordered_heats, heats_per_flight)
+    # Build optimized heat order using multi-pass greedy algorithm.
+    # Springboard opener and Hot Saw closer bonuses are baked into the scoring.
+    ordered_heats = _optimize_heat_order(all_heats, heats_per_flight, N_OPTIMIZATION_PASSES)
+    total_heats = len(ordered_heats)
 
     # Partnered axe requires one heat per flight, so ensure enough flights.
     if target_flights == 0 and partnered_axe_heats:
@@ -111,7 +147,7 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
 
         flights_created += 1
 
-    # Insert partnered axe heats with random flight placement across flights.
+    # Insert partnered axe heats with deterministic flight placement.
     _insert_partnered_axe_heats(created_flights, partnered_axe_heats)
 
     db.session.commit()
@@ -154,7 +190,6 @@ def _prepare_partnered_axe_show_heats(event: Event | None) -> list[Heat]:
         )
         heat.set_competitors(comp_ids)
         for comp_id in comp_ids:
-            # Partnered axe pair shares one target.
             heat.set_stand_assignment(comp_id, 1)
         db.session.add(heat)
         created.append(heat)
@@ -194,19 +229,21 @@ def _get_partnered_axe_qualifier_pairs(event: Event, count: int) -> list[dict]:
 
 
 def _insert_partnered_axe_heats(flights: list[Flight], axe_heats: list[Heat]) -> None:
-    """Assign partnered axe heats across flights with random distribution."""
+    """
+    Assign partnered axe heats across flights in deterministic order.
+
+    Heats are sorted by heat_number (which reflects prelim ranking) and
+    distributed one-per-flight in flight_number order. This is deterministic
+    and reproducible — no random shuffle.
+    """
     if not flights or not axe_heats:
         return
 
-    flight_pool = list(flights)
-    random.shuffle(flight_pool)
+    sorted_flights = sorted(flights, key=lambda f: f.flight_number)
+    sorted_heats = sorted(axe_heats, key=lambda h: h.heat_number)
 
-    shuffled_heats = list(axe_heats)
-    random.shuffle(shuffled_heats)
-
-    # If there are more axe heats than flights, loop and allow double-ups.
-    for idx, heat in enumerate(shuffled_heats):
-        flight = flight_pool[idx % len(flight_pool)]
+    for idx, heat in enumerate(sorted_heats):
+        flight = sorted_flights[idx % len(sorted_flights)]
         heat.flight_id = flight.id
         heat.flight_position = _next_flight_position(flight.id)
 
@@ -219,48 +256,24 @@ def _next_flight_position(flight_id: int) -> int:
     return int(max_pos or 0) + 1
 
 
-def _promote_springboard_to_flight_start(ordered_heats: list, heats_per_flight: int) -> list:
+def _optimize_heat_order(all_heats: list, heats_per_flight: int = 8,
+                         n_passes: int = N_OPTIMIZATION_PASSES) -> list:
     """
-    Move the first pro springboard heat in each flight block to position 0 of that block.
+    Optimize heat order using a multi-pass greedy algorithm.
 
-    Each flight should open with a springboard cut when one is available.
-    Only the first springboard heat in a block is moved — this preserves the
-    sequential heat-number constraint because that heat is already the next
-    sequential springboard heat in the global order.
-    """
-    result = list(ordered_heats)
-    total = len(result)
+    Runs the greedy n_passes times, each time rotating the initial event order to
+    explore different orderings. Keeps the run with the highest quality score.
 
-    for block_start in range(0, total, heats_per_flight):
-        block_end = min(block_start + heats_per_flight, total)
-
-        # Find the first springboard heat in this block (skip position 0 — already correct).
-        sb_idx = None
-        for i in range(block_start + 1, block_end):
-            hd = result[i]
-            if (getattr(hd['event'], 'event_type', '') == 'pro' and
-                    getattr(hd['event'], 'stand_type', '') == 'springboard'):
-                sb_idx = i
-                break
-
-        if sb_idx is not None:
-            sb_heat = result.pop(sb_idx)
-            result.insert(block_start, sb_heat)
-
-    return result
-
-
-def _optimize_heat_order(all_heats: list) -> list:
-    """
-    Optimize heat order using a per-event sequential queue.
-
-    At each step only the NEXT unplaced heat from each event is eligible.
-    This guarantees that within any event, heats appear in ascending heat_number
-    order across the show (Heat 1 before Heat 2 before Heat 3 ...).
-    The greedy pick at each step still maximises competitor spacing across events.
+    Within each pass:
+    - Only the NEXT unplaced heat from each event is eligible (sequential guarantee).
+    - Scoring uses per-event tiered spacing, springboard opener bonus, Hot Saw
+      closer bonus, and event recency bonus to encourage flight-block variety.
+    - Tie-breaking: prefer the event with the most remaining unplaced heats.
 
     Args:
         all_heats: List of heat data dicts with 'heat', 'event', 'competitors'
+        heats_per_flight: Size of each flight block (used for opener/closer bonuses)
+        n_passes: Number of independent greedy passes to run
 
     Returns:
         Ordered list of heat data dicts
@@ -279,26 +292,55 @@ def _optimize_heat_order(all_heats: list) -> list:
             key=lambda h: (h['heat'].heat_number, h['heat'].run_number)
         )
     event_ids = list(event_queues.keys())
-    # Pointer to the next unplaced heat in each event's queue.
-    event_ptrs: dict[int, int] = {eid: 0 for eid in event_ids}
 
+    best_ordered: list = []
+    best_score = float('-inf')
+
+    actual_passes = min(n_passes, max(1, len(event_ids)))
+    for pass_num in range(actual_passes):
+        # Rotate event_ids to create different greedy starting conditions.
+        rotated = event_ids[pass_num:] + event_ids[:pass_num]
+        candidate = _single_pass_optimize(event_queues, rotated, heats_per_flight)
+        score = _score_ordering(candidate, heats_per_flight)
+        if score > best_score:
+            best_score = score
+            best_ordered = candidate
+
+    return best_ordered
+
+
+def _single_pass_optimize(event_queues: dict, event_id_order: list,
+                           heats_per_flight: int) -> list:
+    """
+    Execute a single greedy pass through the event queues.
+
+    At each step, the next unplaced heat from each event is scored and the
+    highest-scoring candidate is selected. Tie-breaking prefers the event
+    with the most remaining heats (encourages balanced distribution).
+    """
+    event_ptrs: dict[int, int] = {eid: 0 for eid in event_id_order}
     ordered: list = []
     competitor_last_heat: dict[int, int] = {}
     stand_type_last_position: dict[str, int] = {}
+    # Track which flight block each event last appeared in (for recency bonus).
+    event_last_block: dict[int, int] = {}
 
     while True:
-        # Collect candidates: front of each non-exhausted event queue.
         candidates = [
             (eid, event_queues[eid][event_ptrs[eid]])
-            for eid in event_ids
+            for eid in event_id_order
             if event_ptrs[eid] < len(event_queues[eid])
         ]
         if not candidates:
             break
 
         current_position = len(ordered)
+        remaining_counts = {
+            eid: len(event_queues[eid]) - event_ptrs[eid]
+            for eid in event_id_order
+        }
 
-        # Score every candidate with stand-conflict enforcement.
+        # Score all candidates.
         scored = [
             (
                 _calculate_heat_score(
@@ -307,18 +349,21 @@ def _optimize_heat_order(all_heats: list) -> list:
                     current_position,
                     hd['event'],
                     stand_type_last_position,
+                    heats_per_flight,
+                    event_last_block,
                 ),
+                remaining_counts[eid],   # tie-break: more remaining = preferred
                 eid,
                 hd,
             )
             for eid, hd in candidates
         ]
 
-        best_score, best_eid, best_heat_data = max(scored, key=lambda x: x[0])
+        best_score, _, best_eid, best_heat_data = max(scored, key=lambda x: (x[0], x[1]))
 
         # If every candidate is blocked by a stand conflict, re-score ignoring it.
         if best_score < 0:
-            scored_no_conflict = [
+            scored_nc = [
                 (
                     _calculate_heat_score(
                         hd['competitors'],
@@ -326,13 +371,16 @@ def _optimize_heat_order(all_heats: list) -> list:
                         current_position,
                         hd['event'],
                         None,  # disable stand conflict check
+                        heats_per_flight,
+                        event_last_block,
                     ),
+                    remaining_counts[eid],
                     eid,
                     hd,
                 )
                 for eid, hd in candidates
             ]
-            _, best_eid, best_heat_data = max(scored_no_conflict, key=lambda x: x[0])
+            _, _, best_eid, best_heat_data = max(scored_nc, key=lambda x: (x[0], x[1]))
 
         ordered.append(best_heat_data)
         event_ptrs[best_eid] += 1
@@ -343,46 +391,91 @@ def _optimize_heat_order(all_heats: list) -> list:
         stand_type = getattr(best_heat_data['event'], 'stand_type', None)
         if stand_type:
             stand_type_last_position[stand_type] = pos
+        event_id = best_heat_data['heat'].event_id
+        current_block = pos // heats_per_flight if heats_per_flight > 0 else 0
+        event_last_block[event_id] = current_block
 
     return ordered
 
 
-_CONFLICTING_STANDS: dict[str, str] = {
-    'standing_block': 'cookie_stack',
-    'cookie_stack': 'standing_block',
-}
-# Minimum gap between conflicting stand types (approximately one flight)
-_STAND_CONFLICT_GAP = 8
+def _score_ordering(ordered: list, heats_per_flight: int) -> float:
+    """
+    Compute a quality score for a complete heat ordering. Higher is better.
+
+    Used to compare multiple greedy passes and select the best result.
+    Rewards adequate competitor spacing, penalizes spacing violations,
+    and gives a small bonus for event variety within each flight block.
+    """
+    if not ordered:
+        return 0.0
+
+    competitor_last: dict[int, int] = {}
+    event_blocks_seen: dict[tuple, bool] = {}  # (block, event_id) -> seen
+    total = 0.0
+
+    for pos, hd in enumerate(ordered):
+        event = hd['event']
+        min_sp, target_sp = _get_spacing(event)
+        block = pos // heats_per_flight if heats_per_flight > 0 else 0
+
+        for cid in hd['competitors']:
+            if cid in competitor_last:
+                spacing = pos - competitor_last[cid]
+                if spacing < min_sp:
+                    total -= (min_sp - spacing) * 50  # heavy violation penalty
+                elif spacing >= target_sp:
+                    total += 20                        # target spacing bonus
+                else:
+                    total += spacing * 2               # linear partial bonus
+            competitor_last[cid] = pos
+
+        # Variety bonus: first time this event appears in this flight block
+        block_key = (block, hd['heat'].event_id)
+        if block_key not in event_blocks_seen:
+            total += 10
+            event_blocks_seen[block_key] = True
+
+    return total
 
 
 def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
-                          current_position: int, event: Event,
-                          stand_type_last_position: dict | None = None) -> float:
+                           current_position: int, event: Event,
+                           stand_type_last_position: dict | None,
+                           heats_per_flight: int = 8,
+                           event_last_block: dict | None = None) -> float:
     """
     Calculate a score for placing a heat at the current position.
 
-    Higher score = better placement. Score is based on:
-    - Minimum spacing for all competitors (must be >= MIN_HEAT_SPACING or first appearance)
-    - Average spacing across all competitors
-    - Stand conflict enforcement (cookie_stack / standing_block mutual exclusion)
+    Higher score = better placement. Components:
+    - Stand conflict enforcement (cookie_stack / standing_block mutual exclusion) → -1 if violated
+    - Per-event tiered spacing (Tier 1=springboard, Tier 2=saw, Tier 3=others)
+    - Rebalanced formula: min_spacing × 5 + avg_spacing × 5
+    - Springboard opener bonus: +500 when at the start of a flight block
+    - Hot Saw closer bonus: +300 when at the end of a flight block
+    - Event recency bonus: +30 when this event hasn't appeared yet in the current block
 
     Args:
         competitors: Set of competitor IDs in this heat
         competitor_last_heat: Dict of competitor_id -> last heat index
         current_position: Current position in the ordered list
         event: The event this heat belongs to
-        stand_type_last_position: Dict of stand_type -> last position (for conflict checks)
+        stand_type_last_position: Dict of stand_type -> last position (None = disabled)
+        heats_per_flight: Flight block size for positional bonuses
+        event_last_block: Dict of event_id -> last block number appeared in
 
     Returns:
-        Score (higher is better), or -1 if invalid placement
+        Score (higher is better), or -1 if blocked by stand conflict
     """
-    # Enforce stand type conflict: cookie_stack and standing_block share physical stands
     stand_type = getattr(event, 'stand_type', None)
+
+    # Enforce stand type conflict: cookie_stack and standing_block share physical stands
     if stand_type and stand_type in _CONFLICTING_STANDS and stand_type_last_position is not None:
         conflict_type = _CONFLICTING_STANDS[stand_type]
         last_conflict = stand_type_last_position.get(conflict_type)
         if last_conflict is not None and (current_position - last_conflict) < _STAND_CONFLICT_GAP:
             return -1.0
+
+    min_sp, target_sp = _get_spacing(event)
 
     if not competitors:
         return 100.0  # Empty heats can go anywhere
@@ -393,33 +486,47 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
 
     for comp_id in competitors:
         last_heat = competitor_last_heat.get(comp_id)
-
         if last_heat is not None:
             spacing = current_position - last_heat
             min_spacing = min(min_spacing, spacing)
             total_spacing += spacing
             competitor_count += 1
 
-    # If all competitors are new, this is a great placement
+    # All competitors are new — great placement
     if competitor_count == 0:
-        return 1000.0
+        score = 1000.0
+    elif min_spacing < min_sp:
+        # Below minimum spacing — penalize but don't hard-reject
+        penalty = (min_sp - min_spacing) * 100
+        score = max(0.0, 50.0 - penalty)
+    else:
+        avg_spacing = total_spacing / competitor_count
+        # Rebalanced formula (#13): equal weight to min and average spacing
+        score = min_spacing * 5 + avg_spacing * 5
+        if min_spacing >= target_sp:
+            score += 50
 
-    # Check if minimum spacing requirement is met
-    if min_spacing < MIN_HEAT_SPACING:
-        # Penalize but don't completely reject - may be necessary
-        # Score decreases exponentially as spacing decreases
-        penalty = (MIN_HEAT_SPACING - min_spacing) * 100
-        return max(0, 50 - penalty)
+    # Springboard opener bonus (#5): strongly prefer springboard at the start of every
+    # flight block so each flight opens with a springboard cut (crowd favourite).
+    if stand_type == 'springboard' and heats_per_flight > 0:
+        if current_position % heats_per_flight == 0:
+            score += 500
 
-    # Calculate average spacing bonus
-    avg_spacing = total_spacing / competitor_count
+    # Hot Saw closer bonus (#7): Hot Saw is a dramatic crowd-pleaser — give it a bonus
+    # when it would be placed as the last heat of a flight block.
+    if stand_type == 'hot_saw' and heats_per_flight > 0:
+        if (current_position + 1) % heats_per_flight == 0:
+            score += 300
 
-    # Score based on minimum spacing (most important) plus average spacing bonus
-    score = min_spacing * 10 + avg_spacing
-
-    # Bonus for meeting target spacing
-    if min_spacing >= TARGET_HEAT_SPACING:
-        score += 50
+    # Event recency bonus (#11): encourage variety within each flight block by rewarding
+    # placing an event that hasn't appeared yet in the current block.
+    if event_last_block is not None and heats_per_flight > 0:
+        current_block = current_position // heats_per_flight
+        event_id = getattr(event, 'id', None)
+        if event_id is not None:
+            last_block = event_last_block.get(event_id)
+            if last_block is None or last_block < current_block:
+                score += 30
 
     return score
 
@@ -427,21 +534,73 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
 def optimize_flight_for_ability(flight: Flight, event: Event):
     """
     Reorder heats within a flight to group by ability.
-    Particularly important for springboard to keep similar-speed cutters together.
+
+    For springboard events, competitors flagged springboard_slow_heat=True are
+    consolidated into dedicated heats at the back of the flight block so that
+    slow cutters do not dilute faster heats.  Heat assignments are rewritten in
+    place; competitors and stand assignments are preserved — only which heat a
+    competitor appears in changes.
+
+    For non-springboard events the function is a no-op.  Predicted-time-based
+    grouping (STRATHMARK) can be layered in here later.
 
     Args:
-        flight: Flight to optimize
-        event: Event to optimize within the flight
+        flight: Flight whose heats will be reordered
+        event: Event within that flight to optimise
     """
-    # Get heats for this event in this flight
-    event_heats = flight.heats.filter_by(event_id=event.id).all()
+    if event.stand_type != 'springboard':
+        return
 
+    from models.competitor import ProCompetitor
+
+    event_heats = (
+        flight.heats.filter_by(event_id=event.id)
+        .order_by(Heat.flight_position)
+        .all()
+    )
     if len(event_heats) <= 1:
         return
 
-    # For now, just ensure they're sequential
-    # Future: Could reorder based on predicted times
-    pass
+    max_per_heat = event.max_stands or 4
+
+    # Collect all competitor IDs from these heats with their slow_heat flag.
+    all_comp_ids: list[int] = []
+    for heat in event_heats:
+        all_comp_ids.extend(heat.get_competitors())
+
+    if not all_comp_ids:
+        return
+
+    slow_flag: dict[int, bool] = {}
+    for comp in ProCompetitor.query.filter(ProCompetitor.id.in_(all_comp_ids)).all():
+        slow_flag[comp.id] = bool(getattr(comp, 'springboard_slow_heat', False))
+
+    normal = [cid for cid in all_comp_ids if not slow_flag.get(cid)]
+    slow = [cid for cid in all_comp_ids if slow_flag.get(cid)]
+
+    # Rebuild: normal competitors fill the front heats, slow the back heats.
+    reordered: list[list[int]] = []
+    for i in range(0, len(normal), max_per_heat):
+        reordered.append(normal[i:i + max_per_heat])
+    for i in range(0, len(slow), max_per_heat):
+        reordered.append(slow[i:i + max_per_heat])
+
+    # If nothing changed there is nothing to write.
+    flat_before = all_comp_ids
+    flat_after = [cid for group in reordered for cid in group]
+    if flat_before == flat_after:
+        return
+
+    # Write new compositions back to existing heat rows.
+    for idx, heat in enumerate(event_heats):
+        if idx < len(reordered):
+            group = reordered[idx]
+        else:
+            group = []
+        heat.set_competitors(group)
+        for position, comp_id in enumerate(group, start=1):
+            heat.set_stand_assignment(comp_id, position)
+        heat.sync_assignments('pro')
 
 
 def insert_axe_throw_finals(tournament: Tournament, top_teams: list):
@@ -462,14 +621,12 @@ def insert_axe_throw_finals(tournament: Tournament, top_teams: list):
 
     for i, team in enumerate(top_teams[:4]):
         if i < len(flights):
-            # Create a finals heat for this team
             heat = Heat(
                 event_id=axe_event.id,
                 heat_number=100 + i,  # High number to indicate finals
                 run_number=1,
                 flight_id=flights[i].id
             )
-            # Note: team assignment would be handled separately
             db.session.add(heat)
 
     db.session.commit()
@@ -488,7 +645,6 @@ def get_flight_summary(tournament: Tournament) -> list:
     for flight in flights:
         heats = flight.heats.all()
 
-        # Count heats by event
         event_counts = {}
         for heat in heats:
             event_name = heat.event.display_name if heat.event else 'Unknown'
@@ -507,36 +663,35 @@ def get_flight_summary(tournament: Tournament) -> list:
 
 def validate_competitor_spacing(tournament: Tournament) -> dict:
     """
-    Validate that competitor spacing meets requirements.
+    Validate that competitor spacing meets tier requirements.
 
     Returns:
         Dict with validation results and any violations
     """
     flights = Flight.query.filter_by(tournament_id=tournament.id).order_by(Flight.flight_number).all()
 
-    # Build ordered list of all heats
     all_heats = []
     for flight in flights:
-        flight_heats = flight.heats.order_by(Heat.id).all()
+        flight_heats = flight.heats.order_by(Heat.flight_position).all()
         all_heats.extend(flight_heats)
 
-    # Track competitor appearances
     competitor_appearances = {}
     violations = []
 
     for i, heat in enumerate(all_heats):
+        min_sp, _ = _get_spacing(heat.event)
         competitors = heat.get_competitors()
         for comp_id in competitors:
             if comp_id in competitor_appearances:
                 last_appearance = competitor_appearances[comp_id]
                 spacing = i - last_appearance
-                if spacing < MIN_HEAT_SPACING:
+                if spacing < min_sp:
                     violations.append({
                         'competitor_id': comp_id,
                         'heat_1': last_appearance + 1,
                         'heat_2': i + 1,
                         'spacing': spacing,
-                        'required': MIN_HEAT_SPACING
+                        'required': min_sp
                     })
             competitor_appearances[comp_id] = i
 
@@ -548,11 +703,142 @@ def validate_competitor_spacing(tournament: Tournament) -> dict:
     }
 
 
+def build_flight_audit_report(tournament: Tournament) -> dict:
+    """
+    Build a post-flight-construction audit report.
+
+    Checks:
+    1. Sequential heat order within each event (heats must appear in ascending
+       heat_number order across the full show).
+    2. Competitor spacing violations (actual gap vs tier minimum).
+    3. Per-competitor spacing statistics (min, avg, max actual gaps).
+    4. Event variety per flight (distinct events per flight block).
+    5. Gear sharing adjacency conflicts (gear partners in back-to-back heats).
+
+    Returns a dict suitable for display in the scheduling UI and for storage
+    as a JSON audit record.
+    """
+    flights = Flight.query.filter_by(tournament_id=tournament.id).order_by(Flight.flight_number).all()
+    if not flights:
+        return {'error': 'No flights built yet.'}
+
+    # Build global ordered heat list across all flights in display order.
+    all_heat_data = []
+    for flight in flights:
+        for heat in Heat.query.filter_by(flight_id=flight.id).order_by(Heat.flight_position).all():
+            all_heat_data.append({
+                'heat': heat,
+                'event': heat.event,
+                'flight_number': flight.flight_number,
+                'flight_position': heat.flight_position,
+                'competitors': list(heat.get_competitors()),
+            })
+
+    # 1. Sequential order check (#15)
+    event_last_heat_num: dict[int, int] = {}
+    event_last_flight_pos: dict[int, int] = {}
+    sequential_violations: list[dict] = []
+    for pos, hd in enumerate(all_heat_data):
+        eid = hd['heat'].event_id
+        hn = hd['heat'].heat_number
+        if eid in event_last_heat_num and hn < event_last_heat_num[eid]:
+            sequential_violations.append({
+                'event': hd['event'].display_name if hd['event'] else str(eid),
+                'heat_number': hn,
+                'previous_heat_number': event_last_heat_num[eid],
+                'global_position': pos,
+                'previous_global_position': event_last_flight_pos[eid],
+                'flight': hd['flight_number'],
+            })
+        event_last_heat_num[eid] = hn
+        event_last_flight_pos[eid] = pos
+
+    # 2 + 3. Competitor spacing audit (#16)
+    competitor_last: dict[int, int] = {}
+    competitor_spacings: dict[int, list[int]] = {}
+    spacing_violations: list[dict] = []
+
+    for pos, hd in enumerate(all_heat_data):
+        event = hd['event']
+        min_sp, _ = _get_spacing(event)
+        for cid in hd['competitors']:
+            if cid in competitor_last:
+                spacing = pos - competitor_last[cid]
+                competitor_spacings.setdefault(cid, []).append(spacing)
+                if spacing < min_sp:
+                    spacing_violations.append({
+                        'competitor_id': cid,
+                        'position_1': competitor_last[cid],
+                        'position_2': pos,
+                        'spacing': spacing,
+                        'required': min_sp,
+                        'event': event.display_name if event else '?',
+                    })
+            competitor_last[cid] = pos
+
+    # Per-competitor stats
+    competitor_stats: list[dict] = []
+    for cid, spacings in competitor_spacings.items():
+        competitor_stats.append({
+            'competitor_id': cid,
+            'appearances': len(spacings) + 1,
+            'min_spacing': min(spacings),
+            'avg_spacing': round(sum(spacings) / len(spacings), 1),
+            'max_spacing': max(spacings),
+        })
+    all_spacings = [s for sl in competitor_spacings.values() for s in sl]
+    avg_spacing_overall = round(sum(all_spacings) / len(all_spacings), 2) if all_spacings else 0
+
+    # 4. Event variety per flight
+    variety_report: list[dict] = []
+    for flight in flights:
+        flight_heats = [hd for hd in all_heat_data if hd['flight_number'] == flight.flight_number]
+        distinct_events = len({hd['heat'].event_id for hd in flight_heats})
+        variety_report.append({
+            'flight_number': flight.flight_number,
+            'heat_count': len(flight_heats),
+            'distinct_events': distinct_events,
+        })
+
+    # 5. Gear sharing adjacency check (#18) — warn if gear partners appear in back-to-back heats
+    gear_adjacency_warnings: list[dict] = []
+    for i in range(len(all_heat_data) - 1):
+        curr_comps = set(all_heat_data[i]['competitors'])
+        next_comps = set(all_heat_data[i + 1]['competitors'])
+        overlap = curr_comps & next_comps
+        if not overlap:
+            continue
+        # Same competitor in consecutive heats — not gear sharing but is a spacing issue
+        for cid in overlap:
+            gear_adjacency_warnings.append({
+                'competitor_id': cid,
+                'position': i,
+                'next_position': i + 1,
+                'type': 'back_to_back',
+            })
+
+    return {
+        'total_heats': len(all_heat_data),
+        'total_flights': len(flights),
+        'sequential_violations': sequential_violations,
+        'passes_sequential': len(sequential_violations) == 0,
+        'spacing_violations': spacing_violations,
+        'spacing_violation_count': len(spacing_violations),
+        'passes_spacing': len(spacing_violations) == 0,
+        'avg_competitor_spacing': avg_spacing_overall,
+        'competitor_stats': sorted(competitor_stats, key=lambda x: x['min_spacing']),
+        'variety_per_flight': variety_report,
+        'gear_adjacency_warnings': gear_adjacency_warnings,
+    }
+
+
 def integrate_college_spillover_into_flights(tournament: Tournament, college_event_ids: list[int] | None = None) -> dict:
     """
     Assign selected college spillover heats into existing Saturday pro flights.
 
     Chokerman's Race only contributes run 2 per Missoula rules.
+    Chokerman heats are always placed at the end of the last flight to serve as
+    the show climax — no other heats are inserted after them.
     """
     selected_ids = set(int(v) for v in (college_event_ids or []))
     mandatory = tournament.events.filter_by(event_type='college', name="Chokerman's Race").first()
@@ -571,6 +857,18 @@ def integrate_college_spillover_into_flights(tournament: Tournament, college_eve
     integrated = 0
     per_event = 0
     flight_idx = 0
+
+    # Build a map of competitor_id -> approximate global heat position from pro heats already
+    # placed in flights. Used to enforce MIN_HEAT_SPACING for competitors who appear in both
+    # pro heats and college overflow heats.
+    competitor_last_position: dict[int, int] = {}
+    global_position = 0
+    for flight in flights:
+        for heat in Heat.query.filter_by(flight_id=flight.id).order_by(Heat.flight_position).all():
+            for comp_id in heat.get_competitors():
+                competitor_last_position[int(comp_id)] = global_position
+            global_position += 1
+
     for event in sorted(events, key=lambda e: (e.name, e.gender or '')):
         if event.name == "Chokerman's Race":
             # Run 2 only on Saturday. All heats group together at the end of
@@ -587,14 +885,42 @@ def integrate_college_spillover_into_flights(tournament: Tournament, college_eve
             if heat.flight_id is not None:
                 continue
             if event.name == "Chokerman's Race":
-                # Always place at end of last flight.
+                # Always place at end of last flight (show climax — sealed position).
                 heat.flight_id = last_flight.id
                 heat.flight_position = _next_flight_position(last_flight.id)
+                global_position += 1
             else:
-                target = flights[flight_idx % len(flights)]
-                heat.flight_id = target.id
-                heat.flight_position = _next_flight_position(target.id)
-                flight_idx += 1
+                # Try flights in round-robin order, respecting MIN_HEAT_SPACING for
+                # any competitor who also appears in pro heats.
+                heat_comp_ids = [int(c) for c in heat.get_competitors()]
+                placed = False
+                for attempt in range(len(flights)):
+                    candidate = flights[(flight_idx + attempt) % len(flights)]
+                    candidate_pos = global_position
+                    spacing_ok = all(
+                        (candidate_pos - competitor_last_position[cid]) >= MIN_HEAT_SPACING
+                        for cid in heat_comp_ids
+                        if cid in competitor_last_position
+                    )
+                    if spacing_ok:
+                        heat.flight_id = candidate.id
+                        heat.flight_position = _next_flight_position(candidate.id)
+                        for cid in heat_comp_ids:
+                            competitor_last_position[cid] = candidate_pos
+                        flight_idx = (flight_idx + attempt + 1) % len(flights)
+                        placed = True
+                        break
+
+                if not placed:
+                    # Fallback: place in original target regardless of spacing.
+                    target = flights[flight_idx % len(flights)]
+                    heat.flight_id = target.id
+                    heat.flight_position = _next_flight_position(target.id)
+                    for cid in heat_comp_ids:
+                        competitor_last_position[cid] = global_position
+                    flight_idx = (flight_idx + 1) % len(flights)
+
+                global_position += 1
             integrated += 1
 
     db.session.flush()

@@ -22,6 +22,12 @@ class Tournament(db.Model):
     # Status tracking
     status = db.Column(db.String(50), default='setup')  # setup, college_active, pro_active, completed
 
+    # Shirt logistics — True when the show provides shirts; controls shirt-size collection on pro entry
+    providing_shirts = db.Column(db.Boolean, nullable=False, default=False)
+
+    # Schedule config — persists friday_pro_event_ids / saturday_college_event_ids across sessions
+    schedule_config = db.Column(db.Text, nullable=True)
+
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -32,6 +38,19 @@ class Tournament(db.Model):
     pro_competitors = db.relationship('ProCompetitor', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
     events = db.relationship('Event', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
     wood_configs = db.relationship('WoodConfig', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
+
+    def get_schedule_config(self) -> dict:
+        """Return parsed schedule config dict (friday/saturday event selections)."""
+        import json as _json
+        try:
+            return _json.loads(self.schedule_config or '{}')
+        except Exception:
+            return {}
+
+    def set_schedule_config(self, data: dict):
+        """Persist schedule config dict to the DB column."""
+        import json as _json
+        self.schedule_config = _json.dumps(data)
 
     def __repr__(self):
         return f'<Tournament {self.name} {self.year}>'

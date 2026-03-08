@@ -162,6 +162,21 @@
     </div>
     {% endif %}
 
+    <!-- Gear group size warnings -->
+    {% if report.group_warnings %}
+    <div class="alert alert-warning mb-4">
+        <h6 class="alert-heading">{{ report.group_warnings|length }} Gear Group Size Warning(s)</h6>
+        <ul class="mb-0 small">
+            {% for w in report.group_warnings %}
+            <li>
+                Group <strong>{{ w.group_name }}</strong> ({{ w.event_label }}): {{ w.issue }}
+                Members: {{ w.members|join(', ') }}.
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
     <!-- Unresolved entries (missing partner, unknown partner, self-reference only — one_sided is now treated as a valid pair) -->
     {% if report.pro_unresolved %}
     <div class="card mb-4 border-warning">
@@ -169,7 +184,7 @@
             <h6 class="mb-0">Unresolved Gear Entries ({{ report.pro_unresolved|length }})</h6>
         </div>
         <div class="table-responsive">
-            <table class="table table-sm table-hover align-middle mb-0">
+            <table class="table table-sm table-hover align-middle mb-0" id="unresolvedGearTable">
                 <thead class="table-light">
                     <tr>
                         <th>Competitor</th>
@@ -181,15 +196,25 @@
                 </thead>
                 <tbody>
                     {% for entry in report.pro_unresolved %}
-                    <tr>
+                    <tr data-comp-id="{{ entry.competitor.id }}"
+                        data-event-key="{{ entry.event_key }}"
+                        data-comp-name="{{ entry.competitor.name|e }}">
                         <td><strong>{{ entry.competitor.name }}</strong></td>
                         <td>{{ entry.event_label }}</td>
-                        <td>
-                            {% if entry.partner_raw %}
-                                <span class="text-danger">{{ entry.partner_raw }}</span>
-                            {% else %}
-                                <span class="text-muted fst-italic">none</span>
-                            {% endif %}
+                        <td class="partner-cell">
+                            <span class="partner-display">
+                                {% if entry.partner_raw %}
+                                    <span class="text-danger">{{ entry.partner_raw }}</span>
+                                {% else %}
+                                    <span class="text-muted fst-italic">none</span>
+                                {% endif %}
+                            </span>
+                            <span class="partner-edit d-none">
+                                <input type="text" class="form-control form-control-sm partner-input"
+                                       value="{{ entry.partner_raw or '' }}"
+                                       list="editCompNames" autocomplete="off"
+                                       style="min-width:160px">
+                            </span>
                         </td>
                         <td>
                             {% for issue in entry.issues %}
@@ -197,15 +222,18 @@
                             {% endfor %}
                         </td>
                         <td>
-                            <div class="btn-group btn-group-sm">
-                                <button type="button" class="btn btn-outline-primary"
+                            <div class="btn-group btn-group-sm view-mode">
+                                <button type="button" class="btn btn-outline-primary btn-inline-edit">
+                                    Quick Edit
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary"
                                         data-bs-toggle="modal" data-bs-target="#editGearModal"
                                         data-competitor-id="{{ entry.competitor.id }}"
                                         data-competitor-name="{{ entry.competitor.name }}"
                                         data-event-key="{{ entry.event_key }}"
                                         data-event-label="{{ entry.event_label }}"
                                         data-partner="{{ entry.partner_raw }}">
-                                    Edit
+                                    Full Edit
                                 </button>
                                 <form method="POST"
                                       action="{{ url_for('registration.pro_gear_remove', tournament_id=tournament.id) }}"
@@ -216,6 +244,10 @@
                                     <input type="hidden" name="event_key" value="{{ entry.event_key }}">
                                     <button type="submit" class="btn btn-outline-danger">Remove</button>
                                 </form>
+                            </div>
+                            <div class="btn-group btn-group-sm edit-mode d-none">
+                                <button type="button" class="btn btn-success btn-inline-save">Save</button>
+                                <button type="button" class="btn btn-secondary btn-inline-cancel">Cancel</button>
                             </div>
                         </td>
                     </tr>
@@ -635,7 +667,7 @@
 (function () {
     'use strict';
 
-    // Pro gear edit modal
+    // Pro gear edit modal (Full Edit button)
     var gearModal = document.getElementById('editGearModal');
     if (gearModal) {
         gearModal.addEventListener('show.bs.modal', function (event) {
@@ -662,6 +694,99 @@
             document.getElementById('collegeModalPartnerName').value = btn.dataset.partner || '';
         });
     }
+
+    // -----------------------------------------------------------------------
+    // Inline AJAX editing for unresolved gear entries
+    // -----------------------------------------------------------------------
+    var CSRF_TOKEN = '{{ csrf_token() }}';
+    var UPDATE_AJAX_URL = '{{ url_for("registration.pro_gear_update_ajax", tournament_id=tournament.id) }}';
+
+    function showInlineFlash(type, msg) {
+        var div = document.createElement('div');
+        div.className = 'alert alert-' + type + ' alert-dismissible fade show position-fixed bottom-0 end-0 m-3 shadow';
+        div.style.zIndex = '9999';
+        div.style.maxWidth = '380px';
+        div.innerHTML = msg + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+        document.body.appendChild(div);
+        setTimeout(function () { if (div.parentNode) div.remove(); }, 4500);
+    }
+
+    document.addEventListener('click', function (e) {
+        // Quick Edit: switch row to edit mode
+        if (e.target.classList.contains('btn-inline-edit')) {
+            var row = e.target.closest('tr');
+            row.querySelector('.partner-display').classList.add('d-none');
+            row.querySelector('.partner-edit').classList.remove('d-none');
+            row.querySelector('.view-mode').classList.add('d-none');
+            row.querySelector('.edit-mode').classList.remove('d-none');
+            row.querySelector('.partner-input').focus();
+            return;
+        }
+
+        // Cancel: revert to display mode
+        if (e.target.classList.contains('btn-inline-cancel')) {
+            var row = e.target.closest('tr');
+            row.querySelector('.partner-display').classList.remove('d-none');
+            row.querySelector('.partner-edit').classList.add('d-none');
+            row.querySelector('.view-mode').classList.remove('d-none');
+            row.querySelector('.edit-mode').classList.add('d-none');
+            return;
+        }
+
+        // Save: AJAX POST
+        if (e.target.classList.contains('btn-inline-save')) {
+            var btn = e.target;
+            var row = btn.closest('tr');
+            var compId = row.dataset.compId;
+            var eventKey = row.dataset.eventKey;
+            var compName = row.dataset.compName || '';
+            var partnerName = row.querySelector('.partner-input').value.trim();
+
+            btn.disabled = true;
+            btn.textContent = 'Saving\u2026';
+
+            var fd = new FormData();
+            fd.append('csrf_token', CSRF_TOKEN);
+            fd.append('competitor_id', compId);
+            fd.append('event_key', eventKey);
+            fd.append('partner_name', partnerName);
+
+            fetch(UPDATE_AJAX_URL, { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.ok) {
+                        row.remove();
+                        var tbody = document.querySelector('#unresolvedGearTable tbody');
+                        if (tbody && tbody.querySelectorAll('tr').length === 0) {
+                            tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-3">All entries resolved.</td></tr>';
+                        }
+                        showInlineFlash('success', 'Gear entry updated for <strong>' + compName + '</strong>. Reload to see updated pairs.');
+                    } else {
+                        showInlineFlash('danger', 'Error: ' + (data.error || 'Unknown error'));
+                        btn.disabled = false;
+                        btn.textContent = 'Save';
+                    }
+                })
+                .catch(function (err) {
+                    showInlineFlash('danger', 'Network error: ' + err.message);
+                    btn.disabled = false;
+                    btn.textContent = 'Save';
+                });
+        }
+    });
+
+    // Allow Enter key in the partner input to trigger save
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target.classList.contains('partner-input')) {
+            e.preventDefault();
+            var saveBtn = e.target.closest('tr').querySelector('.btn-inline-save');
+            if (saveBtn) saveBtn.click();
+        }
+        if (e.key === 'Escape' && e.target.classList.contains('partner-input')) {
+            var cancelBtn = e.target.closest('tr').querySelector('.btn-inline-cancel');
+            if (cancelBtn) cancelBtn.click();
+        }
+    });
 }());
 </script>
 {% endblock %}

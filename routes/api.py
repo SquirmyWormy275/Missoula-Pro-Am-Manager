@@ -1,6 +1,8 @@
 """Minimal REST API endpoints for schedules, standings, and results."""
+import json
+import time
 from datetime import datetime
-from flask import Blueprint, current_app, jsonify
+from flask import Blueprint, Response, current_app, jsonify, stream_with_context
 from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import ProCompetitor
 from services.report_cache import get as cache_get, set as cache_set
@@ -8,8 +10,47 @@ from services.handicap_export import build_chopping_rows
 
 api_bp = Blueprint('api', __name__)
 
+# ---------------------------------------------------------------------------
+# Rate limiting — gracefully no-ops if flask-limiter is not installed.
+# Set RATELIMIT_STORAGE_URI in env (e.g. "memory://") or rely on the default.
+# Default limits: 60 requests/minute, 600/hour per remote IP.
+# ---------------------------------------------------------------------------
+try:
+    from flask_limiter import Limiter  # type: ignore
+    from flask_limiter.util import get_remote_address  # type: ignore
+
+    _limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=['600 per hour', '60 per minute'],
+        storage_uri='memory://',
+    )
+
+    def _init_limiter(app):
+        """Attach the limiter to the Flask app — call from create_app()."""
+        _limiter.init_app(app)
+
+    def _limit(rate: str):
+        """Decorator applying a specific rate limit to a route."""
+        return _limiter.limit(rate)
+
+except ImportError:
+    import functools
+
+    def _init_limiter(app):  # type: ignore[misc]
+        pass
+
+    def _limit(rate: str):  # type: ignore[misc]
+        """No-op decorator when flask-limiter is not installed."""
+        def decorator(f):
+            @functools.wraps(f)
+            def wrapper(*args, **kwargs):
+                return f(*args, **kwargs)
+            return wrapper
+        return decorator
+
 
 @api_bp.route('/public/tournaments/<int:tournament_id>/standings')
+@_limit('120 per minute')
 def public_standings(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     pro_earnings_rows = (
@@ -95,6 +136,7 @@ def public_results(tournament_id):
 # ---------------------------------------------------------------------------
 
 @api_bp.route('/public/tournaments/<int:tournament_id>/standings-poll')
+@_limit('120 per minute')
 def standings_poll(tournament_id):
     """Lightweight polling endpoint for live leaderboard auto-refresh."""
     tournament = Tournament.query.get_or_404(tournament_id)
@@ -154,6 +196,100 @@ def standings_poll(tournament_id):
     }
     cache_set(cache_key, payload, ttl_seconds)
     return jsonify(payload)
+
+
+# ---------------------------------------------------------------------------
+# #13 — Server-Sent Events: live standings push
+# ---------------------------------------------------------------------------
+
+@api_bp.route('/public/tournaments/<int:tournament_id>/standings-stream')
+def standings_stream(tournament_id):
+    """
+    SSE endpoint for real-time leaderboard updates.
+
+    The browser connects once and receives push events as scores are entered.
+    Replaces the 30-second polling loop in spectator_college.html when JS
+    EventSource is supported.
+
+    Events:
+      data: <JSON payload>  — same shape as standings-poll
+      : keep-alive comment  — sent every 15s when no data changes
+
+    Clients should reconnect automatically (EventSource does this by default).
+    Max stream duration: 5 minutes to avoid long-lived connections on Railway.
+    """
+    app = current_app._get_current_object()
+    ttl_seconds = max(1, int(app.config.get('PUBLIC_CACHE_TTL_SECONDS', 5)))
+    max_duration = 300  # 5 minutes
+    poll_interval = 5   # seconds between DB checks
+
+    def _build_payload():
+        tournament = Tournament.query.get(tournament_id)
+        if not tournament:
+            return None
+        teams = []
+        for team in (
+            Team.query
+            .filter_by(tournament_id=tournament_id, status='active')
+            .order_by(Team.total_points.desc(), Team.team_code)
+            .limit(15)
+            .all()
+        ):
+            teams.append({
+                'id': team.id,
+                'team_code': team.team_code,
+                'school_name': team.school_name,
+                'points': team.total_points,
+            })
+        bull = [
+            {'id': c.id, 'name': c.name, 'points': c.individual_points}
+            for c in tournament.get_bull_of_woods(10)
+        ]
+        belle = [
+            {'id': c.id, 'name': c.name, 'points': c.individual_points}
+            for c in tournament.get_belle_of_woods(10)
+        ]
+        pro = [
+            {'id': c.id, 'name': c.name, 'earnings': c.total_earnings or 0}
+            for c in (
+                ProCompetitor.query
+                .filter_by(tournament_id=tournament_id, status='active')
+                .order_by(ProCompetitor.total_earnings.desc(), ProCompetitor.name)
+                .limit(15)
+                .all()
+            )
+        ]
+        return {
+            'tournament_id': tournament_id,
+            'last_updated': datetime.utcnow().isoformat() + 'Z',
+            'college_teams': teams,
+            'bull': bull,
+            'belle': belle,
+            'pro': pro,
+        }
+
+    @stream_with_context
+    def _generate():
+        start = time.monotonic()
+        last_payload_json = None
+        while time.monotonic() - start < max_duration:
+            with app.app_context():
+                payload = _build_payload()
+            if payload is None:
+                break
+            payload_json = json.dumps(payload)
+            if payload_json != last_payload_json:
+                last_payload_json = payload_json
+                yield f'data: {payload_json}\n\n'
+            else:
+                # Keep-alive comment so the connection doesn't time out.
+                yield ': keep-alive\n\n'
+            time.sleep(poll_interval)
+
+    return Response(_generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',  # Disable Nginx buffering for SSE
+    })
 
 
 @api_bp.route('/public/tournaments/<int:tournament_id>/handicap-input')

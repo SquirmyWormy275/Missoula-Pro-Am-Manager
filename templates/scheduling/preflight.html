@@ -95,7 +95,22 @@
                                 </span>
                             </td>
                             <td>{{ issue.title }}</td>
-                            <td>{{ issue.detail }}</td>
+                            <td>
+                                {{ issue.detail }}
+                                {% if issue.code == 'gear_details_not_parsed' %}
+                                <br>
+                                <a href="{{ url_for('registration.pro_gear_parse_review', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-info btn-sm mt-1">
+                                    <i class="bi bi-eye"></i> Review Free-Text Before Applying
+                                </a>
+                                {% elif issue.code in ('gear_partner_mismatch', 'gear_unknown_partner_names', 'gear_self_reference', 'gear_non_enrolled_event', 'gear_unmapped_event_keys') %}
+                                <br>
+                                <a href="{{ url_for('registration.pro_gear_manager', tournament_id=tournament.id) }}"
+                                   class="btn btn-outline-secondary btn-sm mt-1">
+                                    <i class="bi bi-tools"></i> Open Gear Sharing Manager
+                                </a>
+                                {% endif %}
+                            </td>
                             <td>
                                 {% if issue.autofix %}
                                     <span class="badge bg-success">Yes</span>

@@ -31,7 +31,14 @@ class Event(db.Model):
     # Event characteristics
     is_partnered = db.Column(db.Boolean, default=False)
     partner_gender_requirement = db.Column(db.String(10), nullable=True)  # 'same', 'mixed', 'any'
-    requires_dual_runs = db.Column(db.Boolean, default=False)  # True for Chokerman, Obstacle, Climb
+
+    # Run configuration
+    # requires_dual_runs: two separate heats (run 1 & run 2); best run counts.
+    #   Used by: Speed Climb, Chokerman's Race, Caber Toss.
+    requires_dual_runs = db.Column(db.Boolean, default=False)
+    # requires_triple_runs: three throw inputs in a single heat; sum counts.
+    #   Used by: Axe Throw, Partnered Axe Throw. Tie detected → throw-off required.
+    requires_triple_runs = db.Column(db.Boolean, default=False)
 
     # Stand configuration
     stand_type = db.Column(db.String(50), nullable=True)
@@ -45,6 +52,10 @@ class Event(db.Model):
 
     # Status
     status = db.Column(db.String(20), default='pending')  # pending, in_progress, completed
+
+    # Explicit finalization lock — set True after _calculate_positions() succeeds.
+    # Editing a result on a finalized event resets this to False, requiring re-finalization.
+    is_finalized = db.Column(db.Boolean, default=False)
 
     # Relationships
     heats = db.relationship('Heat', backref='event', lazy='dynamic', cascade='all, delete-orphan')
@@ -63,6 +74,18 @@ class Event(db.Model):
             return f"Women's {self.name}"
         return self.name
 
+    @property
+    def is_hard_hit(self):
+        """True for Hard-Hit events where ties break on time."""
+        import config
+        return self.name in config.HARD_HIT_EVENTS
+
+    @property
+    def is_axe_throw_cumulative(self):
+        """True for axe throw events using 3-throw cumulative scoring."""
+        import config
+        return self.name in config.AXE_THROW_CUMULATIVE_EVENTS
+
     def get_payouts(self):
         """Return dict of position -> payout amount."""
         return json.loads(self.payouts or '{}')
@@ -78,7 +101,6 @@ class Event(db.Model):
 
     def get_competitors(self):
         """Return list of competitors entered in this event."""
-        # Get from results
         return [r.competitor_name for r in self.results.all()]
 
     def get_results_sorted(self):
@@ -107,13 +129,28 @@ class EventResult(db.Model):
     partner_name = db.Column(db.String(200), nullable=True)
 
     # Results - flexible storage
-    result_value = db.Column(db.Float, nullable=True)  # Time in seconds, score, distance, or hits
+    result_value = db.Column(db.Float, nullable=True)  # Ranked metric: best run, cumulative score, or raw value
     result_unit = db.Column(db.String(20), nullable=True)  # 'seconds', 'points', 'feet', 'hits'
 
-    # For dual-run events
+    # Dual-run events (Speed Climb, Chokerman, Caber Toss)
     run1_value = db.Column(db.Float, nullable=True)
     run2_value = db.Column(db.Float, nullable=True)
-    best_run = db.Column(db.Float, nullable=True)  # The better of the two runs
+    best_run = db.Column(db.Float, nullable=True)  # The better of two runs per scoring_order
+
+    # Triple-run events (Axe Throw, Partnered Axe Throw) — stored individually, result_value = sum
+    run3_value = db.Column(db.Float, nullable=True)
+
+    # Secondary tiebreak metric (Hard-Hit events only).
+    # Stores elapsed time in seconds; lowest time wins the tiebreak when hit counts are equal.
+    tiebreak_value = db.Column(db.Float, nullable=True)
+
+    # Throw-off flag — set True when the system detects a cumulative-score tie on axe throw.
+    # Judge must record throw-off positions before is_finalized can be set True.
+    throwoff_pending = db.Column(db.Boolean, default=False)
+
+    # Handicap placeholder — reserved for future STRATHMARK integration.
+    # DO NOT populate or display until full integration is complete.
+    handicap_factor = db.Column(db.Float, default=1.0, nullable=False)
 
     # Placement
     final_position = db.Column(db.Integer, nullable=True)  # 1st, 2nd, 3rd, etc.
@@ -124,7 +161,7 @@ class EventResult(db.Model):
     # Payout (pro only)
     payout_amount = db.Column(db.Float, default=0.0)
 
-    # Score discrepancy flag (#8)
+    # Score discrepancy flag
     is_flagged = db.Column(db.Boolean, default=False)
 
     # Status
@@ -138,16 +175,29 @@ class EventResult(db.Model):
     def __repr__(self):
         return f'<EventResult {self.competitor_name} - {self.result_value}>'
 
-    def calculate_best_run(self):
-        """For dual-run events, calculate the best (lowest for time) of two runs."""
-        if self.run1_value is not None and self.run2_value is not None:
-            # For time-based events, lower is better
-            self.best_run = min(self.run1_value, self.run2_value)
-            self.result_value = self.best_run
-        elif self.run1_value is not None:
-            self.best_run = self.run1_value
-            self.result_value = self.run1_value
-        elif self.run2_value is not None:
-            self.best_run = self.run2_value
-            self.result_value = self.run2_value
+    def calculate_best_run(self, scoring_order='lowest_wins'):
+        """
+        For dual-run events: store the run that counts based on scoring_order.
+          lowest_wins  → min(run1, run2)   e.g. Speed Climb, Chokerman
+          highest_wins → max(run1, run2)   e.g. Caber Toss (distance)
+        Also updates result_value so the ranking sort always uses best_run.
+        """
+        runs = [v for v in [self.run1_value, self.run2_value] if v is not None]
+        if not runs:
+            return self.best_run
+        if scoring_order == 'highest_wins':
+            self.best_run = max(runs)
+        else:
+            self.best_run = min(runs)
+        self.result_value = self.best_run
         return self.best_run
+
+    def calculate_cumulative_score(self):
+        """
+        For triple-run events (Axe Throw): result_value = sum of all throws entered so far.
+        Missing throws (not yet entered) are treated as 0 and NOT counted so partial sums
+        update live — the final sum is only authoritative once all three are entered.
+        """
+        values = [v for v in [self.run1_value, self.run2_value, self.run3_value] if v is not None]
+        self.result_value = sum(values) if values else None
+        return self.result_value

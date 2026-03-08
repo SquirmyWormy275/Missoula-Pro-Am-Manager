@@ -475,6 +475,99 @@ def fee_tracker(tournament_id):
 
 
 # ---------------------------------------------------------------------------
+# Pro event fee configuration — bulk-set entry fees per event
+# ---------------------------------------------------------------------------
+
+@reporting_bp.route('/<int:tournament_id>/pro/event-fees', methods=['GET', 'POST'])
+def pro_event_fees(tournament_id):
+    """Set default entry fees per event and bulk-apply to enrolled competitors.
+
+    POST fields:
+      fee_<event_id>   — fee amount for that event (float, blank to skip)
+      overwrite        — if present, overwrite existing non-zero fees too
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from models.competitor import ProCompetitor
+
+    pro_events = Event.query.filter_by(
+        tournament_id=tournament_id,
+        event_type='pro',
+    ).order_by(Event.name, Event.gender).all()
+
+    if request.method == 'POST':
+        overwrite = bool(request.form.get('overwrite'))
+        updated_count = 0
+
+        for event in pro_events:
+            raw = request.form.get(f'fee_{event.id}', '').strip()
+            if not raw:
+                continue
+            try:
+                fee_amount = float(raw)
+            except (TypeError, ValueError):
+                flash(f'Invalid fee amount for {event.display_name}: {raw!r}', 'error')
+                continue
+
+            # Apply to every active competitor enrolled in this event.
+            competitors = ProCompetitor.query.filter_by(
+                tournament_id=tournament_id,
+                status='active',
+            ).all()
+            for comp in competitors:
+                entered = [str(eid) for eid in comp.get_events_entered()]
+                if str(event.id) not in entered:
+                    continue
+                existing_fees = comp.get_entry_fees()
+                existing = existing_fees.get(str(event.id), 0)
+                if existing and not overwrite:
+                    continue
+                comp.set_entry_fee(event.id, fee_amount)
+                updated_count += 1
+
+        db.session.commit()
+        log_action('pro_event_fees_configured', 'tournament', tournament_id, {
+            'event_count': len(pro_events),
+            'overwrite': overwrite,
+            'competitor_fees_updated': updated_count,
+        })
+        flash(f'Entry fees applied to {updated_count} competitor-event record(s).', 'success')
+        return redirect(url_for('reporting.pro_event_fees', tournament_id=tournament_id))
+
+    # Build display data: per event, count enrolled and sum of fees already set.
+    competitors_all = ProCompetitor.query.filter_by(
+        tournament_id=tournament_id, status='active',
+    ).all()
+
+    event_rows = []
+    for event in pro_events:
+        enrolled = [
+            c for c in competitors_all
+            if str(event.id) in [str(eid) for eid in c.get_events_entered()]
+        ]
+        fee_values = [
+            c.get_entry_fees().get(str(event.id), 0)
+            for c in enrolled
+        ]
+        set_count = sum(1 for v in fee_values if v)
+        # Suggest the most common non-zero fee, or 0 if none set yet.
+        from collections import Counter
+        nonzero = [v for v in fee_values if v]
+        suggested = Counter(nonzero).most_common(1)[0][0] if nonzero else 0
+        event_rows.append({
+            'event': event,
+            'enrolled_count': len(enrolled),
+            'fee_set_count': set_count,
+            'suggested_fee': suggested,
+        })
+
+    return render_template(
+        'reporting/event_fee_config.html',
+        tournament=tournament,
+        event_rows=event_rows,
+    )
+
+
+# ---------------------------------------------------------------------------
 # #25 — Cloud / local backup
 # ---------------------------------------------------------------------------
 

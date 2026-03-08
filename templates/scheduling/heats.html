@@ -4,7 +4,17 @@
 
 {% block extra_css %}
 <style>
-/* ── Heat card grid ───────────────────────────────────────── */
+/* ── Stand color palette ─────────────────────────────────────────────── */
+.stand-badge.stand-1 { background:#1a6fa8 !important; color:#fff !important; border-color:#1a6fa8 !important; }
+.stand-badge.stand-2 { background:#2a9d8f !important; color:#fff !important; border-color:#2a9d8f !important; }
+.stand-badge.stand-3 { background:#8d3a6e !important; color:#fff !important; border-color:#8d3a6e !important; }
+.stand-badge.stand-4 { background:#e07c2b !important; color:#fff !important; border-color:#e07c2b !important; }
+.stand-badge.stand-5 { background:#5c6bc0 !important; color:#fff !important; border-color:#5c6bc0 !important; }
+.stand-badge.stand-6 { background:#388e3c !important; color:#fff !important; border-color:#388e3c !important; }
+.stand-badge.stand-7 { background:#c0392b !important; color:#fff !important; border-color:#c0392b !important; }
+.stand-badge.stand-8 { background:#6d4c41 !important; color:#fff !important; border-color:#6d4c41 !important; }
+
+/* ── Heat card grid ──────────────────────────────────────────────────── */
 .heat-card {
     background: var(--sx-surface);
     border: 1px solid var(--sx-border);
@@ -16,7 +26,6 @@
     height: 100%;
 }
 
-/* Pending header */
 .heat-card-header {
     display: flex;
     align-items: center;
@@ -25,16 +34,8 @@
     background: var(--sx-surface-2);
     border-bottom: 1px solid var(--sx-border);
 }
-/* Completed header — green accent */
-.heat-card-header.completed {
-    background: rgba(45,168,94,0.12);
-    border-bottom-color: rgba(45,168,94,0.35);
-}
-/* Active/in-progress header — amber accent */
-.heat-card-header.in-progress {
-    background: rgba(232,144,18,0.12);
-    border-bottom-color: rgba(232,144,18,0.35);
-}
+.heat-card-header.completed  { background: rgba(45,168,94,0.12); border-bottom-color: rgba(45,168,94,0.35); }
+.heat-card-header.in-progress { background: rgba(232,144,18,0.12); border-bottom-color: rgba(232,144,18,0.35); }
 
 .heat-card-title {
     font-weight: 700;
@@ -42,25 +43,20 @@
     color: var(--sx-text);
     letter-spacing: 0.03em;
 }
-.heat-card-title small {
-    font-weight: 400;
-    color: var(--sx-text-2);
-}
+.heat-card-title small { font-weight: 400; color: var(--sx-text-2); }
 
-/* Competitor list items */
 .heat-card .list-group-item {
-    padding: 7px 14px;
+    padding: 6px 12px;
     border-color: var(--sx-border);
     background: transparent;
 }
 .heat-card .list-group-item:hover { background: rgba(255,255,255,0.03); }
 
-/* Stand badge inside competitor rows */
 .stand-badge {
     display: inline-block;
-    min-width: 24px;
+    min-width: 22px;
     text-align: center;
-    font-size: 0.72rem;
+    font-size: 0.70rem;
     font-weight: 700;
     color: var(--sx-text-2);
     background: var(--sx-surface-3);
@@ -70,13 +66,8 @@
     margin-right: 6px;
 }
 
-/* Competitor name */
-.comp-name {
-    font-size: 0.87rem;
-    color: var(--sx-text);
-}
+.comp-name { font-size: 0.87rem; color: var(--sx-text); }
 
-/* Card footer */
 .heat-card-footer {
     padding: 10px 14px;
     border-top: 1px solid var(--sx-border);
@@ -85,9 +76,7 @@
 }
 
 /* Edit assignments <details> */
-.heat-assign-details {
-    margin-top: 10px;
-}
+.heat-assign-details { margin-top: 10px; }
 .heat-assign-details summary {
     font-size: 0.80rem;
     color: var(--sx-text-2);
@@ -96,8 +85,24 @@
     padding: 4px 0;
 }
 .heat-assign-details summary:hover { color: var(--sx-text); }
-.heat-assign-details .form-select-sm {
-    font-size: 0.80rem;
+.heat-assign-details .form-select-sm { font-size: 0.80rem; }
+
+/* ── Dual-run card ───────────────────────────────────────────────────── */
+.dual-run-card {
+    background: var(--sx-surface);
+    border: 1px solid var(--sx-border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 3px 14px rgba(0,0,0,0.30);
+}
+.dual-run-card .run-header {
+    padding: 3px 10px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--sx-text-2);
+    background: var(--sx-surface-3);
 }
 </style>
 {% endblock %}
@@ -114,7 +119,7 @@
                     <li class="breadcrumb-item active">{{ event.display_name }}</li>
                 </ol>
             </nav>
-            <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <div>
                     <h1>
                         <i class="bi bi-layers text-primary"></i>
@@ -124,11 +129,11 @@
                         <span class="badge bg-secondary">{{ event.scoring_type }}</span>
                         <span class="badge bg-info">{{ event.max_stands or '?' }} stands</span>
                         {% if event.requires_dual_runs %}
-                            <span class="badge bg-warning text-dark">Dual Runs Required</span>
+                            <span class="badge bg-warning text-dark">Dual Runs — side-by-side view</span>
                         {% endif %}
                     </p>
                 </div>
-                <div>
+                <div class="d-flex flex-wrap gap-2">
                     {% if signup_list_mode %}
                     <span class="badge bg-dark">Signup List Event (No Heats)</span>
                     {% elif not heats %}
@@ -161,6 +166,7 @@
         </div>
     </div>
 
+    {# ── Signup list mode ── #}
     {% if signup_list_mode %}
     <div class="row">
         <div class="col-12">
@@ -178,6 +184,136 @@
             </div>
         </div>
     </div>
+
+    {# ── Dual-run events: side-by-side layout ── #}
+    {% elif heats and event.requires_dual_runs %}
+    {% set ns = namespace(shown_heat_numbers=[]) %}
+    <div class="row row-cols-1 row-cols-xl-2 g-3">
+        {% for heat in heats %}
+        {% if heat.heat_number not in ns.shown_heat_numbers %}
+        {% set _ = ns.shown_heat_numbers.append(heat.heat_number) %}
+        {# Locate run1 and run2 for this heat_number #}
+        {% set run1 = heats | selectattr('heat_number', 'equalto', heat.heat_number) | selectattr('run_number', 'equalto', 1) | list | first %}
+        {% set run2 = heats | selectattr('heat_number', 'equalto', heat.heat_number) | selectattr('run_number', 'equalto', 2) | list | first %}
+        <div class="col">
+            <div class="dual-run-card h-100">
+                {# Header #}
+                <div class="heat-card-header {% if run1 and run1.status == 'completed' and (not run2 or run2.status == 'completed') %}completed{% elif run1 and run1.status == 'in_progress' %}in-progress{% endif %} d-flex justify-content-between align-items-center">
+                    <span class="heat-card-title">Heat {{ heat.heat_number }}</span>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-info text-dark" style="font-size:0.65rem;">2 Runs</span>
+                        {% if run1 and run1.status == 'completed' and (not run2 or run2.status == 'completed') %}
+                            <i class="bi bi-check-circle-fill text-success"></i>
+                        {% elif run1 and run1.status == 'in_progress' %}
+                            <span class="badge bg-warning text-dark">Active</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {# Two-column run display #}
+                <div class="row g-0" style="border-top:1px solid var(--sx-border);">
+                    {# Run 1 #}
+                    <div class="col-6" style="border-right:1px solid var(--sx-border);">
+                        <div class="run-header">Run 1</div>
+                        {% if run1 %}
+                        {% set r1_assignments = run1.get_stand_assignments() %}
+                        <ul class="list-group list-group-flush">
+                            {% for cid in run1.get_competitors() %}
+                            {% if event.event_type == 'college' %}
+                                {% set comp = tournament.college_competitors.filter_by(id=cid).first() %}
+                            {% else %}
+                                {% set comp = tournament.pro_competitors.filter_by(id=cid).first() %}
+                            {% endif %}
+                            {% set sn = r1_assignments.get(cid|string)|int if r1_assignments.get(cid|string) else 0 %}
+                            <li class="list-group-item d-flex align-items-center" style="padding:5px 10px;">
+                                <span class="stand-badge stand-{{ sn }}">{{ r1_assignments.get(cid|string, '?') }}</span>
+                                <span class="comp-name">{{ comp.name if comp else 'Unknown' }}</span>
+                            </li>
+                            {% else %}
+                            <li class="list-group-item text-muted fst-italic" style="font-size:0.82rem;">No competitors</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </div>
+                    {# Run 2 #}
+                    <div class="col-6">
+                        <div class="run-header">Run 2</div>
+                        {% if run2 %}
+                        {% set r2_assignments = run2.get_stand_assignments() %}
+                        <ul class="list-group list-group-flush">
+                            {% for cid in run2.get_competitors() %}
+                            {% if event.event_type == 'college' %}
+                                {% set comp = tournament.college_competitors.filter_by(id=cid).first() %}
+                            {% else %}
+                                {% set comp = tournament.pro_competitors.filter_by(id=cid).first() %}
+                            {% endif %}
+                            {% set sn = r2_assignments.get(cid|string)|int if r2_assignments.get(cid|string) else 0 %}
+                            <li class="list-group-item d-flex align-items-center" style="padding:5px 10px;">
+                                <span class="stand-badge stand-{{ sn }}">{{ r2_assignments.get(cid|string, '?') }}</span>
+                                <span class="comp-name">{{ comp.name if comp else 'Unknown' }}</span>
+                            </li>
+                            {% else %}
+                            <li class="list-group-item text-muted fst-italic" style="font-size:0.82rem;">No competitors</li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <div class="p-3 text-muted fst-italic" style="font-size:0.82rem;">Run 2 not generated</div>
+                        {% endif %}
+                    </div>
+                </div>
+                {# Footer — score + move (based on run1) #}
+                {% if run1 %}
+                <div class="heat-card-footer">
+                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=run1.id) }}"
+                       class="btn btn-sm {% if run1.status == 'completed' and (not run2 or run2.status == 'completed') %}btn-outline-success{% else %}btn-proam{% endif %} w-100">
+                        {% if run1.status == 'completed' and (not run2 or run2.status == 'completed') %}
+                            <i class="bi bi-pencil"></i> Edit Results
+                        {% else %}
+                            <i class="bi bi-play-fill"></i> Enter Results
+                        {% endif %}
+                    </a>
+                    <details class="heat-assign-details">
+                        <summary>Move Competitor</summary>
+                        <form action="{{ url_for('scheduling.move_competitor_between_heats', tournament_id=tournament.id, event_id=event.id) }}"
+                              method="POST" class="mt-2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="from_heat_id" value="{{ run1.id }}">
+                            <div class="mb-2">
+                                <label class="form-label mb-1">Competitor</label>
+                                <select class="form-select form-select-sm" name="competitor_id" required>
+                                    <option value="">Select...</option>
+                                    {% for cid in run1.get_competitors() %}
+                                    {% if event.event_type == 'college' %}
+                                        {% set c = tournament.college_competitors.filter_by(id=cid).first() %}
+                                    {% else %}
+                                        {% set c = tournament.pro_competitors.filter_by(id=cid).first() %}
+                                    {% endif %}
+                                    {% if c %}<option value="{{ c.id }}">{{ c.name }}</option>{% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label mb-1">Move To Heat</label>
+                                <select class="form-select form-select-sm" name="to_heat_id" required>
+                                    <option value="">Select heat...</option>
+                                    {% for dest in heats %}
+                                    {% if dest.heat_number != run1.heat_number and dest.run_number == 1 %}
+                                    <option value="{{ dest.id }}">Heat {{ dest.heat_number }}</option>
+                                    {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-sm btn-outline-primary w-100">Move</button>
+                        </form>
+                    </details>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    {# ── Single-run events: original card grid ── #}
     {% elif heats %}
     <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-xl-4 g-3">
         {% for heat in heats %}
@@ -208,8 +344,9 @@
                         {% else %}
                             {% set comp = tournament.pro_competitors.filter_by(id=comp_id).first() %}
                         {% endif %}
+                        {% set sn = assignments.get(comp_id|string)|int if assignments.get(comp_id|string) else 0 %}
                         <li class="list-group-item d-flex align-items-center">
-                            <span class="stand-badge">{{ assignments.get(comp_id|string, '?') }}</span>
+                            <span class="stand-badge stand-{{ sn }}">{{ assignments.get(comp_id|string, '?') }}</span>
                             <span class="comp-name">{{ comp.name if comp else 'Unknown' }}</span>
                         </li>
                     {% else %}
@@ -270,6 +407,8 @@
         </div>
         {% endfor %}
     </div>
+
+    {# ── No heats ── #}
     {% else %}
     <div class="row">
         <div class="col-12">
@@ -284,6 +423,59 @@
                             <i class="bi bi-shuffle"></i> Generate Heats Now
                         </button>
                     </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Competitor Spacing Timeline ── #}
+    {% if spacing_data and spacing_data.competitors %}
+    <div class="mt-4">
+        <button class="btn btn-outline-secondary btn-sm mb-2" type="button"
+                data-bs-toggle="collapse" data-bs-target="#spacingPanel" aria-expanded="false">
+            <i class="bi bi-bar-chart-steps me-1"></i>Competitor Spacing Timeline
+        </button>
+        <div class="collapse" id="spacingPanel">
+            <div class="card">
+                <div class="card-body py-3 px-3">
+                    <p class="text-muted small mb-2">
+                        Each bar shows when a competitor appears across all heats.
+                        <span class="text-danger fw-semibold">Red</span> = fewer than 4 heats between appearances (tight gap).
+                    </p>
+                    <div style="overflow-x:auto;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.78rem; min-width:400px;">
+                        <thead>
+                            <tr>
+                                <th style="width:170px; padding:3px 8px; text-align:left; color:var(--sx-text-2);">Competitor</th>
+                                <th style="padding:3px 8px; text-align:left; color:var(--sx-text-2);">
+                                    Heats 1 &ndash; {{ spacing_data.total_heats }}
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for comp in spacing_data.competitors %}
+                            {% set appearances = comp.appearances %}
+                            <tr>
+                                <td style="padding:3px 8px; color:var(--sx-text); font-weight:600; white-space:nowrap; max-width:170px; overflow:hidden; text-overflow:ellipsis;" title="{{ comp.name }}">{{ comp.name }}</td>
+                                <td style="padding:3px 8px;">
+                                    <div style="position:relative; height:16px; background:var(--sx-surface-2); border-radius:3px; border:1px solid var(--sx-border);">
+                                        {% for hn in appearances %}
+                                        {% set left_pct = ((hn - 1) / spacing_data.total_heats * 100) | round(2) %}
+                                        {% set width_pct = [1 / spacing_data.total_heats * 100, 1.5] | max | round(2) %}
+                                        {% set prev = appearances[loop.index0 - 1] if loop.index0 > 0 else none %}
+                                        {% set gap = (hn - prev) if prev is not none else 99 %}
+                                        {% set bar_color = '#e74c3c' if (gap < 4 and prev is not none) else '#3b8ee8' %}
+                                        <div title="Heat {{ hn }}{% if prev is not none %} (gap: {{ gap - 1 }} heats){% endif %}"
+                                             style="position:absolute; left:{{ left_pct }}%; width:max({{ width_pct }}%, 5px); height:100%; background:{{ bar_color }}; border-radius:2px;"></div>
+                                        {% endfor %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -305,7 +497,7 @@
                     <h5 class="modal-title">HeatAssignment Sync Check</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body" id="syncModalBody">Checking…</div>
+                <div class="modal-body" id="syncModalBody">Checking...</div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                     <button type="button" class="btn btn-warning" id="syncFixBtn" style="display:none;"

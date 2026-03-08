@@ -17,6 +17,69 @@ LIST_ONLY_EVENT_NAMES = {
 }
 
 
+def _rank_category_for_event(event: Event):
+    """Return the ProEventRank category string for this event, or None if unranked."""
+    if event is None:
+        return None
+    st = getattr(event, 'stand_type', None)
+    if st == 'springboard':
+        return 'springboard'
+    if st == 'underhand':
+        return 'underhand'
+    if st == 'standing_block':
+        return 'standing_block'
+    if st == 'obstacle_pole':
+        return 'obstacle_pole'
+    if st == 'saw_hand':
+        if not getattr(event, 'is_partnered', False):
+            return 'singlebuck'
+        pg = getattr(event, 'partner_gender', None)
+        if pg == 'mixed':
+            return 'jack_jill'
+        return 'doublebuck'
+    return None
+
+
+def _sort_by_ability(competitors: list, event: Event) -> list:
+    """
+    Sort competitors by their ProEventRank before the snake draft.
+
+    Ranked competitors (rank 1 = best) are placed first in ascending order.
+    Competitors with no rank record sort to the end of the list so they are
+    still distributed by snake draft among the unranked group.
+
+    Falls back to the original list order when:
+    - event is None or event_type is not 'pro'
+    - the event has no ranked category
+    - no ProEventRank rows exist for this tournament + category
+    """
+    if event is None or getattr(event, 'event_type', None) != 'pro':
+        return competitors
+
+    category = _rank_category_for_event(event)
+    if category is None:
+        return competitors
+
+    # Local import to avoid circular imports (established project pattern).
+    from models.pro_event_rank import ProEventRank
+
+    rows = ProEventRank.query.filter_by(
+        tournament_id=event.tournament_id,
+        event_category=category,
+    ).all()
+
+    if not rows:
+        return competitors  # No ranks set — fall back to registration order.
+
+    rank_map = {row.competitor_id: row.rank for row in rows}
+    # Secondary sort by name ensures unranked competitors (float('inf')) are
+    # ordered alphabetically for reproducibility (#23).
+    return sorted(
+        competitors,
+        key=lambda c: (rank_map.get(c['id'], float('inf')), c.get('name', '')),
+    )
+
+
 def generate_event_heats(event: Event) -> int:
     """
     Generate heats for an event using snake draft distribution.
@@ -207,7 +270,11 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
     Snake draft ensures each heat has a mix of skill levels.
     """
     heats = [[] for _ in range(num_heats)]
+    competitors = _sort_by_ability(competitors, event)
     units = _build_partner_units(competitors, event)
+    # Re-sort partner units by composite rank so paired competitors enter the
+    # snake draft in the right ability order (#22).
+    units = _sort_units_by_ability(units, event)
 
     # Snake draft distribution
     direction = 1
@@ -271,6 +338,41 @@ def _build_partner_units(competitors: list, event: Event) -> list:
         used.add(comp_id)
 
     return units
+
+
+def _sort_units_by_ability(units: list, event: Event) -> list:
+    """
+    Sort partner units by composite ability rank for the snake draft (#22).
+
+    A unit's rank is the minimum rank of its members (best member drives position).
+    Unranked units sort after all ranked units, with alphabetical secondary sort.
+    Falls back to the input order when no ranks are configured.
+    """
+    if event is None or getattr(event, 'event_type', None) != 'pro':
+        return units
+
+    category = _rank_category_for_event(event)
+    if category is None:
+        return units
+
+    from models.pro_event_rank import ProEventRank
+
+    rows = ProEventRank.query.filter_by(
+        tournament_id=event.tournament_id,
+        event_category=category,
+    ).all()
+
+    if not rows:
+        return units
+
+    rank_map = {row.competitor_id: row.rank for row in rows}
+    return sorted(
+        units,
+        key=lambda unit: (
+            min(rank_map.get(c['id'], float('inf')) for c in unit),
+            min(c.get('name', '') for c in unit),
+        ),
+    )
 
 
 def _norm_name(value) -> str:
@@ -350,7 +452,10 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
     _place_group(slow_heat, slow_heat_idx)
 
     # Fill the remaining cutters with snake draft while respecting capacity.
-    remaining = [c for c in competitors if c['id'] not in assigned_ids]
+    # Sort by ability rank before the snake draft so each heat gets a skill mix.
+    remaining = _sort_by_ability(
+        [c for c in competitors if c['id'] not in assigned_ids], event
+    )
     if not remaining:
         return heats
 

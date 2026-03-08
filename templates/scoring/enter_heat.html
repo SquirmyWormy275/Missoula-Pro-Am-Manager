@@ -1,443 +1,848 @@
 {% extends "base.html" %}
 
-{% block title %}Enter Results - Heat {{ heat.heat_number }} - {{ event.display_name }}{% endblock %}
+{% block title %}Enter Results – Heat {{ heat.heat_number }}{% if event.requires_dual_runs %} Run {{ heat.run_number }}{% endif %} – {{ event.display_name }}{% endblock %}
 
 {% block extra_css %}
 <style>
-    .tablet-mode input[type="number"],
-    .tablet-mode select {
-        font-size: 1.4rem;
-        padding: 0.6rem 0.8rem;
-        height: auto;
-    }
+/* ── Tablet / large-input mode ───────────────────────────────────────────── */
+.tablet-mode .result-input,
+.tablet-mode select.form-select {
+    font-size: 1.5rem;
+    padding: 0.65rem 0.9rem;
+    height: auto;
+}
+.tablet-mode .quick-btn { font-size: 1rem; padding: 0.4rem 0.75rem; }
 
-    @media (max-width: 768px) {
-        .sticky-save {
-            position: sticky;
-            bottom: 0;
-            background: #fff;
-            padding-top: 0.75rem;
-            border-top: 1px solid #dee2e6;
-            z-index: 10;
-        }
-        input[type="number"] {
-            font-size: 1.2rem;
-            min-height: 44px;
-        }
-        select.form-select {
-            min-height: 44px;
-        }
+@media (max-width: 768px) {
+    .result-input { font-size: 1.2rem; min-height: 48px; }
+    select.form-select { min-height: 48px; }
+    .sticky-save {
+        position: sticky; bottom: 0;
+        background: #fff; padding-top: 0.75rem;
+        border-top: 1px solid #dee2e6; z-index: 10;
     }
+}
+
+/* ── Tie indicator ───────────────────────────────────────────────────────── */
+.tie-indicator {
+    display: none;
+    font-size: 0.75rem; font-weight: 600;
+    color: #fff; background: #f0ad4e;
+    border-radius: 4px; padding: 1px 6px;
+    margin-left: 4px; vertical-align: middle;
+}
+
+/* ── Lock banner ─────────────────────────────────────────────────────────── */
+.lock-banner { font-size: 0.9rem; }
+
+/* ── Headshot thumbnail ──────────────────────────────────────────────────── */
+.comp-headshot {
+    width: 36px; height: 36px;
+    object-fit: cover; border-radius: 50%;
+    border: 1px solid #dee2e6;
+}
+.comp-headshot-placeholder {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: #e9ecef; display: inline-flex;
+    align-items: center; justify-content: center;
+    font-size: 1rem; color: #6c757d;
+    border: 1px solid #dee2e6;
+}
+
+/* ── Run-2 context chip ──────────────────────────────────────────────────── */
+.run1-chip {
+    font-size: 0.75rem; color: #6c757d;
+    background: #f8f9fa; border-radius: 4px;
+    padding: 2px 6px; white-space: nowrap;
+}
+.run1-chip.is-best { color: #198754; font-weight: 600; }
+
+/* ── Numpad overlay ──────────────────────────────────────────────────────── */
+#numpadOverlay {
+    position: fixed; inset: 0; z-index: 2000;
+    background: rgba(0,0,0,.55);
+    display: none; align-items: flex-end; justify-content: center;
+}
+#numpadOverlay.open { display: flex; }
+#numpadPanel {
+    background: #1c2230; border-radius: 16px 16px 0 0;
+    width: 100%; max-width: 420px;
+    padding: 16px 16px 32px;
+    box-shadow: 0 -4px 24px rgba(0,0,0,.4);
+}
+#numpadDisplay {
+    font-size: 2.4rem; font-weight: 700; color: #fff;
+    text-align: right; padding: 8px 12px 12px;
+    border-bottom: 1px solid #2e3a50; margin-bottom: 12px;
+    min-height: 60px; letter-spacing: 1px;
+}
+#numpadLabel {
+    font-size: 0.78rem; color: #8fa3c0;
+    text-align: center; margin-bottom: 8px;
+}
+.np-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+}
+.np-btn {
+    background: #2e3a50; color: #e8edf5; border: none;
+    border-radius: 10px; font-size: 1.4rem; font-weight: 500;
+    padding: 14px 0; cursor: pointer; transition: background .12s;
+    -webkit-tap-highlight-color: transparent;
+}
+.np-btn:active, .np-btn:hover { background: #3d4f6b; }
+.np-btn.np-action { background: #3a506b; color: #7eb8f7; }
+.np-btn.np-confirm { background: #1a7a4a; color: #fff; grid-column: span 2; }
+.np-btn.np-cancel  { background: #7a1a1a; color: #fff; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="container py-4">
-    <div class="row justify-content-center">
-        <div class="col-lg-8">
-            <nav aria-label="breadcrumb">
-                <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
-                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
-                    <li class="breadcrumb-item"><a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Events</a></li>
-                    <li class="breadcrumb-item"><a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}">{{ event.display_name }}</a></li>
-                    <li class="breadcrumb-item active">Heat {{ heat.heat_number }}{% if event.requires_dual_runs %} - Run {{ heat.run_number }}{% endif %}</li>
-                </ol>
-            </nav>
+  <div class="row justify-content-center">
+    <div class="col-lg-9">
 
-            <div class="card">
-                <div class="card-header card-header-proam d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">
-                        <i class="bi bi-pencil-square"></i>
-                        Enter Results: Heat {{ heat.heat_number }}
-                        {% if event.requires_dual_runs %} - Run {{ heat.run_number }}{% endif %}
-                    </h5>
-                    <button type="button" class="btn btn-sm btn-outline-light" id="tabletModeBtn" title="Toggle tablet-friendly large inputs">
-                        <i class="bi bi-tablet"></i> Tablet
-                    </button>
-                </div>
-                <div class="card-body">
-                    <div id="offlineStatusBox" class="alert alert-secondary mb-3 d-none"></div>
+      {# ── Breadcrumb ────────────────────────────────────────────────────── #}
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+          <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+          <li class="breadcrumb-item"><a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Events</a></li>
+          <li class="breadcrumb-item"><a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}">{{ event.display_name }}</a></li>
+          <li class="breadcrumb-item active">Heat {{ heat.heat_number }}{% if event.requires_dual_runs %} – Run {{ heat.run_number }}{% endif %}</li>
+        </ol>
+      </nav>
 
-                    <div class="alert alert-info mb-4">
-                        <i class="bi bi-info-circle"></i>
-                        <strong>{{ event.display_name }}</strong> -
-                        {% if event.scoring_type == 'time' %}
-                            Enter time in seconds (lower is better)
-                        {% elif event.scoring_type == 'hits' %}
-                            Enter number of hits (fewer is better)
-                        {% elif event.scoring_type == 'score' %}
-                            Enter score (higher is better)
-                        {% elif event.scoring_type == 'distance' %}
-                            Enter distance in feet (greater is better)
-                        {% endif %}
-                    </div>
-
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div class="d-flex align-items-center gap-2">
-                            <button type="button" class="btn btn-sm btn-outline-secondary" id="markAllCompleteBtn">
-                                <i class="bi bi-check-all"></i> Mark All Complete
-                            </button>
-                            <a href="{{ url_for('scoring.offline_ops', tournament_id=tournament.id) }}"
-                               class="btn btn-sm btn-outline-info">
-                                <i class="bi bi-wifi-off"></i> Offline Ops
-                            </a>
-                        </div>
-                        <div class="d-flex align-items-center gap-2">
-                            <button type="button" class="btn btn-sm btn-outline-info" id="syncPendingBtn">
-                                <i class="bi bi-arrow-repeat"></i> Sync Pending
-                            </button>
-                            <small class="text-muted" id="netStatusLabel">Checking connection...</small>
-                        </div>
-                    </div>
-
-                    <form method="POST" id="heatEntryForm">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="heat_version" value="{{ heat_version }}">
-                        <table class="table">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Stand</th>
-                                    <th>Competitor</th>
-                                    <th>Result</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for comp in competitors %}
-                                <tr>
-                                    <td>
-                                        <span class="badge bg-secondary">{{ comp.stand or 'N/A' }}</span>
-                                    </td>
-                                    <td>
-                                        <strong>{{ comp.name }}</strong>
-                                    </td>
-                                    <td>
-                                        <div class="input-group">
-                                            <input type="number"
-                                                   class="form-control"
-                                                   name="result_{{ comp.id }}"
-                                                   step="0.01"
-                                                   min="0"
-                                                   inputmode="decimal"
-                                                   placeholder="{% if event.scoring_type == 'time' %}seconds{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}feet{% else %}score{% endif %}">
-                                            <span class="input-group-text">
-                                                {% if event.scoring_type == 'time' %}s{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}ft{% else %}pts{% endif %}
-                                            </span>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <select class="form-select" name="status_{{ comp.id }}">
-                                            <option value="completed">Completed</option>
-                                            <option value="dnf">DNF</option>
-                                            <option value="scratched">Scratched</option>
-                                        </select>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-
-                        <hr>
-
-                        <div class="sticky-save">
-                            <div class="d-grid gap-2 mb-2">
-                                <button type="submit" id="savePrimaryBtn" class="btn btn-proam btn-lg">
-                                    <i class="bi bi-check-circle"></i> Save Results
-                                </button>
-                                {% if next_heat_url %}
-                                <button type="submit" id="saveNextBtn" class="btn btn-outline-warning"
-                                        data-next-url="{{ next_heat_url }}">
-                                    <i class="bi bi-skip-forward-fill"></i> Save &amp; Next Heat
-                                </button>
-                                {% endif %}
-                            </div>
-                            <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
-                               class="btn btn-outline-secondary w-100">
-                                <i class="bi bi-arrow-left"></i> Back to Event
-                            </a>
-                        </div>
-                    </form>
-                </div>
-            </div>
+      {# ── Lock banner ───────────────────────────────────────────────────── #}
+      {% if lock_blocked %}
+      <div class="alert alert-danger lock-banner d-flex align-items-center gap-2 mb-3">
+        <i class="bi bi-lock-fill fs-5"></i>
+        <div>
+          <strong>Heat is locked</strong> — currently being entered by <strong>{{ lock_owner }}</strong>.
+          Results are shown read-only. Refresh to check if the lock has been released.
         </div>
+      </div>
+      {% endif %}
+
+      {# ── Main card ─────────────────────────────────────────────────────── #}
+      <div class="card">
+        <div class="card-header card-header-proam d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <h5 class="mb-0">
+            <i class="bi bi-pencil-square"></i>
+            Heat {{ heat.heat_number }}
+            {% if event.requires_dual_runs %}– Run {{ heat.run_number }}{% endif %}
+            {% if event.requires_triple_runs %}<span class="badge bg-info ms-2">3 Throws</span>{% endif %}
+          </h5>
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-light" id="numpadToggleBtn"
+                    title="Toggle large numpad">
+              <i class="bi bi-calculator"></i>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-light" id="tabletModeBtn"
+                    title="Toggle tablet large-input mode">
+              <i class="bi bi-tablet"></i> Tablet
+            </button>
+          </div>
+        </div>
+        <div class="card-body">
+
+          {# ── Status / offline box ──────────────────────────────────────── #}
+          <div id="offlineStatusBox" class="alert alert-secondary mb-3 d-none"></div>
+
+          {# ── Event info banner ─────────────────────────────────────────── #}
+          <div class="alert alert-info mb-4 py-2">
+            <i class="bi bi-info-circle"></i>
+            <strong>{{ event.display_name }}</strong> —
+            {% if event.requires_triple_runs %}
+              Enter <strong>3 throws</strong>; cumulative score counts
+              ({{ 'higher' if event.scoring_order == 'highest_wins' else 'lower' }} is better).
+              Ties trigger a throw-off.
+            {% elif event.requires_dual_runs %}
+              Two runs — best counts
+              ({{ 'fastest / lowest' if event.scoring_order == 'lowest_wins' else 'farthest / highest' }}).
+              {% if heat.run_number == 2 %}<strong>Run 1 results shown for reference.</strong>{% endif %}
+            {% elif event.is_hard_hit %}
+              Enter <strong>hits</strong> (more is better) and <strong>time</strong> as tiebreak (fastest wins ties).
+            {% elif event.scoring_type == 'time' %}
+              Enter time in seconds — lower is better.
+            {% elif event.scoring_type == 'distance' %}
+              Enter distance in feet — farther is better.
+            {% else %}
+              Enter score — {{ 'higher' if event.scoring_order == 'highest_wins' else 'lower' }} is better.
+            {% endif %}
+          </div>
+
+          {# ── Toolbar ───────────────────────────────────────────────────── #}
+          <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <div class="d-flex align-items-center gap-2">
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="markAllCompleteBtn">
+                <i class="bi bi-check-all"></i> Mark All Complete
+              </button>
+              {% if not lock_blocked %}
+              <div class="form-check form-switch mb-0 ms-2">
+                <input class="form-check-input" type="checkbox" id="autoAdvanceToggle">
+                <label class="form-check-label small" for="autoAdvanceToggle">Auto-advance</label>
+              </div>
+              {% endif %}
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button type="button" class="btn btn-sm btn-outline-info" id="syncPendingBtn">
+                <i class="bi bi-arrow-repeat"></i> Sync
+              </button>
+              <a href="{{ url_for('scoring.offline_ops', tournament_id=tournament.id) }}"
+                 class="btn btn-sm btn-outline-info">
+                <i class="bi bi-wifi-off"></i> Offline
+              </a>
+              <small class="text-muted" id="netStatusLabel">…</small>
+            </div>
+          </div>
+
+          {# ── Entry form ────────────────────────────────────────────────── #}
+          <form method="POST" id="heatEntryForm" {% if lock_blocked %}inert{% endif %}>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="heat_version" value="{{ heat_version }}">
+
+            <div class="table-responsive">
+            <table class="table align-middle">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:44px"></th>{# headshot #}
+                  <th>Stand</th>
+                  <th>Competitor</th>
+                  {% if event.requires_triple_runs %}
+                    <th>Throw 1</th>
+                    <th>Throw 2</th>
+                    <th>Throw 3</th>
+                    <th class="text-muted small">Total</th>
+                  {% elif event.requires_dual_runs %}
+                    {% if heat.run_number == 2 %}<th class="text-muted small">Run 1</th>{% endif %}
+                    <th>Run {{ heat.run_number }}</th>
+                  {% elif event.is_hard_hit %}
+                    <th>Hits</th>
+                    <th>Time (s) <small class="text-muted">tiebreak</small></th>
+                  {% else %}
+                    <th>Result</th>
+                  {% endif %}
+                  <th>Status</th>
+                  <th></th>{# quick buttons #}
+                </tr>
+              </thead>
+              <tbody id="competitorRows">
+                {% for comp in competitors %}
+                <tr class="comp-row" data-comp-id="{{ comp.id }}">
+
+                  {# headshot #}
+                  <td>
+                    {% if comp.headshot %}
+                      <img src="{{ url_for('static', filename='uploads/headshots/' ~ comp.headshot) }}"
+                           alt="{{ comp.name }}" class="comp-headshot">
+                    {% else %}
+                      <span class="comp-headshot-placeholder"><i class="bi bi-person"></i></span>
+                    {% endif %}
+                  </td>
+
+                  {# stand #}
+                  <td>
+                    <span class="badge bg-secondary">{{ comp.stand or '—' }}</span>
+                  </td>
+
+                  {# name #}
+                  <td>
+                    <strong>{{ comp.name }}</strong>
+                    <span class="tie-indicator" id="tie_{{ comp.id }}">TIE</span>
+                  </td>
+
+                  {# result inputs #}
+                  {% if event.requires_triple_runs %}
+                    {# Throw 1 #}
+                    <td>
+                      <input type="number" class="form-control result-input throw-input"
+                             name="result_{{ comp.id }}" id="r1_{{ comp.id }}"
+                             step="1" min="0" inputmode="decimal"
+                             placeholder="hits"
+                             value="{{ comp.existing_run1 | int if comp.existing_run1 is not none else '' }}"
+                             data-comp="{{ comp.id }}" data-throw="1">
+                    </td>
+                    {# Throw 2 #}
+                    <td>
+                      <input type="number" class="form-control result-input throw-input"
+                             name="result2_{{ comp.id }}" id="r2_{{ comp.id }}"
+                             step="1" min="0" inputmode="decimal"
+                             placeholder="hits"
+                             value="{{ comp.existing_run2 | int if comp.existing_run2 is not none else '' }}"
+                             data-comp="{{ comp.id }}" data-throw="2">
+                    </td>
+                    {# Throw 3 #}
+                    <td>
+                      <input type="number" class="form-control result-input throw-input"
+                             name="result3_{{ comp.id }}" id="r3_{{ comp.id }}"
+                             step="1" min="0" inputmode="decimal"
+                             placeholder="hits"
+                             value="{{ comp.existing_run3 | int if comp.existing_run3 is not none else '' }}"
+                             data-comp="{{ comp.id }}" data-throw="3">
+                    </td>
+                    {# live running total #}
+                    <td>
+                      <span class="badge bg-primary" id="total_{{ comp.id }}">
+                        {{ ((comp.existing_run1 or 0) + (comp.existing_run2 or 0) + (comp.existing_run3 or 0)) | int }}
+                      </span>
+                    </td>
+
+                  {% elif event.requires_dual_runs %}
+                    {# run-1 context column #}
+                    {% if heat.run_number == 2 %}
+                    <td>
+                      {% if comp.run1_context is not none %}
+                        <span class="run1-chip">{{ "%.2f"|format(comp.run1_context) }}</span>
+                      {% else %}
+                        <span class="text-muted small">—</span>
+                      {% endif %}
+                    </td>
+                    {% endif %}
+                    {# current run input #}
+                    <td>
+                      <div class="input-group">
+                        <input type="number" class="form-control result-input"
+                               name="result_{{ comp.id }}"
+                               step="0.01" min="0" inputmode="decimal"
+                               placeholder="{% if event.scoring_type == 'time' %}sec{% elif event.scoring_type == 'distance' %}ft{% else %}score{% endif %}"
+                               value="{{ '%.2f'|format(comp.existing_run2 if heat.run_number == 2 else comp.existing_run1) if (comp.existing_run2 if heat.run_number == 2 else comp.existing_run1) is not none else '' }}"
+                               data-comp="{{ comp.id }}">
+                        <span class="input-group-text">
+                          {% if event.scoring_type == 'time' %}s{% elif event.scoring_type == 'distance' %}ft{% else %}pts{% endif %}
+                        </span>
+                      </div>
+                    </td>
+
+                  {% elif event.is_hard_hit %}
+                    {# hits input #}
+                    <td>
+                      <input type="number" class="form-control result-input"
+                             name="result_{{ comp.id }}"
+                             step="1" min="0" inputmode="numeric"
+                             placeholder="hits"
+                             value="{{ comp.existing_result | int if comp.existing_result is not none else '' }}"
+                             data-comp="{{ comp.id }}">
+                    </td>
+                    {# tiebreak time input #}
+                    <td>
+                      <div class="input-group">
+                        <input type="number" class="form-control result-input"
+                               name="tiebreak_{{ comp.id }}"
+                               step="0.01" min="0" inputmode="decimal"
+                               placeholder="secs"
+                               value="{{ '%.2f'|format(comp.existing_tiebreak) if comp.existing_tiebreak is not none else '' }}">
+                        <span class="input-group-text">s</span>
+                      </div>
+                    </td>
+
+                  {% else %}
+                    {# standard single result #}
+                    <td>
+                      <div class="input-group">
+                        <input type="number" class="form-control result-input"
+                               name="result_{{ comp.id }}"
+                               step="{% if event.scoring_type == 'hits' %}1{% else %}0.01{% endif %}"
+                               min="0"
+                               inputmode="{% if event.scoring_type == 'hits' %}numeric{% else %}decimal{% endif %}"
+                               placeholder="{% if event.scoring_type == 'time' %}seconds{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}feet{% else %}score{% endif %}"
+                               value="{{ comp.existing_result if comp.existing_result is not none else '' }}"
+                               data-comp="{{ comp.id }}">
+                        <span class="input-group-text">
+                          {% if event.scoring_type == 'time' %}s{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}ft{% else %}pts{% endif %}
+                        </span>
+                      </div>
+                    </td>
+                  {% endif %}
+
+                  {# status select #}
+                  <td>
+                    <select class="form-select" name="status_{{ comp.id }}">
+                      <option value="completed" {% if comp.existing_status == 'completed' %}selected{% endif %}>Done</option>
+                      <option value="dnf"       {% if comp.existing_status == 'dnf' %}selected{% endif %}>DNF</option>
+                      <option value="scratched" {% if comp.existing_status == 'scratched' %}selected{% endif %}>Scratched</option>
+                    </select>
+                  </td>
+
+                  {# quick-action buttons #}
+                  <td class="text-nowrap">
+                    {% if not lock_blocked %}
+                    <button type="button" class="btn btn-sm btn-outline-danger quick-btn quick-dnf"
+                            data-comp="{{ comp.id }}" title="Mark DNF">DNF</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary quick-btn quick-scratch"
+                            data-comp="{{ comp.id }}" title="Mark Scratched">SCR</button>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            </div>{# table-responsive #}
+
+            <hr>
+
+            {% if not lock_blocked %}
+            <div class="sticky-save">
+              <div class="d-grid gap-2 mb-2">
+                <button type="submit" id="savePrimaryBtn" class="btn btn-proam btn-lg">
+                  <i class="bi bi-check-circle"></i> Save Results
+                </button>
+                {% if next_heat_url %}
+                <button type="submit" id="saveNextBtn" class="btn btn-outline-warning"
+                        data-next-url="{{ next_heat_url }}">
+                  <i class="bi bi-skip-forward-fill"></i> Save &amp; Next Heat
+                </button>
+                {% endif %}
+              </div>
+              <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
+                 class="btn btn-outline-secondary w-100">
+                <i class="bi bi-arrow-left"></i> Back to Event
+              </a>
+            </div>
+            {% else %}
+            <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
+               class="btn btn-outline-secondary">
+              <i class="bi bi-arrow-left"></i> Back to Event
+            </a>
+            {% endif %}
+          </form>
+
+        </div>{# card-body #}
+      </div>{# card #}
     </div>
+  </div>
+</div>
+
+{# ── Numpad overlay ────────────────────────────────────────────────────────── #}
+<div id="numpadOverlay" role="dialog" aria-modal="true" aria-label="Number entry pad">
+  <div id="numpadPanel">
+    <div id="numpadLabel">Enter value</div>
+    <div id="numpadDisplay">—</div>
+    <div class="np-grid">
+      <button class="np-btn" data-val="7">7</button>
+      <button class="np-btn" data-val="8">8</button>
+      <button class="np-btn" data-val="9">9</button>
+      <button class="np-btn" data-val="4">4</button>
+      <button class="np-btn" data-val="5">5</button>
+      <button class="np-btn" data-val="6">6</button>
+      <button class="np-btn" data-val="1">1</button>
+      <button class="np-btn" data-val="2">2</button>
+      <button class="np-btn" data-val="3">3</button>
+      <button class="np-btn np-action" data-val=".">.</button>
+      <button class="np-btn" data-val="0">0</button>
+      <button class="np-btn np-action" id="npBackspace">⌫</button>
+      <button class="np-btn np-cancel"  id="npCancel">Cancel</button>
+      <button class="np-btn np-confirm" id="npConfirm">✓ Confirm</button>
+    </div>
+  </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/offline_queue_shared.js') }}"></script>
 <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        const form = document.getElementById('heatEntryForm');
-        const saveBtn = form.querySelector('button[type="submit"]');
-        const syncBtn = document.getElementById('syncPendingBtn');
-        const statusBox = document.getElementById('offlineStatusBox');
-        const netStatusLabel = document.getElementById('netStatusLabel');
-        const postUrl = "{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}";
-        const redirectUrl = "{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}";
-        let nextHeatOverride = null; // set when "Save & Next" is clicked
-        const heatId = {{ heat.id }};
-        const eventId = {{ event.id }};
-        const scoringOrder = "{{ event.scoring_order }}";
-        const requiresDualRuns = {{ 'true' if event.requires_dual_runs else 'false' }};
-        const runNumber = {{ heat.run_number }};
-        const competitorNames = {
-            {% for comp in competitors %}
-            "{{ comp.id }}": {{ comp.name|tojson }}{% if not loop.last %},{% endif %}
-            {% endfor %}
-        };
+document.addEventListener('DOMContentLoaded', function () {
+    /* ── Constants from server ───────────────────────────────────────────── */
+    const postUrl          = {{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id)|tojson }};
+    const redirectUrl      = {{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id)|tojson }};
+    const undoUrl          = {{ url_for('scoring.undo_heat_save', tournament_id=tournament.id, heat_id=heat.id)|tojson }};
+    const heatId           = {{ heat.id }};
+    const eventId          = {{ event.id }};
+    const scoringOrder     = {{ event.scoring_order|tojson }};
+    const requiresDualRuns = {{ 'true' if event.requires_dual_runs else 'false' }};
+    const requiresTriple   = {{ 'true' if event.requires_triple_runs else 'false' }};
+    const isHardHit        = {{ 'true' if event.is_hard_hit else 'false' }};
+    const runNumber        = {{ heat.run_number }};
+    const lockBlocked      = {{ 'true' if lock_blocked else 'false' }};
+    const competitorNames  = {
+        {% for comp in competitors %}
+        {{ comp.id }}: {{ comp.name|tojson }}{% if not loop.last %},{% endif %}
+        {% endfor %}
+    };
 
-        function readQueue() {
-            return window.ProAmOfflineQueue.read();
-        }
+    if (lockBlocked) return; // read-only, no JS wiring needed
 
-        function writeQueue(queue) {
-            window.ProAmOfflineQueue.write(queue);
-            refreshStatusBanner();
-        }
+    /* ── DOM refs ────────────────────────────────────────────────────────── */
+    const form          = document.getElementById('heatEntryForm');
+    const saveBtn       = document.getElementById('savePrimaryBtn');
+    const saveNextBtn   = document.getElementById('saveNextBtn');
+    const syncBtn       = document.getElementById('syncPendingBtn');
+    const statusBox     = document.getElementById('offlineStatusBox');
+    const netLabel      = document.getElementById('netStatusLabel');
+    const tabletBtn     = document.getElementById('tabletModeBtn');
+    const autoAdvTgl    = document.getElementById('autoAdvanceToggle');
+    const numpadToggle  = document.getElementById('numpadToggleBtn');
 
-        function setStatus(message, type) {
-            statusBox.classList.remove('d-none', 'alert-secondary', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger');
-            statusBox.classList.add(type || 'alert-secondary');
-            statusBox.innerHTML = message;
-        }
+    /* ── Offline queue helpers ───────────────────────────────────────────── */
+    const readQ  = () => window.ProAmOfflineQueue.read();
+    const writeQ = (q) => { window.ProAmOfflineQueue.write(q); refreshBanner(); };
 
-        function clearStatus() {
-            statusBox.classList.add('d-none');
-        }
+    function setStatus(msg, type) {
+        statusBox.classList.remove('d-none','alert-secondary','alert-info','alert-success','alert-warning','alert-danger');
+        statusBox.classList.add(type || 'alert-secondary');
+        statusBox.innerHTML = msg;
+    }
+    function clearStatus() { statusBox.classList.add('d-none'); }
 
-        function refreshNetworkStatus() {
-            if (navigator.onLine) {
-                netStatusLabel.textContent = 'Online';
-                netStatusLabel.classList.remove('text-warning');
-                netStatusLabel.classList.add('text-success');
-            } else {
-                netStatusLabel.textContent = 'Offline';
-                netStatusLabel.classList.remove('text-success');
-                netStatusLabel.classList.add('text-warning');
-            }
-        }
+    function refreshNetStatus() {
+        const online = navigator.onLine;
+        netLabel.textContent = online ? 'Online' : 'Offline';
+        netLabel.className = 'small ' + (online ? 'text-success' : 'text-warning');
+    }
 
-        function buildSnapshot() {
-            const payload = {};
-            form.querySelectorAll('input, select').forEach(function (field) {
-                if (!field.name) return;
-                payload[field.name] = field.value;
-            });
-            return payload;
-        }
+    function refreshBanner() {
+        const q = readQ();
+        const thisHeat = q.some(e => e.heat_id === heatId && e.url === postUrl);
+        if (thisHeat) { setStatus('<i class="bi bi-cloud-slash"></i> Queued locally — will sync when online.', 'alert-warning'); return; }
+        if (q.length)  { setStatus(`<i class="bi bi-info-circle"></i> ${q.length} heat(s) pending sync.`, 'alert-info'); return; }
+        clearStatus();
+    }
 
-        function removeEntry(entry) {
-            window.ProAmOfflineQueue.remove(entry.url, entry.heat_id);
-            refreshStatusBanner();
-        }
+    function buildSnapshot() {
+        const p = {};
+        form.querySelectorAll('input,select').forEach(f => { if (f.name) p[f.name] = f.value; });
+        return p;
+    }
 
-        function upsertEntry(entry) {
-            window.ProAmOfflineQueue.upsert(entry);
-            refreshStatusBanner();
-        }
-
-        function prefillFromQueue() {
-            const pending = readQueue().find(function (item) {
-                return item.heat_id === heatId && item.url === postUrl;
-            });
-            if (!pending || !pending.payload) return;
-            Object.keys(pending.payload).forEach(function (name) {
-                const field = form.querySelector('[name="' + name + '"]');
-                if (field) field.value = pending.payload[name];
-            });
-        }
-
-        function setSavingState(saving) {
-            saveBtn.disabled = saving;
-            syncBtn.disabled = saving;
-            if (saving) {
-                saveBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Saving...';
-            } else {
-                saveBtn.innerHTML = '<i class="bi bi-check-circle"></i> Save Results';
-            }
-        }
-
-        async function postEntry(entry) {
-            const body = new FormData();
-            Object.keys(entry.payload).forEach(function (key) {
-                body.append(key, entry.payload[key]);
-            });
-            const response = await fetch(entry.url, {
-                method: 'POST',
-                body: body,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                credentials: 'same-origin'
-            });
-
-            const data = await response.json().catch(function () { return {}; });
-            if (!response.ok || !data.ok) {
-                const err = new Error(data.message || 'Unable to save heat');
-                err.httpStatus = response.status;
-                throw err;
-            }
-            return data;
-        }
-
-        async function syncPending() {
-            if (!navigator.onLine) {
-                setStatus('<i class="bi bi-wifi-off"></i> Offline: pending scores remain safely saved on this device.', 'alert-warning');
-                return false;
-            }
-
-            const queue = readQueue();
-            if (!queue.length) {
-                setStatus('<i class="bi bi-cloud-check"></i> No pending scores to sync.', 'alert-success');
-                return true;
-            }
-
-            let synced = 0;
-            for (let i = 0; i < queue.length; i += 1) {
-                const entry = queue[i];
-                try {
-                    await postEntry(entry);
-                    removeEntry(entry);
-                    synced += 1;
-                } catch (err) {
-                    if (err.httpStatus === 409) {
-                        setStatus('<i class="bi bi-exclamation-circle"></i> A queued heat is out of date. Open that heat and save again.', 'alert-danger');
-                        return false;
-                    }
-                    setStatus('<i class="bi bi-cloud-slash"></i> Connection interrupted. Remaining scores stay queued on this device.', 'alert-warning');
-                    return false;
-                }
-            }
-
-            if (synced > 0) {
-                setStatus('<i class="bi bi-cloud-check"></i> Synced ' + synced + ' pending heat(s).', 'alert-success');
-            }
-            return true;
-        }
-
-        function refreshStatusBanner() {
-            const queue = readQueue();
-            const pendingForThisHeat = queue.some(function (item) {
-                return item.heat_id === heatId && item.url === postUrl;
-            });
-            if (pendingForThisHeat) {
-                setStatus('<i class="bi bi-cloud-slash"></i> This heat is queued locally and will sync automatically when online.', 'alert-warning');
-                return;
-            }
-            if (queue.length > 0) {
-                setStatus('<i class="bi bi-info-circle"></i> ' + queue.length + ' heat(s) are pending sync from this device.', 'alert-info');
-                return;
-            }
-            clearStatus();
-        }
-
-        const inputs = document.querySelectorAll('input[type="number"]');
-        for (let i = 0; i < inputs.length; i += 1) {
-            if (!inputs[i].value) {
-                inputs[i].focus();
-                break;
-            }
-        }
-
-        inputs.forEach(function (input, index) {
-            input.addEventListener('keypress', function (e) {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (index < inputs.length - 1) inputs[index + 1].focus();
-                }
-            });
+    async function postEntry(entry) {
+        const body = new FormData();
+        Object.keys(entry.payload).forEach(k => body.append(k, entry.payload[k]));
+        const res = await fetch(entry.url, {
+            method: 'POST', body,
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            credentials: 'same-origin'
         });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) { const e = new Error(data.message || 'Error'); e.httpStatus = res.status; throw e; }
+        return data;
+    }
 
-        document.getElementById('markAllCompleteBtn').addEventListener('click', function () {
-            document.querySelectorAll('#heatEntryForm select').forEach(function (sel) {
-                sel.value = 'completed';
-            });
-        });
-
-        const tabletBtn = document.getElementById('tabletModeBtn');
-        const tabletKey = 'heat_entry_tablet_mode';
-
-        function setTabletMode(on) {
-            if (on) {
-                form.classList.add('tablet-mode');
-                tabletBtn.classList.remove('btn-outline-light');
-                tabletBtn.classList.add('btn-light');
-                localStorage.setItem(tabletKey, '1');
-            } else {
-                form.classList.remove('tablet-mode');
-                tabletBtn.classList.add('btn-outline-light');
-                tabletBtn.classList.remove('btn-light');
-                localStorage.removeItem(tabletKey);
-            }
-        }
-
-        if (localStorage.getItem(tabletKey) === '1') setTabletMode(true);
-
-        tabletBtn.addEventListener('click', function () {
-            setTabletMode(!form.classList.contains('tablet-mode'));
-        });
-
-        syncBtn.addEventListener('click', async function () {
-            setSavingState(true);
+    async function syncPending() {
+        if (!navigator.onLine) { setStatus('<i class="bi bi-wifi-off"></i> Offline — scores safely stored.', 'alert-warning'); return false; }
+        const q = readQ();
+        if (!q.length) { setStatus('<i class="bi bi-cloud-check"></i> Nothing to sync.', 'alert-success'); return true; }
+        let synced = 0;
+        for (const entry of q) {
             try {
-                await syncPending();
-            } finally {
-                setSavingState(false);
+                await postEntry(entry);
+                window.ProAmOfflineQueue.remove(entry.url, entry.heat_id);
+                synced++;
+            } catch(err) {
+                if (err.httpStatus === 409) { setStatus('<i class="bi bi-exclamation-circle"></i> A queued heat is stale. Open and re-save.', 'alert-danger'); return false; }
+                setStatus('<i class="bi bi-cloud-slash"></i> Connection issue — scores remain queued.', 'alert-warning'); return false;
             }
+        }
+        if (synced) setStatus(`<i class="bi bi-cloud-check"></i> Synced ${synced} heat(s).`, 'alert-success');
+        refreshBanner();
+        return true;
+    }
+
+    /* ── Auto-advance toggle (persisted) ────────────────────────────────── */
+    const AA_KEY = 'heat_entry_auto_advance';
+    function setAutoAdvance(on) {
+        autoAdvTgl.checked = on;
+        if (on) localStorage.setItem(AA_KEY, '1'); else localStorage.removeItem(AA_KEY);
+    }
+    setAutoAdvance(localStorage.getItem(AA_KEY) === '1');
+    autoAdvTgl.addEventListener('change', () => setAutoAdvance(autoAdvTgl.checked));
+
+    /* ── Tablet mode ─────────────────────────────────────────────────────── */
+    const TAB_KEY = 'heat_entry_tablet_mode';
+    function setTabletMode(on) {
+        form.classList.toggle('tablet-mode', on);
+        tabletBtn.classList.toggle('btn-outline-light', !on);
+        tabletBtn.classList.toggle('btn-light', on);
+        if (on) localStorage.setItem(TAB_KEY,'1'); else localStorage.removeItem(TAB_KEY);
+    }
+    if (localStorage.getItem(TAB_KEY) === '1') setTabletMode(true);
+    tabletBtn.addEventListener('click', () => setTabletMode(!form.classList.contains('tablet-mode')));
+
+    /* ── Quick DNF / Scratch buttons ─────────────────────────────────────── */
+    document.querySelectorAll('.quick-dnf').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const cid = btn.dataset.comp;
+            const sel = form.querySelector(`select[name="status_${cid}"]`);
+            if (sel) sel.value = 'dnf';
+        });
+    });
+    document.querySelectorAll('.quick-scratch').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const cid = btn.dataset.comp;
+            const sel = form.querySelector(`select[name="status_${cid}"]`);
+            if (sel) sel.value = 'scratched';
+        });
+    });
+
+    /* ── Mark all complete ───────────────────────────────────────────────── */
+    document.getElementById('markAllCompleteBtn').addEventListener('click', () => {
+        form.querySelectorAll('select[name^="status_"]').forEach(s => s.value = 'completed');
+    });
+
+    /* ── Inline tie indicator ────────────────────────────────────────────── */
+    function updateTies() {
+        // Gather primary values per competitor
+        const vals = {};
+        document.querySelectorAll('.comp-row').forEach(row => {
+            const cid = row.dataset.compId;
+            let v = null;
+            if (requiresTriple) {
+                const r1 = parseFloat(document.getElementById('r1_' + cid)?.value) || 0;
+                const r2 = parseFloat(document.getElementById('r2_' + cid)?.value) || 0;
+                const r3 = parseFloat(document.getElementById('r3_' + cid)?.value) || 0;
+                v = r1 + r2 + r3;
+            } else {
+                const inp = row.querySelector(`input[name="result_${cid}"]`);
+                v = inp ? parseFloat(inp.value) : null;
+            }
+            if (v !== null && !isNaN(v) && v > 0) vals[cid] = v;
         });
 
-        form.addEventListener('submit', async function (e) {
+        const counts = {};
+        Object.values(vals).forEach(v => { counts[v] = (counts[v] || 0) + 1; });
+
+        document.querySelectorAll('.comp-row').forEach(row => {
+            const cid = row.dataset.compId;
+            const ind = document.getElementById('tie_' + cid);
+            if (!ind) return;
+            const v = vals[cid];
+            ind.style.display = (v !== undefined && counts[v] > 1) ? 'inline-block' : 'none';
+        });
+    }
+
+    /* ── Triple-run live total ───────────────────────────────────────────── */
+    function updateTripleTotals() {
+        if (!requiresTriple) return;
+        document.querySelectorAll('.comp-row').forEach(row => {
+            const cid = row.dataset.compId;
+            const r1 = parseFloat(document.getElementById('r1_' + cid)?.value) || 0;
+            const r2 = parseFloat(document.getElementById('r2_' + cid)?.value) || 0;
+            const r3 = parseFloat(document.getElementById('r3_' + cid)?.value) || 0;
+            const tot = document.getElementById('total_' + cid);
+            if (tot) tot.textContent = Math.round(r1 + r2 + r3);
+        });
+    }
+
+    form.querySelectorAll('input[type="number"]').forEach(inp => {
+        inp.addEventListener('input', () => { updateTies(); updateTripleTotals(); });
+    });
+    updateTies();
+    updateTripleTotals();
+
+    /* ── Keyboard navigation (Enter → next input) ────────────────────────── */
+    const allInputs = () => Array.from(form.querySelectorAll('input[type="number"]'));
+    form.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        const inputs = allInputs();
+        const idx = inputs.indexOf(document.activeElement);
+        if (idx >= 0 && idx < inputs.length - 1) {
             e.preventDefault();
-            const entry = {
-                url: postUrl,
-                event_id: eventId,
-                heat_id: heatId,
-                scoring_order: scoringOrder,
-                requires_dual_runs: requiresDualRuns,
-                run_number: runNumber,
-                competitor_names: competitorNames,
-                queued_at: new Date().toISOString(),
-                payload: buildSnapshot()
-            };
-
-            setSavingState(true);
-            try {
-                const response = await postEntry(entry);
-                removeEntry(entry);
-                window.location.href = nextHeatOverride || response.redirect_url || redirectUrl;
-                nextHeatOverride = null;
-            } catch (err) {
-                if (err.httpStatus === 409) {
-                    setStatus('<i class="bi bi-exclamation-circle"></i> This heat changed elsewhere. Reload and save again.', 'alert-danger');
-                } else {
-                    upsertEntry(entry);
-                    setStatus('<i class="bi bi-cloud-slash"></i> Connection issue. Scores were saved locally and will sync when online.', 'alert-warning');
-                }
-            } finally {
-                setSavingState(false);
-            }
-        });
-
-        // "Save & Next Heat" — capture destination before form submit fires
-        var saveNextBtn = document.getElementById('saveNextBtn');
-        if (saveNextBtn) {
-            saveNextBtn.addEventListener('click', function () {
-                nextHeatOverride = saveNextBtn.getAttribute('data-next-url');
-            });
-        }
-
-        window.addEventListener('online', function () {
-            refreshNetworkStatus();
-            syncPending();
-        });
-        window.addEventListener('offline', refreshNetworkStatus);
-
-        refreshNetworkStatus();
-        prefillFromQueue();
-        refreshStatusBanner();
-        if (navigator.onLine) {
-            syncPending();
+            inputs[idx + 1].focus();
         }
     });
+
+    /* ── Swipe between heats ─────────────────────────────────────────────── */
+    {% if next_heat_url %}
+    let touchStartX = 0;
+    document.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, {passive: true});
+    document.addEventListener('touchend', e => {
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        if (dx < -80) window.location.href = {{ next_heat_url|tojson }};  // swipe left = next heat
+    }, {passive: true});
+    {% endif %}
+
+    /* ── Numpad overlay ──────────────────────────────────────────────────── */
+    let numpadTarget = null;
+    let numpadBuffer = '';
+    const numpadOn = localStorage.getItem('heat_numpad') === '1';
+    let numpadEnabled = numpadOn;
+    const overlay    = document.getElementById('numpadOverlay');
+    const npDisplay  = document.getElementById('numpadDisplay');
+    const npLabel    = document.getElementById('numpadLabel');
+
+    function toggleNumpad(on) {
+        numpadEnabled = on;
+        if (on) localStorage.setItem('heat_numpad','1'); else localStorage.removeItem('heat_numpad');
+        numpadToggle.classList.toggle('btn-light', on);
+        numpadToggle.classList.toggle('btn-outline-light', !on);
+    }
+    toggleNumpad(numpadOn);
+
+    numpadToggle.addEventListener('click', () => toggleNumpad(!numpadEnabled));
+
+    function openNumpad(input) {
+        numpadTarget = input;
+        numpadBuffer = input.value || '';
+        npDisplay.textContent = numpadBuffer || '—';
+        npLabel.textContent = input.placeholder || 'Enter value';
+        overlay.classList.add('open');
+    }
+    function closeNumpad() {
+        overlay.classList.remove('open');
+        numpadTarget = null;
+        numpadBuffer = '';
+    }
+
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeNumpad(); });
+    document.getElementById('npCancel').addEventListener('click', closeNumpad);
+    document.getElementById('npBackspace').addEventListener('click', () => {
+        numpadBuffer = numpadBuffer.slice(0, -1);
+        npDisplay.textContent = numpadBuffer || '—';
+    });
+    document.querySelectorAll('.np-btn[data-val]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const v = btn.dataset.val;
+            if (v === '.' && numpadBuffer.includes('.')) return;
+            numpadBuffer += v;
+            npDisplay.textContent = numpadBuffer;
+        });
+    });
+    document.getElementById('npConfirm').addEventListener('click', () => {
+        if (numpadTarget && numpadBuffer) {
+            numpadTarget.value = numpadBuffer;
+            numpadTarget.dispatchEvent(new Event('input', {bubbles: true}));
+            // Move focus to next input
+            const inputs = allInputs();
+            const idx = inputs.indexOf(numpadTarget);
+            closeNumpad();
+            if (idx >= 0 && idx < inputs.length - 1) openNumpad(inputs[idx + 1]);
+        } else {
+            closeNumpad();
+        }
+    });
+
+    // Wire numpad to focus on inputs when enabled
+    form.querySelectorAll('input[type="number"]').forEach(inp => {
+        inp.addEventListener('focus', () => {
+            if (numpadEnabled) { inp.blur(); openNumpad(inp); }
+        });
+    });
+
+    /* ── Form submit ─────────────────────────────────────────────────────── */
+    let nextHeatOverride = null;
+    let savingState = false;
+
+    function setSaving(on) {
+        savingState = on;
+        if (saveBtn) { saveBtn.disabled = on; saveBtn.innerHTML = on ? '<i class="bi bi-hourglass-split"></i> Saving…' : '<i class="bi bi-check-circle"></i> Save Results'; }
+        if (syncBtn)  syncBtn.disabled = on;
+    }
+
+    if (saveNextBtn) {
+        saveNextBtn.addEventListener('click', () => {
+            nextHeatOverride = saveNextBtn.dataset.nextUrl;
+        });
+    }
+
+    form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        if (savingState) return;
+        const autoAdvance = autoAdvTgl?.checked && saveNextBtn;
+        const entry = {
+            url: postUrl, event_id: eventId, heat_id: heatId,
+            scoring_order: scoringOrder, requires_dual_runs: requiresDualRuns,
+            run_number: runNumber, competitor_names: competitorNames,
+            queued_at: new Date().toISOString(), payload: buildSnapshot()
+        };
+
+        setSaving(true);
+        try {
+            const res = await postEntry(entry);
+            window.ProAmOfflineQueue.remove(postUrl, heatId);
+            // Show undo toast
+            showUndoToast(res.undo_heat_id, res.redirect_url || redirectUrl);
+            const dest = nextHeatOverride || (autoAdvance ? saveNextBtn.dataset.nextUrl : null) || res.redirect_url || redirectUrl;
+            nextHeatOverride = null;
+            if (!res.undo_heat_id) {
+                window.location.href = dest;
+            } else {
+                // Redirect after undo window (30 s) if not undone
+                setTimeout(() => { if (!undone) window.location.href = dest; }, 30500);
+            }
+        } catch (err) {
+            if (err.httpStatus === 409) {
+                setStatus('<i class="bi bi-exclamation-circle"></i> Heat changed elsewhere — reload and save again.', 'alert-danger');
+            } else {
+                window.ProAmOfflineQueue.upsert(entry);
+                setStatus('<i class="bi bi-cloud-slash"></i> Saved locally — will sync when online.', 'alert-warning');
+                refreshBanner();
+            }
+        } finally {
+            setSaving(false);
+        }
+    });
+
+    /* ── Undo toast ──────────────────────────────────────────────────────── */
+    let undone = false;
+    function showUndoToast(heatIdUndo, dest) {
+        if (!heatIdUndo) return;
+        const toast = document.createElement('div');
+        toast.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9999;max-width:320px;';
+        toast.innerHTML = `
+            <div class="toast show align-items-center text-bg-success border-0 shadow" role="alert">
+                <div class="d-flex">
+                    <div class="toast-body">
+                        <i class="bi bi-check-circle"></i> Heat saved.
+                        <button class="btn btn-sm btn-outline-light ms-2 py-0 px-2" id="undoBtn">Undo</button>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>
+            </div>`;
+        document.body.appendChild(toast);
+        const ub = toast.querySelector('#undoBtn');
+        ub.addEventListener('click', async () => {
+            undone = true;
+            toast.remove();
+            const fd = new FormData();
+            fd.append('csrf_token', document.querySelector('[name=csrf_token]').value);
+            fd.append('event_id', eventId);
+            const r = await fetch(undoUrl, {method:'POST', body:fd, headers:{'X-Requested-With':'XMLHttpRequest'}, credentials:'same-origin'});
+            const d = await r.json().catch(() => ({}));
+            if (d.ok) window.location.href = postUrl;
+            else alert(d.message || 'Undo failed.');
+        });
+        const closeBtns = toast.querySelectorAll('[data-bs-dismiss="toast"]');
+        closeBtns.forEach(b => b.addEventListener('click', () => { toast.remove(); window.location.href = dest; }));
+        setTimeout(() => { if (document.body.contains(toast)) { toast.remove(); window.location.href = dest; } }, 30000);
+    }
+
+    /* ── Prefill from offline queue ──────────────────────────────────────── */
+    function prefillFromQueue() {
+        const pending = readQ().find(i => i.heat_id === heatId && i.url === postUrl);
+        if (!pending?.payload) return;
+        Object.keys(pending.payload).forEach(name => {
+            const f = form.querySelector(`[name="${name}"]`);
+            if (f) f.value = pending.payload[name];
+        });
+        updateTies(); updateTripleTotals();
+    }
+
+    /* ── Sync button ─────────────────────────────────────────────────────── */
+    syncBtn.addEventListener('click', async () => { setSaving(true); try { await syncPending(); } finally { setSaving(false); } });
+
+    /* ── Network events ──────────────────────────────────────────────────── */
+    window.addEventListener('online',  () => { refreshNetStatus(); syncPending(); });
+    window.addEventListener('offline', refreshNetStatus);
+
+    /* ── Auto-focus first empty ──────────────────────────────────────────── */
+    function autoFocus() {
+        const inputs = allInputs();
+        const first = inputs.find(i => !i.value);
+        if (first && !numpadEnabled) first.focus();
+    }
+
+    /* ── Init ────────────────────────────────────────────────────────────── */
+    refreshNetStatus();
+    prefillFromQueue();
+    refreshBanner();
+    if (navigator.onLine) syncPending();
+    autoFocus();
+
+    /* ── Release lock on page unload ─────────────────────────────────────── */
+    window.addEventListener('beforeunload', () => {
+        navigator.sendBeacon(
+            {{ url_for('scoring.release_heat_lock', tournament_id=tournament.id, heat_id=heat.id)|tojson }},
+            new URLSearchParams({csrf_token: document.querySelector('[name=csrf_token]').value})
+        );
+    });
+});
 </script>
 {% endblock %}

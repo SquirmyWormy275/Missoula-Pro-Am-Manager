@@ -66,6 +66,25 @@ def validate_runtime(app_config: dict) -> None:
     if len(secret) < 16 or secret.lower() in weak_values:
         raise RuntimeError('Invalid SECRET_KEY for production. Set a strong random secret.')
 
+# ---------------------------------------------------------------------------
+# Scoring rule helpers
+# ---------------------------------------------------------------------------
+
+# Events where the TIE-BREAKER is elapsed time (lowest time wins).
+# Primary score is hits; if two competitors tie on hits, fastest time wins.
+HARD_HIT_EVENTS = [
+    'Underhand Hard Hit',
+    'Standing Block Hard Hit',
+]
+
+# Axe throw events that use 3 cumulative throws (run1 + run2 + run3 = result).
+# Excludes the Pro-Am Relay, which uses a single team time entry.
+AXE_THROW_CUMULATIVE_EVENTS = [
+    'Axe Throw',           # College open event
+    'Partnered Axe Throw', # Pro show event
+]
+
+# ---------------------------------------------------------------------------
 # Scoring points for college competition
 PLACEMENT_POINTS = {
     1: 10,
@@ -150,10 +169,16 @@ STAND_CONFIGS = {
 
 # College events - traditionally OPEN (can be configured as CLOSED)
 COLLEGE_OPEN_EVENTS = [
-    {'name': 'Axe Throw', 'scoring_type': 'score', 'stand_type': 'axe_throw'},
-    {'name': 'Peavey Log Roll', 'scoring_type': 'time', 'stand_type': 'peavey', 'is_partnered': True, 'partner_gender': 'mixed'},
-    {'name': 'Caber Toss', 'scoring_type': 'distance', 'stand_type': 'caber'},
-    {'name': 'Pulp Toss', 'scoring_type': 'time', 'stand_type': 'pulp_toss', 'is_partnered': True, 'partner_gender': 'mixed'},
+    # Axe Throw: 3 throws, cumulative score, highest wins. Tie → throw-off.
+    {'name': 'Axe Throw', 'scoring_type': 'score', 'scoring_order': 'highest_wins',
+     'stand_type': 'axe_throw', 'requires_triple_runs': True},
+    {'name': 'Peavey Log Roll', 'scoring_type': 'time', 'stand_type': 'peavey',
+     'is_partnered': True, 'partner_gender': 'mixed'},
+    # Caber Toss: 2 throws (dual run), farthest throw counts. Tie → combined.
+    {'name': 'Caber Toss', 'scoring_type': 'distance', 'scoring_order': 'highest_wins',
+     'stand_type': 'caber', 'requires_dual_runs': True},
+    {'name': 'Pulp Toss', 'scoring_type': 'time', 'stand_type': 'pulp_toss',
+     'is_partnered': True, 'partner_gender': 'mixed'},
 ]
 
 # College events - CLOSED (max 6 per athlete)
@@ -185,7 +210,9 @@ PRO_EVENTS = [
     {'name': 'Single Buck', 'scoring_type': 'time', 'stand_type': 'saw_hand', 'is_gendered': True},
     {'name': 'Double Buck', 'scoring_type': 'time', 'stand_type': 'saw_hand', 'is_gendered': True, 'is_partnered': True},
     {'name': 'Jack & Jill Sawing', 'scoring_type': 'time', 'stand_type': 'saw_hand', 'is_partnered': True, 'partner_gender': 'mixed'},
-    {'name': 'Partnered Axe Throw', 'scoring_type': 'score', 'stand_type': 'axe_throw', 'is_partnered': True, 'has_prelims': True},
+    # Partnered Axe Throw: 3 throws per pair, cumulative. Tie → throw-off.
+    {'name': 'Partnered Axe Throw', 'scoring_type': 'score', 'scoring_order': 'highest_wins',
+     'stand_type': 'axe_throw', 'is_partnered': True, 'has_prelims': True, 'requires_triple_runs': True},
     {'name': 'Obstacle Pole', 'scoring_type': 'time', 'stand_type': 'obstacle_pole'},
     {'name': 'Pole Climb', 'scoring_type': 'time', 'stand_type': 'speed_climb'},
     {'name': 'Cookie Stack', 'scoring_type': 'time', 'stand_type': 'cookie_stack'},

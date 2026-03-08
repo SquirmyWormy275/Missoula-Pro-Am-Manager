@@ -316,6 +316,15 @@ def confirm_pro_entries(tournament_id):
         flash(f'Database error during commit: {exc}', 'error')
         return redirect(url_for('import_pro.review_pro_entries', tournament_id=tournament_id))
 
+    # Post-import gear parse: catch any competitors whose gear details weren't resolved
+    # per-entry (e.g. when the 'gear_sharing' boolean field was absent/falsy on the form row).
+    from services.gear_sharing import parse_all_gear_details
+    gear_post = parse_all_gear_details(tournament)
+    post_parsed_msg = ''
+    if gear_post['parsed']:
+        db.session.commit()
+        post_parsed_msg = f' Auto-parsed gear-sharing details for {gear_post["parsed"]} competitor(s).'
+
     # Clean up temp file and session key
     try:
         os.remove(_temp_path(temp_name))
@@ -326,10 +335,12 @@ def confirm_pro_entries(tournament_id):
     summary = f'Import complete: {imported} added, {updated} updated.'
     if gear_parse_warnings:
         summary += f' Gear-sharing parse warnings on {gear_parse_warnings} row(s); review competitor detail pages.'
+    summary += post_parsed_msg
     log_action('pro_import_confirmed', 'tournament', tournament_id, {
         'imported': imported,
         'updated': updated,
         'errors': len(errors),
+        'gear_post_parsed': gear_post['parsed'],
     })
     db.session.commit()
     if errors:

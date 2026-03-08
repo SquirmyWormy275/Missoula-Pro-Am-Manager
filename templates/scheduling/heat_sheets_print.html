@@ -3,60 +3,82 @@
 
 {% block extra_css %}
 <style>
-/* ── Shared heat card ──────────────────────────────────────────────── */
+/* ── Stand color palette ─────────────────────────────────────────────── */
+.stand-1  { background:#1a6fa8 !important; color:#fff !important; }
+.stand-2  { background:#2a9d8f !important; color:#fff !important; }
+.stand-3  { background:#8d3a6e !important; color:#fff !important; }
+.stand-4  { background:#e07c2b !important; color:#fff !important; }
+.stand-5  { background:#5c6bc0 !important; color:#fff !important; }
+.stand-6  { background:#388e3c !important; color:#fff !important; }
+.stand-7  { background:#c0392b !important; color:#fff !important; }
+.stand-8  { background:#6d4c41 !important; color:#fff !important; }
+
+/* ── Shared heat card ──────────────────────────────────────────────────── */
 .heat-card {
     border: 1px solid #dee2e6;
     border-radius: 5px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     overflow: hidden;
     break-inside: avoid;
     page-break-inside: avoid;
 }
 .heat-card-head {
-    padding: 6px 12px;
+    padding: 5px 10px;
     border-bottom: 1px solid #dee2e6;
     background: #f8f9fa;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
+/* Event-type color band on left edge of header */
+.heat-card-head.head-pro     { border-left: 4px solid #1a3a5c; }
+.heat-card-head.head-college { border-left: 4px solid #8d3a6e; }
+
+.heat-drag-handle {
+    cursor: grab;
+    color: #adb5bd;
+    padding: 2px 4px;
+    flex-shrink: 0;
+}
+.heat-drag-handle:hover { color: #6c757d; }
+
 .heat-card-event {
     font-weight: 800;
-    font-size: 0.95rem;
+    font-size: 0.93rem;
     line-height: 1.25;
     color: #212529;
+    flex: 1;
 }
 .event-type-badge {
     display: inline-block;
-    font-size: 0.62rem;
+    font-size: 0.60rem;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     border-radius: 3px;
     padding: 1px 5px;
-    margin-right: 6px;
+    margin-right: 5px;
     vertical-align: middle;
+    flex-shrink: 0;
 }
-.event-type-badge.pro {
-    background: #0b5ed7;
-    color: #fff;
-}
-.event-type-badge.college {
-    background: #e65100;
-    color: #fff;
-}
+.event-type-badge.pro     { background: #0b5ed7; color: #fff; }
+.event-type-badge.college { background: #8d3a6e; color: #fff; }
 .heat-card-sub {
-    font-size: 0.72rem;
+    font-size: 0.70rem;
     color: #6c757d;
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    margin-top: 2px;
+    margin-top: 1px;
+    white-space: nowrap;
 }
 .heat-tbl {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.88rem;
+    font-size: 0.87rem;
 }
 .heat-tbl thead th {
-    font-size: 0.67rem;
+    font-size: 0.65rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -66,29 +88,25 @@
     border-bottom: 1px solid #dee2e6;
 }
 .heat-tbl .td-stand {
-    width: 38px;
+    width: 36px;
     text-align: center;
     font-weight: 800;
-    font-size: 0.85rem;
+    font-size: 0.83rem;
     border-right: 1px solid #e9ecef;
+    padding: 5px 4px;
     color: #343a40;
     background: #f8f9fa;
-    padding: 5px 6px;
 }
-.heat-tbl td {
-    padding: 5px 10px;
-}
-.heat-tbl tbody tr + tr td {
-    border-top: 1px solid #f1f3f5;
-}
+.heat-tbl td { padding: 5px 10px; }
+.heat-tbl tbody tr + tr td { border-top: 1px solid #f1f3f5; }
 
-/* ── Section banners ───────────────────────────────────────────────── */
+/* ── Section banners ───────────────────────────────────────────────────── */
 .section-banner {
-    padding: 7px 14px;
+    padding: 6px 14px;
     border-radius: 4px;
-    margin: 22px 0 10px;
+    margin: 18px 0 8px;
     font-weight: 800;
-    font-size: 0.95rem;
+    font-size: 0.93rem;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: #fff;
@@ -97,43 +115,51 @@
     gap: 10px;
 }
 .section-banner.flight  { background: #1a3a5c; }
-.section-banner.college { background: #174a7c; }
+.section-banner.college { background: #6d3a7c; }
 
-/* ── Print overrides ───────────────────────────────────────────────── */
+/* ── Sortable ghost ─────────────────────────────────────────────────────── */
+.sortable-ghost { opacity: 0.35; background: #e9f0fb !important; }
+
+/* ── Print overrides ───────────────────────────────────────────────────── */
 @media print {
     .no-print { display: none !important; }
 
     body {
-        font-size: 10pt;
+        font-size: 9.5pt;
         background: #fff !important;
         color: #000 !important;
     }
     .container-fluid { padding: 0 4mm; }
 
-    /* Force dark backgrounds through to paper */
     .section-banner {
         background: #111 !important;
         color: #fff !important;
         border-radius: 0 !important;
+        margin: 8px 0 5px !important;
+        padding: 4px 10px !important;
+        font-size: 0.82rem !important;
         page-break-after: avoid;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
-    .heat-card {
-        border: 1.5px solid #444 !important;
-    }
+    .heat-card { border: 1.5px solid #444 !important; margin-bottom: 5px !important; }
     .heat-card-head {
-        background: #e0e0e0 !important;
-        border-bottom: 1.5px solid #444 !important;
+        background: #e4e4e4 !important;
+        border-bottom: 1.5px solid #555 !important;
+        padding: 3px 8px !important;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
-    .heat-card-event { color: #000 !important; }
+    .heat-card-head.head-pro     { border-left: 4px solid #1a3a5c !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .heat-card-head.head-college { border-left: 4px solid #8d3a6e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .heat-card-event { color: #000 !important; font-size: 0.85rem !important; }
     .heat-card-sub   { color: #333 !important; }
+    .heat-tbl { font-size: 0.80rem !important; }
     .heat-tbl thead th {
         background: #d4d4d4 !important;
         color: #000 !important;
-        border-bottom: 1px solid #666 !important;
+        border-bottom: 1px solid #777 !important;
+        padding: 2px 8px !important;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
@@ -141,20 +167,40 @@
         background: #ebebeb !important;
         border-right: 1px solid #999 !important;
         color: #000 !important;
+        padding: 3px 4px !important;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
     .heat-tbl tbody tr + tr td { border-top: 1px solid #ccc !important; }
+    .heat-tbl td { padding: 3px 8px !important; }
+
+    /* Stand colors in print */
+    .stand-1 { background:#1a6fa8 !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-2 { background:#2a9d8f !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-3 { background:#8d3a6e !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-4 { background:#e07c2b !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-5 { background:#5c6bc0 !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-6 { background:#388e3c !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-7 { background:#c0392b !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-8 { background:#6d4c41 !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 
     /* Pro flights: 2 columns per row on paper */
     .pro-grid  { columns: 2; column-gap: 6mm; }
     /* College: 3 columns */
     .coll-grid { columns: 3; column-gap: 5mm; }
-    /* Prevent cards from splitting across columns */
     .pro-grid .heat-card,
     .coll-grid .heat-card {
         display: inline-block;
         width: 100%;
+    }
+
+    /* Notes-lines mode: add a ruled space after each heat card */
+    .notes-mode .heat-card::after {
+        content: '';
+        display: block;
+        height: 26px;
+        border-top: 1px dashed #bbb;
+        margin: 0 6px 3px;
     }
 }
 </style>
@@ -164,24 +210,44 @@
 <div class="container-fluid py-3">
 
     {# ── Toolbar (screen only) ── #}
-    <div class="d-flex justify-content-between align-items-center mb-3 no-print">
+    <div class="d-flex justify-content-between align-items-center mb-2 no-print flex-wrap gap-2">
         <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Heat Sheets</h4>
-        <div class="d-flex gap-2">
-            <a href="javascript:window.print()" class="btn btn-primary">
-                <i class="bi bi-printer"></i> Print Now
+        <div class="d-flex gap-2 flex-wrap">
+            <label class="d-flex align-items-center gap-2 mb-0" style="font-size:0.85rem; cursor:pointer; font-weight:500;">
+                <input type="checkbox" id="notesToggle" onchange="document.body.classList.toggle('notes-mode', this.checked)">
+                Notes lines
+            </label>
+            <button id="printFlightBtn" class="btn btn-outline-primary btn-sm" onclick="window.print()" style="display:none;">
+                <i class="bi bi-printer"></i> Print This Flight
+            </button>
+            <a href="javascript:window.print()" class="btn btn-primary btn-sm">
+                <i class="bi bi-printer"></i> Print All
             </a>
-            <a href="?autoprint=1" class="btn btn-outline-secondary" title="Reload and auto-open print dialog">
+            <a href="?autoprint=1" class="btn btn-outline-secondary btn-sm" title="Reload and auto-open print dialog">
                 <i class="bi bi-printer-fill"></i> Auto-Print
             </a>
             <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
-               class="btn btn-outline-secondary">Back to Events</a>
+               class="btn btn-outline-secondary btn-sm">Back</a>
         </div>
     </div>
 
+    {# ── Flight Filter Strip (screen only) ── #}
+    {% if flight_data %}
+    <div class="no-print mb-3 d-flex flex-wrap gap-1 align-items-center">
+        <span class="text-muted me-1" style="font-size:0.8rem; font-weight:600;">Filter:</span>
+        <button class="btn btn-sm btn-primary flight-filter-btn" data-filter="all" onclick="filterFlights('all',this)">All Flights</button>
+        {% for fd in flight_data %}
+        <button class="btn btn-sm btn-outline-secondary flight-filter-btn" data-filter="{{ fd.flight.id }}" onclick="filterFlights('{{ fd.flight.id }}',this)">
+            Flight {{ fd.flight.flight_number }}
+        </button>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     {# ── Print title (print only) ── #}
-    <div class="text-center mb-3 d-none d-print-block">
-        <h3>{{ tournament.name }} {{ tournament.year }} — Heat Sheets</h3>
-        {% if now %}<small>Printed {{ now.strftime('%B %d, %Y') }}</small>{% endif %}
+    <div class="text-center mb-2 d-none d-print-block">
+        <h4 style="margin:0 0 2px;">{{ tournament.name }} {{ tournament.year }} — Heat Sheets</h4>
+        {% if now %}<div style="font-size:0.8rem; color:#555;">Printed {{ now.strftime('%B %d, %Y at %I:%M %p') }}</div>{% endif %}
     </div>
 
     {# ══════════════════════════════════════════════════════════════════
@@ -190,79 +256,103 @@
     {% if flight_data %}
     {% for fd in flight_data %}
 
-    <div class="section-banner flight">
-        <i class="bi bi-layers"></i>
-        Flight {{ fd.flight.flight_number }}
-        {% if fd.flight.name %}&mdash; {{ fd.flight.name }}{% endif %}
-        <span style="font-weight:400; font-size:0.78rem; opacity:0.75; margin-left:auto;">
-            {{ fd.heats|length }} heat{{ 's' if fd.heats|length != 1 else '' }}
-        </span>
-    </div>
+    <div class="flight-block" data-flight-id="{{ fd.flight.id }}">
 
-    {# Screen view: Bootstrap 2-column grid #}
-    <div class="row no-print">
-        {% for row in fd.heats %}
-        <div class="col-md-6 col-lg-4 mb-0">
-            <div class="heat-card">
-                <div class="heat-card-head">
-                    <div class="heat-card-event">
-                        <span class="event-type-badge {{ 'college' if row.event.event_type == 'college' else 'pro' }}">
-                            {{ 'COLLEGE' if row.event.event_type == 'college' else 'PRO' }}
-                        </span>{{ row.event.display_name }}
+        <div class="section-banner flight">
+            <i class="bi bi-layers"></i>
+            Flight {{ fd.flight.flight_number }}
+            {% if fd.flight.name %}&mdash; {{ fd.flight.name }}{% endif %}
+            <span style="font-weight:400; font-size:0.78rem; opacity:0.75; margin-left:auto;">
+                {{ fd.heats|length }} heat{{ 's' if fd.heats|length != 1 else '' }}
+            </span>
+        </div>
+
+        {# Stand conflict warning (screen only) #}
+        {% if fd.stand_conflicts %}
+        <div class="no-print alert alert-warning py-2 px-3 mb-2" style="font-size:0.82rem;">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            <strong>{{ fd.stand_conflicts|length }} stand conflict{{ 's' if fd.stand_conflicts|length != 1 else '' }}</strong>
+            — Cookie Stack and Standing Block appear within {{ stand_conflict_gap }} heats of each other.
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="ms-2 alert-link">Rebuild flights</a> to auto-resolve.
+        </div>
+        {% endif %}
+
+        {# Screen view: Bootstrap grid + drag handles #}
+        <div class="row no-print flight-screen-grid" data-flight-id="{{ fd.flight.id }}">
+            {% for row in fd.heats %}
+            <div class="col-md-6 col-lg-4 mb-0" data-heat-id="{{ row.heat.id }}">
+                <div class="heat-card">
+                    <div class="heat-card-head head-{{ 'college' if row.event.event_type == 'college' else 'pro' }}">
+                        <span class="heat-drag-handle no-print" title="Drag to reorder"><i class="bi bi-grip-vertical"></i></span>
+                        <div style="flex:1;">
+                            <div class="heat-card-event">
+                                <span class="event-type-badge {{ 'college' if row.event.event_type == 'college' else 'pro' }}">
+                                    {{ 'COLLEGE' if row.event.event_type == 'college' else 'PRO' }}
+                                </span>{{ row.event.display_name }}
+                            </div>
+                            <div class="heat-card-sub">
+                                Heat {{ row.heat.heat_number }}
+                                {% if row.heat.run_number > 1 %}&nbsp;&bull;&nbsp;Run {{ row.heat.run_number }}{% endif %}
+                            </div>
+                        </div>
                     </div>
-                    <div class="heat-card-sub">
-                        Heat {{ row.heat.heat_number }}
-                        {% if row.heat.run_number > 1 %}&nbsp;&bull;&nbsp;Run {{ row.heat.run_number }}{% endif %}
+                    <table class="heat-tbl">
+                        <thead><tr><th class="td-stand">Std</th><th>Competitor</th></tr></thead>
+                        <tbody>
+                        {% for comp in row.competitors %}
+                            {% set sn = comp.stand | string | int if comp.stand else 0 %}
+                            <tr>
+                                <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
+                                <td>{{ comp.name }}</td>
+                            </tr>
+                        {% else %}
+                            <tr><td colspan="2" class="text-muted px-3 py-2 fst-italic">No competitors</td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {# Print view: CSS columns #}
+        {% set hc = fd.heats|length %}
+        {% set col_count = 3 if hc >= 12 else (2 if hc >= 6 else 1) %}
+        <div class="pro-grid d-none d-print-block" style="columns:{{ col_count }}; column-gap:5mm;">
+            {% for row in fd.heats %}
+            <div class="heat-card">
+                <div class="heat-card-head head-{{ 'college' if row.event.event_type == 'college' else 'pro' }}">
+                    <div style="flex:1;">
+                        <div class="heat-card-event">
+                            <span class="event-type-badge {{ 'college' if row.event.event_type == 'college' else 'pro' }}">
+                                {{ 'COLLEGE' if row.event.event_type == 'college' else 'PRO' }}
+                            </span>{{ row.event.display_name }}
+                        </div>
+                        <div class="heat-card-sub">
+                            Heat {{ row.heat.heat_number }}
+                            {% if row.heat.run_number > 1 %}&bull; Run {{ row.heat.run_number }}{% endif %}
+                        </div>
                     </div>
                 </div>
                 <table class="heat-tbl">
-                    <thead><tr><th class="td-stand">Stand</th><th>Competitor</th></tr></thead>
+                    <thead><tr><th class="td-stand">Std</th><th>Competitor</th></tr></thead>
                     <tbody>
                     {% for comp in row.competitors %}
+                        {% set sn = comp.stand | string | int if comp.stand else 0 %}
                         <tr>
-                            <td class="td-stand">{{ comp.stand }}</td>
+                            <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
                             <td>{{ comp.name }}</td>
                         </tr>
                     {% else %}
-                        <tr><td colspan="2" class="text-muted px-3 py-2 fst-italic">No competitors</td></tr>
+                        <tr><td colspan="2" class="text-muted fst-italic px-3">No competitors</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>
             </div>
+            {% endfor %}
         </div>
-        {% endfor %}
-    </div>
 
-    {# Print view: dynamic column count based on heat count #}
-    {% set hc = fd.heats|length %}
-    {% set col_count = 3 if hc >= 12 else (2 if hc >= 6 else 1) %}
-    <div class="pro-grid d-none d-print-block" style="columns:{{ col_count }}; column-gap:5mm;">
-        {% for row in fd.heats %}
-        <div class="heat-card">
-            <div class="heat-card-head">
-                <div class="heat-card-event">
-                    <span class="event-type-badge {{ 'college' if row.event.event_type == 'college' else 'pro' }}">
-                        {{ 'COLLEGE' if row.event.event_type == 'college' else 'PRO' }}
-                    </span>{{ row.event.display_name }}
-                </div>
-                <div class="heat-card-sub">
-                    Heat {{ row.heat.heat_number }}
-                    {% if row.heat.run_number > 1 %}&bull; Run {{ row.heat.run_number }}{% endif %}
-                </div>
-            </div>
-            <table class="heat-tbl">
-                <thead><tr><th class="td-stand">Std</th><th>Competitor</th></tr></thead>
-                <tbody>
-                {% for comp in row.competitors %}
-                    <tr><td class="td-stand">{{ comp.stand }}</td><td>{{ comp.name }}</td></tr>
-                {% else %}
-                    <tr><td colspan="2" class="text-muted fst-italic px-3">No competitors</td></tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% endfor %}
-    </div>
+    </div>{# end .flight-block #}
 
     {% endfor %}
     {% endif %}
@@ -283,23 +373,24 @@
         {% for row in ed.heats %}
         <div class="col-md-4 col-lg-3 mb-0">
             <div class="heat-card">
-                <div class="heat-card-head">
-                    <div class="heat-card-event">
-                        <span class="event-type-badge {{ 'college' if ed.event.event_type == 'college' else 'pro' }}">
-                            {{ 'COLLEGE' if ed.event.event_type == 'college' else 'PRO' }}
-                        </span>{{ ed.event.display_name }}
-                    </div>
-                    <div class="heat-card-sub">
-                        Heat {{ row.heat.heat_number }}
-                        {% if row.heat.run_number > 1 %}&nbsp;&bull;&nbsp;Run {{ row.heat.run_number }}{% endif %}
+                <div class="heat-card-head head-college">
+                    <div style="flex:1;">
+                        <div class="heat-card-event">
+                            <span class="event-type-badge college">COLLEGE</span>{{ ed.event.display_name }}
+                        </div>
+                        <div class="heat-card-sub">
+                            Heat {{ row.heat.heat_number }}
+                            {% if row.heat.run_number > 1 %}&nbsp;&bull;&nbsp;Run {{ row.heat.run_number }}{% endif %}
+                        </div>
                     </div>
                 </div>
                 <table class="heat-tbl">
-                    <thead><tr><th class="td-stand">Stand</th><th>Competitor</th></tr></thead>
+                    <thead><tr><th class="td-stand">Std</th><th>Competitor</th></tr></thead>
                     <tbody>
                     {% for comp in row.competitors %}
+                        {% set sn = comp.stand | string | int if comp.stand else 0 %}
                         <tr>
-                            <td class="td-stand">{{ comp.stand }}</td>
+                            <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
                             <td>{{ comp.name }}</td>
                         </tr>
                     {% else %}
@@ -316,22 +407,26 @@
     <div class="coll-grid d-none d-print-block">
         {% for row in ed.heats %}
         <div class="heat-card">
-            <div class="heat-card-head">
-                <div class="heat-card-event">
-                    <span class="event-type-badge {{ 'college' if ed.event.event_type == 'college' else 'pro' }}">
-                        {{ 'COLLEGE' if ed.event.event_type == 'college' else 'PRO' }}
-                    </span>{{ ed.event.display_name }}
-                </div>
-                <div class="heat-card-sub">
-                    Heat {{ row.heat.heat_number }}
-                    {% if row.heat.run_number > 1 %}&bull; Run {{ row.heat.run_number }}{% endif %}
+            <div class="heat-card-head head-college">
+                <div style="flex:1;">
+                    <div class="heat-card-event">
+                        <span class="event-type-badge college">COLLEGE</span>{{ ed.event.display_name }}
+                    </div>
+                    <div class="heat-card-sub">
+                        Heat {{ row.heat.heat_number }}
+                        {% if row.heat.run_number > 1 %}&bull; Run {{ row.heat.run_number }}{% endif %}
+                    </div>
                 </div>
             </div>
             <table class="heat-tbl">
                 <thead><tr><th class="td-stand">Std</th><th>Competitor</th></tr></thead>
                 <tbody>
                 {% for comp in row.competitors %}
-                    <tr><td class="td-stand">{{ comp.stand }}</td><td>{{ comp.name }}</td></tr>
+                    {% set sn = comp.stand | string | int if comp.stand else 0 %}
+                    <tr>
+                        <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
+                        <td>{{ comp.name }}</td>
+                    </tr>
                 {% else %}
                     <tr><td colspan="2" class="text-muted fst-italic px-3">No competitors</td></tr>
                 {% endfor %}
@@ -347,14 +442,66 @@
     {% if not flight_data and not no_flight_heats %}
     <div class="alert alert-info mt-3">No heats have been generated yet for this tournament.</div>
     {% endif %}
+
 </div>
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script>
-    // Auto-trigger print dialog if ?autoprint=1 is present in the URL
-    if (new URLSearchParams(window.location.search).get('autoprint') === '1') {
-        window.addEventListener('load', function () { window.print(); });
-    }
+// ── Auto-print ────────────────────────────────────────────────────────────
+if (new URLSearchParams(window.location.search).get('autoprint') === '1') {
+    window.addEventListener('load', function () { window.print(); });
+}
+
+// ── Per-flight filter ────────────────────────────────────────────────────
+function filterFlights(filter, btn) {
+    document.querySelectorAll('.flight-filter-btn').forEach(function(b) {
+        b.classList.remove('active', 'btn-primary');
+        b.classList.add('btn-outline-secondary');
+    });
+    btn.classList.add('active', 'btn-primary');
+    btn.classList.remove('btn-outline-secondary');
+
+    document.querySelectorAll('.flight-block').forEach(function(block) {
+        block.style.display = (filter === 'all' || block.dataset.flightId === String(filter)) ? '' : 'none';
+    });
+
+    const printBtn = document.getElementById('printFlightBtn');
+    if (printBtn) printBtn.style.display = (filter === 'all') ? 'none' : '';
+    window._currentFlightFilter = filter;
+}
+
+// ── Drag-and-drop reorder ────────────────────────────────────────────────
+{% if flight_data %}
+document.querySelectorAll('.flight-screen-grid').forEach(function(grid) {
+    var flightId = grid.dataset.flightId;
+    new Sortable(grid, {
+        animation: 150,
+        handle: '.heat-drag-handle',
+        ghostClass: 'sortable-ghost',
+        onEnd: function() {
+            var cards = grid.querySelectorAll('[data-heat-id]');
+            var heatIds = Array.from(cards).map(function(c) { return parseInt(c.dataset.heatId); });
+            var csrf = document.querySelector('meta[name="csrf-token"]');
+            var csrfToken = csrf ? csrf.getAttribute('content') : '';
+            fetch('/scheduling/{{ tournament.id }}/flights/' + flightId + '/reorder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                },
+                body: JSON.stringify({heat_ids: heatIds})
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (!data.ok) {
+                    alert('Reorder failed: ' + (data.error || 'unknown error') + '. Refresh to see current order.');
+                }
+            }).catch(function() {
+                alert('Reorder request failed. Check your connection and refresh.');
+            });
+        }
+    });
+});
+{% endif %}
 </script>
 {% endblock %}

@@ -1,83 +1,204 @@
 {% extends "base.html" %}
 
-{% block title %}Configure Payouts - {{ event.display_name }}{% endblock %}
+{% block title %}Configure Payouts – {{ event.display_name }}{% endblock %}
 
 {% block content %}
 <div class="container py-4">
-    <div class="row justify-content-center">
-        <div class="col-md-6">
-            <nav aria-label="breadcrumb">
-                <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}">{{ event.display_name }}</a></li>
-                    <li class="breadcrumb-item active">Configure Payouts</li>
-                </ol>
-            </nav>
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
 
-            <div class="card">
-                <div class="card-header bg-warning text-dark">
-                    <h5 class="mb-0">
-                        <i class="bi bi-cash-stack"></i>
-                        Configure Payouts: {{ event.display_name }}
-                    </h5>
-                </div>
-                <div class="card-body">
-                    <p class="text-muted">Set the payout amount for each placing. Leave blank for positions that don't pay out.</p>
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item"><a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}">{{ event.display_name }}</a></li>
+          <li class="breadcrumb-item active">Configure Payouts</li>
+        </ol>
+      </nav>
 
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <table class="table">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Position</th>
-                                    <th>Payout Amount</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for i in range(1, 11) %}
-                                <tr>
-                                    <td>
-                                        {% if i == 1 %}
-                                            <span class="badge badge-gold">1st Place</span>
-                                        {% elif i == 2 %}
-                                            <span class="badge badge-silver">2nd Place</span>
-                                        {% elif i == 3 %}
-                                            <span class="badge badge-bronze">3rd Place</span>
-                                        {% else %}
-                                            {{ i }}{{ 'th' if i > 3 else ['st', 'nd', 'rd'][i-1] }} Place
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <div class="input-group">
-                                            <span class="input-group-text">$</span>
-                                            <input type="number"
-                                                   class="form-control"
-                                                   name="payout_{{ i }}"
-                                                   step="0.01"
-                                                   min="0"
-                                                   value="{{ current_payouts.get(i|string, '') }}"
-                                                   placeholder="0.00">
-                                        </div>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+      <div class="row g-4">
 
-                        <hr>
-
-                        <div class="d-grid gap-2">
-                            <button type="submit" class="btn btn-warning">
-                                <i class="bi bi-check-circle"></i> Save Payouts
-                            </button>
-                            <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
-                               class="btn btn-outline-secondary">
-                                <i class="bi bi-arrow-left"></i> Back to Event
-                            </a>
-                        </div>
-                    </form>
-                </div>
+        {# ── Left: payout entry form ───────────────────────────────────────── #}
+        <div class="col-md-7">
+          <div class="card">
+            <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+              <h5 class="mb-0"><i class="bi bi-cash-stack"></i> {{ event.display_name }}</h5>
+              {% if current_payouts %}
+              <span class="badge bg-dark">
+                Total: ${{ "%.2f"|format(current_payouts.values()|map('float')|sum) }}
+              </span>
+              {% endif %}
             </div>
+            <div class="card-body">
+              <p class="text-muted small mb-3">Set payout per placing (1–15). Leave blank = no payout for that place.</p>
+
+              <form method="POST" id="payoutForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="save">
+
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle">
+                    <thead class="table-light">
+                      <tr><th>Place</th><th>Payout</th><th class="text-muted small text-end" id="runningTotalLabel">Running Total</th></tr>
+                    </thead>
+                    <tbody>
+                      {% for i in range(1, 16) %}
+                      <tr>
+                        <td>
+                          {% if i == 1 %}<span class="badge badge-gold">1st</span>
+                          {% elif i == 2 %}<span class="badge badge-silver">2nd</span>
+                          {% elif i == 3 %}<span class="badge badge-bronze">3rd</span>
+                          {% else %}<span class="text-muted">{{ i }}th</span>{% endif %}
+                        </td>
+                        <td>
+                          <div class="input-group input-group-sm">
+                            <span class="input-group-text">$</span>
+                            <input type="number" class="form-control payout-input"
+                                   name="payout_{{ i }}" step="0.01" min="0"
+                                   value="{{ "%.2f"|format(current_payouts.get(i|string)|float) if current_payouts.get(i|string) else '' }}"
+                                   placeholder="0.00">
+                          </div>
+                        </td>
+                        <td class="text-end text-muted small">
+                          <span class="running-total" id="rt_{{ i }}">$0.00</span>
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                    <tfoot>
+                      <tr class="table-light fw-bold">
+                        <td>Total</td>
+                        <td colspan="2" class="text-end" id="grandTotal">$0.00</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                <div class="d-grid gap-2 mt-3">
+                  <button type="submit" class="btn btn-warning">
+                    <i class="bi bi-check-circle"></i> Save Payouts to This Event
+                  </button>
+
+                  {# Save as template #}
+                  <div class="input-group">
+                    <input type="text" class="form-control" name="template_name"
+                           placeholder="Template name (e.g. Standard Pro 10-deep)">
+                    <button type="submit" class="btn btn-outline-secondary"
+                            onclick="this.form.querySelector('[name=action]').value='save_template'">
+                      <i class="bi bi-bookmark-plus"></i> Save as Template
+                    </button>
+                  </div>
+
+                  <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
+                     class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to Event
+                  </a>
+                </div>
+              </form>
+            </div>
+          </div>
         </div>
+
+        {# ── Right: saved templates ────────────────────────────────────────── #}
+        <div class="col-md-5">
+          <div class="card h-100">
+            <div class="card-header">
+              <h6 class="mb-0"><i class="bi bi-bookmarks"></i> Saved Templates</h6>
+            </div>
+            {% if templates %}
+            <div class="list-group list-group-flush">
+              {% for tpl in templates %}
+              <div class="list-group-item py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                  <div>
+                    <strong class="small">{{ tpl.name }}</strong>
+                    <div class="text-muted" style="font-size:.75rem">
+                      Total: ${{ "%.2f"|format(tpl.total_purse()) }}
+                    </div>
+                  </div>
+                  <div class="d-flex gap-1">
+                    {# Apply #}
+                    <form method="POST" class="d-inline">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="action" value="apply_template">
+                      <input type="hidden" name="template_id" value="{{ tpl.id }}">
+                      <button type="submit" class="btn btn-sm btn-outline-warning" title="Apply to this event">
+                        <i class="bi bi-check2-circle"></i>
+                      </button>
+                    </form>
+                    {# Load into form #}
+                    <button type="button" class="btn btn-sm btn-outline-secondary load-tpl-btn"
+                            title="Load into form"
+                            data-payouts="{{ tpl.get_payouts()|tojson }}">
+                      <i class="bi bi-pencil"></i>
+                    </button>
+                    {# Delete #}
+                    <form method="POST" class="d-inline"
+                          data-confirm="Delete template '{{ tpl.name }}'?">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="action" value="delete_template">
+                      <input type="hidden" name="template_id" value="{{ tpl.id }}">
+                      <button type="submit" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-trash"></i>
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="card-body text-center text-muted py-4 small">
+              <i class="bi bi-bookmarks display-6 d-block mb-2"></i>
+              No templates saved yet.<br>Enter a name above and click "Save as Template".
+            </div>
+            {% endif %}
+          </div>
+        </div>
+
+      </div>{# row #}
     </div>
+  </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const inputs    = document.querySelectorAll('.payout-input');
+    const grandTot  = document.getElementById('grandTotal');
+
+    function updateTotals() {
+        let running = 0;
+        inputs.forEach((inp, idx) => {
+            const v = parseFloat(inp.value) || 0;
+            running += v;
+            const rt = document.getElementById(`rt_${idx + 1}`);
+            if (rt) rt.textContent = `$${running.toFixed(2)}`;
+        });
+        grandTot.textContent = `$${running.toFixed(2)}`;
+    }
+
+    inputs.forEach(inp => inp.addEventListener('input', updateTotals));
+    updateTotals();
+
+    /* Load template into form fields */
+    document.querySelectorAll('.load-tpl-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const payouts = JSON.parse(btn.dataset.payouts || '{}');
+            inputs.forEach((inp, idx) => {
+                const pos = String(idx + 1);
+                inp.value = payouts[pos] ? Number(payouts[pos]).toFixed(2) : '';
+            });
+            updateTotals();
+            window.scrollTo({top: 0, behavior: 'smooth'});
+        });
+    });
+
+    /* data-confirm on delete forms */
+    document.querySelectorAll('form[data-confirm]').forEach(f => {
+        f.addEventListener('submit', e => {
+            if (!confirm(f.dataset.confirm)) e.preventDefault();
+        });
+    });
+});
+</script>
 {% endblock %}

@@ -236,6 +236,9 @@ def save_tournament_settings(tournament_id):
     # Friday Night Feature always occurs on the same day as the college day
     tournament.friday_feature_date = tournament.college_date
 
+    # Shirt logistics checkbox — present in form means True
+    tournament.providing_shirts = bool(request.form.get('providing_shirts'))
+
     db.session.commit()
     flash('Tournament settings saved.', 'success')
     return redirect(url_for('main.tournament_setup', tournament_id=tournament_id, tab='settings'))
