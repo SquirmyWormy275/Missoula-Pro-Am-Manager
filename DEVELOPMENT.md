@@ -186,6 +186,7 @@ Event:
     scoring_type: String   # 'time' | 'score' | 'distance' | 'hits' | 'bracket'
     scoring_order: String  # 'lowest_wins' | 'highest_wins'
     is_open: Boolean       # College: OPEN vs CLOSED event
+    is_handicap: Boolean   # Championship (False) vs Handicap (True); underhand/standing_block/springboard Speed only
     is_partnered: Boolean
     partner_gender_requirement: String  # 'same' | 'mixed' | 'any'
     requires_dual_runs: Boolean  # True for Speed Climb, Chokerman's Race
@@ -549,6 +550,25 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-03-09 (V2.1.0)
+
+**STRATHMARK Phase 1 — Championship vs. Handicap format selection:**
+
+- Added `Event.is_handicap` (Boolean, default False) to `models/event.py`: stores Championship vs. Handicap format choice per event; applies only to underhand, standing block, and springboard Speed events
+- Added migration `j7k8l9m0n1o2_add_is_handicap_to_events.py` (down_revision: `i6j7k8l9m0n1`): `is_handicap` column with `server_default='0'`
+- Added `HANDICAP_ELIGIBLE_STAND_TYPES = {'underhand', 'standing_block', 'springboard'}` to `config.py`: single gating constant used across routes and templates
+- Updated `routes/scheduling.py` (`_upsert_event`, `_create_college_events`, `_create_pro_events`, `_get_existing_event_config`): reads `handicap_format_{field_key}` form field for eligible events (excluding `scoring_type == 'hits'`); saves to `event.is_handicap`; `_get_existing_event_config` returns `college_handicap` and `pro_handicap` state dicts
+- Updated `templates/scheduling/setup_events.html` and `templates/tournament_setup.html` (Events tab): Championship / Handicap radio toggle rendered beneath each eligible college CLOSED event and within each eligible pro event card; toggle hidden for Hard Hit events (`scoring_type == 'hits'`)
+
+**Eligible events with Championship/Handicap toggle:**
+- College CLOSED: Underhand Speed (M/F), Standing Block Speed (M/F), 1-Board Springboard (M/F)
+- Pro: Springboard, Pro 1-Board, 3-Board Jigger, Underhand (M/F), Standing Block (M/F)
+
+**Not eligible (no toggle):**
+- Underhand Hard Hit, Standing Block Hard Hit — hits-based scoring, handicap not applicable
+
+---
 
 ### 2026-03-09 (V2.0.0)
 

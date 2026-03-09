@@ -280,14 +280,20 @@ def _create_college_events(tournament, form_data, college_open_events, college_c
             continue
 
         max_stands_override = stand_overrides.get(event_config.get('stand_type'))
+        is_handicap = (
+            form_data.get(f"handicap_format_{event_config['field_key']}", 'championship') == 'handicap'
+            if event_config.get('stand_type') in config.HANDICAP_ELIGIBLE_STAND_TYPES
+            and event_config.get('scoring_type') != 'hits'
+            else False
+        )
         if event_config.get('is_gendered', True):
             # Create men's and women's versions
-            event_m = _upsert_event(tournament, event_config, 'college', 'M', False, max_stands_override)
-            event_f = _upsert_event(tournament, event_config, 'college', 'F', False, max_stands_override)
+            event_m = _upsert_event(tournament, event_config, 'college', 'M', False, max_stands_override, is_handicap)
+            event_f = _upsert_event(tournament, event_config, 'college', 'F', False, max_stands_override, is_handicap)
             selected_signatures.add(_event_signature(event_m.name, event_m.event_type, event_m.gender))
             selected_signatures.add(_event_signature(event_f.name, event_f.event_type, event_f.gender))
         else:
-            event = _upsert_event(tournament, event_config, 'college', None, False, max_stands_override)
+            event = _upsert_event(tournament, event_config, 'college', None, False, max_stands_override, is_handicap)
             selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
 
     return _remove_deselected_events(tournament, 'college', selected_signatures)
@@ -304,22 +310,28 @@ def _create_pro_events(tournament, form_data, pro_events):
             continue
 
         max_stands_override = stand_overrides.get(event_config.get('stand_type'))
+        is_handicap = (
+            form_data.get(f"handicap_format_{event_config['field_key']}", 'championship') == 'handicap'
+            if event_config.get('stand_type') in config.HANDICAP_ELIGIBLE_STAND_TYPES
+            and event_config.get('scoring_type') != 'hits'
+            else False
+        )
         if event_config.get('is_gendered', False):
             # Check which genders are enabled
             if form_data.get(f"enable_{event_config['field_key']}_M") == 'on':
-                event_m = _upsert_event(tournament, event_config, 'pro', 'M', False, max_stands_override)
+                event_m = _upsert_event(tournament, event_config, 'pro', 'M', False, max_stands_override, is_handicap)
                 selected_signatures.add(_event_signature(event_m.name, event_m.event_type, event_m.gender))
             if form_data.get(f"enable_{event_config['field_key']}_F") == 'on':
-                event_f = _upsert_event(tournament, event_config, 'pro', 'F', False, max_stands_override)
+                event_f = _upsert_event(tournament, event_config, 'pro', 'F', False, max_stands_override, is_handicap)
                 selected_signatures.add(_event_signature(event_f.name, event_f.event_type, event_f.gender))
         else:
-            event = _upsert_event(tournament, event_config, 'pro', None, False, max_stands_override)
+            event = _upsert_event(tournament, event_config, 'pro', None, False, max_stands_override, is_handicap)
             selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
 
     return _remove_deselected_events(tournament, 'pro', selected_signatures)
 
 
-def _upsert_event(tournament, event_config, event_type, gender, is_open, max_stands_override=None):
+def _upsert_event(tournament, event_config, event_type, gender, is_open, max_stands_override=None, is_handicap=False):
     """Create or update a single event from configuration."""
     stand_config = config.STAND_CONFIGS.get(event_config.get('stand_type', ''), {})
 
@@ -347,6 +359,7 @@ def _upsert_event(tournament, event_config, event_type, gender, is_open, max_sta
     event.stand_type = event_config.get('stand_type')
     event.max_stands = max_stands_override if max_stands_override is not None else stand_config.get('total')
     event.has_prelims = event_config.get('has_prelims', False)
+    event.is_handicap = is_handicap
 
     return event
 
@@ -576,6 +589,28 @@ def _get_existing_event_config(tournament):
             'F': any(e.gender == 'F' for e in matching),
         }
 
+    # Handicap vs. Championship state for eligible college CLOSED events
+    college_handicap = {}
+    for cfg in config.COLLEGE_CLOSED_EVENTS:
+        if cfg.get('stand_type') not in config.HANDICAP_ELIGIBLE_STAND_TYPES:
+            continue
+        if cfg.get('scoring_type') == 'hits':
+            continue
+        key = cfg['name']
+        matching = [e for e in events if e.event_type == 'college' and e.name == key]
+        college_handicap[key] = matching[0].is_handicap if matching else False
+
+    # Handicap vs. Championship state for eligible pro events
+    pro_handicap = {}
+    for cfg in config.PRO_EVENTS:
+        if cfg.get('stand_type') not in config.HANDICAP_ELIGIBLE_STAND_TYPES:
+            continue
+        if cfg.get('scoring_type') == 'hits':
+            continue
+        key = cfg['name']
+        matching = [e for e in events if e.event_type == 'pro' and e.name == key]
+        pro_handicap[key] = matching[0].is_handicap if matching else False
+
     # Per-stand-type count overrides stored on existing events
     stand_counts = {}
     for event in events:
@@ -587,6 +622,8 @@ def _get_existing_event_config(tournament):
         'college_closed_enabled': closed_enabled,
         'pro_enabled': pro_enabled,
         'pro_gender': pro_gender,
+        'college_handicap': college_handicap,
+        'pro_handicap': pro_handicap,
         'stand_counts': stand_counts,
     }
 

@@ -95,6 +95,9 @@ PLACEMENT_POINTS = {
     6: 1
 }
 
+# Stand types that support Championship vs. Handicap format selection (STRATHMARK integration)
+HANDICAP_ELIGIBLE_STAND_TYPES = {'underhand', 'standing_block', 'springboard'}
+
 # Stand configurations
 STAND_CONFIGS = {
     'springboard': {

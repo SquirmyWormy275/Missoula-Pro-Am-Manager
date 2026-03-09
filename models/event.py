@@ -28,6 +28,9 @@ class Event(db.Model):
     # Event classification (college only)
     is_open = db.Column(db.Boolean, default=False)  # True = OPEN event, False = CLOSED
 
+    # Competition format (underhand, standing block, springboard only)
+    is_handicap = db.Column(db.Boolean, default=False)  # False = Championship, True = Handicap
+
     # Event characteristics
     is_partnered = db.Column(db.Boolean, default=False)
     partner_gender_requirement = db.Column(db.String(10), nullable=True)  # 'same', 'mixed', 'any'

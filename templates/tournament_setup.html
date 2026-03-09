@@ -159,6 +159,22 @@
                                                 {% endif %}
                                             </label>
                                         </div>
+                                        {% if event.stand_type in ['underhand', 'standing_block', 'springboard'] and event.scoring_type != 'hits' %}
+                                        <div class="btn-group btn-group-sm mt-1 ms-4" role="group">
+                                            <input type="radio" class="btn-check"
+                                                   name="handicap_format_{{ event.field_key }}"
+                                                   id="setup_hf_college_{{ event.field_key }}_champ" value="championship"
+                                                   {% if not existing_config.college_handicap.get(event.name, False) %}checked{% endif %}>
+                                            <label class="btn btn-outline-secondary" style="font-size:0.7rem;padding:0.15rem 0.5rem"
+                                                   for="setup_hf_college_{{ event.field_key }}_champ">Championship</label>
+                                            <input type="radio" class="btn-check"
+                                                   name="handicap_format_{{ event.field_key }}"
+                                                   id="setup_hf_college_{{ event.field_key }}_hdcp" value="handicap"
+                                                   {% if existing_config.college_handicap.get(event.name, False) %}checked{% endif %}>
+                                            <label class="btn btn-outline-info" style="font-size:0.7rem;padding:0.15rem 0.5rem"
+                                                   for="setup_hf_college_{{ event.field_key }}_hdcp">Handicap</label>
+                                        </div>
+                                        {% endif %}
                                     </div>
                                     {% endfor %}
                                 </div>
@@ -222,6 +238,27 @@
                                                 {% endif %}
                                             </div>
                                         </div>
+                                        {% if event.stand_type in ['underhand', 'standing_block', 'springboard'] and event.scoring_type != 'hits' %}
+                                        <div class="row mt-2">
+                                            <div class="col-12 d-flex align-items-center gap-2">
+                                                <small class="text-muted">Format:</small>
+                                                <div class="btn-group btn-group-sm" role="group">
+                                                    <input type="radio" class="btn-check"
+                                                           name="handicap_format_{{ event.field_key }}"
+                                                           id="setup_hf_pro_{{ event.field_key }}_champ" value="championship"
+                                                           {% if not existing_config.pro_handicap.get(event.name, False) %}checked{% endif %}>
+                                                    <label class="btn btn-outline-secondary"
+                                                           for="setup_hf_pro_{{ event.field_key }}_champ">Championship</label>
+                                                    <input type="radio" class="btn-check"
+                                                           name="handicap_format_{{ event.field_key }}"
+                                                           id="setup_hf_pro_{{ event.field_key }}_hdcp" value="handicap"
+                                                           {% if existing_config.pro_handicap.get(event.name, False) %}checked{% endif %}>
+                                                    <label class="btn btn-outline-info"
+                                                           for="setup_hf_pro_{{ event.field_key }}_hdcp">Handicap</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {% endif %}
                                     </div>
                                 </div>
                                 {% endfor %}

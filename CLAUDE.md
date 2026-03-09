@@ -13,10 +13,10 @@ This application exists within the **STRATHEX ecosystem**, built by Alex Kaper. 
 **Ecosystem components:**
 
 - **Missoula Pro-Am Manager** (this repo): Tournament logistics — registration, heats, flights, results, payouts.
-- **STRATHMARK** (separate STRATHEX repo): Handicap Calculator add-on. Python CLI, uses XGBoost + Ollama LLM. Not yet connected to this app.
+- **STRATHMARK** (separate STRATHEX repo): Handicap Calculator add-on. Python CLI, uses XGBoost + Ollama LLM. Partially integrated — `Event.is_handicap` flag now stored and surfaced in tournament setup UI; full calculation pipeline not yet wired. See Section 7.
 - **KYTHEREX**: Predictive Engine add-on. Planned but not yet detailed in this codebase.
 
-STRATHMARK and KYTHEREX are not integrated into this app. See Section 7 for planned integration points.
+STRATHMARK has partial data-model integration (the format flag). Full calculation and mark assignment are not yet wired. See Section 7.
 
 ---
 
@@ -262,7 +262,7 @@ Fields: `id`, `tournament_id`, `name`, `gender`, `address`, `phone`, `email`, `s
 
 ### Event
 
-Fields: `id`, `tournament_id`, `name`, `event_type` (college/pro), `gender` (M/F/None), `scoring_type` (time/score/distance/hits/bracket), `scoring_order` (lowest_wins/highest_wins), `is_open` (college OPEN/CLOSED flag), `is_partnered`, `partner_gender_requirement` (same/mixed/any), `requires_dual_runs`, `requires_triple_runs` (Boolean — event uses 3-run cumulative scoring format), `stand_type`, `max_stands`, `has_prelims`, `payouts` (JSON dict position → amount), `status` (pending/in_progress/completed), `is_finalized` (Boolean — scoring locked; payouts distributed; prevents further edits). Relationships: heats, results.
+Fields: `id`, `tournament_id`, `name`, `event_type` (college/pro), `gender` (M/F/None), `scoring_type` (time/score/distance/hits/bracket), `scoring_order` (lowest_wins/highest_wins), `is_open` (college OPEN/CLOSED flag), `is_handicap` (Boolean, default False — Championship vs. Handicap format; applies to underhand/standing_block/springboard Speed events only; Hard Hit events always Championship; controlled via `config.HANDICAP_ELIGIBLE_STAND_TYPES`), `is_partnered`, `partner_gender_requirement` (same/mixed/any), `requires_dual_runs`, `requires_triple_runs` (Boolean — event uses 3-run cumulative scoring format), `stand_type`, `max_stands`, `has_prelims`, `payouts` (JSON dict position → amount), `status` (pending/in_progress/completed), `is_finalized` (Boolean — scoring locked; payouts distributed; prevents further edits). Relationships: heats, results.
 
 The `payouts` JSON field is repurposed by `ProAmRelay` and `PartneredAxeThrow` to store their state, and by `BirlingBracket` to store bracket data. This is a deliberate design decision to avoid extra tables.
 
@@ -416,7 +416,7 @@ PayoutTemplate  (tournament-independent, standalone)
 
 **Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
 
-**STRATHMARK integration:** Completely absent. See Section 7.
+**STRATHMARK integration:** Partial — `Event.is_handicap` field added (migration `j7k8l9m0n1o2`); Championship/Handicap toggle present in tournament setup UI for eligible events; mark calculation and `handicap_factor` scoring not yet wired. See Section 7.
 
 **EntryFormReqs.md:** Contains only a stub note. Pro entry form redesign is pending.
 
@@ -454,25 +454,33 @@ Cookie Stack and Standing Block stand conflict: any code touching heat generatio
 
 ## 7. RELATIONSHIP TO STRATHEX ECOSYSTEM
 
-This app handles tournament logistics only: registration, heats, flights, results, payouts. It does not perform any predictive or handicap calculation.
+This app handles tournament logistics only: registration, heats, flights, results, payouts. It does not yet perform full handicap calculation.
 
-**STRATHMARK** (not yet integrated) handles handicap calculation and AI-powered predictions. It is a Python CLI tool using XGBoost and an Ollama LLM, living in the separate STRATHEX repository.
+**STRATHMARK** (partially integrated) handles handicap calculation and AI-powered predictions. It is a Python CLI tool using XGBoost and an Ollama LLM, living in the separate STRATHEX repository.
 
 **KYTHEREX** (not yet integrated) is described as a Predictive Engine add-on.
 
-### Natural Integration Points in the Current Codebase
+### What Is Already Integrated (V2.1.0)
 
-Two specific locations are where STRATHMARK predictions would plug in:
+1. **`Event.is_handicap` (Boolean):** Stores the format choice — Championship (False) or Handicap (True) — per event. Added via migration `j7k8l9m0n1o2`. Default False (Championship).
 
-1. **`services/flight_builder.py` — `optimize_flight_for_ability()`:** This function (lines 196–213) is explicitly a stub with a comment reading "Future: Could reorder based on predicted times." This is the designed hook for STRATHMARK to provide predicted completion times per competitor per event, enabling ability-grouped heats in the springboard and other time-based events.
+2. **`config.HANDICAP_ELIGIBLE_STAND_TYPES`:** Set `{'underhand', 'standing_block', 'springboard'}`. Used by `_upsert_event()`, `_create_college_events()`, `_create_pro_events()`, `_get_existing_event_config()`, and both setup templates to gate the toggle. Hard Hit events (scoring_type `'hits'`) are excluded even within eligible stand types.
 
-2. **`services/heat_generator.py` — `_generate_event_heats()`:** The current snake-draft distribution has no ability-weighting. Competitors are distributed without regard to predicted performance. STRATHMARK predictions should feed a pre-sorted competitor list or a weighting scheme here to produce ability-grouped heats rather than purely round-robin distribution.
+3. **Tournament setup UI (both `tournament_setup.html` and `scheduling/setup_events.html`):** Championship / Handicap radio toggle appears beneath each eligible event during tournament design. Selection is saved to `Event.is_handicap` on form submit.
 
-3. **`models/competitor.py` — `ProCompetitor`:** Has no `handicap` or `predicted_time` fields. These would need to be added (or provided externally at heat generation time) for STRATHMARK integration.
+### Remaining Integration Points
 
-4. **`models/event.py` — `Event`:** Has no `start_mark` field. Pro springboard start marks are determined by handicap — this would be a natural STRATHMARK output field on the Event or EventResult.
+4. **`services/flight_builder.py` — `optimize_flight_for_ability()`:** Stub function (lines 196–213) — the designed hook for STRATHMARK predicted completion times to enable ability-grouped heats for springboard and other time-based events.
 
-The broader vision: STRATHMARK calculates start marks and predicted times from historical data, feeds them into this app's heat generation step to group competitors by predicted ability, and its predictions are surfaced to the TD during the pre-show planning phase.
+5. **`services/heat_generator.py` — `_generate_event_heats()`:** Current snake-draft distribution has no ability-weighting. STRATHMARK predictions should feed a pre-sorted competitor list here.
+
+6. **`models/competitor.py` — `ProCompetitor`:** No `handicap` or `predicted_time` fields yet. These must be added (or provided at heat generation time) for full STRATHMARK integration.
+
+7. **`EventResult.handicap_factor` (Float, default 1.0):** Placeholder column exists. Scoring engine must apply this factor when `event.is_handicap` is True — subtract each competitor's start mark from their raw time before position calculation.
+
+8. **Mark assignment pipeline:** When `event.is_handicap` is True, STRATHMARK's `HandicapCalculator` must be called at heat sheet print time (or pre-event) to compute each competitor's start mark from historical data and store it on `EventResult.handicap_factor` (or a new `start_mark_seconds` field on EventResult or HeatAssignment).
+
+The broader vision: STRATHMARK calculates start marks and predicted times, feeds them into this app's heat generation step to group competitors by predicted ability, and marks are printed on heat sheets so competitors know their start times.
 
 ---
 
@@ -492,10 +500,12 @@ The following features remain as planned or implied by the codebase and requirem
 - Authenticated write endpoints on the public API (currently GET-only)
 - Multi-year competitor tracking and performance history
 
-**STRATHMARK integration (see Section 7 for integration points):**
+**STRATHMARK integration (see Section 7 for what's done and what remains):**
+- `Event.is_handicap` flag now stored and surfaced in UI (V2.1.0) ✓
+- `config.HANDICAP_ELIGIBLE_STAND_TYPES` gating constant added (V2.1.0) ✓
 - `optimize_flight_for_ability()` stub in `flight_builder.py` is the designed hook for predicted times
 - `_generate_event_heats()` in `heat_generator.py` needs ability-weighting input
 - `ProCompetitor` needs `handicap` / `predicted_time` fields
-- `Event` needs `start_mark` field for springboard
+- Mark assignment pipeline: call `HandicapCalculator` when `event.is_handicap` is True; store result on `EventResult.handicap_factor` or a new `start_mark_seconds` field
 
 **Generalization vision:** The current app is hardcoded to the Missoula Pro Am's specific event list and format. The event list lives in `config.py` (`COLLEGE_OPEN_EVENTS`, `COLLEGE_CLOSED_EVENTS`, `PRO_EVENTS`) and the UI strings in `strings.py`. The long-term STRATHEX platform vision is to make these event lists configurable per-tournament rather than hardcoded, enabling this application to serve any timbersports event, not just Missoula. The `is_open` flag on Event, the configurable payouts system, and the per-tournament event setup flow are all steps in this direction.
