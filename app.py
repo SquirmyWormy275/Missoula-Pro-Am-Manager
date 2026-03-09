@@ -168,9 +168,12 @@ def create_app():
         app.register_blueprint(auth_bp, url_prefix='/auth')
         app.register_blueprint(portal_bp, url_prefix='/portal')
         app.register_blueprint(api_bp, url_prefix='/api')
-        # Attach rate limiter to the app (no-op if flask-limiter not installed)
-        from routes.api import _init_limiter
+        # Also register api_bp at /api/v1/ for forwards-compatible clients (#19)
+        app.register_blueprint(api_bp, url_prefix='/api/v1', name='api_v1')
+        # Attach rate limiters to the app (no-op if flask-limiter not installed)
+        from routes.api import _init_limiter, _init_write_limiter
         _init_limiter(app)
+        _init_write_limiter(app)
 
     @sa_event.listens_for(Engine, 'connect')
     def _set_sqlite_pragma(dbapi_connection, connection_record):

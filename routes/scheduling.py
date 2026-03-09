@@ -44,6 +44,79 @@ def _event_rank_category(event) -> str | None:
     return None
 
 
+def _snapshot_flights(tournament_id: int) -> dict:
+    """Capture per-flight heat counts for the build-diff modal."""
+    snapshot = {}
+    for fl in Flight.query.filter_by(tournament_id=tournament_id).all():
+        snapshot[fl.flight_number] = len(fl.get_heats_ordered())
+    return snapshot
+
+
+def _handle_event_list_post(tournament, saturday_college_event_ids, generate_event_heats, build_pro_flights, integrate_college_spillover_into_flights):
+    """Handle POST actions for event_list: generate_all, rebuild_flights, integrate_spillover.
+
+    Wraps each multi-step operation in a try/except so a failure in one step rolls
+    back that step without corrupting the whole session (heat generation already
+    commits per-event; flight building commits at the end of build_pro_flights).
+    """
+    action = request.form.get('action', '')
+    tournament_id = tournament.id
+
+    if action == 'generate_all':
+        try:
+            _generate_all_heats(tournament, generate_event_heats)
+            pre_snap = _snapshot_flights(tournament_id)
+            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
+            if flights is not None:
+                flash(f'Built {flights} pro flight(s).', 'success')
+                integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
+                if integration['integrated_heats'] > 0:
+                    db.session.commit()
+                    flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
+                post_snap = _snapshot_flights(tournament_id)
+                session[f'build_diff_{tournament_id}'] = {
+                    'before_flight_count': len(pre_snap),
+                    'after_flight_count': len(post_snap),
+                    'total_heats': sum(post_snap.values()),
+                }
+                session.modified = True
+        except Exception as exc:
+            db.session.rollback()
+            flash(f'Heat/flight generation failed and was rolled back: {exc}', 'error')
+
+    elif action == 'rebuild_flights':
+        try:
+            pre_snap = _snapshot_flights(tournament_id)
+            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
+            if flights is not None:
+                flash(f'Rebuilt {flights} pro flight(s).', 'success')
+                integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
+                if integration['integrated_heats'] > 0:
+                    db.session.commit()
+                    flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
+                post_snap = _snapshot_flights(tournament_id)
+                session[f'build_diff_{tournament_id}'] = {
+                    'before_flight_count': len(pre_snap),
+                    'after_flight_count': len(post_snap),
+                    'total_heats': sum(post_snap.values()),
+                }
+                session.modified = True
+        except Exception as exc:
+            db.session.rollback()
+            flash(f'Flight rebuild failed and was rolled back: {exc}', 'error')
+
+    elif action == 'integrate_spillover':
+        try:
+            integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
+            db.session.commit()
+            flash(integration['message'], 'info')
+            if integration['integrated_heats'] > 0:
+                flash(f"Integrated {integration['integrated_heats']} heat(s) into flights.", 'success')
+        except Exception as exc:
+            db.session.rollback()
+            flash(f'Spillover integration failed: {exc}', 'error')
+
+
 @scheduling_bp.route('/<int:tournament_id>/events', methods=['GET', 'POST'])
 def event_list(tournament_id):
     """Unified Events & Schedule page — heat status, schedule options, generation actions."""
@@ -59,62 +132,14 @@ def event_list(tournament_id):
     db_config = tournament.get_schedule_config()
     saved = db_config if db_config else session.get(session_key, {})
 
-    # ── POST: handle schedule generation actions ──────────────────────────
-    # Fri/Sat options are managed exclusively by the friday_feature page.
-    # This handler reads them from session/DB; it never overwrites them.
+    # ── POST: dispatch to action handler ─────────────────────────────────
     if request.method == 'POST':
-        action = request.form.get('action', '')
-        # Use stored spillover selections (set by Fri Feature / Sat Overflow page)
         saturday_college_event_ids = [int(i) for i in saved.get('saturday_college_event_ids', [])]
-
-        def _snapshot_flights():
-            """Capture pre/post build metrics for the diff modal."""
-            snapshot = {}
-            for fl in Flight.query.filter_by(tournament_id=tournament_id).all():
-                ordered = fl.get_heats_ordered()
-                snapshot[fl.flight_number] = len(ordered)
-            return snapshot
-
-        if action == 'generate_all':
-            _generate_all_heats(tournament, generate_event_heats)
-            pre_snap = _snapshot_flights()
-            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
-            if flights is not None:
-                flash(f'Built {flights} pro flight(s).', 'success')
-                integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
-                if integration['integrated_heats'] > 0:
-                    db.session.commit()
-                    flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
-                post_snap = _snapshot_flights()
-                session[f'build_diff_{tournament_id}'] = {
-                    'before_flight_count': len(pre_snap),
-                    'after_flight_count': len(post_snap),
-                    'total_heats': sum(post_snap.values()),
-                }
-                session.modified = True
-        elif action == 'rebuild_flights':
-            pre_snap = _snapshot_flights()
-            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
-            if flights is not None:
-                flash(f'Rebuilt {flights} pro flight(s).', 'success')
-                integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
-                if integration['integrated_heats'] > 0:
-                    db.session.commit()
-                    flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
-                post_snap = _snapshot_flights()
-                session[f'build_diff_{tournament_id}'] = {
-                    'before_flight_count': len(pre_snap),
-                    'after_flight_count': len(post_snap),
-                    'total_heats': sum(post_snap.values()),
-                }
-                session.modified = True
-        elif action == 'integrate_spillover':
-            integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
-            db.session.commit()
-            flash(integration['message'], 'info')
-            if integration['integrated_heats'] > 0:
-                flash(f"Integrated {integration['integrated_heats']} heat(s) into flights.", 'success')
-
+        _handle_event_list_post(
+            tournament, saturday_college_event_ids,
+            generate_event_heats, build_pro_flights,
+            integrate_college_spillover_into_flights,
+        )
         return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
     # ── Normalise saved options ───────────────────────────────────────────
@@ -1909,3 +1934,75 @@ def ability_rankings(tournament_id):
         category_display_names=CATEGORY_DISPLAY_NAMES,
         category_descriptions=CATEGORY_DESCRIPTIONS,
     )
+
+
+# ---------------------------------------------------------------------------
+# #4 — Async heat / flight generation  (#4)
+# ---------------------------------------------------------------------------
+
+def _async_generate_all(tournament_id: int) -> dict:
+    """Background task: generate all heats + pro flights for a tournament.
+
+    Runs inside a new application context so the ThreadPoolExecutor worker
+    has access to the DB session and Flask app.
+    """
+    from flask import current_app
+    app = current_app._get_current_object()
+    with app.app_context():
+        from models import Tournament as _Tournament
+        from services.heat_generator import generate_event_heats
+        from services.flight_builder import build_pro_flights
+
+        tournament = _Tournament.query.get(tournament_id)
+        if not tournament:
+            return {'ok': False, 'error': f'Tournament {tournament_id} not found.'}
+
+        generated, skipped, errors = 0, 0, []
+        for event in tournament.events.order_by(Event.event_type, Event.name, Event.gender).all():
+            try:
+                generate_event_heats(event)
+                generated += 1
+            except Exception as exc:
+                if 'No competitors entered' in str(exc):
+                    skipped += 1
+                else:
+                    errors.append(str(exc))
+
+        pro_flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
+        return {
+            'ok': True,
+            'generated': generated,
+            'skipped': skipped,
+            'errors': errors,
+            'flights': pro_flights,
+        }
+
+
+@scheduling_bp.route('/<int:tournament_id>/events/generate-async', methods=['POST'])
+def generate_async(tournament_id):
+    """Submit heat + flight generation as a background job and return a job_id."""
+    Tournament.query.get_or_404(tournament_id)
+    from flask import current_app
+    app = current_app._get_current_object()
+
+    job_id = submit_job(
+        f'generate_all:{tournament_id}',
+        _async_generate_all,
+        tournament_id,
+    )
+    return json.dumps({'job_id': job_id}), 202, {'Content-Type': 'application/json'}
+
+
+@scheduling_bp.route('/<int:tournament_id>/events/job-status/<job_id>')
+def generation_job_status(tournament_id, job_id):
+    """Poll background job status. Returns JSON with status/result."""
+    from services.background_jobs import get as get_job
+    job = get_job(job_id)
+    if not job:
+        return json.dumps({'error': 'Job not found.'}), 404, {'Content-Type': 'application/json'}
+    return json.dumps({
+        'job_id': job['id'],
+        'status': job['status'],
+        'result': job['result'],
+        'error': job['error'],
+    }), 200, {'Content-Type': 'application/json'}

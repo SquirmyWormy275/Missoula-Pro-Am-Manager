@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import statistics
 from typing import Optional
 
@@ -33,6 +34,8 @@ from models.team import Team
 from models.payout_template import PayoutTemplate
 import config
 from services.audit import log_action
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +108,8 @@ def calculate_positions(event: Event) -> None:
 
     Raises nothing; caller should catch StaleDataError/IntegrityError and rollback.
     """
+    logger.info('scoring_engine: calculate_positions event_id=%s name=%r type=%s',
+                event.id, event.name, event.event_type)
     all_results = event.results.all()
 
     # --- strip previous awards ---

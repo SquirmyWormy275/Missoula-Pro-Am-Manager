@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}My Results – {{ competitor.name }}{% endblock %}
+{% block content %}
+<div class="container py-4">
+
+  {# ── Header ── #}
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+      <h4 class="mb-0"><i class="bi bi-person-badge me-2"></i>{{ competitor.name }}</h4>
+      <small class="text-muted">{{ tournament.name }} {{ tournament.year }}
+        &nbsp;·&nbsp;
+        {% if competitor_type == 'pro' %}Pro Division{% else %}College Division{% endif %}
+      </small>
+    </div>
+    <div class="d-flex gap-2">
+      {% if mobile_view %}
+        <a href="?view=full" class="btn btn-sm btn-outline-secondary"><i class="bi bi-table me-1"></i>Full View</a>
+      {% else %}
+        <a href="?view=mobile" class="btn btn-sm btn-outline-secondary"><i class="bi bi-phone me-1"></i>Mobile View</a>
+      {% endif %}
+      <a href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id) }}"
+         class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back
+      </a>
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show py-2">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+    {% endfor %}
+  {% endwith %}
+
+  {# ── Events Entered ── #}
+  {% if entered_events %}
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-light fw-semibold">
+      <i class="bi bi-list-check me-2"></i>Events Entered
+    </div>
+    <div class="card-body p-0">
+      <ul class="list-group list-group-flush">
+        {% for ev in entered_events %}
+        <li class="list-group-item d-flex align-items-center justify-content-between py-2">
+          <span>{{ ev.display_name }}</span>
+          {% set res = result_by_event.get(ev.id) %}
+          {% if ev.is_finalized and res %}
+            <span class="badge bg-success">
+              {% if res.position %}#{{ res.position }}{% else %}Scored{% endif %}
+            </span>
+          {% elif ev.is_finalized %}
+            <span class="badge bg-secondary">No result</span>
+          {% else %}
+            <span class="badge bg-warning text-dark">Pending</span>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert alert-info">No events found for your registration.</div>
+  {% endif %}
+
+  {# ── Heat Assignments ── #}
+  {% if my_heats %}
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-light fw-semibold">
+      <i class="bi bi-calendar3 me-2"></i>Heat Assignments
+    </div>
+    <div class="{% if mobile_view %}card-body p-0{% else %}card-body p-0{% endif %}">
+      {% if mobile_view %}
+        {# Mobile: card-per-heat layout #}
+        <div class="p-2 d-flex flex-column gap-2">
+          {% for h in my_heats %}
+          <div class="border rounded p-2">
+            <div class="fw-semibold">{{ h.event_name }}</div>
+            <div class="text-muted small">
+              Heat {{ h.heat_number }}{% if h.run_number %} / Run {{ h.run_number }}{% endif %}
+              {% if h.flight %}&nbsp;· Flight {{ h.flight }}{% endif %}
+            </div>
+            <div class="small mt-1">
+              Stand: <strong>{{ h.stand or '—' }}</strong>
+              &nbsp;|&nbsp; Status:
+              <span class="badge bg-{{ 'success' if h.status == 'complete' else ('warning text-dark' if h.status == 'in_progress' else 'secondary') }}">
+                {{ h.status }}
+              </span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        {# Full table layout #}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Event</th>
+                <th>Heat</th>
+                <th>Run</th>
+                <th>Flight</th>
+                <th>Stand</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for h in my_heats %}
+              <tr>
+                <td>{{ h.event_name }}</td>
+                <td>{{ h.heat_number }}</td>
+                <td>{{ h.run_number or '—' }}</td>
+                <td>{{ h.flight or '—' }}</td>
+                <td><strong>{{ h.stand or '—' }}</strong></td>
+                <td>
+                  <span class="badge bg-{{ 'success' if h.status == 'complete' else ('warning text-dark' if h.status == 'in_progress' else 'secondary') }}">
+                    {{ h.status }}
+                  </span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Personal Results ── #}
+  {% if result_by_event %}
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-light fw-semibold">
+      <i class="bi bi-trophy me-2"></i>My Results
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Event</th>
+              <th>Result</th>
+              {% if not mobile_view %}<th>Run 1</th><th>Run 2</th><th>Run 3</th>{% endif %}
+              <th>Position</th>
+              <th>Points / Payout</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ev in entered_events %}
+              {% set res = result_by_event.get(ev.id) %}
+              {% if res %}
+              <tr>
+                <td>{{ ev.display_name }}</td>
+                <td>
+                  {% if res.result_value is not none %}
+                    <strong>{{ res.result_value }}</strong>
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+                {% if not mobile_view %}
+                <td>{{ res.run1_value if res.run1_value is not none else '—' }}</td>
+                <td>{{ res.run2_value if res.run2_value is not none else '—' }}</td>
+                <td>{{ res.run3_value if res.run3_value is not none else '—' }}</td>
+                {% endif %}
+                <td>
+                  {% if res.position %}
+                    <span class="fw-semibold
+                      {% if res.position == 1 %} text-warning
+                      {% elif res.position == 2 %} text-secondary
+                      {% elif res.position == 3 %} text-danger
+                      {% endif %}">
+                      #{{ res.position }}
+                    </span>
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if res.points_earned is not none %}
+                    {{ res.points_earned }} pts
+                  {% endif %}
+                  {% if res.payout_amount %}
+                    &nbsp;<span class="text-success">${{ "%.2f"|format(res.payout_amount) }}</span>
+                  {% endif %}
+                  {% if res.points_earned is none and not res.payout_amount %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Gear Sharing ── #}
+  {% if gear_entries %}
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-light fw-semibold">
+      <i class="bi bi-tools me-2"></i>Gear Sharing
+    </div>
+    <div class="card-body p-0">
+      <ul class="list-group list-group-flush">
+        {% for entry in gear_entries %}
+        <li class="list-group-item py-2">
+          <div class="fw-semibold small">{{ entry.event_name }}</div>
+          <div class="text-muted small">{{ entry.partner }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="text-muted small text-center mt-3">
+    <i class="bi bi-shield-lock me-1"></i>
+    Your portal session is private. <a href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id) }}">Sign out / Back to spectator view</a>
+  </div>
+
+</div>
+{% endblock %}

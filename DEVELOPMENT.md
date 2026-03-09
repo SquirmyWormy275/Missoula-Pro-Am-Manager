@@ -550,6 +550,47 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-03-09 (V2.0.0)
+
+**20-improvement code quality and feature release:**
+
+**Performance:**
+- Fixed N+1 query in `routes/api.py` (`public_schedule`, `public_results`): replaced per-event lazy loads with single `Heat.query.filter(Heat.event_id.in_(event_ids))` batch query + `defaultdict` grouping
+- Fixed N+1 query in `services/flight_builder.py`: replaced per-event `.filter_by(run_number=1).all()` loop with single batch heat query for all non-axe events
+
+**Reliability & Error Handling:**
+- Split `StaleDataError` and `IntegrityError` handlers in `routes/scoring.py`: StaleDataError now shows "another judge edited this — reload" warning; IntegrityError shows constraint violation error
+- Added transactional rollback to scheduling: each `generate_all` / `rebuild_flights` / `integrate_spillover` action in `routes/scheduling.py` wrapped in `try/except db.session.rollback()`
+- Fixed error leakage in `routes/registration.py`: unexpected exceptions no longer flash `str(e)` to users; generic admin-contact message shown instead
+- Added `JSONDecodeError` guards to all model `.get_*()` methods — `CollegeCompetitor`, `ProCompetitor`, `Event.get_payouts()`, `Heat.get_competitors()`, `Heat.get_stand_assignments()` — return empty list/dict rather than propagating decode error
+
+**Security:**
+- Added `write_limit()` rate-limiting decorator to `routes/api.py`; `_init_write_limiter(app)` registered in `create_app()`
+- Applied `@write_limit('60 per minute')` to `enter_heat_results` and `@write_limit('10 per minute')` to `finalize_event` in `routes/scoring.py`
+
+**Validation:**
+- Added `@validates('name')` on `CollegeCompetitor` and `ProCompetitor` (SQLAlchemy event); truncates at `MAX_NAME_LENGTH = 100`
+
+**New Features:**
+- Competitor self-service portal: `competitor_my_results` route in `routes/portal.py` at `/portal/competitor/<tid>/<type>/<id>/my-results`; PIN gate template `templates/portal/competitor_pin_gate.html`; results dashboard `templates/portal/competitor_my_results.html` showing events entered, heat assignments (with stand/flight/run), personal results with position and payout, gear-sharing partners; mobile/full view toggle
+- Heat sheet PDF: `heat_sheet_pdf` route in `routes/scoring.py` at `/scoring/<tid>/heat/<hid>/pdf`; uses WeasyPrint if installed, falls back to print-styled HTML; standalone `templates/scoring/heat_sheet_print.html` with `@page` CSS, run-aware columns, "Print / Save as PDF" button; "Print Heat Sheet" link added to `enter_heat.html`
+- Async heat/flight generation: `generate_async` POST and `generation_job_status` GET routes in `routes/scheduling.py`; wraps `background_jobs.submit()`; returns 202 + `job_id`; poll endpoint returns status/progress JSON
+- API v1 prefix: `api_bp` now registered at both `/api/` and `/api/v1/` (name='api_v1') in `app.py`
+
+**Code Organization:**
+- Added `FlightBuilder` class to `services/flight_builder.py`: OO wrapper with `build()`, `integrate_spillover()`, and `spacing()` convenience methods
+- Added `logging.getLogger(__name__)` + `logger.info(...)` at entry of `calculate_positions()` in `services/scoring_engine.py`
+- Added `logging.getLogger(__name__)` + `logger.info(...)` at entry of `generate_event_heats()` in `services/heat_generator.py`
+- Extracted `_handle_event_list_post()` helper in `routes/scheduling.py` to separate POST action dispatch from GET rendering
+
+**UI:**
+- Added Bootstrap 5 conflict modal to `templates/scoring/enter_heat.html`: 409 conflict response shows modal with server message and reload link
+
+**Tests:**
+- Added 5 new test classes to `tests/test_scoring.py`: `TestFlagOutliersEdgeCases`, `TestDetectAxeTiesEdgeCases`, `TestSortKeyTiebreaks`, `TestPendingThrowoffs`, `TestImportResultsFromCSV`
+
+---
+
 ### 2026-03-07 (V1.9.0)
 
 **Scoring Engine Overhaul — centralized, comprehensive scoring service:**

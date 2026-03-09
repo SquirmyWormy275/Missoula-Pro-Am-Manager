@@ -88,7 +88,10 @@ class Event(db.Model):
 
     def get_payouts(self):
         """Return dict of position -> payout amount."""
-        return json.loads(self.payouts or '{}')
+        try:
+            return json.loads(self.payouts or '{}')
+        except json.JSONDecodeError:
+            return {}
 
     def set_payouts(self, payout_dict):
         """Set the payout structure."""

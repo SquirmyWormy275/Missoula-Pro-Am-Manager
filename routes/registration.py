@@ -86,9 +86,15 @@ def upload_college_entry(tournament_id):
                 )
             else:
                 flash(text.FLASH['import_success'].format(teams=valid_teams, competitors=result['competitors']), 'success')
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, OSError) as e:
             db.session.rollback()
-            flash(text.FLASH['import_error'].format(error=str(e)), 'error')
+            # Log full detail server-side; show only a safe summary to the user.
+            current_app.logger.exception('College upload failed for tournament %s', tournament_id)
+            flash(text.FLASH['import_error'].format(error='File could not be processed. Check the format and try again.'), 'error')
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception('Unexpected error during college upload for tournament %s', tournament_id)
+            flash('An unexpected error occurred during import. Please contact an administrator.', 'error')
 
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 

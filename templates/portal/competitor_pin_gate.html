@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Competitor Access – {{ competitor.name }}{% endblock %}
+{% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-sm-10 col-md-6 col-lg-5">
+      <div class="card shadow-sm">
+        <div class="card-header bg-primary text-white">
+          <h5 class="mb-0"><i class="bi bi-person-lock me-2"></i>Competitor Portal</h5>
+        </div>
+        <div class="card-body">
+          <p class="mb-3">
+            Enter the PIN for <strong>{{ competitor.name }}</strong> to view your personal schedule and results.
+          </p>
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show py-2">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endwith %}
+          <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+              <label for="pin" class="form-label fw-semibold">Portal PIN</label>
+              <input type="password" id="pin" name="pin" class="form-control form-control-lg"
+                     inputmode="numeric" pattern="[0-9]*" autocomplete="current-password"
+                     placeholder="Enter PIN" autofocus required>
+            </div>
+            <div class="d-grid">
+              <button type="submit" class="btn btn-primary btn-lg">
+                <i class="bi bi-unlock me-2"></i>Access My Results
+              </button>
+            </div>
+          </form>
+        </div>
+        <div class="card-footer text-muted small">
+          <a href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id) }}">
+            &larr; Back to spectator view
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

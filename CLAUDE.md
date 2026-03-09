@@ -118,6 +118,7 @@ templates/
     portal/             landing, spectator_dashboard, spectator_college_standings,
                         spectator_pro_standings, spectator_event_results,
                         spectator_relay_results, competitor_access, competitor_dashboard,
+                        competitor_pin_gate, competitor_my_results,
                         school_access, school_claim, school_dashboard, user_guide
     college/            dashboard, registration, team_detail
     pro/                dashboard, registration, new_competitor, competitor_detail,
@@ -126,7 +127,8 @@ templates/
     scheduling/         events, setup_events, heats, day_schedule (+ _print),
                         heat_sheets_print, friday_feature, preflight,
                         ability_rankings, show_day
-    scoring/            event_results, enter_heat, configure_payouts, offline_ops
+    scoring/            event_results, enter_heat, configure_payouts, offline_ops,
+                        heat_sheet_print
     reports/            all_results, college_standings, event_results,
                         payout_summary (+ _print variants), export_status,
                         payout_settlement
@@ -387,6 +389,22 @@ PayoutTemplate  (tournament-independent, standalone)
 - Pro Ability Rankings (`/scheduling/<tid>/ability-rankings`, `templates/scheduling/ability_rankings.html`): assign rank 1-N per competitor per event category (7 categories: springboard, underhand, standing_block, obstacle_pole, singlebuck, doublebuck, jack_jill); rank-ordered heat grouping for improved competitive balance
 - Heat locking for concurrent score entry: `Heat.locked_by_user_id` + `Heat.locked_at`; `acquire_lock()` / `release_lock()` / `is_locked()` methods prevent simultaneous edits by multiple scorers
 - Heat sheet enhancements (V1.8.0): per-flight pill filter tabs; two-column print layout with event color bands (pro=blue, college=mauve); drag-and-drop heat reordering (SortableJS); judge annotation notes-lines toggle; Cookie Stack / Standing Block conflict warning badges; competitor spacing heatmap; stand-assignment color coding (8 distinct colors); dual-run side-by-side layout; flight build progress overlay; flight build diff summary modal; 4-step scheduling wizard indicator
+- Competitor self-service portal (`/portal/competitor/<tid>/<type>/<id>/my-results`): PIN gate (`competitor_pin_gate.html`) + personal results dashboard (`competitor_my_results.html`); shows events entered, heat assignments with stand/flight/run, personal results with position and payout, gear-sharing partners; mobile/full view toggle
+- Heat sheet PDF export (`/scoring/<tid>/heat/<hid>/pdf`): WeasyPrint PDF if installed, graceful fallback to print-styled HTML; standalone `heat_sheet_print.html` template with `@page` CSS; "Print / Save as PDF" button; "Print Heat Sheet" link in `enter_heat.html`
+- Async heat/flight generation (`/scheduling/<tid>/events/generate-async`, `/scheduling/<tid>/events/job-status/<job_id>`): wraps `background_jobs.submit()`; returns 202 + `job_id`; poll endpoint returns status/progress; app context created inside async worker via `current_app._get_current_object()`
+- Rate limiting: `write_limit()` decorator in `routes/api.py`; `_init_write_limiter(app)` called in `create_app()`; `enter_heat_results` capped at 60/min, `finalize_event` at 10/min
+- N+1 query fix in `routes/api.py` (`public_schedule`, `public_results`): batch `.filter(Heat.event_id.in_(event_ids)).all()` + `defaultdict` grouping replaces per-event lazy loads
+- N+1 query fix in `services/flight_builder.py`: single batch query for all non-axe event heats (run_number==1) replaces per-event `.filter_by(run_number=1).all()` loop
+- `FlightBuilder` class in `services/flight_builder.py`: OO wrapper with `build(num_flights=None)`, `integrate_spillover(saturday_college_event_ids)`, and `spacing(event)` methods
+- JSON resilience: `JSONDecodeError` guards on all model `.get_*()` methods — `CollegeCompetitor.get_events_entered/get_partners/get_gear_sharing`, `ProCompetitor` equivalents, `Event.get_payouts()`, `Heat.get_competitors/get_stand_assignments()`; return empty list/dict instead of propagating decode error
+- Name validation: `@validates('name')` on both `CollegeCompetitor` and `ProCompetitor`; truncates at `MAX_NAME_LENGTH = 100` characters silently
+- `StaleDataError` / `IntegrityError` split in scoring: `StaleDataError` shows user-friendly "another judge edited this — reload" warning; `IntegrityError` shows database constraint violation error; each rolls back independently
+- Error leakage fix in `routes/registration.py`: `except Exception` no longer exposes `str(e)` to users; unexpected errors show a generic admin-contact message
+- Transactional rollback in scheduling: each `generate_all` / `rebuild_flights` / `integrate_spillover` action wrapped in `try/except db.session.rollback()` to prevent half-committed state
+- Logging: `logger.info(...)` added at entry of `calculate_positions()` in `scoring_engine.py` and `generate_event_heats()` in `heat_generator.py`
+- API v1 prefix: `api_bp` registered at `/api/v1/` (name='api_v1') in addition to `/api/` for forward-compatible clients
+- Bootstrap 5 conflict modal in `enter_heat.html`: 409 conflict response shows modal with server message and reload link instead of inline alert
+- Test coverage: 5 new test classes in `tests/test_scoring.py` — `TestFlagOutliersEdgeCases`, `TestDetectAxeTiesEdgeCases`, `TestSortKeyTiebreaks`, `TestPendingThrowoffs`, `TestImportResultsFromCSV`
 
 ### Known Gaps and Incomplete Features
 
@@ -470,7 +488,7 @@ The following features remain as planned or implied by the codebase and requirem
 
 **Technical debt:**
 - Comprehensive server-side input validation (continue hardening)
-- Unit and integration tests (none exist — optimistic locking and transaction rollback especially need coverage)
+- Unit and integration tests (partial — `tests/test_scoring.py` covers scoring engine, outlier detection, tiebreaks, throwoffs, CSV import; other layers remain untested)
 - Authenticated write endpoints on the public API (currently GET-only)
 - Multi-year competitor tracking and performance history
 

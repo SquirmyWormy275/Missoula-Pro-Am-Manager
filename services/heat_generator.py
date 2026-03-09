@@ -2,12 +2,16 @@
 Heat generation service using snake draft distribution.
 Adapted from STRATHEX tournament_ui.py patterns.
 """
+import logging
+import math
+
 from database import db
 from models import Event, Heat, HeatAssignment, EventResult
 from models.competitor import CollegeCompetitor, ProCompetitor
 import config
-import math
 from services.gear_sharing import competitors_share_gear_for_event
+
+logger = logging.getLogger(__name__)
 
 LIST_ONLY_EVENT_NAMES = {
     'axethrow',
@@ -96,6 +100,8 @@ def generate_event_heats(event: Event) -> int:
     Returns:
         Number of heats generated
     """
+    logger.info('heat_generator: generate_event_heats event_id=%s name=%r type=%s',
+                event.id, event.name, event.event_type)
     # Get competitors for this event
     competitors = _get_event_competitors(event)
 

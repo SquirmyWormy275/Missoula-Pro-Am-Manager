@@ -1,6 +1,7 @@
 """Minimal REST API endpoints for schedules, standings, and results."""
 import json
 import time
+from collections import defaultdict
 from datetime import datetime
 from flask import Blueprint, Response, current_app, jsonify, stream_with_context
 from models import Event, EventResult, Heat, Team, Tournament
@@ -9,6 +10,40 @@ from services.report_cache import get as cache_get, set as cache_set
 from services.handicap_export import build_chopping_rows
 
 api_bp = Blueprint('api', __name__)
+
+# ---------------------------------------------------------------------------
+# Write-endpoint rate limiter — attached in create_app() via _init_write_limiter.
+# Applies to POST/PUT/DELETE routes on management blueprints.
+# Falls back to a no-op if flask-limiter is not installed.
+# ---------------------------------------------------------------------------
+_write_limiter = None
+
+def _init_write_limiter(app):
+    """Optionally create a shared Limiter for management write routes."""
+    global _write_limiter
+    try:
+        from flask_limiter import Limiter  # type: ignore
+        from flask_limiter.util import get_remote_address  # type: ignore
+        _write_limiter = Limiter(
+            key_func=get_remote_address,
+            default_limits=[],
+            storage_uri='memory://',
+        )
+        _write_limiter.init_app(app)
+    except ImportError:
+        _write_limiter = None
+
+def write_limit(rate: str = '30 per minute'):
+    """Decorator applying a write-specific rate limit. No-op when limiter unavailable."""
+    import functools
+    def decorator(f):
+        if _write_limiter is not None:
+            return _write_limiter.limit(rate)(f)
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
 # ---------------------------------------------------------------------------
 # Rate limiting — gracefully no-ops if flask-limiter is not installed.
@@ -79,9 +114,21 @@ def public_standings(tournament_id):
 def public_schedule(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     events = tournament.events.order_by(Event.event_type, Event.name, Event.gender).all()
+    event_ids = [e.id for e in events]
+
+    # Batch-load all heats for all events in one query — avoids N+1
+    all_heats = (
+        Heat.query
+        .filter(Heat.event_id.in_(event_ids))
+        .order_by(Heat.event_id, Heat.heat_number, Heat.run_number)
+        .all()
+    ) if event_ids else []
+    heats_by_event = defaultdict(list)
+    for heat in all_heats:
+        heats_by_event[heat.event_id].append(heat)
+
     payload = []
     for event in events:
-        heats = event.heats.order_by(Heat.heat_number, Heat.run_number).all()
         payload.append({
             'event_id': event.id,
             'event_name': event.display_name,
@@ -97,7 +144,7 @@ def public_schedule(tournament_id):
                     'stand_assignments': heat.get_stand_assignments(),
                     'flight_number': heat.flight.flight_number if heat.flight else None,
                 }
-                for heat in heats
+                for heat in heats_by_event[event.id]
             ],
         })
     return jsonify({'tournament_id': tournament.id, 'schedule': payload})
@@ -107,9 +154,24 @@ def public_schedule(tournament_id):
 def public_results(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     completed_events = tournament.events.filter_by(status='completed').order_by(Event.event_type, Event.name, Event.gender).all()
+    event_ids = [e.id for e in completed_events]
+
+    # Batch-load all completed results in one query — avoids N+1
+    all_results = (
+        EventResult.query
+        .filter(
+            EventResult.event_id.in_(event_ids),
+            EventResult.status == 'completed',
+        )
+        .order_by(EventResult.event_id, EventResult.final_position)
+        .all()
+    ) if event_ids else []
+    results_by_event = defaultdict(list)
+    for row in all_results:
+        results_by_event[row.event_id].append(row)
+
     payload = []
     for event in completed_events:
-        rows = event.results.filter_by(status='completed').order_by(EventResult.final_position).all()
         payload.append({
             'event_id': event.id,
             'event_name': event.display_name,
@@ -125,7 +187,7 @@ def public_results(tournament_id):
                     'points_awarded': row.points_awarded,
                     'payout_amount': row.payout_amount,
                 }
-                for row in rows
+                for row in results_by_event[event.id]
             ],
         })
     return jsonify({'tournament_id': tournament.id, 'results': payload})

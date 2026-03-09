@@ -1112,3 +1112,132 @@ def _can_access_school_page(tournament_id: int, school_name: str) -> bool:
 def user_guide():
     """Comprehensive user guide organized by role."""
     return render_template('portal/user_guide.html')
+
+
+# ---------------------------------------------------------------------------
+# #20 — Competitor self-service portal: personal results, heats, gear
+# ---------------------------------------------------------------------------
+
+@portal_bp.route('/competitor/<int:tournament_id>/<competitor_type>/<int:competitor_id>/my-results',
+                 methods=['GET', 'POST'])
+def competitor_my_results(tournament_id, competitor_type, competitor_id):
+    """
+    Self-service page for a competitor to view their own:
+      - Events entered
+      - Heat assignments (heat number, stand, flight)
+      - Results and placement so far
+      - Gear-sharing partners
+
+    Requires the competitor's portal PIN to access (same PIN system already
+    used by competitor_claim / competitor_dashboard).  If the session already
+    holds an authenticated claim for this competitor, PIN is not re-prompted.
+    """
+    view_mode = _resolve_view_mode(prefer_mobile=True)
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    if competitor_type == 'college':
+        competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+        if competitor.tournament_id != tournament_id:
+            abort(404)
+    elif competitor_type == 'pro':
+        competitor = ProCompetitor.query.get_or_404(competitor_id)
+        if competitor.tournament_id != tournament_id:
+            abort(404)
+    else:
+        abort(404)
+
+    # Session auth check — key set by competitor_dashboard / competitor_claim
+    session_key = f'competitor_auth_{tournament_id}_{competitor_type}_{competitor_id}'
+    if not session.get(session_key):
+        # PIN gate
+        if request.method == 'POST':
+            pin = (request.form.get('pin') or '').strip()
+            if competitor.check_portal_pin(pin):
+                session[session_key] = True
+            else:
+                flash('Incorrect PIN. Please try again.', 'error')
+                return render_template(
+                    'portal/competitor_pin_gate.html',
+                    tournament=tournament, competitor=competitor,
+                    competitor_type=competitor_type,
+                    view_mode=view_mode, mobile_view=view_mode == 'mobile',
+                )
+        elif not competitor.has_portal_pin:
+            # No PIN set — allow access (open portal)
+            session[session_key] = True
+        else:
+            return render_template(
+                'portal/competitor_pin_gate.html',
+                tournament=tournament, competitor=competitor,
+                competitor_type=competitor_type,
+                view_mode=view_mode, mobile_view=view_mode == 'mobile',
+            )
+
+    # --- Build personal data payload ---
+    events = tournament.events.filter_by(event_type=competitor_type).all()
+    event_by_id = {e.id: e for e in events}
+
+    # Events entered
+    entered_event_ids = set()
+    try:
+        raw_entries = competitor.get_events_entered()
+        for raw in raw_entries:
+            val = str(raw).strip()
+            if val.isdigit() and int(val) in event_by_id:
+                entered_event_ids.add(int(val))
+    except Exception:
+        pass
+
+    entered_events = [event_by_id[eid] for eid in sorted(entered_event_ids) if eid in event_by_id]
+
+    # Heat assignments — find heats containing this competitor
+    from models import Heat as _Heat
+    from sqlalchemy import text as _text
+    my_heats = []
+    for event in entered_events:
+        for heat in event.heats.order_by(_Heat.heat_number, _Heat.run_number).all():
+            if competitor_id in heat.get_competitors():
+                my_heats.append({
+                    'event': event,
+                    'heat': heat,
+                    'stand': heat.get_stand_assignments().get(str(competitor_id)),
+                    'flight_number': heat.flight.flight_number if heat.flight else None,
+                })
+
+    # Results
+    from models import EventResult as _ER
+    my_results = (
+        _ER.query
+        .filter_by(
+            competitor_id=competitor_id,
+            competitor_type=competitor_type,
+        )
+        .filter(_ER.event_id.in_([e.id for e in entered_events]))
+        .order_by(_ER.final_position)
+        .all()
+    )
+    result_by_event = {r.event_id: r for r in my_results}
+
+    # Gear sharing
+    gear_map = competitor.get_gear_sharing() if hasattr(competitor, 'get_gear_sharing') else {}
+    gear_entries = []
+    for eid_str, partner in gear_map.items():
+        eid = int(eid_str) if str(eid_str).isdigit() else None
+        ev = event_by_id.get(eid) if eid else None
+        gear_entries.append({
+            'event_name': ev.display_name if ev else eid_str,
+            'partner': partner,
+        })
+
+    return render_template(
+        'portal/competitor_my_results.html',
+        tournament=tournament,
+        competitor=competitor,
+        competitor_type=competitor_type,
+        entered_events=entered_events,
+        my_heats=my_heats,
+        result_by_event=result_by_event,
+        gear_entries=gear_entries,
+        view_mode=view_mode,
+        mobile_view=view_mode == 'mobile',
+    )

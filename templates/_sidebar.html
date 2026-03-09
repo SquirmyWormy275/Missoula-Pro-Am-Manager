@@ -355,9 +355,10 @@
     #appSidebar { display: none !important; }
 }
 
-/* ── Mobile fallback ─────────────────────────────────── */
-@media (max-width: 991px) {
-    #appSidebar { display: none !important; }
+/* ── Mobile: hidden by default; shown as fixed drawer when .mobile-open ── */
+@media (max-width: 991.98px) {
+    #appSidebar { display: none; }
+    /* .mobile-open is toggled by the hamburger button JS in base.html */
 }
 </style>
 

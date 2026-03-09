@@ -3,7 +3,10 @@ Competitor models for both college and professional competitors.
 """
 from database import db
 import json
+from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
+
+MAX_NAME_LENGTH = 100  # Hard cap; String(200) column has room but UI breaks above ~100 chars
 
 
 class CollegeCompetitor(db.Model):
@@ -40,9 +43,18 @@ class CollegeCompetitor(db.Model):
     def __repr__(self):
         return f'<CollegeCompetitor {self.name} ({self.team.team_code if self.team else "no team"})>'
 
+    @validates('name')
+    def validate_name(self, key, value):
+        if value and len(value) > MAX_NAME_LENGTH:
+            value = value[:MAX_NAME_LENGTH]
+        return value
+
     def get_events_entered(self):
         """Return list of event IDs this competitor is entered in."""
-        return json.loads(self.events_entered or '[]')
+        try:
+            return json.loads(self.events_entered or '[]')
+        except json.JSONDecodeError:
+            return []
 
     def set_events_entered(self, events):
         """Set the list of event IDs."""
@@ -50,7 +62,10 @@ class CollegeCompetitor(db.Model):
 
     def get_partners(self):
         """Return dict of event_id -> partner_name."""
-        return json.loads(self.partners or '{}')
+        try:
+            return json.loads(self.partners or '{}')
+        except json.JSONDecodeError:
+            return {}
 
     def set_partner(self, event_id, partner_name):
         """Set partner for a specific event."""
@@ -77,7 +92,10 @@ class CollegeCompetitor(db.Model):
 
     def get_gear_sharing(self):
         """Return dict of event_id -> partner sharing gear."""
-        return json.loads(self.gear_sharing or '{}')
+        try:
+            return json.loads(self.gear_sharing or '{}')
+        except json.JSONDecodeError:
+            return {}
 
     def set_gear_sharing(self, event_id, partner_name):
         """Set gear sharing partner for a specific event."""
@@ -178,9 +196,18 @@ class ProCompetitor(db.Model):
     def __repr__(self):
         return f'<ProCompetitor {self.name}>'
 
+    @validates('name')
+    def validate_name(self, key, value):
+        if value and len(value) > MAX_NAME_LENGTH:
+            value = value[:MAX_NAME_LENGTH]
+        return value
+
     def get_events_entered(self):
         """Return list of event IDs this competitor is entered in."""
-        return json.loads(self.events_entered or '[]')
+        try:
+            return json.loads(self.events_entered or '[]')
+        except json.JSONDecodeError:
+            return []
 
     def set_events_entered(self, events):
         """Set the list of event IDs."""
@@ -188,7 +215,10 @@ class ProCompetitor(db.Model):
 
     def get_entry_fees(self):
         """Return dict of event_id -> fee amount."""
-        return json.loads(self.entry_fees or '{}')
+        try:
+            return json.loads(self.entry_fees or '{}')
+        except json.JSONDecodeError:
+            return {}
 
     def set_entry_fee(self, event_id, amount):
         """Set entry fee for a specific event."""
@@ -198,7 +228,10 @@ class ProCompetitor(db.Model):
 
     def get_fees_paid(self):
         """Return dict of event_id -> paid status."""
-        return json.loads(self.fees_paid or '{}')
+        try:
+            return json.loads(self.fees_paid or '{}')
+        except json.JSONDecodeError:
+            return {}
 
     def set_fee_paid(self, event_id, paid=True):
         """Set fee paid status for a specific event."""
@@ -208,7 +241,10 @@ class ProCompetitor(db.Model):
 
     def get_gear_sharing(self):
         """Return dict of event_id -> partner sharing gear."""
-        return json.loads(self.gear_sharing or '{}')
+        try:
+            return json.loads(self.gear_sharing or '{}')
+        except json.JSONDecodeError:
+            return {}
 
     def set_gear_sharing(self, event_id, partner_name):
         """Set gear sharing partner for a specific event."""
@@ -218,7 +254,10 @@ class ProCompetitor(db.Model):
 
     def get_partners(self):
         """Return dict of event_id -> partner_name."""
-        return json.loads(self.partners or '{}')
+        try:
+            return json.loads(self.partners or '{}')
+        except json.JSONDecodeError:
+            return {}
 
     def set_partner(self, event_id, partner_name):
         """Set partner for a specific event."""

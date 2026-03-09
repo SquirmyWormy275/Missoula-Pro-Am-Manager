@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Heat Sheet – {{ event.display_name }} Heat {{ heat.heat_number }}{% if event.requires_dual_runs %} Run {{ heat.run_number }}{% endif %}</title>
+<style>
+  @page { size: letter portrait; margin: 1.5cm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 11pt;
+    color: #111;
+    background: #fff;
+  }
+  .header { border-bottom: 2pt solid #000; padding-bottom: 0.5rem; margin-bottom: 1rem; }
+  .header h1 { font-size: 16pt; margin: 0 0 0.15rem; }
+  .header .meta { font-size: 9pt; color: #555; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { padding: 6pt 8pt; border: 1pt solid #ccc; font-size: 11pt; }
+  th { background: #f0f0f0; font-weight: 700; text-align: left; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .result-box { width: 120pt; border: 1pt solid #999; height: 20pt; display: inline-block; }
+  .footer { margin-top: 2rem; font-size: 8pt; color: #777; border-top: 1pt solid #ddd; padding-top: 0.5rem; }
+  @media screen {
+    body { max-width: 800px; margin: 2rem auto; padding: 1rem; }
+    .print-btn {
+      display: inline-block; margin-top: 1rem;
+      padding: 0.4rem 1rem; background: #0d6efd; color: #fff;
+      border: none; border-radius: 4px; cursor: pointer; font-size: 10pt;
+    }
+  }
+  @media print { .print-btn { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>{{ event.display_name }} — Heat {{ heat.heat_number }}{% if event.requires_dual_runs %} (Run {{ heat.run_number }}){% endif %}</h1>
+  <div class="meta">
+    {{ tournament.name }} {{ tournament.year }} &nbsp;|&nbsp;
+    Stand type: {{ event.stand_type or 'N/A' }} &nbsp;|&nbsp;
+    Scoring: {{ event.scoring_type }}{% if event.scoring_order == 'lowest_wins' %} (lowest wins){% else %} (highest wins){% endif %}
+    &nbsp;|&nbsp; Status: {{ heat.status }}
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Competitor</th>
+      <th>Stand</th>
+      {% if event.requires_dual_runs %}
+        <th>Run 1</th><th>Run 2</th><th>Best</th>
+      {% elif event.requires_triple_runs %}
+        <th>Throw 1</th><th>Throw 2</th><th>Throw 3</th><th>Total</th>
+      {% else %}
+        <th>Result</th>
+      {% endif %}
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for comp in competitors %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td><strong>{{ comp.name }}</strong></td>
+      <td>{{ comp.stand or '—' }}</td>
+      {% if event.requires_dual_runs %}
+        <td>{{ comp.run1_value if comp.run1_value is not none else '' }}</td>
+        <td>{{ comp.run2_value if comp.run2_value is not none else '' }}</td>
+        <td>{{ [comp.run1_value, comp.run2_value] | select('ne', none) | list | min if comp.run1_value is not none or comp.run2_value is not none else '' }}</td>
+      {% elif event.requires_triple_runs %}
+        <td>{{ comp.run1_value if comp.run1_value is not none else '' }}</td>
+        <td>{{ comp.run2_value if comp.run2_value is not none else '' }}</td>
+        <td>{{ '' }}</td>
+        <td>{{ comp.result_value if comp.result_value is not none else '' }}</td>
+      {% else %}
+        <td>{{ comp.result_value if comp.result_value is not none else '' }}</td>
+      {% endif %}
+      <td>{{ comp.status }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="footer">
+  Printed from Missoula Pro Am Manager &nbsp;|&nbsp; {{ tournament.name }} {{ tournament.year }}
+</div>
+
+<button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+
+</body>
+</html>

@@ -97,6 +97,37 @@
 {% endblock %}
 
 {% block content %}
+
+{# ── Conflict warning modal (#17) ─────────────────────────────────────────── #}
+<div class="modal fade" id="conflictModal" tabindex="-1" aria-labelledby="conflictModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-warning">
+      <div class="modal-header bg-warning text-dark">
+        <h5 class="modal-title" id="conflictModalLabel">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>Score Entry Conflict
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p id="conflictModalMessage" class="mb-3">
+          These scores were updated by another judge while you were entering results.
+          Please reload to see the latest values before saving again.
+        </p>
+        <p class="text-muted small mb-0">
+          <i class="bi bi-info-circle me-1"></i>
+          Reloading will discard your unsaved input for this heat.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <a id="conflictReloadBtn" href="#" class="btn btn-warning">
+          <i class="bi bi-arrow-clockwise me-1"></i>Reload Heat
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="container py-4">
   <div class="row justify-content-center">
     <div class="col-lg-9">
@@ -111,6 +142,12 @@
           <li class="breadcrumb-item active">Heat {{ heat.heat_number }}{% if event.requires_dual_runs %} – Run {{ heat.run_number }}{% endif %}</li>
         </ol>
       </nav>
+      <div class="text-end mb-2">
+        <a href="{{ url_for('scoring.heat_sheet_pdf', tournament_id=tournament.id, heat_id=heat.id) }}"
+           target="_blank" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-printer me-1"></i>Print Heat Sheet
+        </a>
+      </div>
 
       {# ── Lock banner ───────────────────────────────────────────────────── #}
       {% if lock_blocked %}
@@ -512,7 +549,12 @@ document.addEventListener('DOMContentLoaded', function () {
             credentials: 'same-origin'
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) { const e = new Error(data.message || 'Error'); e.httpStatus = res.status; throw e; }
+        if (!res.ok || !data.ok) {
+            const e = new Error(data.message || 'Error');
+            e.httpStatus = res.status;
+            e.serverMessage = data.message || null;  // surface for conflict modal
+            throw e;
+        }
         return data;
     }
 
@@ -759,7 +801,16 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         } catch (err) {
             if (err.httpStatus === 409) {
-                setStatus('<i class="bi bi-exclamation-circle"></i> Heat changed elsewhere — reload and save again.', 'alert-danger');
+                // Show conflict modal with server message and reload link (#17)
+                const msg = err.serverMessage || 'These scores were updated by another judge while you were entering. Please reload before saving again.';
+                const modal = document.getElementById('conflictModal');
+                if (modal) {
+                    document.getElementById('conflictModalMessage').textContent = msg;
+                    document.getElementById('conflictReloadBtn').href = postUrl.replace('/enter', '/enter');
+                    new bootstrap.Modal(modal).show();
+                } else {
+                    setStatus('<i class="bi bi-exclamation-circle"></i> ' + msg, 'alert-danger');
+                }
             } else {
                 window.ProAmOfflineQueue.upsert(entry);
                 setStatus('<i class="bi bi-cloud-slash"></i> Saved locally — will sync when online.', 'alert-warning');

@@ -6,10 +6,15 @@ Ensures competitors have maximum rest between their events using tiered spacing:
   Tier 2 (saw_hand):     min=5, target=7 heats between appearances
   Tier 3 (all others):   min=4, target=5 heats between appearances
 """
-from database import db
-from models import Tournament, Event, Heat, HeatAssignment, Flight
+import logging
 import math
 import json
+from collections import defaultdict
+
+from database import db
+from models import Tournament, Event, Heat, HeatAssignment, Flight
+
+logger = logging.getLogger(__name__)
 
 
 # Global fallback spacing (used for unknown stand types and college heats)
@@ -89,17 +94,30 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
     )
     partnered_axe_heats = _prepare_partnered_axe_show_heats(partnered_axe_event)
 
-    # Collect all non-axe heats with their competitor information
+    # Collect all non-axe heats with their competitor information.
+    # Batch-load all heats for non-axe events in a single query to avoid N+1.
+    non_axe_events = [e for e in pro_events
+                      if not (partnered_axe_event and e.id == partnered_axe_event.id)]
+    non_axe_event_ids = [e.id for e in non_axe_events]
+    event_by_id = {e.id: e for e in non_axe_events}
+
+    batched_heats = (
+        Heat.query
+        .filter(Heat.event_id.in_(non_axe_event_ids), Heat.run_number == 1)
+        .order_by(Heat.event_id, Heat.heat_number)
+        .all()
+    ) if non_axe_event_ids else []
+    logger.debug('flight_builder: loaded %d non-axe heats for %d events',
+                 len(batched_heats), len(non_axe_event_ids))
+
     all_heats = []
-    for event in pro_events:
-        if partnered_axe_event and event.id == partnered_axe_event.id:
-            continue
-        event_heats = event.heats.filter_by(run_number=1).order_by(Heat.heat_number).all()
-        for heat in event_heats:
+    for heat in batched_heats:
+        event = event_by_id.get(heat.event_id)
+        if event:
             all_heats.append({
                 'heat': heat,
                 'event': event,
-                'competitors': set(heat.get_competitors())
+                'competitors': set(heat.get_competitors()),
             })
 
     if not all_heats and not partnered_axe_heats:
@@ -929,3 +947,43 @@ def integrate_college_spillover_into_flights(tournament: Tournament, college_eve
         'events': per_event,
         'message': 'College spillover heats integrated into flights.',
     }
+
+
+# ---------------------------------------------------------------------------
+# FlightBuilder class — thin, testable wrapper around the module functions (#12)
+# ---------------------------------------------------------------------------
+
+class FlightBuilder:
+    """Object-oriented façade for flight building operations.
+
+    Wraps the module-level functions so callers can:
+    - Inject a tournament once and call individual steps cleanly.
+    - Subclass or mock for unit testing without touching the DB.
+
+    Example::
+
+        fb = FlightBuilder(tournament)
+        fb.build(num_flights=5)
+        result = fb.integrate_spillover([101, 102])
+    """
+
+    def __init__(self, tournament: Tournament):
+        self.tournament = tournament
+
+    def build(self, num_flights: int = None) -> int:
+        """Build pro flights. Returns number of flights created."""
+        logger.info('FlightBuilder.build tournament_id=%s num_flights=%s',
+                    self.tournament.id, num_flights)
+        return build_pro_flights(self.tournament, num_flights=num_flights)
+
+    def integrate_spillover(self, saturday_college_event_ids: list[int]) -> dict:
+        """Integrate college spillover heats into existing Saturday flights."""
+        logger.info('FlightBuilder.integrate_spillover tournament_id=%s events=%s',
+                    self.tournament.id, saturday_college_event_ids)
+        return integrate_college_spillover_into_flights(
+            self.tournament, saturday_college_event_ids
+        )
+
+    def spacing(self, event) -> tuple[int, int]:
+        """Return (min_spacing, target_spacing) for the given event's stand type."""
+        return _get_spacing(event)

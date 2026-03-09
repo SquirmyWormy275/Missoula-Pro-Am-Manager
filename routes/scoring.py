@@ -23,6 +23,7 @@ import strings as text
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
 import services.scoring_engine as engine
+from routes.api import write_limit
 
 scoring_bp = Blueprint('scoring', __name__)
 
@@ -203,11 +204,22 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
                     'judge_user_id': _current_user_id()})
         db.session.commit()
 
-    except (StaleDataError, IntegrityError):
+    except StaleDataError:
+        db.session.rollback()
+        return {
+            'ok': False, 'category': 'warning',
+            'message': 'These scores were updated by another judge while you were entering results. '
+                       'Please reload to see the latest values before saving again.',
+            'redirect_url': url_for('scoring.enter_heat_results',
+                                    tournament_id=tournament_id, heat_id=heat.id),
+            'status_code': 409,
+        }
+    except IntegrityError:
         db.session.rollback()
         return {
             'ok': False, 'category': 'error',
-            'message': 'Concurrent edit detected while saving. Reload and try again.',
+            'message': 'A database constraint was violated while saving results. '
+                       'Check for duplicate entries and try again.',
             'redirect_url': url_for('scoring.enter_heat_results',
                                     tournament_id=tournament_id, heat_id=heat.id),
             'status_code': 409,
@@ -323,6 +335,7 @@ def finalize_preview(tournament_id, event_id):
 
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/finalize', methods=['POST'])
+@write_limit('10 per minute')
 def finalize_event(tournament_id, event_id):
     event = _event_for_tournament_or_404(tournament_id, event_id)
 
@@ -333,11 +346,20 @@ def finalize_event(tournament_id, event_id):
                        {'tournament_id': tournament_id,
                         'judge_user_id': _current_user_id()})
         db.session.commit()
-    except (StaleDataError, IntegrityError):
+    except StaleDataError:
         db.session.rollback()
+        msg = 'Results were modified by another judge during finalization. Reload and finalize again.'
         if _is_async():
-            return jsonify({'ok': False, 'message': 'Concurrent update during finalization.'}), 409
-        flash('Concurrent update detected while finalizing event.', 'error')
+            return jsonify({'ok': False, 'message': msg}), 409
+        flash(msg, 'warning')
+        return redirect(url_for('scoring.event_results',
+                                tournament_id=tournament_id, event_id=event_id))
+    except IntegrityError:
+        db.session.rollback()
+        msg = 'A database constraint error occurred during finalization. Contact an admin if this persists.'
+        if _is_async():
+            return jsonify({'ok': False, 'message': msg}), 409
+        flash(msg, 'error')
         return redirect(url_for('scoring.event_results',
                                 tournament_id=tournament_id, event_id=event_id))
 
@@ -354,6 +376,7 @@ def finalize_event(tournament_id, event_id):
 # ---------------------------------------------------------------------------
 
 @scoring_bp.route('/<int:tournament_id>/heat/<int:heat_id>/enter', methods=['GET', 'POST'])
+@write_limit('60 per minute')
 def enter_heat_results(tournament_id, heat_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     heat = _heat_for_tournament_or_404(tournament_id, heat_id)
@@ -679,6 +702,55 @@ def _parse_payout_form() -> dict | None:
 # ---------------------------------------------------------------------------
 # Routes: birling bracket
 # ---------------------------------------------------------------------------
+
+@scoring_bp.route('/<int:tournament_id>/heat/<int:heat_id>/pdf')
+def heat_sheet_pdf(tournament_id, heat_id):
+    """
+    Printable heat sheet for a single heat.
+
+    Attempts to render a PDF via WeasyPrint if installed; falls back to a
+    print-optimised HTML page that the browser can save as PDF.
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    heat = _heat_for_tournament_or_404(tournament_id, heat_id)
+    event = heat.event
+
+    competitor_ids = heat.get_competitors()
+    comp_lookup = _competitor_lookup(event, competitor_ids)
+    result_lookup = _existing_results(event, competitor_ids)
+    assignments = heat.get_stand_assignments()
+
+    competitors = []
+    for cid in competitor_ids:
+        comp = comp_lookup.get(cid)
+        result = result_lookup.get(cid)
+        competitors.append({
+            'id': cid,
+            'name': comp.name if comp else f'Unknown ({cid})',
+            'stand': assignments.get(str(cid)),
+            'result_value': result.result_value if result else None,
+            'run1_value': result.run1_value if result else None,
+            'run2_value': result.run2_value if result else None,
+            'status': result.status if result else 'pending',
+        })
+
+    html = render_template(
+        'scoring/heat_sheet_print.html',
+        tournament=tournament, event=event, heat=heat,
+        competitors=competitors,
+    )
+
+    # Try WeasyPrint; if not installed, return print-styled HTML
+    try:
+        from weasyprint import HTML as WP_HTML  # type: ignore
+        pdf_bytes = WP_HTML(string=html).write_pdf()
+        return pdf_bytes, 200, {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': f'inline; filename="heat_{heat.heat_number}_run{heat.run_number}.pdf"',
+        }
+    except ImportError:
+        return html, 200, {'Content-Type': 'text/html'}
+
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/birling-bracket')
 def birling_bracket(tournament_id, event_id):

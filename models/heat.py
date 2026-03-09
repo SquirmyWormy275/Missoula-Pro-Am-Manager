@@ -67,7 +67,10 @@ class Heat(db.Model):
 
     def get_competitors(self):
         """Return list of competitor IDs in this heat."""
-        return json.loads(self.competitors or '[]')
+        try:
+            return json.loads(self.competitors or '[]')
+        except json.JSONDecodeError:
+            return []
 
     def set_competitors(self, competitor_ids):
         """Set the list of competitor IDs."""
@@ -89,7 +92,10 @@ class Heat(db.Model):
 
     def get_stand_assignments(self):
         """Return dict of competitor_id -> stand_number."""
-        return json.loads(self.stand_assignments or '{}')
+        try:
+            return json.loads(self.stand_assignments or '{}')
+        except json.JSONDecodeError:
+            return {}
 
     def set_stand_assignment(self, competitor_id, stand_number):
         """Assign a competitor to a specific stand."""
