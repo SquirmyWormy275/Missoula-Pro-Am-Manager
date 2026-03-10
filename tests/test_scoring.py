@@ -459,3 +459,92 @@ class TestImportResultsFromCSV:
             assert 'imported' in result
         except Exception:
             pass  # Expected when DB is not available in test environment
+
+
+# ---------------------------------------------------------------------------
+# _metric() handicap scoring — unit tests (no DB)
+# ---------------------------------------------------------------------------
+
+class TestHandicapScoring:
+    """Verify _metric() applies start-mark subtraction for handicap events."""
+
+    def _handi_event(self, scoring_type='time', requires_dual_runs=False):
+        ev = _event(scoring_type=scoring_type, requires_dual_runs=requires_dual_runs)
+        ev.is_handicap = True
+        return ev
+
+    def _champ_event(self, scoring_type='time', requires_dual_runs=False):
+        ev = _event(scoring_type=scoring_type, requires_dual_runs=requires_dual_runs)
+        ev.is_handicap = False
+        return ev
+
+    def _res(self, result_value=None, best_run=None, handicap_factor=1.0):
+        r = _result(result_value=result_value, best_run=best_run)
+        r.handicap_factor = handicap_factor
+        return r
+
+    # --- championship events are never adjusted ---
+
+    def test_championship_event_no_adjustment(self):
+        ev = self._champ_event()
+        r = self._res(result_value=60.0, handicap_factor=5.0)
+        assert engine._metric(r, ev) == 60.0
+
+    def test_championship_event_non_time_no_adjustment(self):
+        ev = self._champ_event(scoring_type='score')
+        r = self._res(result_value=80.0, handicap_factor=5.0)
+        assert engine._metric(r, ev) == 80.0
+
+    # --- handicap events with scoring_type != 'time' are NOT adjusted ---
+
+    def test_handicap_event_score_type_no_adjustment(self):
+        ev = self._handi_event(scoring_type='score')
+        r = self._res(result_value=80.0, handicap_factor=5.0)
+        assert engine._metric(r, ev) == 80.0
+
+    # --- None result_value ---
+
+    def test_handicap_none_result_returns_none(self):
+        ev = self._handi_event()
+        r = self._res(result_value=None)
+        assert engine._metric(r, ev) is None
+
+    # --- DB default placeholder (1.0) treated as scratch (0.0) ---
+
+    def test_handicap_default_factor_is_scratch(self):
+        ev = self._handi_event()
+        r = self._res(result_value=60.0, handicap_factor=1.0)
+        # No adjustment — default placeholder means scratch
+        assert engine._metric(r, ev) == 60.0
+
+    def test_handicap_none_factor_is_scratch(self):
+        ev = self._handi_event()
+        r = self._res(result_value=60.0, handicap_factor=None)
+        assert engine._metric(r, ev) == 60.0
+
+    # --- normal start-mark subtraction ---
+
+    def test_handicap_subtracts_start_mark(self):
+        ev = self._handi_event()
+        r = self._res(result_value=60.0, handicap_factor=5.0)
+        # net = 60.0 - 5.0 = 55.0
+        assert engine._metric(r, ev) == 55.0
+
+    def test_handicap_clamps_to_zero(self):
+        # start_mark > raw_time should not produce a negative net time
+        ev = self._handi_event()
+        r = self._res(result_value=3.0, handicap_factor=10.0)
+        assert engine._metric(r, ev) == 0.0
+
+    # --- dual-run handicap events ---
+
+    def test_handicap_dual_run_uses_best_run(self):
+        ev = self._handi_event(requires_dual_runs=True)
+        r = self._res(best_run=55.0, handicap_factor=5.0)
+        # net = 55.0 - 5.0 = 50.0
+        assert engine._metric(r, ev) == 50.0
+
+    def test_handicap_dual_run_none_best_run(self):
+        ev = self._handi_event(requires_dual_runs=True)
+        r = self._res(best_run=None, handicap_factor=5.0)
+        assert engine._metric(r, ev) is None

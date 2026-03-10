@@ -154,11 +154,19 @@ class EventResult(db.Model):
     # Judge must record throw-off positions before is_finalized can be set True.
     throwoff_pending = db.Column(db.Boolean, default=False)
 
-    # DEPRECATED — reserved for future STRATHMARK handicap integration.
-    # This column exists in the schema but is intentionally never read or written by any
-    # application code.  Do NOT use it until the STRATHMARK scoring spec is finalised and
-    # the full integration is implemented.  See Event.is_handicap for the active flag.
+    # STRATHMARK handicap start mark in seconds.
+    # _metric() in scoring_engine subtracts this from raw time when event.is_handicap is True
+    # and scoring_type == 'time'.  Default 1.0 is the DB placeholder; treated as 0.0 scratch
+    # by _metric().  Populated by services/mark_assignment.py → assign_handicap_marks().
     handicap_factor = db.Column(db.Float, default=1.0, nullable=False)
+
+    # STRATHMARK predicted completion time in seconds — the raw time HandicapCalculator
+    # expected this competitor to post.  Stored here so that after the event runs,
+    # _record_prediction_residuals_for_pro_event() can compare predicted vs actual and push
+    # the residual to the STRATHMARK Supabase bias-learning table.
+    # Populated by mark_assignment.assign_handicap_marks() when a MarkResult is available.
+    # NULL means no prediction was recorded (mark assignment not run, or competitor scratched).
+    predicted_time = db.Column(db.Float, nullable=True, default=None)
 
     # Placement
     final_position = db.Column(db.Integer, nullable=True)  # 1st, 2nd, 3rd, etc.

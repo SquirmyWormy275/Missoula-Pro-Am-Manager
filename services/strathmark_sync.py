@@ -373,6 +373,107 @@ def push_pro_event_results(event, tournament_year: int) -> None:
             event.display_name, exc, rows,
         )
 
+    # Record prediction residuals for STRATHMARK bias-learning (non-blocking).
+    _record_prediction_residuals_for_pro_event(event, event_code)
+
+
+# ---------------------------------------------------------------------------
+# Change 2b — Prediction residual recording for pro SB / UH events
+# ---------------------------------------------------------------------------
+
+def _record_prediction_residuals_for_pro_event(event, event_code: str) -> None:
+    """
+    Record per-competitor prediction residuals in the STRATHMARK Supabase table
+    after a pro SB or UH event is finalized.
+
+    Called from push_pro_event_results() immediately after results have been
+    pushed so that STRATHMARK can track prediction accuracy and adjust future
+    marks for systematic bias.
+
+    residual = actual_time - predicted_time
+    Positive: competitor ran slower than predicted (undermarked).
+    Negative: competitor ran faster than predicted (overmarked).
+
+    PREDICTED TIME — CURRENT STATE (NOT YET WIRED):
+    predicted_time must be stored on EventResult before finalization for this
+    function to record any data.  As of now, EventResult does not have a
+    predicted_time column — the schema only carries handicap_factor (the start
+    mark in seconds, default 1.0 = unassigned scratch).
+
+    The mark assignment service (services/mark_assignment.py) populates
+    handicap_factor with the start mark but does NOT store the predicted
+    completion time.  Additionally, mark_assignment._get_handicap_calculator()
+    instantiates HandicapCalculator with supabase_url/supabase_key kwargs that
+    HandicapCalculator.__init__ does not accept (it takes event_ceiling, ollama_url,
+    wood_df, results_df), so the constructor raises TypeError and returns None.
+    mark_assignment._fetch_start_mark() also calls calculator.get_start_mark()
+    which does not exist on HandicapCalculator (the correct method is calculate()).
+    Until both issues are resolved:
+        (a) EventResult.predicted_time column added via migration, and
+        (b) mark_assignment.py updated to persist MarkResult.predicted_time,
+    this function will silently skip every competitor (predicted_time is None)
+    and record nothing.  It remains safe to call at any time.
+
+    This function is non-blocking — all exceptions are caught and logged at
+    ERROR level; the caller's response path is never interrupted.
+    """
+    if not is_configured():
+        return
+
+    try:
+        from models.competitor import ProCompetitor
+
+        today = date.today()
+        predicted: dict = {}
+        actual: dict = {}
+
+        for result in event.results.filter_by(status='completed').all():
+            if result.result_value is None:
+                continue
+
+            comp = ProCompetitor.query.get(result.competitor_id)
+            if comp is None or not comp.strathmark_id:
+                # strathmark_id absence already logged by push_pro_event_results().
+                continue
+
+            # predicted_time is not yet a column on EventResult.  getattr returns
+            # None until the field exists and mark_assignment stores it.
+            # Do NOT use handicap_factor as a substitute — it is the start mark
+            # (in seconds), not the predicted completion time.
+            predicted_time = getattr(result, 'predicted_time', None)
+            if predicted_time is None:
+                logger.warning(
+                    'STRATHMARK residuals: no predicted_time for %s (%s) in %s; '
+                    'skipping — assign handicap marks before finalizing to capture residuals.',
+                    result.competitor_name, comp.strathmark_id, event.display_name,
+                )
+                continue
+
+            predicted[comp.strathmark_id] = float(predicted_time)
+            actual[comp.strathmark_id] = float(result.result_value)
+
+        if not predicted:
+            return
+
+        from strathmark import record_prediction_residuals
+        record_prediction_residuals(
+            predicted=predicted,
+            actual=actual,
+            show_name=SHOW_NAME,
+            event_code=event_code,
+            result_date=today,
+        )
+        logger.info(
+            'STRATHMARK: recorded prediction residuals for %d competitor(s) in %s',
+            len(predicted), event.display_name,
+        )
+
+    except Exception as exc:
+        logger.error(
+            'STRATHMARK: _record_prediction_residuals_for_pro_event failed for %s: %s',
+            event.display_name, exc,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Change 3 — College SB Speed / UH Speed result push

@@ -63,6 +63,7 @@ BLUEPRINT_PERMISSIONS = {
 PUBLIC_MAIN_ENDPOINTS = {
     'main.index',
     'main.set_language',
+    'main.health',
 }
 
 

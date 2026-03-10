@@ -13,10 +13,10 @@ This application exists within the **STRATHEX ecosystem**, built by Alex Kaper. 
 **Ecosystem components:**
 
 - **Missoula Pro-Am Manager** (this repo): Tournament logistics — registration, heats, flights, results, payouts.
-- **STRATHMARK** (separate STRATHEX repo): Handicap Calculator add-on. Python CLI, uses XGBoost + Ollama LLM. Live integration as of V2.2.0 — competitor enrollment, SB/UH result push, college result resolution, and sync status page wired. Full handicap calculation pipeline (mark assignment, `handicap_factor` scoring) not yet wired. See Section 7.
+- **STRATHMARK** (separate STRATHEX repo): Handicap Calculator add-on. Python CLI, uses XGBoost + Ollama LLM. Live integration as of V2.3.0 — competitor enrollment, SB/UH result push, college result resolution, sync status page, handicap scoring math in `_metric()`, and mark assignment route wired. Full end-to-end pipeline requires `strathmark` package installed + env vars. See Section 7.
 - **KYTHEREX**: Predictive Engine add-on. Planned but not yet detailed in this codebase.
 
-STRATHMARK has active live-data integration (enrollment + result push to Supabase global DB). Full handicap calculation and mark assignment are not yet wired. See Section 7.
+STRATHMARK has active live-data integration (enrollment + result push to Supabase global DB). Handicap scoring math and mark assignment route are wired (V2.3.0). Full end-to-end pipeline requires the `strathmark` package installed + env vars. See Section 7.
 
 ---
 
@@ -63,7 +63,17 @@ routes/
     __init__.py
     main.py             # Dashboard, tournament CRUD, college/pro dashboards; tournament_setup multi-tab GET; save_tournament_settings POST
     registration.py     # Excel upload for college; manual entry for pro; gear sharing manager routes (15+ routes)
-    scheduling.py       # Event setup, heat generation, flight building
+    scheduling/         # Event setup, heat generation, flight building (Blueprint package)
+        __init__.py       # Blueprint + shared helpers; imports sub-modules
+        events.py         # event_list, setup_events, day_schedule, apply_saturday_priority
+        heats.py          # event_heats, generate_heats, generate_college_heats, swap, sync
+        flights.py        # flight_list, build_flights, reorder, start_flight, complete_flight
+        heat_sheets.py    # heat_sheets, day_schedule_print
+        friday_feature.py # friday_feature
+        show_day.py       # show_day
+        ability_rankings.py # ability_rankings
+        preflight.py      # preflight_check, preflight_json, generate_async, job_status
+        assign_marks.py   # assign_marks (STRATHMARK handicap mark assignment)
     scoring.py          # Heat result entry, position calculation, payouts
     reporting.py        # Standings, event results, payout summary + async export; fee_tracker route
     proam_relay.py      # Pro-Am Relay lottery and results
@@ -107,6 +117,8 @@ services/
                         #   outlier flagging, individual/team standings, payout template CRUD, bulk CSV import
     strathmark_sync.py  # STRATHMARK integration layer: competitor enrollment, result push (pro SB/UH, college Speed),
                         #   ID generation, WoodConfig lookup, name-match resolution, local sync cache + skipped log
+    mark_assignment.py  # Handicap mark assignment: is_mark_assignment_eligible(), assign_handicap_marks();
+                        #   queries STRATHMARK HandicapCalculator; stores start marks on EventResult.handicap_factor
 
 templates/
     base.html
@@ -129,7 +141,7 @@ templates/
                         gear_sharing, gear_sharing_print, gear_parse_review
     scheduling/         events, setup_events, heats, day_schedule (+ _print),
                         heat_sheets_print, friday_feature, preflight,
-                        ability_rankings, show_day
+                        ability_rankings, show_day, assign_marks
     scoring/            event_results, enter_heat, configure_payouts, offline_ops,
                         heat_sheet_print
     reports/            all_results, college_standings, event_results,
@@ -271,7 +283,7 @@ The `payouts` JSON field is repurposed by `ProAmRelay` and `PartneredAxeThrow` t
 
 ### EventResult
 
-Fields: `id`, `event_id`, `competitor_id` (integer, not FK), `competitor_type` (college/pro), `competitor_name`, `partner_name`, `result_value`, `result_unit`, `run1_value`, `run2_value`, `best_run`, `run3_value` (Float, nullable — third run for triple-run events), `tiebreak_value` (Float, nullable — result from a throwoff run to break a tie), `throwoff_pending` (Boolean — two or more tied competitors need a throwoff before positions can be finalized), `handicap_factor` (Float, default 1.0 — placeholder for STRATHMARK-adjusted scoring; currently unused), `final_position`, `points_awarded`, `payout_amount`, `is_flagged` (Boolean — score flagged as statistical outlier by `_flag_score_outliers()`), `status` (pending/completed/scratched/dnf), `version_id` (Integer — optimistic locking). Methods: `calculate_best_run()` sets `best_run` and `result_value` to the lower of run1/run2; `calculate_cumulative_score()` sums all run values for triple-run events.
+Fields: `id`, `event_id`, `competitor_id` (integer, not FK), `competitor_type` (college/pro), `competitor_name`, `partner_name`, `result_value`, `result_unit`, `run1_value`, `run2_value`, `best_run`, `run3_value` (Float, nullable — third run for triple-run events), `tiebreak_value` (Float, nullable — result from a throwoff run to break a tie), `throwoff_pending` (Boolean — two or more tied competitors need a throwoff before positions can be finalized), `handicap_factor` (Float, default 1.0 — STRATHMARK start mark in seconds; `_metric()` subtracts this from raw time when `event.is_handicap is True` and `scoring_type == "time"`; 1.0 = default placeholder treated as 0.0 scratch), `predicted_time` (Float, nullable — HandicapCalculator predicted completion time in seconds; stored by `mark_assignment.assign_handicap_marks()` for use by `_record_prediction_residuals_for_pro_event()` after finalization; NULL = mark assignment not run), `final_position`, `points_awarded`, `payout_amount`, `is_flagged` (Boolean — score flagged as statistical outlier by `_flag_score_outliers()`), `status` (pending/completed/scratched/dnf), `version_id` (Integer — optimistic locking). Methods: `calculate_best_run()` sets `best_run` and `result_value` to the lower of run1/run2; `calculate_cumulative_score()` sums all run values for triple-run events.
 
 ### Heat
 
@@ -409,6 +421,14 @@ PayoutTemplate  (tournament-independent, standalone)
 - API v1 prefix: `api_bp` registered at `/api/v1/` (name='api_v1') in addition to `/api/` for forward-compatible clients
 - Bootstrap 5 conflict modal in `enter_heat.html`: 409 conflict response shows modal with server message and reload link instead of inline alert
 - Test coverage: 5 new test classes in `tests/test_scoring.py` — `TestFlagOutliersEdgeCases`, `TestDetectAxeTiesEdgeCases`, `TestSortKeyTiebreaks`, `TestPendingThrowoffs`, `TestImportResultsFromCSV`
+- Scheduling blueprint decomposed into package (`routes/scheduling/`): 9 sub-modules; all 24 URL paths identical; shared helpers in `__init__.py`; original monolithic `routes/scheduling.py` removed
+- Route smoke tests (`tests/test_routes_smoke.py`): Flask test client + in-memory SQLite; covers all blueprints; asserts no 500/502/503
+- Handicap scoring math in `scoring_engine._metric()` (V2.3.0): subtracts `handicap_factor` start mark from raw time when `event.is_handicap` + `scoring_type=="time"`; 1.0/None treated as scratch; 11 unit tests in `TestHandicapScoring`
+- STRATHMARK mark assignment service (`services/mark_assignment.py`, V2.3.0): `assign_handicap_marks()` queries HandicapCalculator; `is_mark_assignment_eligible()` guard; non-blocking + graceful no-op if package missing; import path fixed to `strathmark.calculator` (V2.4.0)
+- Mark assignment route + template (`/scheduling/<tid>/events/<eid>/assign-marks`, V2.3.0): GET status page, POST trigger; audit log; `templates/scheduling/assign_marks.html`; STRATHMARK logo added at top (V2.4.0)
+- PostgreSQL migration guide (`docs/POSTGRES_MIGRATION.md`, V2.3.0): full SQLite-to-PG data migration procedure with inline script; Railway deployment checklist
+- `EventResult.predicted_time` (Float, nullable, V2.4.0): stores HandicapCalculator predicted completion time; wired in `assign_handicap_marks()` for loop; used by `_record_prediction_residuals_for_pro_event()` after finalization; migration `d8d4aa7bdb45`
+- `_record_prediction_residuals_for_pro_event()` in `strathmark_sync.py` (V2.4.0): records per-competitor prediction residuals (actual − predicted) to STRATHMARK Supabase bias-learning table after pro SB/UH finalization; called at end of `push_pro_event_results()`; non-blocking
 
 ### Known Gaps and Incomplete Features
 
@@ -420,7 +440,7 @@ PayoutTemplate  (tournament-independent, standalone)
 
 **Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
 
-**STRATHMARK integration:** Live data push wired (V2.2.0) — competitor enrollment, pro SB/UH result push, college Speed result push with name-match resolution, sync status page. Handicap calculation pipeline (`handicap_factor` scoring, mark assignment) not yet wired. See Section 7.
+**STRATHMARK integration:** Live data push wired (V2.2.0); handicap scoring math + mark assignment route wired (V2.3.0); prediction residuals infrastructure + `predicted_time` column added (V2.4.0). Remaining gap: `_get_handicap_calculator()` in `mark_assignment.py` still passes wrong kwargs to `HandicapCalculator.__init__`; `_fetch_start_mark()` calls `get_start_mark()` which does not exist on `HandicapCalculator` (correct method is `calculate()`). Until both are fixed, `predicted_time` is always stored as NULL and no residuals are recorded. Heat ability-weighting via STRATHMARK predictions is also still stub. See Section 7.
 
 **EntryFormReqs.md:** Contains only a stub note. Pro entry form redesign is pending.
 
@@ -464,7 +484,7 @@ This app handles tournament logistics only: registration, heats, flights, result
 
 **KYTHEREX** (not yet integrated) is described as a Predictive Engine add-on.
 
-### What Is Already Integrated (V2.2.0)
+### What Is Already Integrated (V2.3.0)
 
 1. **`Event.is_handicap` (Boolean):** Stores the format choice — Championship (False) or Handicap (True) — per event. Added via migration `j7k8l9m0n1o2`. Default False (Championship).
 
@@ -517,8 +537,15 @@ The following features remain as planned or implied by the codebase and requirem
 - Pro SB/UH result push on finalization (V2.2.0) ✓
 - College SB Speed / UH Speed result push with name-match resolution (V2.2.0) ✓
 - Sync status page `/strathmark/status` (V2.2.0) ✓
+- Handicap scoring math in `_metric()` (V2.3.0) ✓
+- Mark assignment route `assign_marks` + service `mark_assignment.py` (V2.3.0) ✓
+- `EventResult.predicted_time` column + migration `d8d4aa7bdb45` (V2.4.0) ✓
+- `_record_prediction_residuals_for_pro_event()` in `strathmark_sync.py` (V2.4.0) ✓
+- Import fix in `mark_assignment.py` (`strathmark.calculator` path) (V2.4.0) ✓
+- STRATHMARK logo on assign marks page (V2.4.0) ✓
+- `_get_handicap_calculator()` constructor kwargs still wrong — `HandicapCalculator` does not accept `supabase_url`/`supabase_key`; needs correct signature
+- `_fetch_start_mark()` calls `get_start_mark()` which does not exist — needs to call `calculate()` and unpack `MarkResult`; until fixed, `predicted_time` is always NULL and no residuals are recorded
 - `optimize_flight_for_ability()` stub in `flight_builder.py` is the designed hook for predicted times
 - `_generate_event_heats()` in `heat_generator.py` needs ability-weighting input
-- Mark assignment pipeline: call `HandicapCalculator` when `event.is_handicap` is True; store result on `EventResult.handicap_factor` or a new `start_mark_seconds` field
 
 **Generalization vision:** The current app is hardcoded to the Missoula Pro Am's specific event list and format. The event list lives in `config.py` (`COLLEGE_OPEN_EVENTS`, `COLLEGE_CLOSED_EVENTS`, `PRO_EVENTS`) and the UI strings in `strings.py`. The long-term STRATHEX platform vision is to make these event lists configurable per-tournament rather than hardcoded, enabling this application to serve any timbersports event, not just Missoula. The `is_open` flag on Event, the configurable payouts system, and the per-tournament event setup flow are all steps in this direction.

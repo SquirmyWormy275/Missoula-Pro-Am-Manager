@@ -1,0 +1,260 @@
+"""
+Scheduling routes package — event setup, heat generation, flight management.
+
+The scheduling blueprint is defined here and registered against sub-modules that
+each contain a logical slice of the original monolithic scheduling.py file.
+
+Sub-module layout:
+  events.py          — event_list, setup_events, day_schedule, apply_saturday_priority
+  heats.py           — event_heats, generate_heats, generate_college_heats, move_competitor_between_heats,
+                       heat_sync_check, heat_sync_fix
+  flights.py         — flight_list, build_flights, start_flight, complete_flight, reorder_flight_heats
+  heat_sheets.py     — heat_sheets, day_schedule_print
+  friday_feature.py  — friday_feature
+  show_day.py        — show_day
+  ability_rankings.py — ability_rankings
+  preflight.py       — preflight_check, preflight_json, generate_async, generation_job_status
+  assign_marks.py    — assign_marks (handicap start-mark assignment via STRATHMARK)
+"""
+import re
+import json
+from flask import Blueprint
+from database import db
+from models import Tournament, Event, Heat, HeatAssignment, Flight
+from models.competitor import CollegeCompetitor, ProCompetitor
+import config
+from config import LIST_ONLY_EVENT_NAMES
+
+scheduling_bp = Blueprint('scheduling', __name__)
+
+
+# ---------------------------------------------------------------------------
+# Shared utility helpers — used by two or more sub-modules.
+# All private (underscore prefix) helpers shared across sub-modules live here
+# so sub-modules can import them without circular-import concerns.
+# ---------------------------------------------------------------------------
+
+def _normalize_name(value: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
+
+
+def _normalize_person_name(value: str) -> str:
+    return str(value or '').strip().lower()
+
+
+def _is_list_only_event(event: Event) -> bool:
+    return event.event_type == 'college' and _normalize_name(event.name) in LIST_ONLY_EVENT_NAMES
+
+
+def _load_competitor_lookup(event: Event, competitor_ids: list) -> dict:
+    ids = sorted(set(int(cid) for cid in competitor_ids if cid is not None))
+    if not ids:
+        return {}
+    if event.event_type == 'college':
+        competitors = CollegeCompetitor.query.filter(CollegeCompetitor.id.in_(ids)).all()
+    else:
+        competitors = ProCompetitor.query.filter(ProCompetitor.id.in_(ids)).all()
+    return {c.id: c for c in competitors}
+
+
+def _signed_up_competitors(event: Event) -> list:
+    if event.event_type == 'college':
+        all_comps = CollegeCompetitor.query.filter_by(
+            tournament_id=event.tournament_id,
+            status='active'
+        ).all()
+    else:
+        all_comps = ProCompetitor.query.filter_by(
+            tournament_id=event.tournament_id,
+            status='active'
+        ).all()
+
+    signed = []
+    for comp in all_comps:
+        entered = comp.get_events_entered() if hasattr(comp, 'get_events_entered') else []
+        if _competitor_entered_event(event, entered):
+            if event.gender and getattr(comp, 'gender', None) != event.gender:
+                continue
+            signed.append(comp)
+
+    return sorted(signed, key=lambda c: c.name.lower())
+
+
+def _competitor_entered_event(event: Event, entered_events: list) -> bool:
+    entered = entered_events if isinstance(entered_events, list) else []
+    target_id = str(event.id)
+    target_name = _normalize_name(event.name)
+    target_display_name = _normalize_name(event.display_name)
+    aliases = {target_name, target_display_name}
+
+    # Backward-compatible aliases for historic imports and form-label variants.
+    if event.event_type == 'pro':
+        if target_name == 'springboard':
+            aliases.update({'springboardl', 'springboardr'})
+        elif target_name in {'pro1board', '1boardspringboard'}:
+            aliases.update({'intermediate1boardspringboard', 'pro1board', '1boardspringboard'})
+        elif target_name == 'jackjillsawing':
+            aliases.update({'jackjill', 'jackandjill'})
+        elif target_name in {'poleclimb', 'speedclimb'}:
+            aliases.update({'poleclimb', 'speedclimb'})
+        elif target_name == 'partneredaxethrow':
+            aliases.update({'partneredaxethrow', 'axethrow'})
+
+    for raw in entered:
+        value = str(raw).strip()
+        if not value:
+            continue
+        if value == target_id:
+            return True
+        normalized = _normalize_name(value)
+        if normalized in aliases:
+            return True
+    return False
+
+
+def _resolve_partner_name(competitor, event: Event) -> str:
+    partners = competitor.get_partners() if hasattr(competitor, 'get_partners') else {}
+    if not isinstance(partners, dict):
+        return ''
+    candidates = [
+        str(event.id),
+        event.name,
+        event.display_name,
+        event.name.lower(),
+        event.display_name.lower(),
+    ]
+    for key in candidates:
+        value = partners.get(key)
+        if str(value or '').strip():
+            return str(value).strip()
+    return ''
+
+
+def _build_signup_rows(event: Event) -> list:
+    competitors = _signed_up_competitors(event)
+    if not event.is_partnered:
+        return [c.name for c in competitors]
+
+    rows = []
+    used = set()
+    by_name = {_normalize_person_name(c.name): c for c in competitors}
+    for comp in competitors:
+        if comp.id in used:
+            continue
+        partner_name = _resolve_partner_name(comp, event)
+        partner = by_name.get(_normalize_person_name(partner_name)) if partner_name else None
+        if partner and partner.id not in used:
+            rows.append(f'{comp.name} + {partner.name}')
+            used.add(comp.id)
+            used.add(partner.id)
+        else:
+            rows.append(comp.name)
+            used.add(comp.id)
+
+    return rows
+
+
+def _build_assignment_details(tournament: Tournament, events: list) -> dict:
+    details = {}
+    for event in events:
+        if _is_list_only_event(event):
+            signup_rows = _build_signup_rows(event)
+            details[event.id] = {
+                'mode': 'signup',
+                'rows': signup_rows,
+                'count': len(signup_rows),
+            }
+            continue
+
+        heats = event.heats.order_by(Heat.heat_number, Heat.run_number).all()
+        all_comp_ids = []
+        for heat in heats:
+            all_comp_ids.extend(heat.get_competitors())
+        comp_lookup = _load_competitor_lookup(event, all_comp_ids)
+
+        heat_rows = []
+        for heat in heats:
+            assignments = heat.get_stand_assignments()
+            competitors = []
+            for comp_id in heat.get_competitors():
+                comp = comp_lookup.get(comp_id)
+                competitors.append({
+                    'name': comp.name if comp else f'Unknown ({comp_id})',
+                    'stand': assignments.get(str(comp_id)),
+                })
+            heat_rows.append({
+                'heat_number': heat.heat_number,
+                'run_number': heat.run_number,
+                'competitors': competitors,
+            })
+
+        details[event.id] = {
+            'mode': 'heats',
+            'rows': heat_rows,
+            'count': len(heat_rows),
+        }
+
+    return details
+
+
+def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
+    """Generate heats for all configured events.
+
+    Each event is wrapped in its own savepoint (begin_nested) so that a failure
+    in one event is rolled back in isolation without corrupting the session state
+    for subsequent events or for the flight-building step that follows.
+    """
+    from flask import flash
+    events = tournament.events.order_by(Event.event_type, Event.name, Event.gender).all()
+    generated = 0
+    skipped = 0
+    errors = 0
+
+    for event in events:
+        try:
+            with db.session.begin_nested():   # savepoint per event — rollback on failure
+                generate_event_heats_fn(event)
+            generated += 1
+        except Exception as exc:
+            # begin_nested().__exit__ rolls back to the savepoint on exception.
+            if 'No competitors entered' in str(exc):
+                skipped += 1
+            else:
+                errors += 1
+                flash(f'Heat generation error for {event.display_name}: {exc}', 'error')
+
+    flash(f'Heats generated for {generated} event(s). Skipped {skipped} without entrants.', 'success')
+    if errors:
+        flash(f'Failed to generate heats for {errors} event(s).', 'error')
+
+
+def _build_pro_flights_if_possible(tournament: Tournament, build_pro_flights_fn):
+    """Build pro flights if there are any pro heats."""
+    from flask import flash
+    pro_heats = Heat.query.join(Event).filter(
+        Event.tournament_id == tournament.id,
+        Event.event_type == 'pro',
+        Heat.run_number == 1
+    ).count()
+    if pro_heats == 0:
+        flash('No pro heats available yet, so no flights were built.', 'warning')
+        return None
+    return build_pro_flights_fn(tournament)
+
+
+# ---------------------------------------------------------------------------
+# Import sub-modules so their @scheduling_bp.route decorators execute.
+# IMPORTANT: these imports must come AFTER scheduling_bp and all shared helpers
+# are defined above, so sub-modules can import them without NameError.
+# ---------------------------------------------------------------------------
+from . import events          # noqa: F401, E402
+from . import heats           # noqa: F401, E402
+from . import flights         # noqa: F401, E402
+from . import heat_sheets     # noqa: F401, E402
+from . import friday_feature  # noqa: F401, E402
+from . import show_day        # noqa: F401, E402
+from . import ability_rankings  # noqa: F401, E402
+from . import preflight       # noqa: F401, E402
+from . import assign_marks    # noqa: F401, E402
+
+__all__ = ['scheduling_bp']

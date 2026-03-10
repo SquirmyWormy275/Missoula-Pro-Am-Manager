@@ -551,6 +551,50 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-03-09 (V2.4.0)
+
+**STRATHMARK Phase 5 — Prediction residuals, predicted_time persistence, import fix, logo:**
+
+- **`EventResult.predicted_time` column (new):** Added `predicted_time = db.Column(db.Float, nullable=True, default=None)` to `EventResult` in `models/event.py`. Stores the HandicapCalculator's predicted completion time (seconds) for a competitor in a handicap event. Used by `_record_prediction_residuals_for_pro_event()` to compute residuals (actual − predicted) after finalization. NULL = mark assignment not run or competitor scratched. Updated `handicap_factor` inline comment to remove stale "DEPRECATED" language.
+- **Migration `d8d4aa7bdb45_add_predicted_time_to_event_result.py`** (down_revision: `k8l9m0n1o2p3`): adds `predicted_time FLOAT NULL` to `event_results`.
+- **`_record_prediction_residuals_for_pro_event()` (new helper in `services/strathmark_sync.py`):** Private function called at the end of `push_pro_event_results()`. Iterates completed results for the event; reads `result.predicted_time` and `result.result_value`; builds `predicted` and `actual` dicts keyed by `strathmark_id`; calls `record_prediction_residuals(predicted, actual, show_name, event_code, result_date)` from the `strathmark` package to update the Supabase bias-learning table. Fully non-blocking — any failure is caught, logged at ERROR level, and silently dropped. If `predicted_time` is NULL (mark assignment not run before finalization), logs a WARNING and skips that competitor.
+- **`services/mark_assignment.py` — bug fix (wrong import):** Fixed `from strathmark.handicap import HandicapCalculator` → `from strathmark.calculator import HandicapCalculator`. Module `strathmark.handicap` does not exist; `strathmark.calculator` is the correct path confirmed by `strathmark/__init__.py` and `calculator.py`.
+- **`services/mark_assignment.py` — predicted_time wiring:** Added `result.predicted_time = None` in the `assign_handicap_marks()` for loop alongside `result.handicap_factor = mark`. Comment documents the forward-compatibility design: replace `None` with `mark_result.predicted_time` once `_get_handicap_calculator()` and `_fetch_start_mark()` are updated to call `HandicapCalculator.calculate()` and return a `MarkResult`.
+- **`services/mark_assignment.py` — logging:** Added `logger.info("HandicapCalculator produced %d marks", assigned)` after the result iteration loop.
+- **`templates/scheduling/assign_marks.html` — STRATHMARK logo:** Added centered STRATHMARK logo (`static/strathmark_logo.png`) at the top of the Assign Marks page, wrapped in a black container div (`background: #000; padding: 16px; display: inline-block`) to preserve the logo's intentional black background against the light page. Logo is `max-width: 400px`.
+- **`static/strathmark_logo.png`** (new): STRATHMARK brand logo copied from `Logos/sTRATHMARK.png`.
+- **Scrubbed** 8 `__pycache__` directories.
+
+**Model changes (migration `d8d4aa7bdb45`):**
+
+| Table | Column | Type | Notes |
+|-------|--------|------|-------|
+| `event_results` | `predicted_time` | FLOAT NULL | HandicapCalculator predicted time in seconds; NULL = no prediction |
+
+### 2026-03-09 (V2.3.0)
+
+**Production Audit Sweep — scheduling decomposition, Postgres migration guide, handicap scoring, mark assignment pipeline:**
+
+- **Scheduling blueprint package (Phase 3A):** Decomposed monolithic `routes/scheduling.py` (2025 lines) into a proper Flask Blueprint package at `routes/scheduling/`. Sub-modules: `events.py`, `heats.py`, `flights.py`, `heat_sheets.py`, `friday_feature.py`, `show_day.py`, `ability_rankings.py`, `preflight.py`, `assign_marks.py`. All 24 routes preserved at identical URL paths. Blueprint name `'scheduling'` unchanged. Shared helpers (`_normalize_name`, `_load_competitor_lookup`, `_generate_all_heats`, etc.) defined in `__init__.py` before sub-module imports to avoid circular imports.
+
+- **Route smoke tests (Phase 3B):** Created `tests/test_routes_smoke.py` — pytest-based smoke tests using Flask test client with in-memory SQLite; CSRF disabled; seeds one admin user + one tournament; covers all blueprints: public, main, registration, scheduling, scoring, reporting, auth, portal, validation, woodboss, proam-relay, partnered-axe, import. Asserts no route returns 500/502/503.
+
+- **PostgreSQL migration guide (Phase 3C):** Created `docs/POSTGRES_MIGRATION.md` — full migration procedure from SQLite to PostgreSQL for Railway deployment: env var checklist, `flask db upgrade` schema migration, `data_migrate.py` inline Python script for data transfer, `postgres://` → `postgresql://` prefix fix, sequence reset after bulk import, JSON TEXT column compatibility notes, Railway deployment checklist, rollback plan.
+
+- **Handicap scoring math (Phase 4A):** Modified `_metric()` in `services/scoring_engine.py` to subtract `handicap_factor` (start mark in seconds) from raw time when `event.is_handicap is True` and `event.scoring_type == 'time'`. A `handicap_factor` of `None` or `1.0` (DB default placeholder) is treated as `0.0` (scratch). Net time clamped to `max(0.0, raw - start_mark)`. Added `TestHandicapScoring` class (11 tests) to `tests/test_scoring.py`.
+
+- **Mark assignment service (Phase 4B):** Created `services/mark_assignment.py`:
+  - `is_mark_assignment_eligible(event)` — checks `is_handicap`, `scoring_type == 'time'`, `stand_type` in `HANDICAP_ELIGIBLE_STAND_TYPES`, event not completed
+  - `assign_handicap_marks(event)` — queries STRATHMARK HandicapCalculator for each competitor's start mark; stores result on `EventResult.handicap_factor`; returns `{status, assigned, skipped, errors}` dict; non-blocking (catches all exceptions); graceful no-op if STRATHMARK not configured or `strathmark` package not installed
+  - `_build_strathmark_id_lookup()` — batch query for strathmark_id from either competitor model
+  - `_get_handicap_calculator()` — lazy import of `strathmark.calculator.HandicapCalculator`; returns None if unavailable
+  - `_fetch_start_mark()` — single competitor mark fetch; clamps negative marks to 0.0
+
+- **Mark assignment route + template (Phase 4C):** Added `routes/scheduling/assign_marks.py` — `GET/POST /scheduling/<tid>/events/<eid>/assign-marks`:
+  - GET: displays current mark state per competitor (has_mark flag, mark display), STRATHMARK config status, eligible status
+  - POST: calls `assign_handicap_marks(event)`, commits, logs audit action, flashes result summary
+  - Created `templates/scheduling/assign_marks.html` — Bootstrap 5 status-card layout: 3 info cards (eligibility, STRATHMARK connection, competitor count), action button (disabled if not eligible/configured), competitor mark table.
+
 ### 2026-03-09 (V2.2.0)
 
 **STRATHMARK Phase 2 — Live competitor enrollment and result push:**

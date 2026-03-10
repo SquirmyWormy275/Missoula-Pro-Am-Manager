@@ -2,8 +2,9 @@
 Main routes for dashboard and navigation.
 """
 import time
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, jsonify
 from urllib.parse import urlsplit
+from sqlalchemy import text
 from database import db
 from models import Tournament, Event, Heat, HeatAssignment, Flight
 from models.competitor import CollegeCompetitor, ProCompetitor
@@ -20,6 +21,18 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for stripped environm
     current_user = _AnonymousCurrentUser()
 
 main_bp = Blueprint('main', __name__)
+
+
+@main_bp.route('/health')
+def health():
+    """Health check — returns DB connectivity status. No auth, no CSRF, no translation."""
+    db_ok = False
+    try:
+        db.session.execute(text('SELECT 1'))
+        db_ok = True
+    except Exception:
+        pass
+    return jsonify({'status': 'ok', 'db': db_ok, 'version': '2.3.0'})
 
 
 def _can_access_arapaho_mode() -> bool:
@@ -119,11 +132,15 @@ def new_tournament():
     """Create a new tournament."""
     if request.method == 'POST':
         name = request.form.get('name', 'Missoula Pro Am')
-        year = request.form.get('year', 2026)
+        try:
+            year = int(request.form.get('year', 2026))
+        except (TypeError, ValueError):
+            flash('Invalid year value. Please enter a four-digit year.', 'error')
+            return render_template('tournament_new.html')
 
         tournament = Tournament(
             name=name,
-            year=int(year),
+            year=year,
             status='setup'
         )
         db.session.add(tournament)

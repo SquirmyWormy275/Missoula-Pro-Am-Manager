@@ -43,10 +43,32 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _metric(result: EventResult, event: Event) -> Optional[float]:
-    """Return the primary ranked metric for a result row."""
+    """Return the primary ranked metric for a result row.
+
+    For handicap-format events (event.is_handicap is True), the competitor's
+    start mark (stored in result.handicap_factor as seconds) is subtracted from
+    the raw time to produce the adjusted net time used for ranking.
+    A handicap_factor of None or 1.0 (the DB default placeholder) is treated as
+    0.0 (scratch — no start mark assigned yet).
+    """
     if event.requires_dual_runs:
-        return result.best_run
-    return result.result_value
+        raw = result.best_run
+    else:
+        raw = result.result_value
+
+    if raw is None:
+        return None
+
+    # Apply handicap start mark: net_time = raw_time - start_mark_seconds.
+    # handicap_factor stores the start mark; 1.0 is the DB default placeholder
+    # meaning "not yet assigned" — treat as 0.0 (scratch).
+    if getattr(event, 'is_handicap', False) and event.scoring_type == 'time':
+        start_mark = result.handicap_factor
+        if start_mark is None or start_mark == 1.0:
+            start_mark = 0.0
+        raw = max(0.0, raw - start_mark)
+
+    return raw
 
 
 def _tiebreak_metric(result: EventResult, event: Event) -> float:

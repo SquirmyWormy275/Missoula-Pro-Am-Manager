@@ -1,5 +1,6 @@
 """Minimal REST API endpoints for schedules, standings, and results."""
 import json
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -8,6 +9,14 @@ from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import ProCompetitor
 from services.report_cache import get as cache_get, set as cache_set
 from services.handicap_export import build_chopping_rows
+
+# ---------------------------------------------------------------------------
+# SSE connection counter — caps concurrent long-lived streams at SSE_MAX_CONNECTIONS
+# to prevent thread exhaustion on gunicorn/gevent workers.
+# ---------------------------------------------------------------------------
+_sse_connection_count = 0
+_sse_lock = threading.Lock()
+SSE_MAX_CONNECTIONS = 150
 
 api_bp = Blueprint('api', __name__)
 
@@ -279,74 +288,54 @@ def standings_stream(tournament_id):
 
     Clients should reconnect automatically (EventSource does this by default).
     Max stream duration: 5 minutes to avoid long-lived connections on Railway.
+
+    Connection cap: returns HTTP 503 with Retry-After: 10 when SSE_MAX_CONNECTIONS
+    is reached, preventing thread exhaustion under heavy spectator load.
     """
+    global _sse_connection_count
+
+    # Enforce connection cap before opening the stream.
+    with _sse_lock:
+        if _sse_connection_count >= SSE_MAX_CONNECTIONS:
+            return jsonify({
+                'error': 'Too many live connections. Please retry in a few seconds.',
+                'retry_after': 10,
+            }), 503, {'Retry-After': '10'}
+        _sse_connection_count += 1
+
     app = current_app._get_current_object()
     ttl_seconds = max(1, int(app.config.get('PUBLIC_CACHE_TTL_SECONDS', 5)))
     max_duration = 300  # 5 minutes
     poll_interval = 5   # seconds between DB checks
-
-    def _build_payload():
-        tournament = Tournament.query.get(tournament_id)
-        if not tournament:
-            return None
-        teams = []
-        for team in (
-            Team.query
-            .filter_by(tournament_id=tournament_id, status='active')
-            .order_by(Team.total_points.desc(), Team.team_code)
-            .limit(15)
-            .all()
-        ):
-            teams.append({
-                'id': team.id,
-                'team_code': team.team_code,
-                'school_name': team.school_name,
-                'points': team.total_points,
-            })
-        bull = [
-            {'id': c.id, 'name': c.name, 'points': c.individual_points}
-            for c in tournament.get_bull_of_woods(10)
-        ]
-        belle = [
-            {'id': c.id, 'name': c.name, 'points': c.individual_points}
-            for c in tournament.get_belle_of_woods(10)
-        ]
-        pro = [
-            {'id': c.id, 'name': c.name, 'earnings': c.total_earnings or 0}
-            for c in (
-                ProCompetitor.query
-                .filter_by(tournament_id=tournament_id, status='active')
-                .order_by(ProCompetitor.total_earnings.desc(), ProCompetitor.name)
-                .limit(15)
-                .all()
-            )
-        ]
-        return {
-            'tournament_id': tournament_id,
-            'last_updated': datetime.utcnow().isoformat() + 'Z',
-            'college_teams': teams,
-            'bull': bull,
-            'belle': belle,
-            'pro': pro,
-        }
+    cache_key = f'api:standings-poll:{tournament_id}'
 
     @stream_with_context
     def _generate():
-        start = time.monotonic()
-        last_payload_json = None
-        while time.monotonic() - start < max_duration:
-            with app.app_context():
-                payload = _build_payload()
-            if payload is None:
-                break
-            payload_json = json.dumps(payload)
-            if payload_json != last_payload_json:
-                last_payload_json = payload_json
-                yield f'data: {payload_json}\n\n'
-            else:
-                # Keep-alive comment so the connection doesn't time out.
-                yield ': keep-alive\n\n'
-            time.sleep(poll_interval)
+        global _sse_connection_count
+        try:
+            start = time.monotonic()
+            last_payload_json = None
+            while time.monotonic() - start < max_duration:
+                # Read from the shared standings-poll cache populated by standings_poll().
+                # Falls back to None when cache is cold (first poll hasn't fired yet).
+                payload = cache_get(cache_key)
+                if payload is None:
+                    # Cache miss — yield keep-alive and let standings_poll warm the cache.
+                    yield ': keep-alive\n\n'
+                    time.sleep(poll_interval)
+                    continue
+                payload_json = json.dumps(payload)
+                if payload_json != last_payload_json:
+                    last_payload_json = payload_json
+                    yield f'data: {payload_json}\n\n'
+                else:
+                    # Keep-alive comment so the connection doesn't time out.
+                    yield ': keep-alive\n\n'
+                time.sleep(poll_interval)
+        finally:
+            # Decrement connection count when the stream ends (client disconnect or timeout).
+            with _sse_lock:
+                _sse_connection_count = max(0, _sse_connection_count - 1)
 
     return Response(_generate(), mimetype='text/event-stream', headers={
         'Cache-Control': 'no-cache',

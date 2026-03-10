@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Assign Marks — {{ event.display_name }} — {{ tournament.name }} {{ tournament.year }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+
+    <div style="text-align: center; margin-bottom: 24px;">
+        <div style="background: #000; padding: 16px; display: inline-block;">
+            <img src="{{ url_for('static', filename='strathmark_logo.png') }}"
+                 alt="STRATHMARK"
+                 style="max-width: 400px; display: block; margin: 0 auto;">
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Assign Handicap Marks</h4>
+            <p class="text-muted small mb-0 mt-1">
+                Event: <strong>{{ event.display_name }}</strong>
+                &mdash; Retrieve STRATHMARK start marks and store them for this event's competitors.
+                Each competitor's net time = raw time &minus; start mark.
+            </p>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm"
+           href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">
+            Back to Events
+        </a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'error' else ('warning' if category == 'warning' else 'success') }} alert-dismissible fade show py-2" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endwith %}
+
+    {# Status cards #}
+    <div class="row g-3 mb-4">
+
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <h6 class="card-title text-muted text-uppercase small mb-2">Handicap Format</h6>
+                    {% if eligible %}
+                        <span class="badge bg-success fs-6">Eligible</span>
+                        <p class="small text-muted mt-2 mb-0">
+                            This event is configured as Handicap format.
+                            Competitors receive a head-start equal to their assigned mark.
+                        </p>
+                    {% else %}
+                        <span class="badge bg-secondary fs-6">Not Eligible</span>
+                        <p class="small text-muted mt-2 mb-0">
+                            Only Handicap-format Speed events (underhand, standing block, springboard)
+                            receive start marks.  Check the event configuration in Tournament Setup.
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <h6 class="card-title text-muted text-uppercase small mb-2">STRATHMARK Connection</h6>
+                    {% if configured %}
+                        <span class="badge bg-success fs-6">Configured</span>
+                        <p class="small text-muted mt-2 mb-0">
+                            STRATHMARK_SUPABASE_URL and STRATHMARK_SUPABASE_KEY are set.
+                            HandicapCalculator is available.
+                        </p>
+                    {% else %}
+                        <span class="badge bg-warning text-dark fs-6">Not Configured</span>
+                        <p class="small text-muted mt-2 mb-0">
+                            Set <code>STRATHMARK_SUPABASE_URL</code> and
+                            <code>STRATHMARK_SUPABASE_KEY</code> environment variables to
+                            enable mark retrieval.
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <h6 class="card-title text-muted text-uppercase small mb-2">Competitor Count</h6>
+                    <span class="fs-4 fw-bold">{{ mark_rows | length }}</span>
+                    <p class="small text-muted mt-1 mb-0">active result records in this event.</p>
+                    {% set marked = mark_rows | selectattr('has_mark') | list | length %}
+                    <p class="small text-muted mb-0">
+                        <strong>{{ marked }}</strong> already have a mark assigned;
+                        <strong>{{ mark_rows | length - marked }}</strong> are currently set to scratch.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    {# Action button #}
+    {% if eligible and configured %}
+    <div class="mb-4">
+        <form method="post" onsubmit="this.querySelector('button[type=submit]').disabled=true;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-primary">
+                Assign Marks via STRATHMARK
+            </button>
+            <span class="text-muted small ms-3">
+                This will query the STRATHMARK HandicapCalculator for each competitor
+                and overwrite existing marks.
+            </span>
+        </form>
+    </div>
+    {% elif eligible and not configured %}
+    <div class="alert alert-warning mb-4">
+        STRATHMARK is not configured.  Marks cannot be retrieved until the environment
+        variables are set.  You can manually enter marks in the table below by editing
+        each EventResult record directly.
+    </div>
+    {% elif not eligible %}
+    <div class="alert alert-secondary mb-4">
+        This event is not eligible for automatic mark assignment.
+    </div>
+    {% endif %}
+
+    {# Competitor mark table #}
+    {% if mark_rows %}
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-2">
+            <h6 class="mb-0">Current Start Marks</h6>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Competitor</th>
+                        <th>Status</th>
+                        <th>Start Mark</th>
+                        <th>Note</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in mark_rows %}
+                    <tr>
+                        <td>{{ row.result.competitor_name }}</td>
+                        <td>
+                            <span class="badge bg-{{ 'secondary' if row.result.status == 'pending' else 'success' }}">
+                                {{ row.result.status }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if row.has_mark %}
+                                <span class="text-success fw-semibold">{{ row.mark_display }}</span>
+                            {% else %}
+                                <span class="text-muted">{{ row.mark_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-muted small">
+                            {% if not row.has_mark %}
+                                No STRATHMARK profile or mark not yet assigned
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <p class="text-muted">No active result records found for this event.
+        Generate heats and enter competitors before assigning marks.</p>
+    {% endif %}
+
+</div>
+{% endblock %}
