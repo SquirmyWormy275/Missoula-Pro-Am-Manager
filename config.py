@@ -237,6 +237,92 @@ FRIDAY_NIGHT_EVENTS = [
     '3-Board Jigger',
 ]
 
+# Heat edit-lock TTL (seconds). A lock acquired when opening the entry form auto-expires
+# after this duration. Centralised here so it's visible alongside other timeout constants.
+HEAT_LOCK_TTL_SECONDS = 300  # 5 minutes
+
+# Tournament lifecycle states — use these constants instead of bare strings so typos are
+# caught at import time rather than silently breaking state-machine logic.
+class TournamentStatus:
+    SETUP = 'setup'
+    COLLEGE_ACTIVE = 'college_active'
+    PRO_ACTIVE = 'pro_active'
+    COMPLETED = 'completed'
+    # Convenience tuple for "tournament is currently running" queries.
+    ACTIVE_STATUSES = ('setup', 'college_active', 'pro_active')
+
+# Normalised event names (lower-case, alphanum-only) that are tracked as sign-up lists
+# only — no heats are generated for them. Defined here so both routes/scheduling.py and
+# services/heat_generator.py read from a single source of truth.
+LIST_ONLY_EVENT_NAMES = {
+    'axethrow',
+    'peaveylogroll',
+    'cabertoss',
+    'pulptoss',
+}
+
+
+def event_rank_category(event) -> 'str | None':
+    """
+    Return the ProEventRank category string for *event*, or None if the event
+    type is not tracked by the ability-ranking system.
+
+    This is the single source of truth for stand_type → rank category mapping.
+    Both routes/scheduling.py and services/heat_generator.py import this function
+    instead of maintaining their own copies.
+    """
+    if event is None:
+        return None
+    st = getattr(event, 'stand_type', None)
+    if st == 'springboard':
+        return 'springboard'
+    if st == 'underhand':
+        return 'underhand'
+    if st == 'standing_block':
+        return 'standing_block'
+    if st == 'obstacle_pole':
+        return 'obstacle_pole'
+    if st == 'saw_hand':
+        if not getattr(event, 'is_partnered', False):
+            return 'singlebuck'
+        if getattr(event, 'partner_gender', None) == 'mixed':
+            return 'jack_jill'
+        return 'doublebuck'
+    return None
+
+
+# Valid event categories for ProEventRank.  Moved here from models/pro_event_rank.py
+# so services and routes can import them without pulling in the full ORM model.
+RANKED_CATEGORIES = {
+    'springboard',
+    'underhand',
+    'standing_block',
+    'obstacle_pole',
+    'singlebuck',
+    'doublebuck',
+    'jack_jill',
+}
+
+CATEGORY_DISPLAY_NAMES = {
+    'springboard': 'Springboard',
+    'underhand': 'Underhand',
+    'standing_block': 'Standing Block',
+    'obstacle_pole': 'Obstacle Pole',
+    'singlebuck': 'Single Buck',
+    'doublebuck': 'Double Buck',
+    'jack_jill': 'Jack & Jill Sawing',
+}
+
+CATEGORY_DESCRIPTIONS = {
+    'springboard': 'Covers Springboard, Pro 1-Board, 3-Board Jigger',
+    'underhand': "Men's and Women's Underhand Butcher Block",
+    'standing_block': "Men's and Women's Standing Block (Speed & Hard Hit)",
+    'obstacle_pole': 'Obstacle Pole',
+    'singlebuck': "Men's and Women's Single Buck",
+    'doublebuck': "Men's and Women's Double Buck",
+    'jack_jill': 'Jack & Jill Sawing (mixed gender)',
+}
+
 # Saturday priority ordering defaults (override via EVENT_ORDER_CONFIG_PATH if needed).
 COLLEGE_SATURDAY_PRIORITY_DEFAULT = [
     ('Standing Block Speed', 'M'),

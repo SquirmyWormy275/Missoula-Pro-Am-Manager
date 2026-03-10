@@ -148,6 +148,7 @@ def create_app():
     from routes.validation import bp as validation_bp
     from routes.import_routes import import_pro_bp
     from routes.woodboss import woodboss_bp, woodboss_public_bp
+    from routes.strathmark import strathmark_bp
     if HAS_FLASK_LOGIN:
         from routes.auth import auth_bp
         from routes.portal import portal_bp
@@ -164,6 +165,7 @@ def create_app():
     app.register_blueprint(import_pro_bp, url_prefix='/import')
     app.register_blueprint(woodboss_bp, url_prefix='/woodboss')
     app.register_blueprint(woodboss_public_bp, url_prefix='/woodboss')
+    app.register_blueprint(strathmark_bp, url_prefix='/strathmark')
     if HAS_FLASK_LOGIN:
         app.register_blueprint(auth_bp, url_prefix='/auth')
         app.register_blueprint(portal_bp, url_prefix='/portal')

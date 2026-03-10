@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from database import db
 from models import Tournament, Event, Heat, HeatAssignment, Flight
 from models.competitor import CollegeCompetitor, ProCompetitor
+from config import TournamentStatus
 import strings as text
 try:
     from flask_login import current_user
@@ -51,7 +52,7 @@ def index():
         return redirect(url_for('main.judge_dashboard'))
 
     active_tournament = Tournament.query.filter(
-        Tournament.status.in_(['setup', 'college_active', 'pro_active'])
+        Tournament.status.in_(TournamentStatus.ACTIVE_STATUSES)
     ).order_by(Tournament.year.desc()).first()
     tournaments = Tournament.query.order_by(Tournament.year.desc()).all()
     return render_template(
@@ -66,7 +67,7 @@ def judge_dashboard():
     """Judge dashboard - show active tournament or tournament selection."""
     tournaments = Tournament.query.order_by(Tournament.year.desc()).all()
     active_tournament = Tournament.query.filter(
-        Tournament.status.in_(['setup', 'college_active', 'pro_active'])
+        Tournament.status.in_(TournamentStatus.ACTIVE_STATUSES)
     ).first()
 
     return render_template('dashboard.html',
@@ -250,10 +251,10 @@ def activate_competition(tournament_id, competition_type):
     tournament = Tournament.query.get_or_404(tournament_id)
 
     if competition_type == 'college':
-        tournament.status = 'college_active'
+        tournament.status = TournamentStatus.COLLEGE_ACTIVE
         flash(text.FLASH['college_active'], 'success')
     elif competition_type == 'pro':
-        tournament.status = 'pro_active'
+        tournament.status = TournamentStatus.PRO_ACTIVE
         flash(text.FLASH['pro_active'], 'success')
     else:
         flash(text.FLASH['invalid_comp_type'], 'error')

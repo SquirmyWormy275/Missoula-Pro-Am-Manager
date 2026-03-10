@@ -9,39 +9,11 @@ from database import db
 from models import Event, Heat, HeatAssignment, EventResult
 from models.competitor import CollegeCompetitor, ProCompetitor
 import config
+from config import LIST_ONLY_EVENT_NAMES, event_rank_category as _rank_category_for_event
 from services.gear_sharing import competitors_share_gear_for_event
 
 logger = logging.getLogger(__name__)
-
-LIST_ONLY_EVENT_NAMES = {
-    'axethrow',
-    'peaveylogroll',
-    'cabertoss',
-    'pulptoss',
-}
-
-
-def _rank_category_for_event(event: Event):
-    """Return the ProEventRank category string for this event, or None if unranked."""
-    if event is None:
-        return None
-    st = getattr(event, 'stand_type', None)
-    if st == 'springboard':
-        return 'springboard'
-    if st == 'underhand':
-        return 'underhand'
-    if st == 'standing_block':
-        return 'standing_block'
-    if st == 'obstacle_pole':
-        return 'obstacle_pole'
-    if st == 'saw_hand':
-        if not getattr(event, 'is_partnered', False):
-            return 'singlebuck'
-        pg = getattr(event, 'partner_gender', None)
-        if pg == 'mixed':
-            return 'jack_jill'
-        return 'doublebuck'
-    return None
+# LIST_ONLY_EVENT_NAMES and _rank_category_for_event imported from config above.
 
 
 def _sort_by_ability(competitors: list, event: Event) -> list:
@@ -112,7 +84,7 @@ def generate_event_heats(event: Event) -> int:
     if _is_list_only_event(event):
         _delete_event_heats(event.id)
         event.status = 'in_progress'
-        db.session.commit()
+        db.session.flush()  # Caller is responsible for commit — preserves atomic transactions.
         return 0
 
     # Get stand configuration; event.max_stands is authoritative when set
@@ -177,7 +149,10 @@ def generate_event_heats(event: Event) -> int:
     for heat in created_heats:
         heat.sync_assignments(comp_type)
 
-    db.session.commit()
+    # Flush but do NOT commit — the calling route owns the transaction boundary and
+    # will commit (or roll back) after all scheduling actions are complete.  This
+    # prevents partial state if a later step in the same request fails.
+    db.session.flush()
 
     return num_heats
 

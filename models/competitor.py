@@ -1,10 +1,14 @@
 """
 Competitor models for both college and professional competitors.
 """
+import logging
+
 from database import db
 import json
 from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
+
+logger = logging.getLogger(__name__)
 
 MAX_NAME_LENGTH = 100  # Hard cap; String(200) column has room but UI breaks above ~100 chars
 
@@ -38,6 +42,11 @@ class CollegeCompetitor(db.Model):
     # Status
     status = db.Column(db.String(20), default='active')  # active, scratched
 
+    # STRATHMARK global database identifier (see ProCompetitor.strathmark_id for full docs).
+    # College competitors gain a strathmark_id only when their name is found in the global DB
+    # (typically because they also compete on the pro circuit).
+    strathmark_id = db.Column(db.String(50), nullable=True, index=True)
+
     _PRO_AM_LOTTERY_META_KEY = '__pro_am_lottery_opt_in__'
 
     def __repr__(self):
@@ -54,6 +63,7 @@ class CollegeCompetitor(db.Model):
         try:
             return json.loads(self.events_entered or '[]')
         except json.JSONDecodeError:
+            logger.warning('CollegeCompetitor id=%s: corrupt events_entered JSON; returning []', self.id)
             return []
 
     def set_events_entered(self, events):
@@ -65,6 +75,7 @@ class CollegeCompetitor(db.Model):
         try:
             return json.loads(self.partners or '{}')
         except json.JSONDecodeError:
+            logger.warning('CollegeCompetitor id=%s: corrupt partners JSON; returning {}', self.id)
             return {}
 
     def set_partner(self, event_id, partner_name):
@@ -95,6 +106,7 @@ class CollegeCompetitor(db.Model):
         try:
             return json.loads(self.gear_sharing or '{}')
         except json.JSONDecodeError:
+            logger.warning('CollegeCompetitor id=%s: corrupt gear_sharing JSON; returning {}', self.id)
             return {}
 
     def set_gear_sharing(self, event_id, partner_name):
@@ -193,6 +205,11 @@ class ProCompetitor(db.Model):
     total_fees = db.Column(db.Integer, default=0)
     import_timestamp = db.Column(db.DateTime, nullable=True)
 
+    # STRATHMARK global database identifier — deterministic, portable, non-autoincrement.
+    # Format: first_initial + last_name + gender_code (e.g. AKAPERM for Alex Kaper Male).
+    # Populated on registration; used to push results to the global STRATHMARK Supabase DB.
+    strathmark_id = db.Column(db.String(50), nullable=True, index=True)
+
     def __repr__(self):
         return f'<ProCompetitor {self.name}>'
 
@@ -207,6 +224,7 @@ class ProCompetitor(db.Model):
         try:
             return json.loads(self.events_entered or '[]')
         except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt events_entered JSON; returning []', self.id)
             return []
 
     def set_events_entered(self, events):
@@ -218,6 +236,7 @@ class ProCompetitor(db.Model):
         try:
             return json.loads(self.entry_fees or '{}')
         except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt entry_fees JSON; returning {}', self.id)
             return {}
 
     def set_entry_fee(self, event_id, amount):
@@ -231,6 +250,7 @@ class ProCompetitor(db.Model):
         try:
             return json.loads(self.fees_paid or '{}')
         except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt fees_paid JSON; returning {}', self.id)
             return {}
 
     def set_fee_paid(self, event_id, paid=True):
@@ -244,6 +264,7 @@ class ProCompetitor(db.Model):
         try:
             return json.loads(self.gear_sharing or '{}')
         except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt gear_sharing JSON; returning {}', self.id)
             return {}
 
     def set_gear_sharing(self, event_id, partner_name):
@@ -257,6 +278,7 @@ class ProCompetitor(db.Model):
         try:
             return json.loads(self.partners or '{}')
         except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt partners JSON; returning {}', self.id)
             return {}
 
     def set_partner(self, event_id, partner_name):

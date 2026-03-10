@@ -56,6 +56,31 @@ def _current_user_id() -> int | None:
     return None
 
 
+def _push_strathmark_results(event: Event, tournament_id: int) -> None:
+    """
+    Attempt to push finalized results to STRATHMARK for eligible event types.
+
+    Covers Change 2 (pro SB/UH) and Change 3 (college SB Speed / UH Speed).
+    All STRATHMARK calls are non-blocking — failures are logged, never raised.
+    """
+    try:
+        from services import strathmark_sync
+        tournament = Tournament.query.get(tournament_id)
+        year = tournament.year if tournament else 0
+
+        if event.event_type == 'pro' and event.stand_type in ('standing_block', 'underhand'):
+            strathmark_sync.push_pro_event_results(event, year)
+        elif strathmark_sync.is_college_sb_uh_speed(event):
+            strathmark_sync.push_college_event_results(event, year)
+    except Exception as exc:
+        # Belt-and-suspenders guard: strathmark_sync functions are already
+        # non-blocking, but catch anything that escapes to protect the response.
+        import logging as _logging
+        _logging.getLogger(__name__).error(
+            'STRATHMARK: unexpected error in _push_strathmark_results: %s', exc
+        )
+
+
 def _competitor_lookup(event: Event, competitor_ids: list[int]) -> dict:
     if event.event_type == 'college':
         comps = CollegeCompetitor.query.filter(CollegeCompetitor.id.in_(competitor_ids)).all()
@@ -364,6 +389,11 @@ def finalize_event(tournament_id, event_id):
                                 tournament_id=tournament_id, event_id=event_id))
 
     invalidate_tournament_caches(tournament_id)
+
+    # STRATHMARK: push results for pro SB/UH and college SB/UH Speed events.
+    # Non-blocking — any failure is logged and the response is unaffected.
+    _push_strathmark_results(event, tournament_id)
+
     if _is_async():
         return jsonify({'ok': True, 'message': f'{event.display_name} finalized.'})
     flash(text.FLASH['event_finalized'].format(event_name=event.display_name), 'success')
@@ -383,6 +413,21 @@ def enter_heat_results(tournament_id, heat_id):
     event = heat.event
 
     if request.method == 'POST':
+        # Reject POST if the heat is locked by a different judge.  This is the server-side
+        # enforcement of the advisory lock shown on the GET form — a second tab or another
+        # device cannot overwrite results while someone else holds the lock.
+        user_id = _current_user_id()
+        if heat.is_locked() and heat.locked_by_user_id != (user_id or -1):
+            from models.user import User
+            locker = User.query.get(heat.locked_by_user_id)
+            owner = locker.username if locker else f'User #{heat.locked_by_user_id}'
+            msg = f'Heat is currently being edited by {owner}. Your submission was not saved.'
+            if _is_async():
+                return jsonify({'ok': False, 'category': 'warning', 'message': msg}), 423
+            flash(msg, 'warning')
+            return redirect(url_for('scoring.enter_heat_results',
+                                    tournament_id=tournament_id, heat_id=heat_id))
+
         outcome = _save_heat_results_submission(tournament_id=tournament_id,
                                                 heat=heat, event=event)
         if _is_async():

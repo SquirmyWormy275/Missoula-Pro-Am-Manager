@@ -13,10 +13,10 @@ This application exists within the **STRATHEX ecosystem**, built by Alex Kaper. 
 **Ecosystem components:**
 
 - **Missoula Pro-Am Manager** (this repo): Tournament logistics — registration, heats, flights, results, payouts.
-- **STRATHMARK** (separate STRATHEX repo): Handicap Calculator add-on. Python CLI, uses XGBoost + Ollama LLM. Partially integrated — `Event.is_handicap` flag now stored and surfaced in tournament setup UI; full calculation pipeline not yet wired. See Section 7.
+- **STRATHMARK** (separate STRATHEX repo): Handicap Calculator add-on. Python CLI, uses XGBoost + Ollama LLM. Live integration as of V2.2.0 — competitor enrollment, SB/UH result push, college result resolution, and sync status page wired. Full handicap calculation pipeline (mark assignment, `handicap_factor` scoring) not yet wired. See Section 7.
 - **KYTHEREX**: Predictive Engine add-on. Planned but not yet detailed in this codebase.
 
-STRATHMARK has partial data-model integration (the format flag). Full calculation and mark assignment are not yet wired. See Section 7.
+STRATHMARK has active live-data integration (enrollment + result push to Supabase global DB). Full handicap calculation and mark assignment are not yet wired. See Section 7.
 
 ---
 
@@ -75,6 +75,7 @@ routes/
     api.py              # Public read-only REST API (/api/public prefix)
     woodboss.py         # Virtual Woodboss — material planning (/woodboss prefix)
                         #   woodboss_bp (protected) + woodboss_public_bp (HMAC share link)
+    strathmark.py       # STRATHMARK sync status page (/strathmark prefix); no auth required
 
 services/
     __init__.py
@@ -104,6 +105,8 @@ services/
     schedule_builder.py # Day schedule assembly: Friday day/feature blocks, Saturday show block from flights
     scoring_engine.py   # Centralized scoring engine: position calculation, tiebreak logic, tie/throwoff management,
                         #   outlier flagging, individual/team standings, payout template CRUD, bulk CSV import
+    strathmark_sync.py  # STRATHMARK integration layer: competitor enrollment, result push (pro SB/UH, college Speed),
+                        #   ID generation, WoodConfig lookup, name-match resolution, local sync cache + skipped log
 
 templates/
     base.html
@@ -252,13 +255,13 @@ College only. Fields: `id`, `tournament_id`, `team_code` (e.g., UM-A), `school_n
 
 ### CollegeCompetitor
 
-Fields: `id`, `tournament_id`, `team_id`, `name`, `gender` (M/F), `individual_points`, `events_entered` (JSON list of event IDs), `partners` (JSON dict event_id → partner_name), `gear_sharing` (JSON dict event_id → partner_name), `status` (active/scratched). Methods: `add_points()` updates individual total and triggers team recalculation; `get_gear_sharing()` returns the dict; `set_gear_sharing(event_id, partner_name)` updates it. Both `CollegeCompetitor` and `ProCompetitor` store gear-sharing identically as a dedicated `gear_sharing` TEXT column (JSON dict event_id → partner_name).
+Fields: `id`, `tournament_id`, `team_id`, `name`, `gender` (M/F), `individual_points`, `events_entered` (JSON list of event IDs), `partners` (JSON dict event_id → partner_name), `gear_sharing` (JSON dict event_id → partner_name), `strathmark_id` (String(50), nullable, indexed — populated by `strathmark_sync.push_college_event_results()` when a name match is found in the global STRATHMARK DB; college-only competitors without a global profile remain NULL), `status` (active/scratched). Methods: `add_points()` updates individual total and triggers team recalculation; `get_gear_sharing()` returns the dict; `set_gear_sharing(event_id, partner_name)` updates it. Both `CollegeCompetitor` and `ProCompetitor` store gear-sharing identically as a dedicated `gear_sharing` TEXT column (JSON dict event_id → partner_name).
 
 Note: `closed_event_count` property currently counts all events entered, not just CLOSED ones. This is a known imprecision — it counts by list length rather than filtering by event classification.
 
 ### ProCompetitor
 
-Fields: `id`, `tournament_id`, `name`, `gender`, `address`, `phone`, `email`, `shirt_size`, `is_ala_member`, `pro_am_lottery_opt_in`, `is_left_handed_springboard`, `springboard_slow_heat` (Boolean — competitor should be grouped in the dedicated slow-cutter heat), `events_entered` (JSON), `entry_fees` (JSON dict event_id → amount), `fees_paid` (JSON dict event_id → bool), `gear_sharing` (JSON dict event_id → partner_name), `partners` (JSON dict event_id → partner_name), `total_earnings`, `payout_settled` (Boolean), `status`. Import tracking fields: `submission_timestamp`, `gear_sharing_details`, `waiver_accepted`, `waiver_signature`, `notes`, `total_fees`, `import_timestamp`. Properties: `total_fees_owed`, `total_fees_paid`, `fees_balance`.
+Fields: `id`, `tournament_id`, `name`, `gender`, `address`, `phone`, `email`, `shirt_size`, `is_ala_member`, `pro_am_lottery_opt_in`, `is_left_handed_springboard`, `springboard_slow_heat` (Boolean — competitor should be grouped in the dedicated slow-cutter heat), `events_entered` (JSON), `entry_fees` (JSON dict event_id → amount), `fees_paid` (JSON dict event_id → bool), `gear_sharing` (JSON dict event_id → partner_name), `partners` (JSON dict event_id → partner_name), `total_earnings`, `payout_settled` (Boolean), `strathmark_id` (String(50), nullable, indexed — deterministic portable ID generated at registration; format: `{FirstInitial}{LastName}{GenderCode}` e.g. `AKAPERM`; populated by `strathmark_sync.enroll_pro_competitor()`; used by result push functions to reference the global STRATHMARK Supabase DB), `status`. Import tracking fields: `submission_timestamp`, `gear_sharing_details`, `waiver_accepted`, `waiver_signature`, `notes`, `total_fees`, `import_timestamp`. Properties: `total_fees_owed`, `total_fees_paid`, `fees_balance`.
 
 ### Event
 
@@ -393,6 +396,7 @@ PayoutTemplate  (tournament-independent, standalone)
 - Heat sheet PDF export (`/scoring/<tid>/heat/<hid>/pdf`): WeasyPrint PDF if installed, graceful fallback to print-styled HTML; standalone `heat_sheet_print.html` template with `@page` CSS; "Print / Save as PDF" button; "Print Heat Sheet" link in `enter_heat.html`
 - Async heat/flight generation (`/scheduling/<tid>/events/generate-async`, `/scheduling/<tid>/events/job-status/<job_id>`): wraps `background_jobs.submit()`; returns 202 + `job_id`; poll endpoint returns status/progress; app context created inside async worker via `current_app._get_current_object()`
 - Rate limiting: `write_limit()` decorator in `routes/api.py`; `_init_write_limiter(app)` called in `create_app()`; `enter_heat_results` capped at 60/min, `finalize_event` at 10/min
+- STRATHMARK live integration (`services/strathmark_sync.py`, `routes/strathmark.py`, migration `k8l9m0n1o2p3`): pro competitor enrollment at registration; pro SB/UH result push on finalization; college SB Speed / UH Speed result push with name-match ID resolution; `GET /strathmark/status` sync status page; all calls non-blocking; `strathmark_id` column on both competitor models; local cache files in `instance/` track push timestamps and skipped college competitors
 - N+1 query fix in `routes/api.py` (`public_schedule`, `public_results`): batch `.filter(Heat.event_id.in_(event_ids)).all()` + `defaultdict` grouping replaces per-event lazy loads
 - N+1 query fix in `services/flight_builder.py`: single batch query for all non-axe event heats (run_number==1) replaces per-event `.filter_by(run_number=1).all()` loop
 - `FlightBuilder` class in `services/flight_builder.py`: OO wrapper with `build(num_flights=None)`, `integrate_spillover(saturday_college_event_ids)`, and `spacing(event)` methods
@@ -416,7 +420,7 @@ PayoutTemplate  (tournament-independent, standalone)
 
 **Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
 
-**STRATHMARK integration:** Partial — `Event.is_handicap` field added (migration `j7k8l9m0n1o2`); Championship/Handicap toggle present in tournament setup UI for eligible events; mark calculation and `handicap_factor` scoring not yet wired. See Section 7.
+**STRATHMARK integration:** Live data push wired (V2.2.0) — competitor enrollment, pro SB/UH result push, college Speed result push with name-match resolution, sync status page. Handicap calculation pipeline (`handicap_factor` scoring, mark assignment) not yet wired. See Section 7.
 
 **EntryFormReqs.md:** Contains only a stub note. Pro entry form redesign is pending.
 
@@ -460,7 +464,7 @@ This app handles tournament logistics only: registration, heats, flights, result
 
 **KYTHEREX** (not yet integrated) is described as a Predictive Engine add-on.
 
-### What Is Already Integrated (V2.1.0)
+### What Is Already Integrated (V2.2.0)
 
 1. **`Event.is_handicap` (Boolean):** Stores the format choice — Championship (False) or Handicap (True) — per event. Added via migration `j7k8l9m0n1o2`. Default False (Championship).
 
@@ -468,17 +472,23 @@ This app handles tournament logistics only: registration, heats, flights, result
 
 3. **Tournament setup UI (both `tournament_setup.html` and `scheduling/setup_events.html`):** Championship / Handicap radio toggle appears beneath each eligible event during tournament design. Selection is saved to `Event.is_handicap` on form submit.
 
+4. **`ProCompetitor.strathmark_id` and `CollegeCompetitor.strathmark_id` (String(50), nullable):** Added via migration `k8l9m0n1o2p3`. Deterministic portable ID used to reference the global STRATHMARK Supabase database. Pro IDs are generated at registration; college IDs are resolved by name match against the global competitor list.
+
+5. **`services/strathmark_sync.py`:** Non-blocking STRATHMARK integration layer. `enroll_pro_competitor()` generates a deterministic ID (`{FirstInitial}{LastName}{GenderCode}`, collision-safe) and calls `push_competitors()`. `push_pro_event_results()` pushes finalized pro SB/UH results via `push_results()`. `push_college_event_results()` resolves college competitor IDs via `pull_competitors()` name match and pushes SB Speed / UH Speed results. `is_college_sb_uh_speed()` identifies eligible college events by name (case-insensitive; matches Standing Block Speed, Underhand Speed, SB Speed, UH Speed). Wood species and diameter are looked up from `WoodConfig` using the existing key convention; inches are converted to mm. Local state files: `instance/strathmark_sync_cache.json` (last push timestamp/count), `instance/strathmark_skipped.json` (college competitors skipped due to no global profile). All functions: catch all exceptions, log as warning/error, return False/None — STRATHMARK outages never block app operations.
+
+6. **`routes/strathmark.py` — `GET /strathmark/status`:** Director-only status page showing env-var config state, last push timestamp, global result count for `Missoula Pro-Am` (via `pull_results()` filtered by `show_name`), and a table of skipped college competitors. Self-contained minimal HTML; no Jinja template; no auth required (localhost use). Registered at `/strathmark` prefix in `app.py`; not in `MANAGEMENT_BLUEPRINTS`.
+
+7. **Hook points in existing routes:** `routes/registration.py` `new_pro_competitor` calls `enroll_pro_competitor()` after `db.session.commit()`. `routes/scoring.py` `finalize_event` calls `_push_strathmark_results()` after `invalidate_tournament_caches()` on the success path. `_push_strathmark_results()` dispatches to pro or college push based on `event.event_type` and `event.stand_type`/name.
+
 ### Remaining Integration Points
 
-4. **`services/flight_builder.py` — `optimize_flight_for_ability()`:** Stub function (lines 196–213) — the designed hook for STRATHMARK predicted completion times to enable ability-grouped heats for springboard and other time-based events.
+8. **`services/flight_builder.py` — `optimize_flight_for_ability()`:** Stub function (lines 196–213) — the designed hook for STRATHMARK predicted completion times to enable ability-grouped heats for springboard and other time-based events.
 
-5. **`services/heat_generator.py` — `_generate_event_heats()`:** Current snake-draft distribution has no ability-weighting. STRATHMARK predictions should feed a pre-sorted competitor list here.
+9. **`services/heat_generator.py` — `_generate_event_heats()`:** Current snake-draft distribution has no ability-weighting. STRATHMARK predictions should feed a pre-sorted competitor list here.
 
-6. **`models/competitor.py` — `ProCompetitor`:** No `handicap` or `predicted_time` fields yet. These must be added (or provided at heat generation time) for full STRATHMARK integration.
+10. **`EventResult.handicap_factor` (Float, default 1.0):** Placeholder column exists. Scoring engine must apply this factor when `event.is_handicap` is True — subtract each competitor's start mark from their raw time before position calculation.
 
-7. **`EventResult.handicap_factor` (Float, default 1.0):** Placeholder column exists. Scoring engine must apply this factor when `event.is_handicap` is True — subtract each competitor's start mark from their raw time before position calculation.
-
-8. **Mark assignment pipeline:** When `event.is_handicap` is True, STRATHMARK's `HandicapCalculator` must be called at heat sheet print time (or pre-event) to compute each competitor's start mark from historical data and store it on `EventResult.handicap_factor` (or a new `start_mark_seconds` field on EventResult or HeatAssignment).
+11. **Mark assignment pipeline:** When `event.is_handicap` is True, STRATHMARK's `HandicapCalculator` must be called at heat sheet print time (or pre-event) to compute each competitor's start mark from historical data and store it on `EventResult.handicap_factor` (or a new `start_mark_seconds` field on EventResult or HeatAssignment).
 
 The broader vision: STRATHMARK calculates start marks and predicted times, feeds them into this app's heat generation step to group competitors by predicted ability, and marks are printed on heat sheets so competitors know their start times.
 
@@ -503,9 +513,12 @@ The following features remain as planned or implied by the codebase and requirem
 **STRATHMARK integration (see Section 7 for what's done and what remains):**
 - `Event.is_handicap` flag now stored and surfaced in UI (V2.1.0) ✓
 - `config.HANDICAP_ELIGIBLE_STAND_TYPES` gating constant added (V2.1.0) ✓
+- Pro competitor enrollment at registration (V2.2.0) ✓
+- Pro SB/UH result push on finalization (V2.2.0) ✓
+- College SB Speed / UH Speed result push with name-match resolution (V2.2.0) ✓
+- Sync status page `/strathmark/status` (V2.2.0) ✓
 - `optimize_flight_for_ability()` stub in `flight_builder.py` is the designed hook for predicted times
 - `_generate_event_heats()` in `heat_generator.py` needs ability-weighting input
-- `ProCompetitor` needs `handicap` / `predicted_time` fields
 - Mark assignment pipeline: call `HandicapCalculator` when `event.is_handicap` is True; store result on `EventResult.handicap_factor` or a new `start_mark_seconds` field
 
 **Generalization vision:** The current app is hardcoded to the Missoula Pro Am's specific event list and format. The event list lives in `config.py` (`COLLEGE_OPEN_EVENTS`, `COLLEGE_CLOSED_EVENTS`, `PRO_EVENTS`) and the UI strings in `strings.py`. The long-term STRATHEX platform vision is to make these event lists configurable per-tournament rather than hardcoded, enabling this application to serve any timbersports event, not just Missoula. The `is_open` flag on Event, the configurable payouts system, and the per-tournament event setup flow are all steps in this direction.

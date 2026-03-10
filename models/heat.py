@@ -4,8 +4,7 @@ Heat and Flight models for scheduling competition runs.
 from database import db
 from datetime import datetime, timezone
 import json
-
-HEAT_LOCK_TTL_SECONDS = 300  # 5-minute lock expiry
+from config import HEAT_LOCK_TTL_SECONDS  # noqa: F401 — single source in config.py
 
 
 class HeatAssignment(db.Model):

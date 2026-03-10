@@ -154,8 +154,10 @@ class EventResult(db.Model):
     # Judge must record throw-off positions before is_finalized can be set True.
     throwoff_pending = db.Column(db.Boolean, default=False)
 
-    # Handicap placeholder — reserved for future STRATHMARK integration.
-    # DO NOT populate or display until full integration is complete.
+    # DEPRECATED — reserved for future STRATHMARK handicap integration.
+    # This column exists in the schema but is intentionally never read or written by any
+    # application code.  Do NOT use it until the STRATHMARK scoring spec is finalised and
+    # the full integration is implemented.  See Event.is_handicap for the active flag.
     handicap_factor = db.Column(db.Float, default=1.0, nullable=False)
 
     # Placement

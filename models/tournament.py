@@ -3,6 +3,7 @@ Tournament model for managing overall tournament state.
 """
 from datetime import datetime
 from database import db
+from config import TournamentStatus  # noqa: F401 — re-exported for convenience
 
 
 class Tournament(db.Model):
@@ -19,8 +20,8 @@ class Tournament(db.Model):
     pro_date = db.Column(db.Date, nullable=True)      # Saturday
     friday_feature_date = db.Column(db.Date, nullable=True)  # Friday night
 
-    # Status tracking
-    status = db.Column(db.String(50), default='setup')  # setup, college_active, pro_active, completed
+    # Status tracking — use TournamentStatus constants (from config) not bare strings.
+    status = db.Column(db.String(50), default=TournamentStatus.SETUP)
 
     # Shirt logistics — True when the show provides shirts; controls shirt-size collection on pro entry
     providing_shirts = db.Column(db.Boolean, nullable=False, default=False)

@@ -7,6 +7,8 @@ from sqlalchemy import func
 from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.school_captain import SchoolCaptain
+from config import TournamentStatus
+from routes.api import write_limit
 from services.report_cache import get as cache_get, set as cache_set
 
 portal_bp = Blueprint('portal', __name__)
@@ -17,7 +19,7 @@ def index():
     """Portal landing: send users to the latest active tournament view."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
     active = Tournament.query.filter(
-        Tournament.status.in_(['setup', 'college_active', 'pro_active'])
+        Tournament.status.in_(TournamentStatus.ACTIVE_STATUSES)
     ).order_by(Tournament.year.desc()).first()
     if active:
         return redirect(url_for('portal.spectator_dashboard', tournament_id=active.id, view=view_mode))
@@ -31,12 +33,13 @@ def index():
 
 
 @portal_bp.route('/competitor-access', methods=['GET', 'POST'])
+@write_limit('20 per minute')  # Brute-force protection for competitor name/PIN lookup.
 def competitor_access():
     """No-login competitor access by full name."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
     tournaments = Tournament.query.order_by(Tournament.year.desc()).all()
     active = Tournament.query.filter(
-        Tournament.status.in_(['setup', 'college_active', 'pro_active'])
+        Tournament.status.in_(TournamentStatus.ACTIVE_STATUSES)
     ).order_by(Tournament.year.desc()).first()
     default_tournament_id = active.id if active else (tournaments[0].id if tournaments else None)
 
@@ -785,12 +788,13 @@ def sms_opt_in_toggle():
 # ---------------------------------------------------------------------------
 
 @portal_bp.route('/school-access', methods=['GET', 'POST'])
+@write_limit('20 per minute')  # Brute-force protection for school captain login.
 def school_access():
     """School name lookup form — entry point for college team captains."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
     tournaments = Tournament.query.order_by(Tournament.year.desc()).all()
     active = Tournament.query.filter(
-        Tournament.status.in_(['setup', 'college_active', 'pro_active'])
+        Tournament.status.in_(TournamentStatus.ACTIVE_STATUSES)
     ).order_by(Tournament.year.desc()).first()
     default_tournament_id = active.id if active else (tournaments[0].id if tournaments else None)
 

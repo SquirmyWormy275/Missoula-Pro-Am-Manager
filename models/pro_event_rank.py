@@ -17,6 +17,13 @@ Competitors with no rank record for a category are treated as unranked and
 placed after all ranked competitors before the snake draft begins.
 """
 from database import db
+# Re-export constants from the canonical location so existing imports from this module
+# continue to work while routes/services can also import directly from config.
+from config import (  # noqa: F401
+    RANKED_CATEGORIES,
+    CATEGORY_DISPLAY_NAMES,
+    CATEGORY_DESCRIPTIONS,
+)
 
 
 class ProEventRank(db.Model):
@@ -48,35 +55,5 @@ class ProEventRank(db.Model):
         )
 
 
-# Valid ranked event categories.
-RANKED_CATEGORIES = {
-    'springboard',
-    'underhand',
-    'standing_block',
-    'obstacle_pole',
-    'singlebuck',
-    'doublebuck',
-    'jack_jill',
-}
-
-# Human-readable display names for the UI.
-CATEGORY_DISPLAY_NAMES = {
-    'springboard': 'Springboard',
-    'underhand': 'Underhand',
-    'standing_block': 'Standing Block',
-    'obstacle_pole': 'Obstacle Pole',
-    'singlebuck': 'Single Buck',
-    'doublebuck': 'Double Buck',
-    'jack_jill': 'Jack & Jill Sawing',
-}
-
-# Short description shown under each category heading in the ranking UI.
-CATEGORY_DESCRIPTIONS = {
-    'springboard': 'Covers Springboard, Pro 1-Board, 3-Board Jigger',
-    'underhand': 'Men\'s and Women\'s Underhand Butcher Block',
-    'standing_block': 'Men\'s and Women\'s Standing Block (Speed & Hard Hit)',
-    'obstacle_pole': 'Obstacle Pole',
-    'singlebuck': 'Men\'s and Women\'s Single Buck',
-    'doublebuck': 'Men\'s and Women\'s Double Buck',
-    'jack_jill': 'Jack & Jill Sawing (mixed gender)',
-}
+# RANKED_CATEGORIES, CATEGORY_DISPLAY_NAMES, and CATEGORY_DESCRIPTIONS are defined in
+# config.py and re-exported at the top of this module for backward compatibility.

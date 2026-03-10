@@ -8,40 +8,13 @@ from database import db
 from models import Tournament, Event, Heat, HeatAssignment, Flight
 from models.competitor import CollegeCompetitor, ProCompetitor
 import config
+from config import LIST_ONLY_EVENT_NAMES, event_rank_category as _event_rank_category
 import strings as text
 from services.audit import log_action
 from services.background_jobs import submit as submit_job
 
 scheduling_bp = Blueprint('scheduling', __name__)
-LIST_ONLY_EVENT_NAMES = {
-    'axethrow',
-    'peaveylogroll',
-    'cabertoss',
-    'pulptoss',
-}
-
-
-def _event_rank_category(event) -> str | None:
-    """Return the ProEventRank category string for an event, or None if unranked."""
-    if event is None:
-        return None
-    st = getattr(event, 'stand_type', None)
-    if st == 'springboard':
-        return 'springboard'
-    if st == 'underhand':
-        return 'underhand'
-    if st == 'standing_block':
-        return 'standing_block'
-    if st == 'obstacle_pole':
-        return 'obstacle_pole'
-    if st == 'saw_hand':
-        if not getattr(event, 'is_partnered', False):
-            return 'singlebuck'
-        pg = getattr(event, 'partner_gender', None)
-        if pg == 'mixed':
-            return 'jack_jill'
-        return 'doublebuck'
-    return None
+# LIST_ONLY_EVENT_NAMES and _event_rank_category imported from config above.
 
 
 def _snapshot_flights(tournament_id: int) -> dict:

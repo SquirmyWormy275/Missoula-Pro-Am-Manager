@@ -551,6 +551,34 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-03-09 (V2.2.0)
+
+**STRATHMARK Phase 2 — Live competitor enrollment and result push:**
+
+- Added `strathmark_id` (String(50), nullable, indexed) to both `ProCompetitor` and `CollegeCompetitor` in `models/competitor.py`
+- Added migration `k8l9m0n1o2p3_add_strathmark_id.py` (down_revision: `j7k8l9m0n1o2`): `strathmark_id` column + index on both `pro_competitors` and `college_competitors` tables
+- Created `services/strathmark_sync.py` — non-blocking STRATHMARK integration layer:
+  - `is_configured()` — checks env vars (never raises)
+  - `make_strathmark_id(name, gender, existing_ids)` — deterministic ID `{FirstInitial}{LastName}{GenderCode}` (e.g. `AKAPERM`); numeric suffix on collision
+  - `enroll_pro_competitor(competitor)` — generates ID, calls `push_competitors()`, stores locally; non-blocking on any failure
+  - `push_pro_event_results(event, year)` — pushes finalized pro SB/UH results; looks up wood species + diameter from `WoodConfig`; logs rows on failure for manual retry
+  - `is_college_sb_uh_speed(event)` — case-insensitive match: Standing Block Speed, Underhand Speed, SB Speed, UH Speed
+  - `push_college_event_results(event, year)` — resolves college competitor `strathmark_id` by name match via `pull_competitors()`; stores resolved ID locally; skips and logs unmatched competitors
+  - Local cache files (gitignored): `instance/strathmark_sync_cache.json`, `instance/strathmark_skipped.json`
+- Modified `routes/registration.py` `new_pro_competitor`: 3 lines after commit call `enroll_pro_competitor(competitor)`
+- Modified `routes/scoring.py` `finalize_event`: added `_push_strathmark_results()` helper + 1-line call after `invalidate_tournament_caches()`
+- Created `routes/strathmark.py` — `GET /strathmark/status`: director sync status page (env config, last push, global result count, skipped names); no auth; registered at `/strathmark`
+- Modified `app.py`: added `from routes.strathmark import strathmark_bp` and `app.register_blueprint(strathmark_bp, url_prefix='/strathmark')`
+
+**Model changes (migration `k8l9m0n1o2p3`):**
+
+| Table | Column | Type | Notes |
+|-------|--------|------|-------|
+| `pro_competitors` | `strathmark_id` | VARCHAR(50) NULL | Populated at registration |
+| `college_competitors` | `strathmark_id` | VARCHAR(50) NULL | Populated by name-match resolution |
+
+---
+
 ### 2026-03-09 (V2.1.0)
 
 **STRATHMARK Phase 1 — Championship vs. Handicap format selection:**

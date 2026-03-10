@@ -10,6 +10,7 @@ from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
 from services.upload_security import malware_scan, save_upload, validate_excel_upload
 from services.gear_sharing import build_name_index, normalize_person_name, resolve_partner_name
+from routes.api import write_limit
 
 registration_bp = Blueprint('registration', __name__)
 
@@ -37,6 +38,7 @@ def college_registration(tournament_id):
 
 
 @registration_bp.route('/<int:tournament_id>/college/upload', methods=['POST'])
+@write_limit('10 per minute')  # Excel parsing is expensive; prevents accidental or malicious flood.
 def upload_college_entry(tournament_id):
     """Upload and process a college entry form Excel file."""
     tournament = Tournament.query.get_or_404(tournament_id)
@@ -400,6 +402,7 @@ def pro_registration(tournament_id):
 
 
 @registration_bp.route('/<int:tournament_id>/pro/new', methods=['GET', 'POST'])
+@write_limit('30 per minute')  # Rate-limit competitor creation to prevent runaway imports.
 def new_pro_competitor(tournament_id):
     """Add a new professional competitor."""
     tournament = Tournament.query.get_or_404(tournament_id)
@@ -422,6 +425,11 @@ def new_pro_competitor(tournament_id):
         db.session.add(competitor)
         db.session.commit()
         invalidate_tournament_caches(tournament_id)
+
+        # STRATHMARK: enroll the new pro competitor in the global database.
+        # Non-blocking — any failure is logged and registration continues normally.
+        from services.strathmark_sync import enroll_pro_competitor
+        enroll_pro_competitor(competitor)
 
         flash(text.FLASH['competitor_added'].format(name=competitor.name), 'success')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
