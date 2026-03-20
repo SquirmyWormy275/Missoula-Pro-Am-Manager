@@ -113,6 +113,10 @@ def run_migrations_online():
         with context.begin_transaction():
             context.run_migrations()
 
+        # SQLAlchemy 2.0 requires explicit commit — without this,
+        # migration changes are rolled back when the connection closes.
+        connection.commit()
+
         if connectable.dialect.name == 'sqlite':
             connection.execute(text('PRAGMA foreign_keys=ON'))
 
