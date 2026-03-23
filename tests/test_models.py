@@ -34,7 +34,7 @@ def app():
         import models  # noqa: F401 â€” side-effect: registers all mappers
         _db.create_all()
         yield test_app
-        _db.drop_all()
+        # _db.drop_all() — skipped; in-memory SQLite is discarded on exit
 
 
 @pytest.fixture()

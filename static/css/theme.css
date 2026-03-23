@@ -243,12 +243,78 @@
             border-bottom: 2px solid var(--sx-fire) !important;
             color: var(--sx-text);
         }
+        /* Semantic card header variants */
+        .card-header-action {
+            background: linear-gradient(135deg, #0e1f35, #162d4a);
+            border-bottom: 2px solid rgba(59,142,232,0.45) !important;
+            color: #6cb6f5;
+        }
+        .card-header-neutral {
+            background: var(--sx-surface-2);
+            border-bottom: 1px solid var(--sx-border) !important;
+            color: var(--sx-text);
+        }
+        .card-header-alert {
+            background: linear-gradient(135deg, #291800, #3a2208);
+            border-bottom: 2px solid rgba(232,144,18,0.45) !important;
+            color: #f0b84c;
+        }
         .card-body { color: var(--sx-text); }
         .card-footer {
             background: rgba(0,0,0,0.20);
             border-top: 1px solid var(--sx-border);
         }
         .card-text { color: var(--sx-text-2); }
+
+        /* ═══════════════════════════════════════════════════════════
+           UTILITY CLASSES
+        ═══════════════════════════════════════════════════════════ */
+        /* Text shortcuts */
+        .text-sx-muted   { color: var(--sx-text-2) !important; }
+        .text-sx-subtle  { color: var(--sx-text-3) !important; }
+        .text-sx-fire    { color: var(--sx-fire) !important; }
+        .text-sx-amber   { color: var(--sx-amber) !important; }
+        .text-sx-gold    { color: var(--sx-gold) !important; }
+        .text-orbitron   { font-family: "Orbitron", sans-serif !important; }
+        .text-fraunces   { font-family: "Fraunces", Georgia, serif !important; }
+        .text-xs         { font-size: 0.72rem !important; }
+        .text-xxs        { font-size: 0.62rem !important; }
+        .text-label      { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
+
+        /* Surface shortcuts */
+        .bg-sx-surface   { background: var(--sx-surface) !important; }
+        .bg-sx-surface-2 { background: var(--sx-surface-2) !important; }
+        .bg-sx-surface-3 { background: var(--sx-surface-3) !important; }
+        .border-sx       { border-color: var(--sx-border) !important; }
+        .border-sx-bright{ border-color: var(--sx-border-bright) !important; }
+
+        /* Sticky form-save bar (items 15) */
+        .sticky-save-bar {
+            position: sticky;
+            bottom: 0;
+            z-index: 50;
+            background: var(--sx-surface);
+            border-top: 1px solid var(--sx-border);
+            padding: 0.75rem 1rem;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.4);
+        }
+
+        /* Async loading overlay on buttons (item 16) */
+        .btn-loading { pointer-events: none; opacity: 0.7; }
+
+        /* Heat progress bar (item 20) */
+        .heat-progress-bar {
+            height: 4px;
+            border-radius: 2px;
+            background: var(--sx-border);
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+        .heat-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--sx-success), #5cd48a);
+            transition: width 0.4s ease;
+        }
 
         /* ═══════════════════════════════════════════════════════════
            TABLES
@@ -418,16 +484,22 @@
             content: "";
             position: absolute;
             top: 0; left: 0; right: 0; height: 1px;
-            background: linear-gradient(90deg, transparent 0%, var(--sx-fire) 30%, var(--sx-amber) 60%, transparent 100%);
-            opacity: 0.55;
+            background: linear-gradient(90deg,
+                transparent 0%,
+                var(--sx-fire) 20%,
+                var(--sx-amber) 50%,
+                var(--sx-gold) 65%,
+                var(--sx-amber) 80%,
+                transparent 100%);
+            opacity: 0.65;
         }
         .ownership-inner {
-            min-height: 34px;
+            min-height: 22px;
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 0.75rem;
-            padding: 0.28rem 0.75rem;
+            justify-content: flex-start;
+            gap: 0.5rem;
+            padding: 0.15rem 0.75rem;
             position: relative;
             z-index: 1;
         }
@@ -467,9 +539,10 @@
            NAVBAR
         ═══════════════════════════════════════════════════════════ */
         .navbar-proam {
-            background: #09090d !important;
-            border-bottom: 2px solid var(--sx-fire);
-            box-shadow: 0 2px 20px rgba(0,0,0,0.6), 0 0 40px rgba(232,57,31,0.07);
+            background: linear-gradient(180deg, #0c0c11 0%, #09090d 100%) !important;
+            border-bottom: 2px solid transparent;
+            border-image: linear-gradient(90deg, var(--sx-fire) 0%, var(--sx-amber) 50%, var(--sx-fire) 100%) 1;
+            box-shadow: 0 2px 20px rgba(0,0,0,0.65), 0 0 60px rgba(232,57,31,0.08);
             padding-top: 0.55rem;
             padding-bottom: 0.55rem;
         }
@@ -1618,3 +1691,298 @@
         }
         .empty-state-sm .empty-state-icon { font-size: 2rem; }
         .empty-state-sm .empty-state-title { font-size: 0.95rem; }
+
+        /* ═══════════════════════════════════════════════════════════
+           PROFESSIONAL ENHANCEMENT PACK — International Competition Grade
+           V2.5.0
+        ═══════════════════════════════════════════════════════════ */
+
+        /* ── Custom Scrollbar ──────────────────────────────────────── */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: var(--sx-base); }
+        ::-webkit-scrollbar-thumb {
+            background: var(--sx-border-bright);
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(239, 43, 22, 0.65); }
+        ::-webkit-scrollbar-corner { background: var(--sx-base); }
+        * { scrollbar-width: thin; scrollbar-color: var(--sx-border-bright) var(--sx-base); }
+
+        /* ── Navbar Brand Logo — Larger Presence ────────────────────── */
+        .brand-logo-wrap {
+            width: 44px;
+            height: 44px;
+        }
+
+        /* ── Card Micro-interactions ─────────────────────────────────── */
+        .card { transition: box-shadow 0.22s ease; }
+        .card:hover {
+            box-shadow: 0 10px 36px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05);
+        }
+
+        /* ── Tabular Numbers in Competition Tables ───────────────────── */
+        .table td, .table th { font-variant-numeric: tabular-nums; }
+
+        /* ── Link Transitions ────────────────────────────────────────── */
+        a { transition: color 0.12s ease; }
+
+        /* ── Sidebar — Gradient Background for Depth ─────────────────── */
+        .sidebar {
+            background: linear-gradient(180deg, #131620 0%, #0e1016 100%);
+        }
+
+        /* ── Footer — 3-Column Layout ────────────────────────────────── */
+        .footer-inner {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            gap: 1.5rem;
+            padding: 1.1rem 0;
+        }
+        .footer-col-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .footer-col-center {
+            text-align: center;
+            white-space: nowrap;
+        }
+        .footer-col-right {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.75rem;
+        }
+        .footer-proam-logo {
+            height: 30px;
+            width: auto;
+            object-fit: contain;
+            padding: 3px 9px;
+            border-radius: 8px;
+            background: #fff;
+            border: 1px solid rgba(255,255,255,0.18);
+            flex-shrink: 0;
+        }
+        .footer-strathex-logo {
+            height: 22px;
+            width: auto;
+            object-fit: contain;
+            padding: 2px 8px;
+            border-radius: 7px;
+            background: #020307;
+            border: 1px solid rgba(239,43,22,0.28);
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+            opacity: 0.92;
+            flex-shrink: 0;
+        }
+        .footer-event-name {
+            font-family: "Orbitron", sans-serif;
+            font-size: 0.56rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--sx-text-3);
+            line-height: 1.2;
+        }
+        .footer-tagline {
+            font-size: 0.67rem;
+            color: var(--sx-text-3);
+            opacity: 0.75;
+            margin-top: 1px;
+        }
+        .footer-divider-line {
+            height: 1px;
+            background: linear-gradient(90deg,
+                transparent 0%,
+                var(--sx-border) 20%,
+                var(--sx-border-bright) 50%,
+                var(--sx-border) 80%,
+                transparent 100%);
+        }
+        .footer-powered-label {
+            font-family: "Orbitron", sans-serif;
+            font-size: 0.5rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--sx-text-3);
+            margin-bottom: 3px;
+            text-align: right;
+        }
+        @media (max-width: 767px) {
+            .footer-inner {
+                grid-template-columns: 1fr;
+                gap: 0.85rem;
+            }
+            .footer-col-left, .footer-col-right { justify-content: center; }
+            .footer-powered-label { text-align: center; }
+        }
+        @media (max-width: 991px) {
+            .footer-proam-logo { height: 24px; padding: 2px 7px; }
+            .footer-strathex-logo { height: 19px; }
+        }
+
+        /* ── Ownership Bar — Richer Top Gradient ────────────────────── */
+        .ownership-bar {
+            background: linear-gradient(180deg, #040507 0%, #07080b 100%);
+        }
+
+        /* ── Stat Card Pattern ───────────────────────────────────────── */
+        .stat-card {
+            background: var(--sx-surface-2);
+            border: 1px solid var(--sx-border);
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+        .stat-card-fire {
+            border-left: 3px solid var(--sx-fire);
+            background: linear-gradient(135deg,
+                rgba(232,57,31,0.07) 0%,
+                var(--sx-surface-2) 50%);
+        }
+        .stat-card-gold {
+            border-left: 3px solid var(--sx-gold);
+            background: linear-gradient(135deg,
+                rgba(243,159,27,0.07) 0%,
+                var(--sx-surface-2) 50%);
+        }
+
+        /* ── Data Value Typography ───────────────────────────────────── */
+        .data-value {
+            font-family: "Orbitron", sans-serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            color: var(--sx-text);
+            line-height: 1;
+        }
+        .data-label {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--sx-text-3);
+            font-weight: 600;
+            margin-top: 2px;
+        }
+
+        /* ── Live / Active Status Beacon ─────────────────────────────── */
+        .status-beacon {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(45, 168, 94, 0.14);
+            border: 1px solid rgba(45, 168, 94, 0.4);
+            border-radius: 999px;
+            padding: 3px 10px 3px 7px;
+            font-size: 0.6rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #5cd48a;
+            font-family: "Orbitron", sans-serif;
+            white-space: nowrap;
+        }
+        .status-beacon-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #5cd48a;
+            flex-shrink: 0;
+            animation: beaconPulse 1.6s ease-in-out infinite;
+        }
+        @keyframes beaconPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.7); }
+        }
+
+        /* ── Competition Phase Banner ─────────────────────────────────── */
+        .phase-banner {
+            border-radius: 10px;
+            padding: 0.7rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.875rem;
+        }
+        .phase-banner-college {
+            background: rgba(59,142,232,0.08);
+            border: 1px solid rgba(59,142,232,0.25);
+            color: #6cb6f5;
+        }
+        .phase-banner-pro {
+            background: rgba(232,144,18,0.08);
+            border: 1px solid rgba(232,144,18,0.25);
+            color: #f0b84c;
+        }
+        .phase-banner-setup {
+            background: rgba(140,149,170,0.08);
+            border: 1px solid rgba(140,149,170,0.2);
+            color: var(--sx-text-2);
+        }
+        .phase-banner-completed {
+            background: rgba(45,168,94,0.08);
+            border: 1px solid rgba(45,168,94,0.25);
+            color: #5cd48a;
+        }
+
+        /* ── Result Position Medallions ─────────────────────────────── */
+        .position-1st {
+            background: linear-gradient(135deg, #b8860b, #ffd700, #b8860b);
+            color: #1a1000;
+            font-weight: 800;
+            border-radius: 50%;
+            width: 28px; height: 28px;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 0.78rem;
+            box-shadow: 0 2px 8px rgba(255,215,0,0.4);
+        }
+        .position-2nd {
+            background: linear-gradient(135deg, #708090, #c0c8d0, #708090);
+            color: #1a1a1a;
+            font-weight: 800;
+            border-radius: 50%;
+            width: 28px; height: 28px;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 0.78rem;
+        }
+        .position-3rd {
+            background: linear-gradient(135deg, #8b4513, #cd7f32, #8b4513);
+            color: #fff;
+            font-weight: 800;
+            border-radius: 50%;
+            width: 28px; height: 28px;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 0.78rem;
+        }
+
+        /* ── Smooth Page Fade — override previous if present ─────────── */
+        #main-content { animation: page-fade-in 0.18s ease-out both; }
+
+        /* ── Competition Identity Banner ──────────────────────────────── */
+        .comp-identity-bar {
+            background: linear-gradient(135deg,
+                rgba(232,57,31,0.08) 0%,
+                rgba(11,13,17,0) 50%,
+                rgba(243,159,27,0.05) 100%);
+            border-bottom: 1px solid var(--sx-border);
+            padding: 0.6rem 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        /* ── Improved nav separator for visual grouping ──────────────── */
+        .nav-sep {
+            display: inline-block;
+            width: 1px;
+            height: 18px;
+            background: var(--sx-border);
+            margin: 0 0.2rem;
+            vertical-align: middle;
+            flex-shrink: 0;
+            align-self: center;
+        }

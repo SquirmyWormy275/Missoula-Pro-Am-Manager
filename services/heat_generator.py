@@ -74,6 +74,8 @@ def generate_event_heats(event: Event) -> int:
     """
     logger.info('heat_generator: generate_event_heats event_id=%s name=%r type=%s',
                 event.id, event.name, event.event_type)
+    # Clear the per-tournament event cache so it refreshes each generate call.
+    _get_tournament_events._cache = {}
     # Get competitors for this event
     competitors = _get_event_competitors(event)
 
@@ -532,6 +534,16 @@ def _stand_numbers_for_event(event: Event, max_per_heat: int, stand_config: dict
     return list(range(1, max_per_heat + 1))
 
 
+def _get_tournament_events(event: Event) -> list:
+    """Return all events for the same tournament (cached per generate call)."""
+    if not hasattr(_get_tournament_events, '_cache'):
+        _get_tournament_events._cache = {}
+    tid = event.tournament_id
+    if tid not in _get_tournament_events._cache:
+        _get_tournament_events._cache[tid] = Event.query.filter_by(tournament_id=tid).all()
+    return _get_tournament_events._cache[tid]
+
+
 def _has_gear_sharing_conflict(comp: dict, heat_competitors: list, event: Event) -> bool:
     """Return True if comp conflicts with anyone already in heat for this event."""
     for other in heat_competitors:
@@ -541,13 +553,18 @@ def _has_gear_sharing_conflict(comp: dict, heat_competitors: list, event: Event)
 
 
 def _competitors_share_gear_for_event(comp1: dict, comp2: dict, event: Event) -> bool:
-    """Check event-specific gear-sharing conflict between two competitors."""
+    """Check event-specific gear-sharing conflict between two competitors.
+
+    Passes all tournament events to enable cascade checking across gear
+    families (e.g. sharing an axe for Springboard also conflicts in Underhand).
+    """
     return competitors_share_gear_for_event(
         str(comp1.get('name', '')).strip(),
         comp1.get('gear_sharing', {}) or {},
         str(comp2.get('name', '')).strip(),
         comp2.get('gear_sharing', {}) or {},
         event,
+        all_events=_get_tournament_events(event),
     )
 
 

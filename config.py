@@ -98,6 +98,47 @@ PLACEMENT_POINTS = {
 # Stand types that support Championship vs. Handicap format selection (STRATHMARK integration)
 HANDICAP_ELIGIBLE_STAND_TYPES = {'underhand', 'standing_block', 'springboard'}
 
+# Gear family taxonomy — groups events by shared equipment type.
+# cascade=True means sharing gear in ANY event within the family creates a
+# conflict in ALL events within that family (e.g. sharing an axe for springboard
+# means conflict in underhand + standing block too).
+# pro_only=True means the gear constraint only applies to pro events (college
+# uses show-provided equipment for that stand type).
+GEAR_FAMILIES = {
+    'chopping': {
+        'stand_types': {'underhand', 'standing_block', 'springboard'},
+        'cascade': True,
+    },
+    'crosscut_saw': {
+        'stand_types': {'saw_hand'},
+        'cascade': True,
+    },
+    'hot_saw': {
+        'stand_types': {'hot_saw'},
+        'cascade': False,
+    },
+    'climbing': {
+        'stand_types': {'speed_climb'},
+        'cascade': False,
+    },
+    'op_saw': {
+        'stand_types': {'obstacle_pole'},
+        'cascade': False,
+        'pro_only': True,
+    },
+    'cookie_stack': {
+        'stand_types': {'cookie_stack'},
+        'cascade': False,
+    },
+}
+
+# Stand types that have NO personal gear constraints — equipment is either
+# show-provided or not applicable.  The gear completeness check skips these.
+NO_CONSTRAINT_STAND_TYPES = {
+    'stock_saw', 'axe_throw', 'birling', 'peavey',
+    'caber', 'pulp_toss', 'chokerman',
+}
+
 # Stand configurations
 STAND_CONFIGS = {
     'springboard': {

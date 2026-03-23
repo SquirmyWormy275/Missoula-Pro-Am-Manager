@@ -143,7 +143,7 @@ templates/
                         heat_sheets_print, friday_feature, preflight,
                         ability_rankings, show_day, assign_marks
     scoring/            event_results, enter_heat, configure_payouts, offline_ops,
-                        heat_sheet_print
+                        heat_sheet_print, tournament_payouts
     reports/            all_results, college_standings, event_results,
                         payout_summary (+ _print variants), export_status,
                         payout_settlement
@@ -152,15 +152,25 @@ templates/
     partnered_axe/      dashboard, prelims, finals, results
     validation/         dashboard, college, pro
     woodboss/           dashboard, config, report, report_print (standalone), lottery, history
+    strathmark/         status
 
 static/
+    css/theme.css       # STRATHEX design system: dark theme tokens, fire palette, component overrides
     js/onboarding.js    # First-time onboarding modal engine (ProAmOnboarding.show/reopen)
     sw.js               # Service worker: offline cache + IDB queue + Background Sync
     offline_queue.js    # Offline queue UI: banner + manual replay
+    img/favicon.svg     # Browser tab icon (red P)
     img/                # Brand logos (STRATHEX, Pro-Am)
 
 FlightLogic.md          # Source-of-truth for all flight builder rules, heat gen rules, stand configs,
                         # algorithm details, constants, and known gaps. Update when rules change.
+
+tests/
+    conftest.py         # Shared pytest fixtures (app, client, db, seeded tournament)
+    fixtures/
+        synthetic_data.py  # Synthetic tournament/competitor/event data generators
+
+pytest.ini              # Pytest config: markers (smoke/integration/slow), warning filters
 
 uploads/                # Uploaded Excel entry forms (gitignored)
 instance/proam.db       # SQLite database (auto-created; gitignored)
@@ -229,9 +239,9 @@ Pro competitors register individually with contact info, shirt size, ALA members
 
 ### Pro-Am Relay
 
-Two teams are randomly drawn prior to the start of the show. Each team consists of 6 competitors: 3 college and 3 professional. Teams arrange themselves in any order they choose to complete three events: partnered sawing (any gender combination), Standing Butcher Block, and Underhand Butcher Block. There is no fixed competitor order or role assignment — the teams decide internally. The relay is fit into one flight. Pro competitors opt in via their entry form (`pro_am_lottery_opt_in` on `ProCompetitor`). College competitors are all eligible. Results do not count toward college team or individual scores. This is the only event where college competitors can win money.
+Two teams are randomly drawn prior to the start of the show. Each team consists of 8 competitors: 2 pro men + 2 pro women + 2 college men + 2 college women. Teams arrange themselves in any order they choose to complete four events: partnered sawing (any gender combination), Standing Butcher Block, Underhand Butcher Block, and team axe throw. There is no fixed competitor order or role assignment — the teams decide internally. The relay is fit into one flight. Pro competitors opt in via their entry form (`pro_am_lottery_opt_in` on `ProCompetitor`). College competitors are all eligible. Results do not count toward college team or individual scores. This is the only event where college competitors can win money.
 
-The lottery implementation in `services/proam_relay.py` attempts gender balance when drawing teams: the first slot on each side draws from the opposite gender pool, then fills from whatever pool remains.
+The lottery implementation in `services/proam_relay.py` enforces strict gender balance when drawing teams: exactly 2 male + 2 female from each division per team.
 
 ### Partnered Axe Throw
 
@@ -429,6 +439,15 @@ PayoutTemplate  (tournament-independent, standalone)
 - PostgreSQL migration guide (`docs/POSTGRES_MIGRATION.md`, V2.3.0): full SQLite-to-PG data migration procedure with inline script; Railway deployment checklist
 - `EventResult.predicted_time` (Float, nullable, V2.4.0): stores HandicapCalculator predicted completion time; wired in `assign_handicap_marks()` for loop; used by `_record_prediction_residuals_for_pro_event()` after finalization; migration `d8d4aa7bdb45`
 - `_record_prediction_residuals_for_pro_event()` in `strathmark_sync.py` (V2.4.0): records per-competitor prediction residuals (actual − predicted) to STRATHMARK Supabase bias-learning table after pro SB/UH finalization; called at end of `push_pro_event_results()`; non-blocking
+- STRATHEX design system (`static/css/theme.css`, V2.5.0): extracted dark theme tokens, fire palette, component overrides from `base.html`; standalone CSS file for maintainability
+- Comprehensive test suite (V2.5.0): 37 new test files + shared `conftest.py` + synthetic data fixtures (`tests/fixtures/synthetic_data.py`); covers models, routes, services, scoring, gear sharing, flight builder, heat gen, templates, infrastructure, security, PostgreSQL compat; `pytest.ini` with smoke/integration/slow markers
+- Tournament payouts hub (`templates/scoring/tournament_payouts.html`, V2.5.0): bulk template application, distribution visualization bars, event summary table, new template builder
+- STRATHMARK status template (`templates/strathmark/status.html`, V2.5.0): moved from inline HTML in route to Jinja2 template; Bootstrap 5 styled status cards
+- Enhanced scoring UI (V2.5.0): tablet mode toggle, mobile numpad overlay, conflict warning modal, run-2 context chips
+- Enhanced gear sharing (V2.5.0): advanced batch operations, domain knowledge docs (`docs/GEAR_SHARING_DOMAIN.md`)
+- Enhanced dashboard (V2.5.0): command centre hero, live aggregate stats, quick launch sidebar, onboarding checklist
+- Enhanced login page (V2.5.0): dual-logo lockup, redesigned card styling
+- Developer tooling (V2.5.0): `pyrightconfig.json` (Pyright/Pylance), `.vscode/launch.json` (debugger), `favicon.svg`
 
 ### Known Gaps and Incomplete Features
 
@@ -526,7 +545,7 @@ The following features remain as planned or implied by the codebase and requirem
 
 **Technical debt:**
 - Comprehensive server-side input validation (continue hardening)
-- Unit and integration tests (partial — `tests/test_scoring.py` covers scoring engine, outlier detection, tiebreaks, throwoffs, CSV import; other layers remain untested)
+- Unit and integration tests (comprehensive — 37 test files covering models, routes, services, scoring, gear sharing, flight builder, heat gen, templates, infrastructure, security, PostgreSQL compat; shared `conftest.py` + synthetic data fixtures; `pytest.ini` with smoke/integration/slow markers)
 - Authenticated write endpoints on the public API (currently GET-only)
 - Multi-year competitor tracking and performance history
 

@@ -97,6 +97,9 @@
                 <div class="card-body py-3">
                     <div class="fs-2 fw-bold text-success">{{ report.stats.pairs }}</div>
                     <div class="small text-muted">Verified Pairs</div>
+                    {% if report.stats.unconfirmed > 0 %}
+                    <div class="small text-warning">({{ report.stats.unconfirmed }} unconfirmed)</div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -144,16 +147,29 @@
                         <th>Competitor A</th>
                         <th>Competitor B</th>
                         <th>Run</th>
+                        <th>Suggestions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for c in report.pro_conflicts %}
                     <tr>
-                        <td>{{ c.event.display_name }}</td>
+                        <td>
+                            <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=c.event.id) }}"
+                               class="text-danger fw-bold">{{ c.event.display_name }}</a>
+                        </td>
                         <td>{{ c.heat.heat_number }}</td>
                         <td>{{ c.comp_a.name }}</td>
                         <td>{{ c.comp_b.name }}</td>
                         <td>{{ c.heat.run_number }}</td>
+                        <td>
+                            {% if c.suggestions %}
+                            <ul class="mb-0 small list-unstyled">
+                                {% for s in c.suggestions %}
+                                <li>{{ s }}</li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -283,7 +299,7 @@
                     </thead>
                     <tbody>
                         {% for pair in report.pro_pairs %}
-                        <tr class="{{ 'table-danger' if pair.heat_conflict else '' }}">
+                        <tr class="{{ 'table-danger' if pair.heat_conflict else ('table-warning' if pair.paired_by == 'inferred' else '') }}">
                             <td>{{ pair.comp_a.name }}</td>
                             <td>{{ pair.comp_b.name }}</td>
                             <td>{{ pair.event_label }}</td>
@@ -291,7 +307,7 @@
                                 {% if pair.paired_by == 'mutual' %}
                                 <span class="badge bg-success">Mutual</span>
                                 {% else %}
-                                <span class="badge bg-warning text-dark" title="Only one side recorded — treated as mutual. Use Complete All Pairs to write both sides.">Inferred</span>
+                                <span class="badge bg-warning text-dark" title="Only one side has recorded this pair. Use Complete All Pairs to write both sides, or verify the partner intended to share.">Unconfirmed</span>
                                 {% endif %}
                             </td>
                             <td>
@@ -489,7 +505,7 @@
     </div>
 
     <!-- College gear constraints (with inline edit/remove) -->
-    {% if report.college_constraints %}
+    {% if report.college_constraints or (college_comps is defined and college_comps) %}
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <h6 class="mb-0">College Gear Constraints ({{ report.college_constraints|length }})</h6>
@@ -499,8 +515,9 @@
             </button>
         </div>
         <div class="collapse" id="collegeGearTable">
+            {% if report.college_constraints %}
             <div class="table-responsive">
-                <table class="table table-sm table-hover align-middle mb-0">
+                <table class="table table-sm table-hover align-middle mb-0" id="collegeGearTableBody">
                     <thead class="table-light">
                         <tr>
                             <th>Competitor</th>
@@ -512,13 +529,32 @@
                     </thead>
                     <tbody>
                         {% for row in report.college_constraints %}
-                        <tr>
-                            <td>{{ row.competitor.name }}</td>
+                        <tr data-comp-id="{{ row.competitor.id }}"
+                            data-event-key="{{ row.event_key }}"
+                            data-comp-name="{{ row.competitor.name|e }}">
+                            <td>
+                                {% if row.competitor.team %}
+                                <a href="{{ url_for('registration.team_detail', tournament_id=tournament.id, team_id=row.competitor.team.id) }}">{{ row.competitor.name }}</a>
+                                {% else %}
+                                {{ row.competitor.name }}
+                                {% endif %}
+                            </td>
                             <td><span class="badge bg-secondary">{{ row.team_code }}</span></td>
                             <td>{{ row.event_label }}</td>
-                            <td>{{ row.partner if row.partner else '<span class="text-muted fst-italic">none</span>'|safe }}</td>
+                            <td class="college-partner-cell">
+                                <span class="college-partner-display">
+                                    {{ row.partner if row.partner else '<span class="text-muted fst-italic">none</span>'|safe }}
+                                </span>
+                                <span class="college-partner-edit d-none">
+                                    <input type="text" class="form-control form-control-sm college-partner-input"
+                                           value="{{ row.partner or '' }}" style="min-width:140px">
+                                </span>
+                            </td>
                             <td>
-                                <div class="btn-group btn-group-sm">
+                                <div class="btn-group btn-group-sm college-view-mode">
+                                    <button type="button" class="btn btn-outline-primary btn-sm btn-college-inline-edit">
+                                        Quick Edit
+                                    </button>
                                     <button type="button" class="btn btn-outline-secondary btn-sm"
                                             data-bs-toggle="modal" data-bs-target="#editCollegeGearModal"
                                             data-competitor-id="{{ row.competitor.id }}"
@@ -538,12 +574,17 @@
                                         <button type="submit" class="btn btn-outline-danger btn-sm">Remove</button>
                                     </form>
                                 </div>
+                                <div class="btn-group btn-group-sm college-edit-mode d-none">
+                                    <button type="button" class="btn btn-success btn-sm btn-college-inline-save">Save</button>
+                                    <button type="button" class="btn btn-secondary btn-sm btn-college-inline-cancel">Cancel</button>
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
+            {% endif %}
             <!-- Add college gear entry inline -->
             <div class="card-body border-top">
                 <h6 class="text-muted small mb-2">Add / Update College Gear Entry</h6>
@@ -552,8 +593,14 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="col-md-3">
                         <label class="form-label form-label-sm">Competitor</label>
-                        <input type="number" name="competitor_id" class="form-control form-control-sm"
-                               placeholder="Competitor ID" required>
+                        <select name="competitor_id" class="form-select form-select-sm" required>
+                            <option value="">-- select --</option>
+                            {% if college_comps is defined %}
+                            {% for c in college_comps %}
+                            <option value="{{ c.id }}">{{ c.name }}{% if c.team %} ({{ c.team.team_code }}){% endif %}</option>
+                            {% endfor %}
+                            {% endif %}
+                        </select>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label form-label-sm">Event Key</label>
@@ -785,6 +832,85 @@
         if (e.key === 'Escape' && e.target.classList.contains('partner-input')) {
             var cancelBtn = e.target.closest('tr').querySelector('.btn-inline-cancel');
             if (cancelBtn) cancelBtn.click();
+        }
+        // College inline editing keyboard shortcuts
+        if (e.key === 'Enter' && e.target.classList.contains('college-partner-input')) {
+            e.preventDefault();
+            var saveBtn = e.target.closest('tr').querySelector('.btn-college-inline-save');
+            if (saveBtn) saveBtn.click();
+        }
+        if (e.key === 'Escape' && e.target.classList.contains('college-partner-input')) {
+            var cancelBtn = e.target.closest('tr').querySelector('.btn-college-inline-cancel');
+            if (cancelBtn) cancelBtn.click();
+        }
+    });
+
+    // -----------------------------------------------------------------------
+    // Inline AJAX editing for college gear entries
+    // -----------------------------------------------------------------------
+    var COLLEGE_UPDATE_AJAX_URL = '{{ url_for("registration.college_gear_update_ajax", tournament_id=tournament.id) }}';
+
+    document.addEventListener('click', function (e) {
+        // College Quick Edit: switch row to edit mode
+        if (e.target.classList.contains('btn-college-inline-edit')) {
+            var row = e.target.closest('tr');
+            row.querySelector('.college-partner-display').classList.add('d-none');
+            row.querySelector('.college-partner-edit').classList.remove('d-none');
+            row.querySelector('.college-view-mode').classList.add('d-none');
+            row.querySelector('.college-edit-mode').classList.remove('d-none');
+            row.querySelector('.college-partner-input').focus();
+            return;
+        }
+
+        // College Cancel: revert to display mode
+        if (e.target.classList.contains('btn-college-inline-cancel')) {
+            var row = e.target.closest('tr');
+            row.querySelector('.college-partner-display').classList.remove('d-none');
+            row.querySelector('.college-partner-edit').classList.add('d-none');
+            row.querySelector('.college-view-mode').classList.remove('d-none');
+            row.querySelector('.college-edit-mode').classList.add('d-none');
+            return;
+        }
+
+        // College Save: AJAX POST
+        if (e.target.classList.contains('btn-college-inline-save')) {
+            var btn = e.target;
+            var row = btn.closest('tr');
+            var compId = row.dataset.compId;
+            var eventKey = row.dataset.eventKey;
+            var compName = row.dataset.compName || '';
+            var partnerName = row.querySelector('.college-partner-input').value.trim();
+
+            btn.disabled = true;
+            btn.textContent = 'Saving\u2026';
+
+            var fd = new FormData();
+            fd.append('csrf_token', CSRF_TOKEN);
+            fd.append('competitor_id', compId);
+            fd.append('event_key', eventKey);
+            fd.append('partner_name', partnerName);
+
+            fetch(COLLEGE_UPDATE_AJAX_URL, { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.ok) {
+                        row.querySelector('.college-partner-display').textContent = data.partner || partnerName;
+                        row.querySelector('.college-partner-display').classList.remove('d-none');
+                        row.querySelector('.college-partner-edit').classList.add('d-none');
+                        row.querySelector('.college-view-mode').classList.remove('d-none');
+                        row.querySelector('.college-edit-mode').classList.add('d-none');
+                        showInlineFlash('success', 'College gear entry updated for <strong>' + compName + '</strong>.');
+                    } else {
+                        showInlineFlash('danger', 'Error: ' + (data.error || 'Unknown error'));
+                        btn.disabled = false;
+                        btn.textContent = 'Save';
+                    }
+                })
+                .catch(function (err) {
+                    showInlineFlash('danger', 'Network error: ' + err.message);
+                    btn.disabled = false;
+                    btn.textContent = 'Save';
+                });
         }
     });
 }());

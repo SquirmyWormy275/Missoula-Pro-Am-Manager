@@ -14,7 +14,7 @@
         </div>
     </div>
 
-    <form method="POST">
+    <form method="POST" id="setupEventsForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row">
         <!-- College Events Setup -->
@@ -239,4 +239,29 @@
     </div>
     </form>
 </div>
+
+{# ── Sticky save bar (visible after scrolling past the inline buttons) ── #}
+<div class="sticky-save-bar d-none" id="stickySaveBar" style="left:0;right:0;">
+    <div class="container-fluid d-flex align-items-center justify-content-between gap-3">
+        <span class="text-sx-muted text-xs">Unsaved event configuration</span>
+        <button type="submit" form="setupEventsForm" class="btn btn-proam btn-sm" name="action_scope" value="both">
+            <i class="bi bi-save2 me-1"></i>Save All
+        </button>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+(function () {
+    var bar = document.getElementById('stickySaveBar');
+    if (!bar) return;
+    var sentinel = document.querySelector('button[name="action_scope"][value="both"]');
+    if (!sentinel) return;
+    var obs = new IntersectionObserver(function (entries) {
+        bar.classList.toggle('d-none', entries[0].isIntersecting);
+    }, { threshold: 0 });
+    obs.observe(sentinel);
+})();
+</script>
+{% endblock %}
 {% endblock %}

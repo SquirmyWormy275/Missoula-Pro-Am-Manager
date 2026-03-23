@@ -127,14 +127,21 @@ def _get_configs(tournament_id):
 
 def _get_pro_event_map(tournament_id):
     """
-    Return {str(event_id): Event} for all pro events in this tournament.
+    Return (id_map, name_map) for all pro events in this tournament.
 
-    Pro competitors store event IDs (not names) in events_entered, so we need
-    this lookup to resolve IDs to event names for fragment matching.
+    id_map:   {str(event_id): Event}  — primary lookup for ID-based entries
+    name_map: {display_name_lower: Event} — fallback for name-based entries
+              (created by the Excel importer when gendered event names like
+              "Women's Standing Block" don't resolve to an Event ID)
     """
     from models.event import Event
     rows = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
-    return {str(r.id): r for r in rows}
+    id_map = {str(r.id): r for r in rows}
+    name_map = {}
+    for r in rows:
+        name_map[r.name.strip().lower()] = r
+        name_map[r.display_name.strip().lower()] = r
+    return id_map, name_map
 
 
 def _count_competitors(tournament_id):
@@ -147,6 +154,9 @@ def _count_competitors(tournament_id):
     Pro competitors store event IDs; these are resolved to event.name via the Event table.
     For gendered pro events (event.gender set), the event gender is used.
     For open/mixed pro events, the competitor's own gender is used.
+
+    Fallback: if a pro entry is a name string rather than an ID (legacy imports),
+    it is matched against Event.name and Event.display_name.
     """
     from models.competitor import CollegeCompetitor, ProCompetitor
 
@@ -163,7 +173,7 @@ def _count_competitors(tournament_id):
             key = (event_name.lower().strip(), 'college', gender)
             counts[key] += 1
 
-    pro_event_map = _get_pro_event_map(tournament_id)
+    pro_id_map, pro_name_map = _get_pro_event_map(tournament_id)
 
     pro_comps = (
         ProCompetitor.query
@@ -173,7 +183,11 @@ def _count_competitors(tournament_id):
     for comp in pro_comps:
         comp_gender = comp.gender or 'M'
         for event_id in comp.get_events_entered():
-            event = pro_event_map.get(str(event_id).strip())
+            event_key = str(event_id).strip()
+            event = pro_id_map.get(event_key)
+            if not event:
+                # Fallback: entry may be a name string from Excel import
+                event = pro_name_map.get(event_key.lower())
             if not event:
                 continue
             # Use event gender if the event is gendered; else use competitor gender
@@ -212,7 +226,7 @@ def _list_competitors(tournament_id):
             'events': comp.get_events_entered(),
         })
 
-    pro_event_map = _get_pro_event_map(tournament_id)
+    pro_id_map, pro_name_map = _get_pro_event_map(tournament_id)
 
     pro_comps = (
         ProCompetitor.query
@@ -220,10 +234,13 @@ def _list_competitors(tournament_id):
         .all()
     )
     for comp in pro_comps:
-        # Resolve event IDs to event names
+        # Resolve event IDs (or name strings from legacy imports) to event names
         event_names = []
         for event_id in comp.get_events_entered():
-            event = pro_event_map.get(str(event_id).strip())
+            event_key = str(event_id).strip()
+            event = pro_id_map.get(event_key)
+            if not event:
+                event = pro_name_map.get(event_key.lower())
             if event:
                 event_names.append(event.name)
         result.append({

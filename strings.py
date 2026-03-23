@@ -13,10 +13,19 @@ import re
 from flask import has_request_context, session
 
 DEFAULT_LANGUAGE = 'en'
-SUPPORTED_LANGUAGES = {
+
+# Public languages are shown to all users in the language switcher.
+PUBLIC_LANGUAGES = {
     'en': 'English',
+    'ru': 'Русский',
+}
+
+# Restricted languages are shown only to judges and admins.
+RESTRICTED_LANGUAGES = {
     'arp': 'Northern Arapaho',
 }
+
+SUPPORTED_LANGUAGES = {**PUBLIC_LANGUAGES, **RESTRICTED_LANGUAGES}
 
 ENGLISH = {
     'NAV': {
@@ -104,6 +113,7 @@ ENGLISH = {
         'go_to_pro_dashboard': 'Go to Pro Dashboard',
         'language_english': 'English',
         'language_arapaho': 'Northern Arapaho',
+        'language_russian': 'Russian',
     },
 }
 
@@ -182,6 +192,366 @@ ARAPAHO_VERIFIED_PHRASES = {
 
 _GLOSSARY_FILE = Path(__file__).with_name('arapaho_glossary.json')
 
+# ---------------------------------------------------------------------------
+# Russian
+# ---------------------------------------------------------------------------
+
+RUSSIAN_OVERRIDES = {
+    'NAV': {
+        'home': 'Главная',
+        'dashboard': 'Панель управления',
+        'college': 'Колледж',
+        'pro': 'Про',
+        'events': 'Соревнования',
+    },
+    'COMPETITION': {
+        'app_title': 'Менеджер турнира Missoula Pro Am',
+        'app_footer': 'Менеджер турнира Missoula Pro Am',
+        'college_title': 'Соревнования колледжей',
+        'college_day': 'Пятница',
+        'pro_title': 'Профессиональные соревнования',
+        'pro_day': 'Суббота',
+        'bull_of_woods': 'Король леса',
+        'belle_of_woods': 'Королева леса',
+        'team_standings': 'Командный зачёт',
+    },
+    'FLASH': {
+        'tournament_created': 'Турнир "{name} {year}" успешно создан!',
+        'college_active': 'Соревнования колледжей начались!',
+        'pro_active': 'Профессиональные соревнования начались!',
+        'invalid_comp_type': 'Неверный тип соревнований.',
+        'no_file': 'Файл не выбран.',
+        'import_success': 'Успешно импортировано: {teams} команд(а), {competitors} участник(ов).',
+        'import_error': 'Ошибка обработки файла: {error}',
+        'invalid_file_type': 'Неверный тип файла. Загрузите файл Excel (.xlsx или .xls).',
+        'competitor_added': 'Участник "{name}" успешно добавлен!',
+        'competitor_scratched': 'Участник "{name}" снят с соревнований.',
+        'events_configured': 'Соревнования успешно настроены!',
+        'heats_generated': 'Создано заездов: {num_heats} для {event_name}.',
+        'heats_error': 'Ошибка создания заездов: {error}',
+        'flights_built': 'Создано этапов: {num_flights} для профессиональных соревнований.',
+        'flights_error': 'Ошибка создания этапов: {error}',
+        'heat_saved': 'Результаты заезда успешно сохранены!',
+        'event_finalized': '{event_name} завершено.',
+        'pro_only_payouts': 'Выплаты настраиваются только для профессиональных соревнований.',
+        'payouts_saved': 'Выплаты успешно настроены!',
+        'language_changed': 'Язык изменён на {language}.',
+        'invalid_language': 'Неверный выбор языка.',
+        'arapaho_restricted': 'Режим арапахо доступен только для судей и администраторов.',
+    },
+    'UI': {
+        'language': 'Язык',
+        'dashboard': 'Панель управления',
+        'active_tournament': 'Активный турнир',
+        'status': 'Статус',
+        'setup': 'Настройка',
+        'college_competition_active': 'Соревнования колледжей активны',
+        'pro_competition_active': 'Профессиональные соревнования активны',
+        'college_active': 'Колледж активен',
+        'pro_active': 'Про активен',
+        'completed': 'Завершено',
+        'go_to_tournament': 'Перейти к турниру',
+        'tournaments': 'Турниры',
+        'new_tournament': 'Новый турнир',
+        'tournament': 'Турнир',
+        'year': 'Год',
+        'teams': 'Команды',
+        'college': 'Колледж',
+        'pro': 'Про',
+        'actions': 'Действия',
+        'view': 'Просмотр',
+        'no_tournaments': 'Турниры ещё не созданы.',
+        'create_first_tournament': 'Создайте первый турнир',
+        'create_new_tournament': 'Создать новый турнир',
+        'tournament_name': 'Название турнира',
+        'create_tournament': 'Создать турнир',
+        'cancel': 'Отмена',
+        'college_teams': 'Команды колледжей',
+        'college_competitors': 'Участники колледжей',
+        'pro_competitors': 'Профессиональные участники',
+        'events_completed': 'Завершённые соревнования',
+        'quick_actions': 'Быстрые действия',
+        'configure_events': 'Настроить соревнования',
+        'view_events': 'Просмотр соревнований',
+        'view_all_events': 'Все соревнования',
+        'view_all_results': 'Все результаты',
+        'import_teams': 'Импорт команд',
+        'go_to_college_dashboard': 'Панель колледжей',
+        'register_competitors': 'Зарегистрировать участников',
+        'go_to_pro_dashboard': 'Профессиональная панель',
+        'language_english': 'Английский',
+        'language_arapaho': 'Северный Арапахо',
+        'language_russian': 'Русский',
+    },
+}
+
+# Common English phrases found throughout templates, substituted during full-page
+# translation in Russian mode. Sorted longest-first at runtime so longer phrases
+# take precedence over shorter ones (e.g. "Pro Competition" before "Competition").
+RUSSIAN_PHRASES = {
+    # ── Competition structure ──────────────────────────────────────────────
+    'College Competition': 'Соревнования колледжей',
+    'Pro Competition': 'Профессиональные соревнования',
+    'Pro-Am Relay': 'Эстафета Про-Ам',
+    'Partnered Axe Throw': 'Парное метание топора',
+    'Bull of the Woods': 'Король леса',
+    'Belle of the Woods': 'Королева леса',
+    'Team Standings': 'Командный зачёт',
+    'Individual Standings': 'Личный зачёт',
+    'Pro Standings': 'Рейтинг профессионалов',
+    'College Standings': 'Рейтинг колледжей',
+    'Event Results': 'Результаты соревнований',
+    'All Results': 'Все результаты',
+    'All Events': 'Все соревнования',
+    # ── Timbersports events ────────────────────────────────────────────────
+    'Springboard': 'Трамплин',
+    'Underhand': 'Нижний удар',
+    'Standing Block': 'Стоячий блок',
+    'Single Buck': 'Одиночная пила',
+    'Double Buck': 'Двойная пила',
+    'Jack & Jill Sawing': 'Командная пила',
+    'Stock Saw': 'Серийная бензопила',
+    'Hot Saw': 'Скоростная пила',
+    'Obstacle Pole': 'Полоса препятствий',
+    'Speed Climb': 'Скоростной подъём',
+    'Pole Climb': 'Подъём на шест',
+    'Axe Throw': 'Метание топора',
+    'Birling': 'Бёрлинг',
+    'Cookie Stack': 'Стойки бревна',
+    'Caber Toss': 'Метание бревна',
+    'Peavey Log Roll': 'Перекатывание бревна',
+    'Pulp Toss': 'Метание поленьев',
+    "Chokerman's Race": 'Гонка сплавщика',
+    '3-Board Jigger': 'Джиггер на 3 доски',
+    '1-Board Springboard': 'Трамплин на 1 доску',
+    'Pro 1-Board': 'Про трамплин на 1 доску',
+    'Hard Hit': 'Силовой удар',
+    'Speed': 'Скоростной',
+    # ── Schedule / heats / flights ─────────────────────────────────────────
+    'Flight': 'Этап',
+    'Flights': 'Этапы',
+    'Heat': 'Заезд',
+    'Heats': 'Заезды',
+    'Heat Sheet': 'Протокол заездов',
+    'Heat Sheets': 'Протоколы заездов',
+    'Run 1': 'Заезд 1',
+    'Run 2': 'Заезд 2',
+    'Run 3': 'Заезд 3',
+    'Stand': 'Стойка',
+    'Stands': 'Стойки',
+    'Flight Schedule': 'Расписание этапов',
+    'Day Schedule': 'Расписание дня',
+    'Show Day': 'День шоу',
+    'Generate Heats': 'Создать заезды',
+    'Build Flights': 'Построить этапы',
+    'Pending': 'Ожидание',
+    'In Progress': 'В процессе',
+    'Completed': 'Завершено',
+    'Finalized': 'Финализировано',
+    'Locked': 'Заблокировано',
+    'Scratched': 'Снят',
+    # ── Scoring / results ──────────────────────────────────────────────────
+    'Score Entry': 'Ввод результатов',
+    'Enter Results': 'Ввести результаты',
+    'Enter Scores': 'Ввести результаты',
+    'Finalize Event': 'Завершить соревнование',
+    'Configure Payouts': 'Настроить выплаты',
+    'Payout Summary': 'Итоги выплат',
+    'Payout Settlement': 'Расчёт выплат',
+    'Payouts': 'Выплаты',
+    'Payout': 'Выплата',
+    'Points': 'Очки',
+    'Position': 'Место',
+    'Place': 'Место',
+    'Rank': 'Рейтинг',
+    'Result': 'Результат',
+    'Results': 'Результаты',
+    'Score': 'Результат',
+    'Time': 'Время',
+    'Distance': 'Расстояние',
+    'Hits': 'Удары',
+    'Best Run': 'Лучший заезд',
+    'Tiebreak': 'Тай-брейк',
+    'Throwoff': 'Перебивка',
+    'Outlier': 'Выброс',
+    'Flagged': 'Отмечено',
+    'Handicap': 'Гандикап',
+    'Start Mark': 'Стартовая метка',
+    'Championship': 'Чемпионат',
+    # ── Registration ───────────────────────────────────────────────────────
+    'Register Competitor': 'Зарегистрировать участника',
+    'New Competitor': 'Новый участник',
+    'Competitor Details': 'Данные участника',
+    'Gear Sharing': 'Совместное снаряжение',
+    'Gear Partner': 'Партнёр по снаряжению',
+    'Scratch Competitor': 'Снять участника',
+    'Pro Competitor': 'Профессиональный участник',
+    'College Competitor': 'Участник колледжа',
+    'Competitor': 'Участник',
+    'Competitors': 'Участники',
+    'Team': 'Команда',
+    'Teams': 'Команды',
+    'School': 'Школа',
+    'Partner': 'Партнёр',
+    'Partners': 'Партнёры',
+    'Entry Fee': 'Взнос за участие',
+    'Entry Fees': 'Взносы за участие',
+    'Fee Tracker': 'Учёт взносов',
+    'ALA Member': 'Член АЛА',
+    'Shirt Size': 'Размер футболки',
+    'Lottery': 'Жеребьёвка',
+    'Opt In': 'Участвовать',
+    # ── People / roles ─────────────────────────────────────────────────────
+    'Judge': 'Судья',
+    'Admin': 'Администратор',
+    'Scorer': 'Секретарь',
+    'Registrar': 'Регистратор',
+    'Spectator': 'Зритель',
+    'School Captain': 'Капитан команды',
+    'Male': 'Мужской',
+    'Female': 'Женский',
+    'Men': 'Мужчины',
+    'Women': 'Женщины',
+    # ── Navigation / UI chrome ─────────────────────────────────────────────
+    'Dashboard': 'Панель управления',
+    'Tournament': 'Турнир',
+    'Tournaments': 'Турниры',
+    'New Tournament': 'Новый турнир',
+    'Tournament Name': 'Название турнира',
+    'Create Tournament': 'Создать турнир',
+    'Active Tournament': 'Активный турнир',
+    'Language': 'Язык',
+    'Settings': 'Настройки',
+    'Overview': 'Обзор',
+    'Schedule': 'Расписание',
+    'Reports': 'Отчёты',
+    'Report': 'Отчёт',
+    'Validation': 'Проверка',
+    'Import': 'Импорт',
+    'Export': 'Экспорт',
+    'Print': 'Печать',
+    'Portal': 'Портал',
+    'Guide': 'Руководство',
+    'Audit Log': 'Журнал аудита',
+    'Users': 'Пользователи',
+    'User': 'Пользователь',
+    # ── Buttons / actions ──────────────────────────────────────────────────
+    'Save Changes': 'Сохранить изменения',
+    'Save': 'Сохранить',
+    'Cancel': 'Отмена',
+    'Edit': 'Редактировать',
+    'Delete': 'Удалить',
+    'Remove': 'Удалить',
+    'Add': 'Добавить',
+    'Create': 'Создать',
+    'Update': 'Обновить',
+    'Submit': 'Отправить',
+    'Upload': 'Загрузить',
+    'Download': 'Скачать',
+    'Search': 'Поиск',
+    'Filter': 'Фильтр',
+    'Confirm': 'Подтвердить',
+    'Generate': 'Сгенерировать',
+    'Rebuild': 'Пересобрать',
+    'Refresh': 'Обновить',
+    'Reset': 'Сбросить',
+    'Back': 'Назад',
+    'Continue': 'Продолжить',
+    'Finish': 'Завершить',
+    'Close': 'Закрыть',
+    'Open': 'Открыть',
+    'View': 'Просмотр',
+    'Show': 'Показать',
+    'Hide': 'Скрыть',
+    'Login': 'Войти',
+    'Log In': 'Войти',
+    'Logout': 'Выйти',
+    'Log Out': 'Выйти',
+    'Register': 'Зарегистрироваться',
+    'Sign In': 'Войти',
+    'Select': 'Выбрать',
+    'Apply': 'Применить',
+    'Assign': 'Назначить',
+    'Swap': 'Переставить',
+    'Move': 'Переместить',
+    'Copy': 'Копировать',
+    'Clone': 'Клонировать',
+    'Lock': 'Заблокировать',
+    'Unlock': 'Разблокировать',
+    'Mark': 'Отметить',
+    'Unmark': 'Снять отметку',
+    'Enable': 'Включить',
+    'Disable': 'Отключить',
+    # ── Status / feedback ──────────────────────────────────────────────────
+    'Active': 'Активный',
+    'Inactive': 'Неактивный',
+    'Setup': 'Настройка',
+    'Loading': 'Загрузка',
+    'Error': 'Ошибка',
+    'Warning': 'Предупреждение',
+    'Success': 'Успех',
+    'Info': 'Информация',
+    'Not found': 'Не найдено',
+    'No results': 'Нет результатов',
+    'No events': 'Нет соревнований',
+    'No heats': 'Нет заездов',
+    'No flights': 'Нет этапов',
+    # ── Form field labels ──────────────────────────────────────────────────
+    'Name': 'Имя',
+    'Year': 'Год',
+    'Date': 'Дата',
+    'Email': 'Электронная почта',
+    'Phone': 'Телефон',
+    'Address': 'Адрес',
+    'Gender': 'Пол',
+    'Notes': 'Заметки',
+    'Details': 'Детали',
+    'Summary': 'Итог',
+    'Total': 'Итого',
+    'Status': 'Статус',
+    'Actions': 'Действия',
+    'Count': 'Количество',
+    'Amount': 'Сумма',
+    'Paid': 'Оплачено',
+    'Unpaid': 'Не оплачено',
+    'Balance': 'Баланс',
+    'PIN': 'ПИН',
+    'Access': 'Доступ',
+    'Password': 'Пароль',
+    'Role': 'Роль',
+    # ── Days of the week ───────────────────────────────────────────────────
+    'Friday': 'Пятница',
+    'Saturday': 'Суббота',
+    'Sunday': 'Воскресенье',
+    'Monday': 'Понедельник',
+    'Tuesday': 'Вторник',
+    'Wednesday': 'Среда',
+    'Thursday': 'Четверг',
+    # ── Language names ─────────────────────────────────────────────────────
+    'English': 'Английский',
+    'Northern Arapaho': 'Северный Арапахо',
+    'Russian': 'Русский',
+    # ── College-specific ───────────────────────────────────────────────────
+    'College Day': 'День колледжа',
+    'Pro Day': 'День профессионалов',
+    'College Dashboard': 'Панель колледжей',
+    'Pro Dashboard': 'Профессиональная панель',
+    'Import Teams': 'Импорт команд',
+    'Team Code': 'Код команды',
+    'School Name': 'Название школы',
+    'Events Entered': 'Зарегистрированные соревнования',
+    'Individual Points': 'Личные очки',
+    'Team Points': 'Командные очки',
+    # ── Wood / material planning ───────────────────────────────────────────
+    'Wood': 'Дерево',
+    'Log': 'Бревно',
+    'Block': 'Блок',
+    'Species': 'Порода',
+    'Diameter': 'Диаметр',
+    'Length': 'Длина',
+    'Material': 'Материал',
+}
+
 
 def _merge_nested(base: dict, overrides: dict) -> dict:
     merged = deepcopy(base)
@@ -196,6 +566,7 @@ def _merge_nested(base: dict, overrides: dict) -> dict:
 TRANSLATIONS = {
     'en': ENGLISH,
     'arp': _merge_nested(ENGLISH, ARAPAHO_OVERRIDES),
+    'ru': _merge_nested(ENGLISH, RUSSIAN_OVERRIDES),
 }
 
 
@@ -262,18 +633,20 @@ def _load_custom_glossary() -> dict[str, str]:
 
 
 def _phrase_map(lang_code: str) -> dict[str, str]:
-    if lang_code != 'arp':
-        return {}
-    # User glossary wins over built-ins for community-approved phrasing.
-    merged = dict(ARAPAHO_VERIFIED_PHRASES)
-    merged.update(_load_custom_glossary())
-    return merged
+    if lang_code == 'arp':
+        # User glossary wins over built-ins for community-approved phrasing.
+        merged = dict(ARAPAHO_VERIFIED_PHRASES)
+        merged.update(_load_custom_glossary())
+        return merged
+    if lang_code == 'ru':
+        return dict(RUSSIAN_PHRASES)
+    return {}
 
 
 def free_text(text_value: str, lang: str | None = None) -> str:
     """Translate free-form UI text with strict phrase-level substitutions only."""
     lang_code = lang or get_language()
-    if lang_code != 'arp' or not text_value:
+    if lang_code == 'en' or not text_value:
         return text_value
 
     translated = text_value
@@ -291,7 +664,7 @@ def translate_html(html: str, lang: str | None = None) -> str:
     Splits on tags and only transforms plain text chunks.
     """
     lang_code = lang or get_language()
-    if lang_code != 'arp' or not html:
+    if lang_code == 'en' or not html:
         return html
 
     parts = re.split(r'(<[^>]+>)', html)

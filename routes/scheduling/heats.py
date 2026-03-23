@@ -226,6 +226,40 @@ def move_competitor_between_heats(tournament_id, event_id):
         target.sync_assignments(comp_type)
 
     db.session.commit()
+
+    # Check for gear-sharing conflicts created by this move (warn, don't block).
+    if event.event_type == 'pro':
+        try:
+            from services.gear_sharing import competitors_share_gear_for_event
+            from models import Event as EventModel
+            mover = ProCompetitor.query.get(competitor_id)
+            if mover:
+                mover_gear = mover.get_gear_sharing()
+                all_events = EventModel.query.filter_by(tournament_id=event.tournament_id).all()
+                final_to_heat = to_pairs[0] if to_pairs else to_heat
+                target_ids = final_to_heat.get_competitors()
+                target_comps = ProCompetitor.query.filter(
+                    ProCompetitor.id.in_([cid for cid in target_ids if cid != competitor_id])
+                ).all()
+                conflicts = []
+                for tc in target_comps:
+                    if competitors_share_gear_for_event(
+                        mover.name, mover_gear,
+                        tc.name, tc.get_gear_sharing(),
+                        event,
+                        all_events=all_events,
+                    ):
+                        conflicts.append(tc.name)
+                if conflicts:
+                    flash(
+                        f'Warning: {mover.name} shares gear with '
+                        f'{", ".join(conflicts)} who are already in the destination heat. '
+                        f'This may cause a scheduling conflict.',
+                        'warning',
+                    )
+        except Exception:
+            pass  # Gear check failure should not block the move
+
     flash('Competitor moved successfully.', 'success')
     return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 

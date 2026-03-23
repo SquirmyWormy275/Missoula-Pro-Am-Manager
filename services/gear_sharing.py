@@ -18,6 +18,65 @@ from typing import Iterable
 _CATEGORY_KEYS = {'category:crosscut', 'category:chainsaw', 'category:springboard'}
 
 
+# ---------------------------------------------------------------------------
+# Gear family helpers
+# ---------------------------------------------------------------------------
+
+def get_gear_family(event):
+    """Return (family_name, family_dict) for the event, or (None, None).
+
+    Respects the ``pro_only`` flag — a college event whose stand_type belongs
+    to a pro_only family returns (None, None).
+    """
+    import config
+    st = str(getattr(event, 'stand_type', '') or '').strip().lower()
+    if not st:
+        return None, None
+    event_type = str(getattr(event, 'event_type', '') or '').strip().lower()
+    for name, fam in config.GEAR_FAMILIES.items():
+        if st in fam['stand_types']:
+            if fam.get('pro_only') and event_type == 'college':
+                return None, None
+            return name, fam
+    return None, None
+
+
+def get_family_events(event, all_events):
+    """Return other events in the same cascade gear family.
+
+    Only returns results when the family has ``cascade=True``.  An empty list
+    means no cascade siblings (or the family is non-cascade / not found).
+    """
+    family_name, family = get_gear_family(event)
+    if not family_name or not family.get('cascade'):
+        return []
+    result = []
+    for other in all_events:
+        if getattr(other, 'id', None) == getattr(event, 'id', None):
+            continue
+        other_family, _ = get_gear_family(other)
+        if other_family == family_name:
+            result.append(other)
+    return result
+
+
+def is_no_constraint_event(event):
+    """Return True if this event requires no gear-sharing constraints.
+
+    True for stand types in ``NO_CONSTRAINT_STAND_TYPES`` (stock_saw, birling,
+    etc.) and for college events whose gear family is ``pro_only``.
+    """
+    import config
+    st = str(getattr(event, 'stand_type', '') or '').strip().lower()
+    if st in config.NO_CONSTRAINT_STAND_TYPES:
+        return True
+    event_type = str(getattr(event, 'event_type', '') or '').strip().lower()
+    for fam in config.GEAR_FAMILIES.values():
+        if st in fam['stand_types'] and fam.get('pro_only') and event_type == 'college':
+            return True
+    return False
+
+
 def normalize_person_name(value: str) -> str:
     """Normalize a person name for tolerant matching."""
     return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
@@ -100,7 +159,7 @@ def infer_equipment_categories(text: str) -> set[str]:
     categories = set()
     if any(token in normalized for token in ['single buck', 'double buck', 'crosscut', 'jack & jill', 'jack and jill', 'handsaw', 'hand saw']):
         categories.add('crosscut')
-    if any(token in normalized for token in ['hot saw', 'stock saw', 'chainsaw', 'power saw', 'powersaw']):
+    if any(token in normalized for token in ['hot saw', 'chainsaw', 'power saw', 'powersaw']):
         categories.add('chainsaw')
     if any(token in normalized for token in ['springboard', 'board']):
         categories.add('springboard')
@@ -129,8 +188,8 @@ def _event_name_aliases(event) -> set[str]:
 
     if stand_type == 'saw_hand':
         aliases.update({'singlebuck', 'doublebuck', 'jackjill', 'jackandjill', 'crosscut'})
-    elif stand_type in {'hot_saw', 'stock_saw'}:
-        aliases.update({'hotsaw', 'stocksaw', 'chainsaw', 'powersaw'})
+    elif stand_type == 'hot_saw':
+        aliases.update({'hotsaw', 'chainsaw', 'powersaw'})
     elif stand_type == 'springboard':
         aliases.update({'springboard', '1boardspringboard', 'pro1board'})
 
@@ -181,7 +240,7 @@ def event_matches_gear_key(event, raw_key: str) -> bool:
         if key == 'category:crosscut':
             return stand_type == 'saw_hand' or any(token in event_text for token in ['buck', 'jackjill', 'saw'])
         if key == 'category:chainsaw':
-            return stand_type in {'hot_saw', 'stock_saw'} or any(token in event_text for token in ['hotsaw', 'stocksaw', 'powersaw', 'chainsaw'])
+            return stand_type == 'hot_saw' or any(token in event_text for token in ['hotsaw', 'powersaw', 'chainsaw'])
         if key == 'category:springboard':
             return stand_type == 'springboard' or 'springboard' in event_text or '1board' in event_text
         return False
@@ -277,8 +336,14 @@ def parse_gear_sharing_details(
     return parsed, warnings
 
 
-def competitors_share_gear_for_event(comp1_name: str, comp1_gear: dict, comp2_name: str, comp2_gear: dict, event) -> bool:
-    """Check if two competitors have a gear-sharing conflict for the given event."""
+def competitors_share_gear_for_event(comp1_name: str, comp1_gear: dict, comp2_name: str, comp2_gear: dict, event, all_events=None) -> bool:
+    """Check if two competitors have a gear-sharing conflict for the given event.
+
+    When *all_events* is provided and the event belongs to a cascade gear
+    family, also checks whether the two competitors share gear for ANY sibling
+    event in that family (e.g. sharing an axe for Springboard creates a
+    conflict in Underhand and Standing Block too).
+    """
     sharing1 = comp1_gear if isinstance(comp1_gear, dict) else {}
     sharing2 = comp2_gear if isinstance(comp2_gear, dict) else {}
     name1 = normalize_person_name(comp1_name)
@@ -294,25 +359,31 @@ def competitors_share_gear_for_event(comp1_name: str, comp1_gear: dict, comp2_na
             if partner2 and partner2 == name1:
                 return True
 
-    for key1, value1 in sharing1.items():
-        if not event_matches_gear_key(event, key1):
-            continue
-        partner1 = normalize_person_name(str(value1 or '').strip())
-        if not partner1:
-            continue
-        if partner1 == name2:
-            return True
-        if partner1.startswith('group:'):
-            for key2, value2 in sharing2.items():
-                if event_matches_gear_key(event, key2) and str(value2 or '').strip() == str(value1 or '').strip():
-                    return True
+    # Build the list of events to check: the primary event + cascade siblings.
+    events_to_check = [event] if event is not None else []
+    if event is not None and all_events is not None:
+        events_to_check.extend(get_family_events(event, all_events))
 
-    for key2, value2 in sharing2.items():
-        if not event_matches_gear_key(event, key2):
-            continue
-        partner2 = normalize_person_name(str(value2 or '').strip())
-        if partner2 == name1:
-            return True
+    for check_event in events_to_check:
+        for key1, value1 in sharing1.items():
+            if not event_matches_gear_key(check_event, key1):
+                continue
+            partner1 = normalize_person_name(str(value1 or '').strip())
+            if not partner1:
+                continue
+            if partner1 == name2:
+                return True
+            if partner1.startswith('group:'):
+                for key2, value2 in sharing2.items():
+                    if event_matches_gear_key(check_event, key2) and str(value2 or '').strip() == str(value1 or '').strip():
+                        return True
+
+        for key2, value2 in sharing2.items():
+            if not event_matches_gear_key(check_event, key2):
+                continue
+            partner2 = normalize_person_name(str(value2 or '').strip())
+            if partner2 == name1:
+                return True
 
     return False
 
@@ -585,11 +656,67 @@ def build_parse_review(tournament) -> list:
     return results
 
 
+def auto_parse_and_warn(competitor, tournament) -> list[str]:
+    """
+    Attempt to parse a competitor's gear_sharing_details free-text into structured
+    gear_sharing JSON at registration time.  Returns human-readable warning
+    strings for display (empty list = clean parse or nothing to parse).
+
+    Caller must commit.
+    """
+    from models import Event
+
+    details = str(getattr(competitor, 'gear_sharing_details', '') or '').strip()
+    if not details:
+        return []
+    if competitor.get_gear_sharing():
+        return []  # Already structured
+
+    from models.competitor import ProCompetitor
+
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).all()
+    pro_events = Event.query.filter_by(
+        tournament_id=tournament.id, event_type='pro'
+    ).all()
+    name_index = build_name_index(c.name for c in pro_comps)
+    entered = [str(v).strip() for v in competitor.get_events_entered() if str(v).strip()]
+
+    gear_map, warnings = parse_gear_sharing_details(
+        details, pro_events, name_index,
+        self_name=competitor.name, entered_event_names=entered,
+    )
+
+    messages: list[str] = []
+
+    if gear_map:
+        competitor.gear_sharing = json.dumps(gear_map)
+        event_labels = {str(e.id): e.display_name for e in pro_events}
+        parts = []
+        for k, v in gear_map.items():
+            label = event_labels.get(k, k)
+            parts.append(f'{label} with {v}')
+        messages.append('Gear details auto-parsed: ' + '; '.join(parts) + '.')
+
+    non_trivial = [w for w in warnings if w != 'missing_details']
+    if 'partner_not_resolved' in non_trivial:
+        messages.append('Gear parse warning: could not identify partner name from details.')
+    if 'events_not_resolved' in non_trivial:
+        messages.append('Gear parse warning: could not match any events from details.')
+
+    return messages
+
+
 def build_gear_completeness_check(event, pro_comps: list) -> dict:
     """
     For a given event, identify active entrants that lack any gear-sharing entry.
     Returns {missing: list[{competitor, reason}], ok_count: int, total: int}.
+    Skips no-constraint events (stock_saw, birling, college obstacle pole, etc.).
     """
+    if is_no_constraint_event(event):
+        return {'missing': [], 'ok_count': 0, 'total': 0, 'skipped': True}
+
     event_aliases = _event_name_aliases(event)
     entered = []
     for c in pro_comps:
@@ -611,6 +738,49 @@ def build_gear_completeness_check(event, pro_comps: list) -> dict:
 # ---------------------------------------------------------------------------
 # Tournament-wide gear audit
 # ---------------------------------------------------------------------------
+
+def build_gear_conflict_pairs(tournament) -> dict[int, set[int]]:
+    """
+    Pre-compute a mapping of competitor_id -> set of competitor IDs they share
+    gear with (any event).  Used by the flight builder to penalize placing
+    gear-sharing partners in adjacent heats across different events.
+
+    Returns:
+        Dict mapping each pro competitor ID to the set of all competitor IDs
+        they share gear with.
+    """
+    from models.competitor import ProCompetitor
+
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).all()
+    pro_by_norm = {normalize_person_name(c.name): c for c in pro_comps}
+
+    conflicts: dict[int, set[int]] = {}
+    for comp in pro_comps:
+        gear = comp.get_gear_sharing()
+        if not isinstance(gear, dict):
+            continue
+        for _key, raw_partner in gear.items():
+            pt = str(raw_partner or '').strip()
+            if not pt or pt.startswith('group:'):
+                # For group keys, find all group members.
+                if pt.startswith('group:'):
+                    for other in pro_comps:
+                        if other.id == comp.id:
+                            continue
+                        other_gear = other.get_gear_sharing()
+                        if any(str(v or '').strip() == pt for v in other_gear.values()):
+                            conflicts.setdefault(comp.id, set()).add(other.id)
+                            conflicts.setdefault(other.id, set()).add(comp.id)
+                continue
+            partner_comp = pro_by_norm.get(normalize_person_name(pt))
+            if partner_comp and partner_comp.id != comp.id:
+                conflicts.setdefault(comp.id, set()).add(partner_comp.id)
+                conflicts.setdefault(partner_comp.id, set()).add(comp.id)
+
+    return conflicts
+
 
 def build_gear_report(tournament) -> dict:
     """
@@ -736,12 +906,17 @@ def build_gear_report(tournament) -> dict:
                         c1.name, comp_gear_by_id.get(c1.id, {}),
                         c2.name, comp_gear_by_id.get(c2.id, {}),
                         event,
+                        all_events=pro_events,
                     ):
                         pro_conflicts.append({
                             'event': event,
                             'heat': heat,
                             'comp_a': c1,
                             'comp_b': c2,
+                            'suggestions': [
+                                f'Move {c2.name} to a different heat via the Heats page',
+                                f'Use Sync Heat Conflicts to auto-resolve',
+                            ],
                         })
                         conflict_pair_ids.add((min(c1.id, c2.id), max(c1.id, c2.id)))
 
@@ -806,6 +981,8 @@ def build_gear_report(tournament) -> dict:
                 'partner': str(partner or '').strip(),
             })
 
+    unconfirmed_count = sum(1 for p in pro_pairs if p['paired_by'] == 'inferred')
+
     return {
         'pro_pairs': pro_pairs,
         'pro_unresolved': pro_unresolved,
@@ -815,6 +992,7 @@ def build_gear_report(tournament) -> dict:
         'college_constraints': college_constraints,
         'stats': {
             'pairs': len(pro_pairs),
+            'unconfirmed': unconfirmed_count,
             'unresolved': len(pro_unresolved),
             'conflicts': len(pro_conflicts),
             'college': len(college_constraints),
@@ -911,7 +1089,8 @@ def fix_heat_gear_conflicts(tournament) -> dict:
     fixed = 0
     failed = []
 
-    for event in Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all():
+    all_pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
+    for event in all_pro_events:
         heats = event.heats.filter(
             Heat.status != 'completed'
         ).order_by(Heat.run_number, Heat.heat_number).all()
@@ -947,6 +1126,7 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                                 c1.name, comp_gear_by_id.get(c1.id, {}),
                                 c2.name, comp_gear_by_id.get(c2.id, {}),
                                 event,
+                                all_events=all_pro_events,
                             ):
                                 conflict_pair = (c1, c2)
                                 break
@@ -977,6 +1157,7 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                                 mover.name, comp_gear_by_id.get(mover.id, {}),
                                 tc.name, comp_gear_by_id.get(tc.id, {}),
                                 event,
+                                all_events=all_pro_events,
                             )
                         )
                         if new_conflicts > 0:
@@ -987,7 +1168,37 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                             best_target = target_heat
 
                     if best_target is None:
-                        # No valid target for this conflict right now; move on.
+                        # No valid target — record diagnostic info for suggestions.
+                        reasons = []
+                        full_count = 0
+                        conflict_count = 0
+                        for th in run_heats:
+                            if th.id == heat.id:
+                                continue
+                            t_ids = th.get_competitors()
+                            if len(t_ids) >= max_per_heat:
+                                full_count += 1
+                            else:
+                                t_comps = [comp_by_id[cid] for cid in t_ids if cid in comp_by_id]
+                                nc = sum(
+                                    1 for tc in t_comps
+                                    if competitors_share_gear_for_event(
+                                        mover.name, comp_gear_by_id.get(mover.id, {}),
+                                        tc.name, comp_gear_by_id.get(tc.id, {}),
+                                        event,
+                                        all_events=all_pro_events,
+                                    )
+                                )
+                                if nc > 0:
+                                    conflict_count += 1
+                        if full_count > 0:
+                            reasons.append(f'{full_count} heat(s) at capacity ({max_per_heat})')
+                        if conflict_count > 0:
+                            reasons.append(f'{conflict_count} heat(s) would create new conflicts')
+                        # Stash suggestions for the post-scan recording phase.
+                        if not hasattr(heat, '_failed_suggestions'):
+                            heat._failed_suggestions = {}
+                        heat._failed_suggestions[(mover.id, conflict_pair[0].id)] = reasons
                         continue
 
                     target_ids = best_target.get_competitors()
@@ -1019,22 +1230,45 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                 if not made_fix_this_pass:
                     break  # No more fixes possible for this run.
 
-            # Record any remaining un-fixable conflicts.
+            # Record any remaining un-fixable conflicts with resolution suggestions.
             for heat in run_heats:
                 comp_ids = heat.get_competitors()
                 heat_comps = [comp_by_id[cid] for cid in comp_ids if cid in comp_by_id]
+                fail_hints = getattr(heat, '_failed_suggestions', {})
                 for i, c1 in enumerate(heat_comps):
                     for c2 in heat_comps[i + 1:]:
                         if competitors_share_gear_for_event(
                             c1.name, comp_gear_by_id.get(c1.id, {}),
                             c2.name, comp_gear_by_id.get(c2.id, {}),
                             event,
+                            all_events=all_pro_events,
                         ):
+                            reasons = (fail_hints.get((c2.id, c1.id))
+                                       or fail_hints.get((c1.id, c2.id))
+                                       or [])
+                            suggestions = []
+                            if any('capacity' in r for r in reasons):
+                                suggestions.append(
+                                    f'Increase max competitors per heat for {event.display_name} '
+                                    f'(currently {max_per_heat})'
+                                )
+                            if any('new conflicts' in r for r in reasons):
+                                suggestions.append(
+                                    f'Remove another gear conflict first so a swap target opens up'
+                                )
+                            suggestions.append(
+                                f'Manually move {c2.name} to a different heat on the Heats page'
+                            )
+                            suggestions.append(
+                                f'Add a new heat to {event.display_name} to create capacity'
+                            )
                             failed.append({
                                 'event': event.display_name,
                                 'heat': heat.heat_number,
                                 'comp_a': c1.name,
                                 'comp_b': c2.name,
+                                'reasons': reasons,
+                                'suggestions': suggestions,
                             })
 
     return {'fixed': fixed, 'failed': failed}

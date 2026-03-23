@@ -758,6 +758,30 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    /* ── Keyboard shortcuts for numpad (when overlay is open) ────────────── */
+    document.addEventListener('keydown', function (e) {
+        if (!overlay.classList.contains('open')) return;
+        if (/^[0-9]$/.test(e.key)) {
+            numpadBuffer += e.key;
+            npDisplay.textContent = numpadBuffer;
+            e.preventDefault();
+        } else if (e.key === '.' && !numpadBuffer.includes('.')) {
+            numpadBuffer += '.';
+            npDisplay.textContent = numpadBuffer;
+            e.preventDefault();
+        } else if (e.key === 'Backspace') {
+            numpadBuffer = numpadBuffer.slice(0, -1);
+            npDisplay.textContent = numpadBuffer || '—';
+            e.preventDefault();
+        } else if (e.key === 'Enter') {
+            document.getElementById('npConfirm').click();
+            e.preventDefault();
+        } else if (e.key === 'Escape') {
+            closeNumpad();
+            e.preventDefault();
+        }
+    });
+
     /* ── Form submit ─────────────────────────────────────────────────────── */
     let nextHeatOverride = null;
     let savingState = false;

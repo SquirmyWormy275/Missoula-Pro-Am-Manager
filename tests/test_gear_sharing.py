@@ -15,6 +15,9 @@ from services.gear_sharing import (
     infer_equipment_categories,
     competitors_share_gear_for_event,
     event_matches_gear_key,
+    get_gear_family,
+    get_family_events,
+    is_no_constraint_event,
 )
 
 
@@ -22,11 +25,12 @@ from services.gear_sharing import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _event(id=1, name='Single Buck', display_name=None, stand_type='saw_hand'):
+def _event(id=1, name='Single Buck', display_name=None, stand_type='saw_hand', event_type='pro'):
     return SimpleNamespace(
         id=id, name=name,
         display_name=display_name or name,
         stand_type=stand_type,
+        event_type=event_type,
     )
 
 
@@ -170,9 +174,10 @@ class TestInferEquipmentCategories:
         cats = infer_equipment_categories('hot saw - borrowed from team')
         assert 'chainsaw' in cats
 
-    def test_chainsaw_from_stock_saw(self):
+    def test_stock_saw_not_chainsaw(self):
+        # Stock saws are show-provided — no gear sharing constraint
         cats = infer_equipment_categories('stock saw gear')
-        assert 'chainsaw' in cats
+        assert 'chainsaw' not in cats
 
     def test_springboard_from_board(self):
         cats = infer_equipment_categories('springboard setup')
@@ -302,3 +307,346 @@ class TestCompetitorsShareGearForEvent:
         ev = _event(id=5)
         result = competitors_share_gear_for_event('Alice', None, 'Bob', None, ev)
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# get_gear_family
+# ---------------------------------------------------------------------------
+
+class TestGetGearFamily:
+    def test_underhand_is_chopping(self):
+        fam, conf = get_gear_family(_event(stand_type='underhand'))
+        assert fam == 'chopping'
+        assert conf['cascade'] is True
+
+    def test_standing_block_is_chopping(self):
+        fam, _ = get_gear_family(_event(stand_type='standing_block'))
+        assert fam == 'chopping'
+
+    def test_springboard_is_chopping(self):
+        fam, _ = get_gear_family(_event(stand_type='springboard'))
+        assert fam == 'chopping'
+
+    def test_saw_hand_is_crosscut_saw(self):
+        fam, conf = get_gear_family(_event(stand_type='saw_hand'))
+        assert fam == 'crosscut_saw'
+        assert conf['cascade'] is True
+
+    def test_hot_saw_family(self):
+        fam, conf = get_gear_family(_event(stand_type='hot_saw'))
+        assert fam == 'hot_saw'
+        assert conf['cascade'] is False
+
+    def test_speed_climb_is_climbing(self):
+        fam, _ = get_gear_family(_event(stand_type='speed_climb'))
+        assert fam == 'climbing'
+
+    def test_obstacle_pole_pro_is_op_saw(self):
+        fam, _ = get_gear_family(_event(stand_type='obstacle_pole', event_type='pro'))
+        assert fam == 'op_saw'
+
+    def test_obstacle_pole_college_excluded_by_pro_only(self):
+        fam, conf = get_gear_family(_event(stand_type='obstacle_pole', event_type='college'))
+        assert fam is None
+        assert conf is None
+
+    def test_cookie_stack_family(self):
+        fam, conf = get_gear_family(_event(stand_type='cookie_stack'))
+        assert fam == 'cookie_stack'
+        assert conf['cascade'] is False
+
+    def test_stock_saw_no_family(self):
+        fam, _ = get_gear_family(_event(stand_type='stock_saw'))
+        assert fam is None
+
+    def test_birling_no_family(self):
+        fam, _ = get_gear_family(_event(stand_type='birling'))
+        assert fam is None
+
+    def test_axe_throw_no_family(self):
+        fam, _ = get_gear_family(_event(stand_type='axe_throw'))
+        assert fam is None
+
+    def test_empty_stand_type(self):
+        fam, _ = get_gear_family(_event(stand_type=''))
+        assert fam is None
+
+    def test_none_stand_type(self):
+        fam, _ = get_gear_family(_event(stand_type=None))
+        assert fam is None
+
+
+# ---------------------------------------------------------------------------
+# get_family_events
+# ---------------------------------------------------------------------------
+
+class TestGetFamilyEvents:
+    def setup_method(self):
+        self.uh = _event(id=10, name='Underhand', stand_type='underhand')
+        self.sb = _event(id=20, name='Standing Block', stand_type='standing_block')
+        self.spring = _event(id=30, name='Springboard', stand_type='springboard')
+        self.single = _event(id=40, name='Single Buck', stand_type='saw_hand')
+        self.double = _event(id=50, name='Double Buck', stand_type='saw_hand')
+        self.jj = _event(id=60, name='Jack & Jill', stand_type='saw_hand')
+        self.hot = _event(id=70, name='Hot Saw', stand_type='hot_saw')
+        self.stock = _event(id=80, name='Stock Saw', stand_type='stock_saw')
+        self.all = [self.uh, self.sb, self.spring, self.single,
+                    self.double, self.jj, self.hot, self.stock]
+
+    def test_chopping_cascade_returns_siblings(self):
+        siblings = get_family_events(self.uh, self.all)
+        sibling_ids = {e.id for e in siblings}
+        assert sibling_ids == {20, 30}  # standing_block + springboard
+
+    def test_chopping_cascade_excludes_self(self):
+        siblings = get_family_events(self.spring, self.all)
+        assert self.spring.id not in {e.id for e in siblings}
+
+    def test_crosscut_cascade_returns_siblings(self):
+        siblings = get_family_events(self.single, self.all)
+        sibling_ids = {e.id for e in siblings}
+        assert sibling_ids == {50, 60}  # double buck + J&J
+
+    def test_hot_saw_no_cascade(self):
+        siblings = get_family_events(self.hot, self.all)
+        assert siblings == []
+
+    def test_stock_saw_no_family_no_siblings(self):
+        siblings = get_family_events(self.stock, self.all)
+        assert siblings == []
+
+    def test_empty_event_list(self):
+        siblings = get_family_events(self.uh, [])
+        assert siblings == []
+
+
+# ---------------------------------------------------------------------------
+# is_no_constraint_event
+# ---------------------------------------------------------------------------
+
+class TestIsNoConstraintEvent:
+    def test_stock_saw(self):
+        assert is_no_constraint_event(_event(stand_type='stock_saw')) is True
+
+    def test_axe_throw(self):
+        assert is_no_constraint_event(_event(stand_type='axe_throw')) is True
+
+    def test_birling(self):
+        assert is_no_constraint_event(_event(stand_type='birling')) is True
+
+    def test_peavey(self):
+        assert is_no_constraint_event(_event(stand_type='peavey')) is True
+
+    def test_caber(self):
+        assert is_no_constraint_event(_event(stand_type='caber')) is True
+
+    def test_pulp_toss(self):
+        assert is_no_constraint_event(_event(stand_type='pulp_toss')) is True
+
+    def test_chokerman(self):
+        assert is_no_constraint_event(_event(stand_type='chokerman')) is True
+
+    def test_college_obstacle_pole_no_constraint(self):
+        assert is_no_constraint_event(_event(stand_type='obstacle_pole', event_type='college')) is True
+
+    def test_pro_obstacle_pole_has_constraint(self):
+        assert is_no_constraint_event(_event(stand_type='obstacle_pole', event_type='pro')) is False
+
+    def test_underhand_has_constraint(self):
+        assert is_no_constraint_event(_event(stand_type='underhand')) is False
+
+    def test_springboard_has_constraint(self):
+        assert is_no_constraint_event(_event(stand_type='springboard')) is False
+
+    def test_hot_saw_has_constraint(self):
+        assert is_no_constraint_event(_event(stand_type='hot_saw')) is False
+
+    def test_saw_hand_has_constraint(self):
+        assert is_no_constraint_event(_event(stand_type='saw_hand')) is False
+
+
+# ---------------------------------------------------------------------------
+# event_matches_gear_key — stock_saw / hot_saw separation
+# ---------------------------------------------------------------------------
+
+class TestEventMatchesGearKeyStockSawFix:
+    def test_category_chainsaw_does_not_match_stock_saw(self):
+        ev = _event(id=1, name='Stock Saw', stand_type='stock_saw')
+        assert event_matches_gear_key(ev, 'category:chainsaw') is False
+
+    def test_category_chainsaw_still_matches_hot_saw(self):
+        ev = _event(id=1, name='Hot Saw', stand_type='hot_saw')
+        assert event_matches_gear_key(ev, 'category:chainsaw') is True
+
+    def test_hot_saw_aliases_do_not_include_stocksaw(self):
+        ev = _event(id=1, name='Hot Saw', stand_type='hot_saw')
+        # 'stocksaw' should not match hot_saw event
+        assert event_matches_gear_key(ev, 'stocksaw') is False
+
+
+# ---------------------------------------------------------------------------
+# Cascade conflict detection
+# ---------------------------------------------------------------------------
+
+class TestCascadeConflictDetection:
+    """Tests for cross-event gear conflict cascade via the all_events parameter."""
+
+    def setup_method(self):
+        self.uh = _event(id=10, name='Underhand', stand_type='underhand')
+        self.sb = _event(id=20, name='Standing Block', stand_type='standing_block')
+        self.spring = _event(id=30, name='Springboard', stand_type='springboard')
+        self.single = _event(id=40, name='Single Buck', stand_type='saw_hand')
+        self.double = _event(id=50, name='Double Buck', stand_type='saw_hand')
+        self.jj = _event(id=60, name='Jack & Jill Sawing', stand_type='saw_hand')
+        self.hot = _event(id=70, name='Hot Saw', stand_type='hot_saw')
+        self.climb = _event(id=80, name='Speed Climb', stand_type='speed_climb')
+        self.all = [self.uh, self.sb, self.spring, self.single,
+                    self.double, self.jj, self.hot, self.climb]
+
+    # --- Chopping family cascade ---
+
+    def test_axe_shared_for_springboard_conflicts_in_underhand(self):
+        """Sharing an axe declared for Springboard should cascade to Underhand."""
+        gear_a = {'30': 'Bob'}  # gear key = springboard event id
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.uh, all_events=self.all)
+        assert result is True
+
+    def test_axe_shared_for_underhand_conflicts_in_springboard(self):
+        """Sharing declared for Underhand cascades to Springboard."""
+        gear_a = {'10': 'Bob'}  # gear key = underhand event id
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.spring, all_events=self.all)
+        assert result is True
+
+    def test_axe_shared_for_underhand_conflicts_in_standing_block(self):
+        gear_a = {'10': 'Bob'}
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.sb, all_events=self.all)
+        assert result is True
+
+    def test_chopping_cascade_bidirectional(self):
+        """Comp2's gear declaration for Standing Block cascades when checking Springboard."""
+        gear_b = {'20': 'Alice'}  # comp2 lists comp1 for standing block
+        result = competitors_share_gear_for_event(
+            'Alice', {}, 'Bob', gear_b, self.spring, all_events=self.all)
+        # comp2 has standing block key with 'Alice' — but that doesn't match 'Alice' as comp1_name
+        # because the check is: partner2 == name1 ('alice')
+        # Wait: gear_b = {'20': 'Alice'}, and comp1_name = 'Alice'
+        # So: key2='20' matches standing_block (sibling of springboard), partner2='alice' == name1='alice'
+        assert result is True
+
+    def test_chopping_does_not_cascade_to_saw_events(self):
+        """Chopping family (axes) should NOT cascade to crosscut saw events."""
+        gear_a = {'10': 'Bob'}  # gear for underhand (chopping)
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.single, all_events=self.all)
+        assert result is False
+
+    # --- Crosscut saw family cascade ---
+
+    def test_saw_shared_for_single_buck_conflicts_in_double_buck(self):
+        gear_a = {'40': 'Bob'}  # gear key = single buck event id
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.double, all_events=self.all)
+        assert result is True
+
+    def test_saw_shared_for_single_buck_conflicts_in_jj(self):
+        gear_a = {'40': 'Bob'}
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.jj, all_events=self.all)
+        assert result is True
+
+    def test_saw_shared_for_double_buck_conflicts_in_single_buck(self):
+        gear_a = {'50': 'Bob'}  # gear key = double buck event id
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.single, all_events=self.all)
+        assert result is True
+
+    def test_saw_does_not_cascade_to_chopping(self):
+        """Crosscut saw family should NOT cascade to chopping events."""
+        gear_a = {'40': 'Bob'}  # single buck (saw_hand)
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.uh, all_events=self.all)
+        assert result is False
+
+    # --- Non-cascade families stay isolated ---
+
+    def test_hot_saw_does_not_cascade_to_anything(self):
+        gear_a = {'70': 'Bob'}  # hot saw
+        # Should NOT cascade to single buck or underhand
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.single, all_events=self.all) is False
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.uh, all_events=self.all) is False
+
+    def test_hot_saw_still_conflicts_within_own_event(self):
+        gear_a = {'70': 'Bob'}
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.hot, all_events=self.all)
+        assert result is True
+
+    def test_climbing_gear_stays_isolated(self):
+        gear_a = {'80': 'Bob'}  # speed climb
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.uh, all_events=self.all) is False
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.climb, all_events=self.all) is True
+
+    # --- Backward compatibility: no cascade without all_events ---
+
+    def test_no_cascade_without_all_events(self):
+        """Without all_events, sharing for Springboard should NOT cascade to Underhand."""
+        gear_a = {'30': 'Bob'}  # springboard
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.uh)
+        assert result is False
+
+    def test_no_cascade_without_all_events_saw(self):
+        """Without all_events, sharing for Single Buck should NOT cascade to Double Buck."""
+        gear_a = {'40': 'Bob'}
+        result = competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.double)
+        assert result is False
+
+    # --- Category keys still work with cascade ---
+
+    def test_category_crosscut_with_cascade(self):
+        """category:crosscut key should match all saw_hand events even without cascade."""
+        gear_a = {'category:crosscut': 'Bob'}
+        # Direct match — category key matches single buck
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.single) is True
+        # Category key also matches double buck directly
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.double) is True
+
+    def test_category_springboard_with_cascade_to_underhand(self):
+        """category:springboard key should cascade to underhand via all_events."""
+        gear_a = {'category:springboard': 'Bob'}
+        # Direct match — category:springboard does NOT match underhand
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.uh) is False
+        # But with cascade, springboard is in chopping family → checks siblings
+        # The cascade checks siblings: standing_block and springboard as check events
+        # category:springboard matches springboard check_event → Bob == name2 → True
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.uh, all_events=self.all) is True
+
+    # --- Multiple gear declarations across families ---
+
+    def test_multiple_gear_entries_only_correct_family_cascades(self):
+        """A competitor sharing both axe and saw should cascade each independently."""
+        gear_a = {'10': 'Bob', '40': 'Charlie'}  # axe for UH with Bob, saw for SB with Charlie
+        # Bob should conflict in all chopping events
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.spring, all_events=self.all) is True
+        # Charlie should conflict in all saw events
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Charlie', {}, self.double, all_events=self.all) is True
+        # But Bob should NOT conflict in saw events
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Bob', {}, self.single, all_events=self.all) is False
+        # And Charlie should NOT conflict in chopping events
+        assert competitors_share_gear_for_event(
+            'Alice', gear_a, 'Charlie', {}, self.uh, all_events=self.all) is False

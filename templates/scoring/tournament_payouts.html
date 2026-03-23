@@ -1,0 +1,582 @@
+{% extends "base.html" %}
+
+{% block title %}Payout Manager – {{ tournament.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Payout Manager page styles ───────────────────────────── */
+.pm-event-row-funded {
+    background: rgba(243,159,27,0.06) !important;
+    border-left: 3px solid rgba(243,159,27,0.45);
+}
+.pm-event-row-funded td:first-child { padding-left: calc(0.75rem - 3px); }
+.pm-event-row-unfunded {
+    opacity: 0.85;
+}
+
+.dist-bar-wrap {
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    gap: 1px;
+    background: var(--sx-surface-3);
+    min-width: 80px;
+}
+.dist-bar-unfilled {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--sx-surface-3);
+    border: 1px dashed var(--sx-border-bright);
+    min-width: 80px;
+}
+.pm-purse-value {
+    font-family: "Orbitron", sans-serif;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--sx-gold);
+    letter-spacing: -0.01em;
+    line-height: 1;
+}
+.pm-purse-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sx-text-3);
+    font-weight: 600;
+    margin-top: 3px;
+}
+.pm-progress-track {
+    height: 5px;
+    background: var(--sx-surface-3);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.pm-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--sx-gold) 0%, var(--sx-amber) 100%);
+    border-radius: 3px;
+    transition: width 0.4s ease;
+}
+.tpl-purse-bar {
+    height: 5px;
+    border-radius: 3px;
+    background: var(--sx-amber);
+    opacity: 0.6;
+    min-width: 2px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+  {# ── breadcrumb ──────────────────────────────────────────────────────── #}
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item">
+        <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a>
+      </li>
+      <li class="breadcrumb-item active">Payout Manager</li>
+    </ol>
+  </nav>
+
+  {# ── header row ──────────────────────────────────────────────────────── #}
+  <div class="d-flex align-items-start gap-3 mb-4 flex-wrap">
+    <div class="flex-grow-1">
+      <h4 class="mb-1">
+        <i class="bi bi-cash-coin me-2" style="color:var(--sx-gold);"></i>Pro Event Payout Manager
+      </h4>
+      <div class="text-muted small">Configure prize money for all pro events in one place.</div>
+    </div>
+    <div class="d-flex gap-3 flex-wrap">
+      <div class="stat-card stat-card-gold" style="min-width:130px; text-align:center;">
+        <div class="pm-purse-value">${{ "%.0f"|format(total_purse) }}</div>
+        <div class="pm-purse-label">Total Purse</div>
+      </div>
+      <div class="stat-card" style="min-width:130px; text-align:center;">
+        <div class="data-value" style="font-size:1.4rem;">{{ configured_count }}<span style="color:var(--sx-text-3);font-size:0.9rem;font-family:'Inter',sans-serif;">/{{ total_events }}</span></div>
+        <div class="data-label">Events Configured</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4">
+
+    {# ══════════════════════════════════════════════════════════════════════
+       LEFT — Event table + bulk apply
+    ══════════════════════════════════════════════════════════════════════ #}
+    <div class="col-lg-8">
+
+      {# ── bulk apply bar ────────────────────────────────────────────── #}
+      <div class="card mb-3" style="border-color:rgba(243,159,27,0.3);">
+        <div class="card-body py-2 px-3">
+          <form method="POST" id="bulkForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="bulk_apply">
+            <div class="row g-2 align-items-center">
+              <div class="col-auto">
+                <label class="form-label mb-0 small fw-semibold" style="color:var(--sx-text-2);">
+                  <i class="bi bi-collection me-1" style="color:var(--sx-amber);"></i>Apply template to selected:
+                </label>
+              </div>
+              <div class="col">
+                <select name="template_id" class="form-select form-select-sm" id="bulkTemplateSelect">
+                  <option value="">-- choose template --</option>
+                  {% for tpl in templates %}
+                  <option value="{{ tpl.id }}" data-payouts="{{ tpl.get_payouts()|tojson }}">
+                    {{ tpl.name }} (${{ "%.0f"|format(tpl.total_purse()) }} purse)
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-auto">
+                <button type="submit" class="btn btn-warning btn-sm">
+                  <i class="bi bi-check2-all me-1"></i>Apply to Selected
+                </button>
+              </div>
+              <div class="col-auto">
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="selectAllBtn">
+                  Select All
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {# ── progress bar ──────────────────────────────────────────────── #}
+      {% if total_events > 0 %}
+      <div class="mb-3">
+        <div class="d-flex justify-content-between small mb-1" style="color:var(--sx-text-3);">
+          <span>Configuration progress</span>
+          <span style="font-family:'Orbitron',sans-serif; font-size:0.72rem; letter-spacing:0.05em;">
+            {{ configured_count }}&thinsp;/&thinsp;{{ total_events }} events
+          </span>
+        </div>
+        <div class="pm-progress-track">
+          <div class="pm-progress-fill" style="width:{{ ((configured_count / total_events) * 100)|int }}%;"></div>
+        </div>
+      </div>
+      {% endif %}
+
+      {# ── event table ───────────────────────────────────────────────── #}
+      <div class="card">
+        <div class="card-header card-header-proam d-flex align-items-center gap-2">
+          <i class="bi bi-trophy me-1" style="color:var(--sx-gold);"></i>
+          <span class="fw-semibold">Pro Events</span>
+          <span class="badge bg-secondary ms-auto">{{ total_events }} events</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-proam">
+              <tr>
+                <th style="width:36px;">
+                  <input type="checkbox" class="form-check-input" id="masterCheck" title="Select all">
+                </th>
+                <th>Event</th>
+                <th class="text-center">1st Place</th>
+                <th class="text-center">Places Paid</th>
+                <th class="text-center">Total Purse</th>
+                <th class="text-center">Distribution</th>
+                <th class="text-end">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in event_summaries %}
+              {% set ev = row.event %}
+              <tr class="{{ 'pm-event-row-funded' if row.purse > 0 else 'pm-event-row-unfunded' }}">
+                <td>
+                  <input type="checkbox" class="form-check-input event-check"
+                         name="event_ids" value="{{ ev.id }}" form="bulkForm">
+                </td>
+                <td>
+                  <div class="fw-semibold" style="font-size:0.875rem;">{{ ev.display_name }}</div>
+                  {% if ev.is_handicap %}
+                  <span class="badge bg-info" style="font-size:.6rem;">Handicap</span>
+                  {% endif %}
+                  {% if ev.is_partnered %}
+                  <span class="badge bg-secondary" style="font-size:.6rem;">Partnered</span>
+                  {% endif %}
+                </td>
+                <td class="text-center">
+                  {% if row.first_place > 0 %}
+                  <span class="badge badge-gold" style="font-size:0.75rem;">${{ "%.0f"|format(row.first_place) }}</span>
+                  {% else %}
+                  <span style="color:var(--sx-text-3);">—</span>
+                  {% endif %}
+                </td>
+                <td class="text-center">
+                  {% if row.places_paid > 0 %}
+                  <span class="badge bg-secondary">Top {{ row.places_paid }}</span>
+                  {% else %}
+                  <span style="color:var(--sx-text-3);">—</span>
+                  {% endif %}
+                </td>
+                <td class="text-center">
+                  {% if row.purse > 0 %}
+                  <strong style="color:var(--sx-gold); font-family:'Orbitron',sans-serif; font-size:0.82rem; letter-spacing:0.01em;">
+                    ${{ "%.0f"|format(row.purse) }}
+                  </strong>
+                  {% else %}
+                  <span class="text-danger small">Not set</span>
+                  {% endif %}
+                </td>
+                <td style="min-width:90px;">
+                  {% if row.payouts and row.purse > 0 %}
+                  <div class="dist-bar-wrap" title="Payout distribution">
+                    {% for pos in ['1','2','3','4','5'] %}
+                    {% set amt = row.payouts.get(pos, 0)|float %}
+                    {% if amt > 0 %}
+                    <div style="width:{{ ((amt / row.purse) * 100)|int }}%;
+                                background:{% if pos == '1' %}#f5c542{% elif pos == '2' %}#9caab8{% elif pos == '3' %}#c88040{% else %}var(--sx-surface-3){% endif %};"
+                         title="{{ pos }}{% if pos == '1' %}st{% elif pos == '2' %}nd{% elif pos == '3' %}rd{% else %}th{% endif %}: ${{ '%.0f'|format(amt) }}"></div>
+                    {% endif %}
+                    {% endfor %}
+                    {% set top5_sum = (row.payouts.get('1',0)|float + row.payouts.get('2',0)|float + row.payouts.get('3',0)|float + row.payouts.get('4',0)|float + row.payouts.get('5',0)|float) %}
+                    {% if row.purse > top5_sum %}
+                    <div style="flex:1; background:var(--sx-surface-3); opacity:0.5;" title="6th+: ${{ '%.0f'|format(row.purse - top5_sum) }}"></div>
+                    {% endif %}
+                  </div>
+                  {% else %}
+                  <div class="dist-bar-unfilled"></div>
+                  {% endif %}
+                </td>
+                <td class="text-end pe-3">
+                  <div class="btn-group btn-group-sm">
+                    <a href="{{ url_for('scoring.configure_payouts', tournament_id=tournament.id, event_id=ev.id) }}"
+                       class="btn {{ 'btn-warning' if row.purse == 0 else 'btn-outline-warning' }}"
+                       title="Configure payouts for this event">
+                      <i class="bi bi-pencil"></i>
+                    </a>
+                    {% if row.purse > 0 %}
+                    <form method="POST" class="d-inline"
+                          data-confirm="Clear all payouts for {{ ev.display_name }}?">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="action" value="clear_event">
+                      <input type="hidden" name="event_id" value="{{ ev.id }}">
+                      <button type="submit" class="btn btn-outline-danger" title="Clear payouts">
+                        <i class="bi bi-x-circle"></i>
+                      </button>
+                    </form>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="7" class="text-center py-5">
+                  <div class="empty-state-icon" style="font-size:2rem; color:var(--sx-text-3);">
+                    <i class="bi bi-cash-stack"></i>
+                  </div>
+                  <div style="color:var(--sx-text-2); margin-top:0.5rem;">No pro events configured for this tournament.</div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>{# /col-lg-8 #}
+
+    {# ══════════════════════════════════════════════════════════════════════
+       RIGHT — Template library + new template builder
+    ══════════════════════════════════════════════════════════════════════ #}
+    <div class="col-lg-4">
+
+      {# ── template library ──────────────────────────────────────────── #}
+      <div class="card mb-3">
+        <div class="card-header d-flex align-items-center gap-2" style="border-bottom-color:rgba(243,159,27,0.3);">
+          <i class="bi bi-bookmarks" style="color:var(--sx-gold);"></i>
+          <span class="fw-semibold">Template Library</span>
+          <span class="badge bg-secondary ms-auto">{{ templates|length }}</span>
+        </div>
+        {% if templates %}
+        <div class="list-group list-group-flush" id="templateLibrary">
+          {% for tpl in templates %}
+          <div class="list-group-item py-2 px-3">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <div class="flex-grow-1" style="min-width:0;">
+                <div class="fw-semibold small text-truncate">{{ tpl.name }}</div>
+                <div style="font-size:.72rem; color:var(--sx-text-3); margin-top:1px;">
+                  <span style="color:var(--sx-gold); font-family:'Orbitron',sans-serif; font-size:0.68rem;">${{ "%.0f"|format(tpl.total_purse()) }}</span>
+                  &bull; {{ tpl.get_payouts()|length }} places
+                </div>
+                {# Inline payout breakdown #}
+                <div class="mt-1 tpl-breakdown" id="tpl-breakdown-{{ tpl.id }}" style="display:none;">
+                  <table class="table table-sm table-borderless mb-0" style="font-size:.72rem;">
+                    <tbody>
+                      {% for pos, amt in tpl.get_payouts().items()|sort(attribute='0', key=int) %}
+                      <tr>
+                        <td class="py-0 ps-0" style="width:36px; color:var(--sx-text-3);">
+                          {% if pos == '1' %}1st
+                          {% elif pos == '2' %}2nd
+                          {% elif pos == '3' %}3rd
+                          {% else %}{{ pos }}th{% endif %}
+                        </td>
+                        <td class="py-0">
+                          <div class="d-flex align-items-center gap-1">
+                            <div class="tpl-purse-bar" style="width:{{ ((amt|float / tpl.total_purse()) * 80)|int }}px;"></div>
+                            <span style="color:var(--sx-text);">${{ "%.0f"|format(amt) }}</span>
+                            <span style="color:var(--sx-text-3);">({{ "%.0f"|format((amt|float / tpl.total_purse()) * 100) }}%)</span>
+                          </div>
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="d-flex flex-column gap-1 flex-shrink-0">
+                <button type="button" class="btn btn-xs btn-outline-secondary toggle-breakdown-btn"
+                        style="font-size:.7rem; padding:1px 6px;"
+                        data-target="tpl-breakdown-{{ tpl.id }}"
+                        title="Show breakdown">
+                  <i class="bi bi-list-ul"></i>
+                </button>
+                <form method="POST" class="d-inline"
+                      data-confirm="Delete template '{{ tpl.name }}'?">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="delete_template">
+                  <input type="hidden" name="template_id" value="{{ tpl.id }}">
+                  <button type="submit" class="btn btn-xs btn-outline-danger"
+                          style="font-size:.7rem; padding:1px 6px;" title="Delete template">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="card-body text-center py-4 small" style="color:var(--sx-text-3);">
+          <i class="bi bi-bookmarks" style="font-size:2rem; display:block; margin-bottom:0.5rem; opacity:0.4;"></i>
+          No templates yet.<br>Create one below or from any event's Configure Payouts page.
+        </div>
+        {% endif %}
+      </div>
+
+      {# ── new template builder ──────────────────────────────────────── #}
+      <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+          <i class="bi bi-bookmark-plus" style="color:var(--sx-amber);"></i>
+          <span class="fw-semibold">Create New Template</span>
+        </div>
+        <div class="card-body p-3">
+          <p class="small mb-3" style="color:var(--sx-text-3);">
+            Define a reusable payout structure to quickly apply across events.
+          </p>
+
+          {# Preset distribution buttons #}
+          <div class="mb-3">
+            <div class="small fw-semibold mb-2" style="color:var(--sx-text-2); text-transform:uppercase; letter-spacing:0.06em; font-size:0.68rem;">Quick Presets</div>
+            <div class="d-flex gap-1 flex-wrap">
+              <button type="button" class="btn btn-xs btn-outline-secondary preset-btn"
+                      style="font-size:.72rem;"
+                      data-preset='{"purse":1000,"splits":[50,30,20]}'
+                      title="50/30/20 — top 3 only">Top 3</button>
+              <button type="button" class="btn btn-xs btn-outline-secondary preset-btn"
+                      style="font-size:.72rem;"
+                      data-preset='{"purse":1000,"splits":[40,25,15,12,8]}'
+                      title="40/25/15/12/8 — top 5">Top 5</button>
+              <button type="button" class="btn btn-xs btn-outline-secondary preset-btn"
+                      style="font-size:.72rem;"
+                      data-preset='{"purse":1000,"splits":[30,20,15,12,9,7,4,3]}'
+                      title="30/20/15/12/9/7/4/3 — top 8">Top 8</button>
+              <button type="button" class="btn btn-xs btn-outline-secondary preset-btn"
+                      style="font-size:.72rem;"
+                      data-preset='{"purse":1000,"splits":[30,20,14,10,8,6,5,4,2,1]}'
+                      title="Standard 10-place">10 Deep</button>
+            </div>
+            <div class="mt-2 d-flex align-items-center gap-2">
+              <label class="small mb-0" style="color:var(--sx-text-2); white-space:nowrap;">Purse total: $</label>
+              <input type="number" class="form-control form-control-sm" id="tplPurseInput"
+                     placeholder="e.g. 5000" min="0" step="1" style="max-width:100px;">
+              <button type="button" class="btn btn-sm btn-outline-warning" id="applyPurseBtn">Apply</button>
+            </div>
+            <div style="font-size:.67rem; margin-top:4px; color:var(--sx-text-3);" id="presetHint">
+              Select a preset, enter a purse total, then click Apply to fill amounts.
+            </div>
+          </div>
+
+          <hr class="my-3">
+
+          <form method="POST" id="newTemplateForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="save_template">
+
+            <div class="table-responsive mb-3">
+              <table class="table table-sm align-middle mb-0">
+                <thead class="table-proam">
+                  <tr>
+                    <th>Place</th>
+                    <th>Payout</th>
+                    <th class="text-end" style="color:var(--sx-text-3); font-size:0.68rem;">Running</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for i in range(1, 16) %}
+                  <tr>
+                    <td>
+                      {% if i == 1 %}<span class="badge badge-gold">1st</span>
+                      {% elif i == 2 %}<span class="badge badge-silver">2nd</span>
+                      {% elif i == 3 %}<span class="badge badge-bronze">3rd</span>
+                      {% else %}<span style="color:var(--sx-text-3); font-size:0.82rem;">{{ i }}th</span>{% endif %}
+                    </td>
+                    <td>
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text">$</span>
+                        <input type="number" class="form-control tpl-payout-input"
+                               name="payout_{{ i }}" step="0.01" min="0"
+                               placeholder="0.00">
+                      </div>
+                    </td>
+                    <td class="text-end" style="color:var(--sx-text-3); font-size:0.8rem;">
+                      <span class="tpl-running-total" id="trt_{{ i }}">$0</span>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+                <tfoot>
+                  <tr style="background:var(--sx-surface-3); font-weight:700; border-top:2px solid var(--sx-border-bright);">
+                    <td style="color:var(--sx-text-2);">Total</td>
+                    <td colspan="2" class="text-end" id="tplGrandTotal" style="color:var(--sx-gold); font-family:'Orbitron',sans-serif; font-size:0.85rem;">$0</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div class="input-group mb-2">
+              <input type="text" class="form-control form-control-sm" name="template_name"
+                     placeholder="Template name (e.g. Standard 5-Deep $5k)" required>
+              <button type="submit" class="btn btn-warning btn-sm">
+                <i class="bi bi-bookmark-check me-1"></i>Save
+              </button>
+            </div>
+          </form>
+
+        </div>
+      </div>
+
+    </div>{# /col-lg-4 #}
+  </div>{# /row #}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+
+    // ── Running totals for new template builder ──────────────────────────
+    const tplInputs   = document.querySelectorAll('.tpl-payout-input');
+    const tplGrand    = document.getElementById('tplGrandTotal');
+
+    function updateTplTotals() {
+        let running = 0;
+        tplInputs.forEach((inp, idx) => {
+            const v = parseFloat(inp.value) || 0;
+            running += v;
+            const rt = document.getElementById(`trt_${idx + 1}`);
+            if (rt) rt.textContent = `$${running.toFixed(0)}`;
+        });
+        tplGrand.textContent = `$${running.toFixed(0)}`;
+    }
+    tplInputs.forEach(inp => inp.addEventListener('input', updateTplTotals));
+    updateTplTotals();
+
+    // ── Preset + purse logic ─────────────────────────────────────────────
+    let activeSplits = null;
+    const purseInput    = document.getElementById('tplPurseInput');
+    const applyBtn      = document.getElementById('applyPurseBtn');
+    const presetHint    = document.getElementById('presetHint');
+    const presetBtns    = document.querySelectorAll('.preset-btn');
+
+    presetBtns.forEach(btn => {
+        btn.addEventListener('click', function () {
+            presetBtns.forEach(b => b.classList.remove('btn-warning', 'active'));
+            presetBtns.forEach(b => b.classList.add('btn-outline-secondary'));
+            this.classList.remove('btn-outline-secondary');
+            this.classList.add('btn-warning', 'active');
+            const data = JSON.parse(this.dataset.preset);
+            activeSplits = data.splits;
+            // Fill with default purse if no purse entered
+            const purse = parseFloat(purseInput.value) || data.purse;
+            if (!purseInput.value) purseInput.value = purse;
+            fillFromSplits(purse, activeSplits);
+            presetHint.textContent = `Loaded: ${activeSplits.map(s=>s+'%').join(' / ')} — adjust purse and click Apply.`;
+        });
+    });
+
+    applyBtn.addEventListener('click', function () {
+        if (!activeSplits) {
+            presetHint.textContent = 'Select a preset first.';
+            return;
+        }
+        const purse = parseFloat(purseInput.value);
+        if (!purse || purse <= 0) {
+            presetHint.textContent = 'Enter a valid purse total.';
+            return;
+        }
+        fillFromSplits(purse, activeSplits);
+        presetHint.textContent = `Applied: $${purse.toFixed(0)} purse across ${activeSplits.length} places.`;
+    });
+
+    function fillFromSplits(purse, splits) {
+        tplInputs.forEach((inp, idx) => {
+            if (idx < splits.length) {
+                inp.value = ((splits[idx] / 100) * purse).toFixed(2);
+            } else {
+                inp.value = '';
+            }
+        });
+        updateTplTotals();
+    }
+
+    // ── Master checkbox + event checkboxes ───────────────────────────────
+    const masterCheck = document.getElementById('masterCheck');
+    const eventChecks = document.querySelectorAll('.event-check');
+
+    masterCheck.addEventListener('change', function () {
+        eventChecks.forEach(cb => { cb.checked = this.checked; });
+    });
+    document.getElementById('selectAllBtn').addEventListener('click', function () {
+        const allChecked = Array.from(eventChecks).every(cb => cb.checked);
+        eventChecks.forEach(cb => { cb.checked = !allChecked; });
+        masterCheck.checked = !allChecked;
+        this.textContent = allChecked ? 'Select All' : 'Deselect All';
+    });
+    eventChecks.forEach(cb => {
+        cb.addEventListener('change', function () {
+            masterCheck.indeterminate = false;
+            const checked = Array.from(eventChecks).filter(c => c.checked).length;
+            if (checked === 0) masterCheck.checked = false;
+            else if (checked === eventChecks.length) masterCheck.checked = true;
+            else masterCheck.indeterminate = true;
+        });
+    });
+
+    // ── Template breakdown toggles ────────────────────────────────────────
+    document.querySelectorAll('.toggle-breakdown-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            const target = document.getElementById(this.dataset.target);
+            if (!target) return;
+            const visible = target.style.display !== 'none';
+            target.style.display = visible ? 'none' : 'block';
+            this.innerHTML = visible
+                ? '<i class="bi bi-list-ul"></i>'
+                : '<i class="bi bi-chevron-up"></i>';
+        });
+    });
+
+    // ── Confirm on clear / delete forms ──────────────────────────────────
+    document.querySelectorAll('form[data-confirm]').forEach(f => {
+        f.addEventListener('submit', e => {
+            if (!confirm(f.dataset.confirm)) e.preventDefault();
+        });
+    });
+});
+</script>
+{% endblock %}

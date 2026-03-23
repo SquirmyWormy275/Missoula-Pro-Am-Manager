@@ -180,9 +180,14 @@ def confirm_pro_entries(tournament_id):
         session.pop(_session_key(tournament_id), None)
         return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
 
-    # Build event name -> Event lookup for this tournament
+    # Build event name -> Event lookup for this tournament.
+    # Index by both raw name ("Standing Block") and display_name ("Women's Standing Block")
+    # so that gendered canonical names from _EVENT_MAP resolve to the correct Event record.
     pro_events = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
-    event_by_name = {e.name.strip(): e for e in pro_events}
+    event_by_name = {}
+    for e in pro_events:
+        event_by_name[e.name.strip()] = e
+        event_by_name[e.display_name.strip()] = e
 
     imported = 0
     updated  = 0

@@ -515,12 +515,21 @@ def import_results_from_csv(event: Event, csv_text: str) -> dict:
             skipped += 1
             continue
 
-        try:
-            result_val = float(row.get('result') or 0)
-        except (TypeError, ValueError):
-            errors.append(f"Row {row_num}: invalid result value for '{name}'.")
-            skipped += 1
-            continue
+        # Handle DQ/DNS/DNF status values in the result column
+        raw_result = (row.get('result') or '').strip()
+        is_dq = raw_result.upper() in ('DQ', 'DNS', 'DNF', 'DSQ', 'DISQUALIFIED', '')
+
+        if is_dq:
+            result_val = None
+            row_status = 'dnf' if raw_result.upper() in ('DNS', 'DNF') else 'scratched'
+        else:
+            try:
+                result_val = _parse_result_value(raw_result)
+            except (TypeError, ValueError):
+                errors.append(f"Row {row_num}: invalid result value '{raw_result}' for '{name}'.")
+                skipped += 1
+                continue
+            row_status = None  # determined below
 
         r = existing.get(comp.id)
         if not r:
@@ -534,22 +543,77 @@ def import_results_from_csv(event: Event, csv_text: str) -> dict:
             existing[comp.id] = r
 
         r.result_value = result_val
-        try:
-            r.run1_value = float(row.get('run1') or 0) or None
-            r.run2_value = float(row.get('run2') or 0) or None
-            r.run3_value = float(row.get('run3') or 0) or None
-        except (TypeError, ValueError):
-            pass
+
+        # Parse individual run values (also handle DQ in run columns)
+        for attr, col_name in [('run1_value', 'run1'), ('run2_value', 'run2'), ('run3_value', 'run3')]:
+            raw_run = (row.get(col_name) or '').strip()
+            if raw_run.upper() in ('DQ', 'DNS', 'DNF', 'DSQ', ''):
+                setattr(r, attr, None)
+            else:
+                try:
+                    val = _parse_result_value(raw_run)
+                    setattr(r, attr, val if val else None)
+                except (TypeError, ValueError):
+                    setattr(r, attr, None)
 
         if event.requires_dual_runs and r.run1_value is not None:
             r.calculate_best_run(event.scoring_order)
         if event.requires_triple_runs:
             r.calculate_cumulative_score()
 
-        r.status = (row.get('status') or 'completed').strip().lower()
+        # Status: explicit column overrides auto-detection
+        explicit_status = (row.get('status') or '').strip().lower()
+        if explicit_status:
+            r.status = explicit_status
+        elif row_status:
+            r.status = row_status
+        else:
+            r.status = 'completed'
         imported += 1
 
     return {'imported': imported, 'skipped': skipped, 'errors': errors}
+
+
+def _parse_result_value(raw: str) -> float:
+    """Parse a result value string, handling feet/inches distance format.
+
+    Supports:
+      - Plain numeric: "28.0", "94"
+      - Feet/inches: "23'3\\"", "23' 3" (apostrophe required)
+      - Minutes:seconds: "2:30.5"
+
+    Returns float value. Raises ValueError on unparseable input.
+    """
+    import re
+    raw = str(raw or '').strip()
+    if not raw:
+        raise ValueError('empty result')
+
+    # Try plain numeric first (most common case)
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+
+    # Feet/inches: 23'3", 23' 3, etc. — apostrophe is REQUIRED to distinguish from plain numbers
+    ft_match = re.match(r"^(\d+)['\u2019]\s*(\d+(?:\.\d+)?)[\"″]?\s*$", raw)
+    if ft_match:
+        feet = float(ft_match.group(1))
+        inches = float(ft_match.group(2))
+        return feet * 12 + inches  # return as total inches
+
+    ft_only = re.match(r"^(\d+)['\u2019]\s*$", raw)
+    if ft_only:
+        return float(ft_only.group(1)) * 12  # feet only, convert to inches
+
+    # Minutes:seconds: 2:30.5 → 150.5
+    time_match = re.match(r'^(\d+):(\d+(?:\.\d+)?)\s*$', raw)
+    if time_match:
+        minutes = float(time_match.group(1))
+        seconds = float(time_match.group(2))
+        return minutes * 60 + seconds
+
+    raise ValueError(f'Cannot parse result value: {raw!r}')
 
 
 # ---------------------------------------------------------------------------

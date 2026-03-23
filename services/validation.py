@@ -282,6 +282,7 @@ class HeatValidator:
             comp_rows = CollegeCompetitor.query.filter(CollegeCompetitor.id.in_(competitor_ids)).all()
         by_id = {c.id: c for c in comp_rows}
 
+        all_events = Event.query.filter_by(tournament_id=event.tournament_id).all()
         seen_pairs = set()
         for i, a1 in enumerate(assignments):
             c1 = by_id.get(a1.competitor_id)
@@ -302,6 +303,7 @@ class HeatValidator:
                     c2.name,
                     c2.get_gear_sharing() if hasattr(c2, 'get_gear_sharing') else {},
                     event,
+                    all_events=all_events,
                 ):
                     result.add_error(
                         'GEAR_SHARING_CONFLICT',

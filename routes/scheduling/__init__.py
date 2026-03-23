@@ -257,4 +257,7 @@ from . import ability_rankings  # noqa: F401, E402
 from . import preflight       # noqa: F401, E402
 from . import assign_marks    # noqa: F401, E402
 
+# Re-export helpers used by routes/main.py (tournament_setup)
+from .events import _with_field_key, _get_existing_event_config  # noqa: F401, E402
+
 __all__ = ['scheduling_bp']

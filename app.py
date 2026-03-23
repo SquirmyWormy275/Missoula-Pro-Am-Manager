@@ -103,7 +103,10 @@ def create_app():
         def load_user(user_id: str):
             if not user_id:
                 return None
-            return db.session.get(User, int(user_id))
+            try:
+                return db.session.get(User, int(user_id))
+            except (ValueError, TypeError):
+                return None
 
     # Inject text constants into all templates
     @app.context_processor
@@ -127,10 +130,15 @@ def create_app():
         except Exception:
             pass
 
+        # Public languages always available; restricted languages (Arapaho) only for judge/admin.
+        available_languages = dict(text.PUBLIC_LANGUAGES)
+        if arapaho_allowed:
+            available_languages.update(text.RESTRICTED_LANGUAGES)
+
         return {
             'NAV': text.section('NAV'),
             'COMPETITION': text.section('COMPETITION'),
-            'LANGUAGES': text.SUPPORTED_LANGUAGES if arapaho_allowed else {'en': text.SUPPORTED_LANGUAGES['en']},
+            'LANGUAGES': available_languages,
             'CURRENT_LANG': text.get_language(),
             'ARAPAHO_ALLOWED': arapaho_allowed,
             'ARAPAHO_LOCK_REMAINING': remaining,
@@ -188,7 +196,8 @@ def create_app():
     # Service worker must be served from root scope, not /static/
     @app.route('/sw.js')
     def service_worker():
-        return send_from_directory(app.static_folder, 'sw.js',
+        static_folder = app.static_folder or 'static'
+        return send_from_directory(static_folder, 'sw.js',
                                    mimetype='application/javascript')
 
     @app.before_request
@@ -224,9 +233,9 @@ def create_app():
 
     @app.before_request
     def enforce_language_access():
-        """Force English outside Judge/Admin contexts."""
+        """Force English if a restricted language is active outside Judge/Admin context."""
         endpoint = request.endpoint or ''
-        if text.get_language() == 'arp' and not _can_access_arapaho_mode(endpoint):
+        if text.get_language() in text.RESTRICTED_LANGUAGES and not _can_access_arapaho_mode(endpoint):
             text.set_language('en')
         return None
 

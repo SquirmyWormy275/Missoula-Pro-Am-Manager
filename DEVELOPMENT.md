@@ -39,11 +39,23 @@ Missoula-Pro-Am-Manager/
 │   ├── user.py            # User — 7-role auth model
 │   ├── audit_log.py       # AuditLog — immutable audit trail
 │   ├── school_captain.py  # SchoolCaptain — one PIN account per school per tournament
-│   └── wood_config.py     # WoodConfig — Virtual Woodboss per-tournament species/size config
+│   ├── wood_config.py     # WoodConfig — Virtual Woodboss per-tournament species/size config
+│   ├── pro_event_rank.py  # ProEventRank — per-tournament ability rankings (7 categories)
+│   └── payout_template.py # PayoutTemplate — reusable tournament-independent payout configs
 ├── routes/                # Flask blueprints
 │   ├── main.py            # Dashboard & navigation
 │   ├── registration.py    # Competitor/team registration; headshot upload
-│   ├── scheduling.py      # Heat & flight generation; heat swap; heat sheets print; Friday feature
+│   ├── scheduling/        # Blueprint package: heat/flight gen, heat swap, heat sheets, Friday feature, assign marks
+│   │   ├── __init__.py    # scheduling_bp + shared helpers (defined before sub-module imports)
+│   │   ├── events.py      # Event CRUD (setup, upsert, handicap toggle)
+│   │   ├── heats.py       # Heat generation, swap, locking
+│   │   ├── flights.py     # Flight scheduling
+│   │   ├── heat_sheets.py # Heat sheet display & PDF
+│   │   ├── friday_feature.py  # Friday Night Feature config
+│   │   ├── show_day.py    # Flight status dashboard (60s auto-refresh)
+│   │   ├── ability_rankings.py # ProEventRank UI
+│   │   ├── preflight.py   # Pre-scheduling validation
+│   │   └── assign_marks.py # Handicap mark assignment UI
 │   ├── scoring.py         # Result entry & calculation; outlier flagging
 │   ├── reporting.py       # Standings, reports, payout settlement, cloud backup
 │   ├── proam_relay.py     # Pro-Am Relay lottery system
@@ -53,6 +65,7 @@ Missoula-Pro-Am-Manager/
 │   ├── auth.py            # Login, logout, bootstrap, user management, audit log viewer
 │   ├── portal.py          # Spectator, competitor, school captain portals; user guide
 │   ├── api.py             # Public read-only REST API (/api/public)
+│   ├── strathmark.py      # STRATHMARK sync status page (/strathmark/status)
 │   └── woodboss.py        # Virtual Woodboss — material planning (/woodboss); dual-blueprint (protected + public share)
 ├── services/              # Business logic
 │   ├── excel_io.py        # Excel import/export; structured team validation errors
@@ -75,7 +88,11 @@ Missoula-Pro-Am-Manager/
 │   ├── partner_matching.py# Auto-partner matching for pro partnered events
 │   ├── preflight.py       # Pre-scheduling validation checks
 │   ├── gear_sharing.py    # Comprehensive gear-sharing: parse, audit, sync, conflict-fix, groups, batch ops
-│   └── schedule_builder.py# Day schedule assembly (Friday/Saturday blocks)
+│   ├── schedule_builder.py# Day schedule assembly (Friday/Saturday blocks)
+│   ├── scoring_engine.py  # Centralized scoring: positions, tiebreaks, throwoffs, payouts, outlier flagging
+│   ├── strathmark_sync.py # STRATHMARK enrollment, result push, prediction residuals
+│   ├── mark_assignment.py # Handicap mark calculation via STRATHMARK HandicapCalculator
+│   └── cache_invalidation.py # Tournament cache invalidation helpers
 ├── static/                # Static assets
 │   ├── js/onboarding.js   # First-time onboarding modal engine
 │   ├── sw.js              # Service worker (offline cache + Background Sync)
@@ -550,6 +567,53 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-03-23 (V2.5.0)
+
+**STRATHEX Design System & Comprehensive Test Suite**
+
+**Design system extraction (`static/css/theme.css`):**
+- Extracted STRATHEX dark theme tokens, fire palette (--sx-fire, --sx-amber, --sx-gold), and component overrides into standalone CSS file
+- Button styles (.btn-proam with gradient/glow), badge variants (gold/silver/bronze), dark surface system (9 shades)
+- Typography: Fraunces serif headings, Orbitron numeric, Inter body
+
+**UI/UX overhaul:**
+- Redesigned login page: dual-logo lockup (Missoula Pro-Am + STRATHEX), gradient card header, fire border accent
+- Redesigned dashboard: Command Centre hero, live aggregate stats, quick launch sidebar, onboarding checklist, tournament table with status badges
+- Redesigned role entry page: 3 role cards with per-role styling, active tournament beacon
+- Enhanced tournament detail: compact stats bar, phase action panels, status-specific alerts
+- Enhanced sidebar: mobile drawer with backdrop, expanded section groups, localStorage v2 persistence
+- Enhanced base template: mobile sidebar toggle, Arapaho lock countdown banner, ownership bar
+- New tournament payouts hub (`templates/scoring/tournament_payouts.html`): bulk template application to events, distribution visualization bars, event summary table, new template builder with presets
+- Enhanced configure payouts: quick preset buttons, percentage mode, saved templates panel with inline breakdowns
+- Enhanced scoring entry (`enter_heat.html`): tablet mode toggle, mobile numpad overlay, run-2 context chips, tie indicator badge, heat lock banner
+- Enhanced heats page: dual-run side-by-side display, competitor spacing timeline, sync check modal
+- Enhanced setup events: sticky save bar via IntersectionObserver
+- Enhanced gear sharing page: summary stat cards, heat conflict alert table, action buttons
+- STRATHMARK status moved to Jinja2 template (`templates/strathmark/status.html`): Bootstrap 5 styled config/push/skipped cards
+
+**Comprehensive test suite (37 new test files):**
+- Added `tests/conftest.py`: session-scoped Flask app, per-test transactional rollback, auth helpers, seed functions
+- Added `tests/fixtures/synthetic_data.py`: 25 pro competitors, 55 college competitors, event scores, gear sharing details
+- Added `pytest.ini`: markers (smoke/integration/slow), warning filters, short traceback
+- New test files: test_api_endpoints, test_axe_throw_qualifiers, test_birling_bracket_12, test_college_import_e2e, test_db_constraints, test_flask_reliability, test_flight_builder_25_pros, test_flight_builder_integration, test_fuzz_scoring, test_gear_sharing_advanced, test_gear_sharing_parse_realistic, test_heat_gen_integration, test_infrastructure, test_mark_assignment, test_model_json_safety, test_models_full, test_partnered_axe_state, test_partnered_events_realistic, test_point_calculator, test_postgres_compat, test_preflight, test_pro_entry_importer, test_pro_import_e2e, test_relay_lottery_realistic, test_routes_post, test_schedule_builder, test_scoring_college_points, test_scoring_engine_integration, test_scoring_full_event, test_scoring_integration, test_sms_backup, test_strathmark_sync, test_template_rendering, test_upload_security, test_woodboss, test_workflow_e2e
+- Updated test_gear_sharing.py, test_models.py, test_routes_smoke.py
+
+**Expanded i18n (`strings.py`):**
+- Additional Arapaho and Russian translations for new UI elements
+
+**Developer tooling:**
+- Added `pyrightconfig.json`: Pyright/Pylance static type checking (basic mode, Python 3.13)
+- Added `.vscode/launch.json`: Flask debugger configuration
+- Added `static/img/favicon.svg`: red P browser tab icon
+- Added `docs/GEAR_SHARING_DOMAIN.md`: equipment inventory and sharing constraints reference
+
+**Service enhancements:**
+- Enhanced `services/gear_sharing.py`: additional batch operations, name normalization, event family helpers
+- Enhanced `services/mark_assignment.py`: batch mark calculation, wood profile builder
+- Enhanced `services/scoring_engine.py`: additional scoring logic
+- Enhanced `services/flight_builder.py`: event spacing tiers, competing stand conflict gap
+- Enhanced `services/heat_generator.py`: ability sorting improvements
 
 ### 2026-03-09 (V2.4.0)
 

@@ -1,7 +1,7 @@
 """
 Registration routes for uploading and managing competitor entries.
 """
-from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app
+from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app, jsonify
 import json
 from database import db
 from models import Tournament, Team, CollegeCompetitor, ProCompetitor, Event, EventResult, Heat
@@ -431,6 +431,17 @@ def new_pro_competitor(tournament_id):
         from services.strathmark_sync import enroll_pro_competitor
         enroll_pro_competitor(competitor)
 
+        # Auto-parse gear-sharing details into structured map (non-blocking).
+        try:
+            from services.gear_sharing import auto_parse_and_warn
+            gear_msgs = auto_parse_and_warn(competitor, tournament)
+            if gear_msgs:
+                db.session.commit()
+            for msg in gear_msgs:
+                flash(msg, 'info')
+        except Exception:
+            pass  # Gear parse failure should never block registration
+
         flash(text.FLASH['competitor_added'].format(name=competitor.name), 'success')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
 
@@ -588,6 +599,10 @@ def pro_gear_manager(tournament_id):
     college_events = Event.query.filter_by(
         tournament_id=tournament_id, event_type='college'
     ).order_by(Event.name, Event.gender).all()
+    from models.competitor import CollegeCompetitor
+    college_comps = CollegeCompetitor.query.filter_by(
+        tournament_id=tournament_id, status='active'
+    ).order_by(CollegeCompetitor.name).all()
     return render_template(
         'pro/gear_sharing.html',
         tournament=tournament,
@@ -596,6 +611,7 @@ def pro_gear_manager(tournament_id):
         pro_comps=pro_comps,
         pro_events=pro_events,
         college_events=college_events,
+        college_comps=college_comps,
     )
 
 
@@ -632,10 +648,12 @@ def pro_gear_sync_heats(tournament_id):
         invalidate_tournament_caches(tournament_id)
         msg = f'Heat sync complete: {result["fixed"]} conflict(s) resolved.'
         if result['failed']:
-            msg += (
-                f' {len(result["failed"])} conflict(s) could not be auto-resolved'
-                ' — no compatible target heat was available.'
-            )
+            msg += f' {len(result["failed"])} conflict(s) could not be auto-resolved.'
+            for fail in result['failed'][:3]:
+                suggestions = fail.get('suggestions', [])
+                if suggestions:
+                    msg += f' [{fail["comp_a"]} / {fail["comp_b"]} in {fail["event"]} Heat {fail["heat"]}:'
+                    msg += f' Try: {suggestions[0]}]'
         flash(msg, 'warning' if result['failed'] else 'success')
         log_action('gear_heat_sync', 'tournament', tournament_id, {
             'fixed': result['fixed'],
@@ -726,7 +744,6 @@ def pro_gear_update(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/update-ajax', methods=['POST'])
 def pro_gear_update_ajax(tournament_id):
     """AJAX JSON endpoint for inline gear-sharing edits in the dashboard unresolved table."""
-    from flask import jsonify
     Tournament.query.get_or_404(tournament_id)
     try:
         competitor_id = int(request.form.get('competitor_id', ''))
@@ -1081,6 +1098,39 @@ def college_gear_update(tournament_id):
     else:
         flash('No partner name — use Remove to delete the entry.', 'warning')
     return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
+@registration_bp.route('/<int:tournament_id>/college/gear-sharing/update-ajax', methods=['POST'])
+def college_gear_update_ajax(tournament_id):
+    """AJAX: Set a gear-sharing entry for a college competitor and return JSON."""
+    Tournament.query.get_or_404(tournament_id)
+    from models.competitor import CollegeCompetitor
+    try:
+        competitor_id = int(request.form.get('competitor_id', ''))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'Invalid competitor ID.'})
+
+    comp = CollegeCompetitor.query.get(competitor_id)
+    if not comp or comp.tournament_id != tournament_id:
+        return jsonify({'ok': False, 'error': 'Competitor not found.'})
+
+    event_key = (request.form.get('event_key') or '').strip()
+    partner_name = (request.form.get('partner_name') or '').strip()
+
+    if not event_key:
+        return jsonify({'ok': False, 'error': 'No event key specified.'})
+    if not partner_name:
+        return jsonify({'ok': False, 'error': 'No partner name specified.'})
+
+    gear = comp.get_gear_sharing()
+    gear[event_key] = partner_name
+    comp.gear_sharing = json.dumps(gear)
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    log_action('college_gear_updated', 'college_competitor', competitor_id, {
+        'event_key': event_key, 'partner': partner_name,
+    })
+    return jsonify({'ok': True, 'partner': partner_name})
 
 
 @registration_bp.route('/<int:tournament_id>/college/gear-sharing/remove', methods=['POST'])

@@ -1,31 +1,112 @@
 {% extends "base.html" %}
 {% block title %}Login - {{ COMPETITION.app_title }}{% endblock %}
+{% block extra_css %}
+<style>
+.login-wrap {
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 3rem 1rem 4rem;
+}
+.login-logo-lockup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 1.75rem;
+}
+.login-logo-proam {
+    width: 72px; height: 72px; border-radius: 14px;
+    background: #fff; padding: 5px;
+    border: 1px solid rgba(255,255,255,0.15);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden; flex-shrink: 0;
+}
+.login-logo-proam img { width:100%; height:100%; object-fit:contain; }
+.login-logo-sep {
+    width: 1px; height: 52px;
+    background: linear-gradient(to bottom, transparent, var(--sx-border-bright), transparent);
+}
+.login-logo-strathex {
+    width: 72px; height: 72px; border-radius: 14px;
+    background: linear-gradient(180deg,#07090e,#030407);
+    border: 1px solid rgba(239,43,22,0.4);
+    box-shadow: 0 0 22px rgba(239,43,22,0.18), 0 4px 16px rgba(0,0,0,0.4);
+    padding: 11px; display: flex; align-items: center; justify-content: center;
+    overflow: hidden; flex-shrink: 0;
+}
+.login-logo-strathex img { width:100%; height:100%; object-fit:contain; }
+.login-card {
+    background: var(--sx-surface);
+    border: 1px solid var(--sx-border);
+    border-top: 3px solid var(--sx-fire);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.login-card-header {
+    background: linear-gradient(135deg, #1a0808 0%, #250c0c 100%);
+    border-bottom: 1px solid var(--sx-border);
+    padding: 1rem 1.25rem;
+    display: flex; align-items: center; gap: 0.6rem;
+}
+.login-card-header i { color: var(--sx-fire); font-size: 1rem; }
+.login-card-header span {
+    font-family: "Orbitron", sans-serif;
+    font-size: 0.78rem; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--sx-text);
+}
+</style>
+{% endblock %}
 {% block content %}
-<div class="container py-4" style="max-width: 520px;">
-    <div class="card shadow-sm">
-        <div class="card-header card-header-proam">
-            <h5 class="mb-0">Login</h5>
+<div class="login-wrap">
+
+    <!-- Logo lockup -->
+    <div class="login-logo-lockup">
+        <div class="login-logo-proam">
+            <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
+                 alt="Missoula Pro Am"
+                 onerror="this.parentElement.style.opacity='0';">
         </div>
-        <div class="card-body">
-            <form method="POST">
+        <div class="login-logo-sep"></div>
+        <div class="login-logo-strathex">
+            <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                 alt="STRATHEX"
+                 onerror="this.parentElement.style.opacity='0';">
+        </div>
+    </div>
+
+    <div class="login-card">
+        <div class="login-card-header">
+            <i class="bi bi-shield-lock-fill"></i>
+            <span>Staff Sign In</span>
+        </div>
+        <div class="card-body p-4">
+            <form method="POST" autocomplete="on">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {% if next_page %}
                 <input type="hidden" name="next" value="{{ next_page }}">
                 {% endif %}
                 <div class="mb-3">
-                    <label class="form-label">Username</label>
-                    <input class="form-control" name="username" required>
+                    <label class="form-label" for="loginUsername">Username</label>
+                    <input class="form-control" id="loginUsername" name="username"
+                           autocomplete="username" required autofocus>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Password</label>
-                    <input class="form-control" type="password" name="password" required>
+                <div class="mb-4">
+                    <label class="form-label" for="loginPassword">Password</label>
+                    <input class="form-control" id="loginPassword" type="password" name="password"
+                           autocomplete="current-password" required>
                 </div>
-                <button class="btn btn-proam w-100" type="submit">Sign in</button>
+                <button class="btn btn-proam w-100 btn-proam-pulse" type="submit">
+                    <i class="bi bi-box-arrow-in-right me-2"></i>Sign In
+                </button>
             </form>
-            <div class="small text-muted mt-3">
-                First-time setup only: <a href="{{ url_for('auth.bootstrap') }}">create initial judge account</a>.
+            <div class="small mt-3" style="color:var(--sx-text-3);">
+                First-time setup only: <a href="{{ url_for('auth.bootstrap') }}" style="color:var(--sx-text-3);">create initial judge account</a>.
             </div>
         </div>
     </div>
+
 </div>
 {% endblock %}

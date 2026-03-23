@@ -8,18 +8,19 @@
     .cmd-hero {
         background:
             linear-gradient(135deg,
-                rgba(232,57,31,0.07) 0%,
-                rgba(11,13,17,0) 45%,
-                rgba(232,144,18,0.04) 100%),
+                rgba(232,57,31,0.09) 0%,
+                rgba(11,13,17,0) 40%,
+                rgba(243,159,27,0.04) 100%),
             var(--sx-surface);
         border: 1px solid var(--sx-border);
-        border-left: 3px solid var(--sx-fire);
+        border-left: 4px solid var(--sx-fire);
         border-radius: 14px;
         overflow: hidden;
         position: relative;
+        box-shadow: 0 4px 28px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06);
     }
 
-    /* Subtle diagonal grain texture */
+    /* Diagonal grain texture */
     .cmd-hero::after {
         content: "";
         position: absolute;
@@ -27,10 +28,20 @@
         background-image: repeating-linear-gradient(
             -45deg,
             transparent,
-            transparent 12px,
-            rgba(255,255,255,0.012) 12px,
-            rgba(255,255,255,0.012) 13px
+            transparent 14px,
+            rgba(255,255,255,0.014) 14px,
+            rgba(255,255,255,0.014) 15px
         );
+        pointer-events: none;
+    }
+
+    /* Corner accent */
+    .cmd-hero::before {
+        content: "";
+        position: absolute;
+        top: 0; right: 0;
+        width: 220px; height: 120px;
+        background: radial-gradient(ellipse at 100% 0%, rgba(239,43,22,0.08) 0%, transparent 70%);
         pointer-events: none;
     }
 
@@ -41,13 +52,13 @@
         display: flex;
         align-items: center;
         gap: 1rem;
-        margin-bottom: 1.25rem;
+        margin-bottom: 1.4rem;
     }
 
     .hero-badge {
-        width: 80px;
-        height: 80px;
-        border-radius: 14px;
+        width: 88px;
+        height: 88px;
+        border-radius: 16px;
         background: #ffffff;
         border: 1px solid rgba(255,255,255,0.15);
         display: flex;
@@ -56,6 +67,7 @@
         overflow: hidden;
         flex-shrink: 0;
         padding: 6px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
     }
     .hero-badge img {
         width: 100%;
@@ -64,20 +76,21 @@
     }
 
     .hero-badge-strathex {
-        width: 80px;
-        height: 80px;
-        border-radius: 14px;
+        width: 88px;
+        height: 88px;
+        border-radius: 16px;
         background: linear-gradient(180deg, #07090e 0%, #030407 100%);
-        border: 1px solid rgba(239,43,22,0.42);
+        border: 1px solid rgba(239,43,22,0.45);
         box-shadow:
-            inset 0 0 0 1px rgba(255,255,255,0.06),
-            0 0 24px rgba(239,43,22,0.18);
+            inset 0 0 0 1px rgba(255,255,255,0.07),
+            0 0 28px rgba(239,43,22,0.22),
+            0 4px 16px rgba(0,0,0,0.4);
         display: flex;
         align-items: center;
         justify-content: center;
         overflow: hidden;
         flex-shrink: 0;
-        padding: 11px;
+        padding: 12px;
     }
     .hero-badge-strathex img {
         width: 100%;
@@ -87,7 +100,7 @@
 
     .hero-lockup-separator {
         width: 1px;
-        height: 56px;
+        height: 64px;
         background: linear-gradient(to bottom, transparent, var(--sx-border-bright), transparent);
         flex-shrink: 0;
     }
@@ -95,18 +108,47 @@
     .hero-title {
         font-family: "Orbitron", sans-serif;
         font-weight: 800;
-        font-size: 1.65rem;
+        font-size: 1.72rem;
         letter-spacing: 0.04em;
         text-transform: uppercase;
         color: var(--sx-text);
         line-height: 1.1;
-        margin-bottom: 0.35rem;
+        margin-bottom: 0.4rem;
     }
 
     .hero-subtitle {
         color: var(--sx-text-2);
         font-size: 0.875rem;
         margin-bottom: 0;
+        letter-spacing: 0.01em;
+    }
+
+    /* ── Competition pedigree tags ─────────────────────────────── */
+    .hero-tags {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 0.75rem;
+    }
+    .hero-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid var(--sx-border);
+        border-radius: 999px;
+        padding: 3px 10px;
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--sx-text-3);
+        white-space: nowrap;
+    }
+    .hero-tag-fire {
+        border-color: rgba(239,43,22,0.35);
+        color: #f0735a;
+        background: rgba(239,43,22,0.07);
     }
 
     /* ── ACTIVE TOURNAMENT CARD ──────────────────────────────────── */
@@ -172,7 +214,7 @@
     .quick-launch-item:hover {
         background: rgba(232,57,31,0.06);
         color: var(--sx-text);
-        padding-left: 1.25rem;
+        transform: translateX(4px);
     }
     .quick-launch-item i {
         color: var(--sx-fire);
@@ -193,16 +235,20 @@
 
     @media (max-width: 991px) {
         .hero-logo-lockup { gap: 0.75rem; margin-bottom: 1rem; }
-        .hero-badge, .hero-badge-strathex { width: 68px; height: 68px; }
-        .hero-lockup-separator { height: 44px; }
+        .hero-badge, .hero-badge-strathex { width: 72px; height: 72px; border-radius: 13px; }
+        .hero-lockup-separator { height: 48px; }
+        .hero-title { font-size: 1.45rem; }
+        .hero-tags { margin-top: 0.5rem; }
     }
 
     @media (max-width: 575px) {
-        .cmd-hero { border-left-width: 2px; }
-        .hero-badge, .hero-badge-strathex { width: 58px; height: 58px; border-radius: 11px; }
-        .hero-badge-strathex { padding: 8px; }
-        .hero-title { font-size: 1.25rem; }
+        .cmd-hero { border-left-width: 3px; }
+        .hero-badge, .hero-badge-strathex { width: 60px; height: 60px; border-radius: 11px; }
+        .hero-badge-strathex { padding: 9px; }
+        .hero-title { font-size: 1.2rem; }
         .hero-subtitle { font-size: 0.8rem; }
+        .hero-tags { gap: 0.35rem; }
+        .hero-tag { font-size: 0.6rem; padding: 2px 8px; }
     }
 </style>
 {% endblock %}
@@ -214,30 +260,51 @@
     <div class="row mb-4">
         <div class="col-12">
             <div class="cmd-hero p-4 p-lg-5">
-                <div class="cmd-hero-inner d-flex flex-wrap align-items-center gap-4">
+                <div class="cmd-hero-inner d-flex flex-wrap align-items-center justify-content-between gap-4">
 
-                    <!-- Left: logos + title -->
+                    <!-- Left: title + subtitle + tags -->
                     <div>
-                        <div class="hero-logo-lockup">
-                            <div class="hero-badge">
-                                <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
-                                     alt="Missoula Pro Am"
-                                     onerror="this.parentElement.style.opacity='0';">
-                            </div>
-                            <div class="hero-lockup-separator"></div>
-                            <div class="hero-badge-strathex">
-                                <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
-                                     alt="STRATHEX"
-                                     onerror="this.parentElement.style.opacity='0';">
-                            </div>
-                        </div>
-
                         <div class="hero-title">{{ COMPETITION.app_title }}</div>
                         <p class="hero-subtitle">
                             Operations Command Center &mdash; Friday &amp; Saturday Show Control
                         </p>
-
+                        <div class="hero-tags">
+                            <span class="hero-tag hero-tag-fire">
+                                <i class="bi bi-trophy-fill" style="font-size:0.6rem;"></i>
+                                International Timbersports
+                            </span>
+                            <span class="hero-tag">
+                                <i class="bi bi-mortarboard-fill" style="font-size:0.6rem;"></i>
+                                College Division
+                            </span>
+                            <span class="hero-tag">
+                                <i class="bi bi-award-fill" style="font-size:0.6rem;"></i>
+                                Professional Division
+                            </span>
+                        </div>
                     </div>
+
+                    <!-- Right: live aggregate stats -->
+                    {% if tournaments %}
+                    <div class="d-flex gap-4 flex-wrap" style="flex-shrink:0;">
+                        {% set total_comps = namespace(n=0) %}
+                        {% for t in tournaments %}{% set total_comps.n = total_comps.n + t.college_competitor_count + t.pro_competitor_count %}{% endfor %}
+                        {% set total_teams = namespace(n=0) %}
+                        {% for t in tournaments %}{% set total_teams.n = total_teams.n + t.college_team_count %}{% endfor %}
+                        <div class="text-center">
+                            <div style="font-family:'Orbitron',sans-serif;font-weight:800;font-size:1.4rem;color:var(--sx-text);line-height:1;">{{ tournaments|length }}</div>
+                            <div class="text-label text-sx-subtle mt-1">Tournaments</div>
+                        </div>
+                        <div class="text-center">
+                            <div style="font-family:'Orbitron',sans-serif;font-weight:800;font-size:1.4rem;color:var(--sx-text);line-height:1;">{{ total_comps.n }}</div>
+                            <div class="text-label text-sx-subtle mt-1">Competitors</div>
+                        </div>
+                        <div class="text-center">
+                            <div style="font-family:'Orbitron',sans-serif;font-weight:800;font-size:1.4rem;color:var(--sx-text);line-height:1;">{{ total_teams.n }}</div>
+                            <div class="text-label text-sx-subtle mt-1">Teams</div>
+                        </div>
+                    </div>
+                    {% endif %}
 
                 </div>
             </div>
@@ -401,15 +468,12 @@
                                             <form method="POST"
                                                   action="{{ url_for('main.delete_tournament', tournament_id=t.id) }}"
                                                   style="display:inline;"
-                                                  onsubmit="
-                                                      var typed = prompt('Type DELETE to permanently remove {{ t.name }} {{ t.year }}.');
-                                                      if (typed === null) { return false; }
-                                                      this.querySelector('input[name=confirm_delete]').value = typed;
-                                                      return true;
-                                                  ">
+                                                  data-delete-tournament
+                                                  data-tournament-name="{{ t.name }} {{ t.year }}">
                                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                                <input type="hidden" name="confirm_delete" value="">
-                                                <button type="submit" class="btn btn-outline-danger btn-sm">
+                                                <input type="hidden" name="confirm_delete" value="DELETE">
+                                                <button type="submit" class="btn btn-outline-danger btn-sm"
+                                                        title="Delete {{ t.name }} {{ t.year }}">
                                                     <i class="bi bi-trash"></i>
                                                 </button>
                                             </form>
@@ -423,11 +487,21 @@
                     {% else %}
                     <div class="empty-state">
                         <div class="empty-state-icon mx-auto">
-                            <i class="bi bi-folder-x"></i>
+                            <i class="bi bi-calendar-plus"></i>
                         </div>
-                        <p style="color:var(--sx-text-2);margin-bottom:1.25rem;">
-                            {{ ui('no_tournaments') }}
+                        <h6 style="color:var(--sx-text);margin-bottom:0.4rem;">Welcome to the Missoula Pro-Am Manager</h6>
+                        <p style="color:var(--sx-text-2);font-size:0.85rem;max-width:420px;margin:0 auto 1.25rem;">
+                            Start by creating a tournament. You'll then configure events, import teams and competitors, generate heats, and manage results all in one place.
                         </p>
+                        <div class="d-flex justify-content-center gap-3 flex-wrap mb-3">
+                            <div style="font-size:0.78rem;color:var(--sx-text-3);display:flex;align-items:center;gap:0.3rem;"><i class="bi bi-1-circle-fill" style="color:var(--sx-fire);"></i>Create tournament</div>
+                            <i class="bi bi-arrow-right" style="color:var(--sx-border-bright);"></i>
+                            <div style="font-size:0.78rem;color:var(--sx-text-3);display:flex;align-items:center;gap:0.3rem;"><i class="bi bi-2-circle-fill" style="color:var(--sx-fire);"></i>Configure events</div>
+                            <i class="bi bi-arrow-right" style="color:var(--sx-border-bright);"></i>
+                            <div style="font-size:0.78rem;color:var(--sx-text-3);display:flex;align-items:center;gap:0.3rem;"><i class="bi bi-3-circle-fill" style="color:var(--sx-fire);"></i>Import competitors</div>
+                            <i class="bi bi-arrow-right" style="color:var(--sx-border-bright);"></i>
+                            <div style="font-size:0.78rem;color:var(--sx-text-3);display:flex;align-items:center;gap:0.3rem;"><i class="bi bi-4-circle-fill" style="color:var(--sx-fire);"></i>Run the show</div>
+                        </div>
                         <a href="{{ url_for('main.new_tournament') }}" class="btn btn-proam">
                             <i class="bi bi-plus-circle me-1"></i> {{ ui('create_first_tournament') }}
                         </a>

@@ -166,6 +166,28 @@
         </div>
     </div>
 
+    {# ── Heat completion progress bar ── #}
+    {% if heats and not signup_list_mode %}
+    {% set total_heat_count = heats|length %}
+    {% set completed_heat_count = heats|selectattr('status', 'equalto', 'completed')|list|length %}
+    {% set progress_pct = ((completed_heat_count / total_heat_count) * 100)|round(0)|int if total_heat_count > 0 else 0 %}
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="d-flex align-items-center justify-content-between mb-1">
+                <span class="text-xs text-sx-muted fw-semibold text-uppercase" style="letter-spacing:0.08em;">Heat Progress</span>
+                <span class="text-xs fw-bold {% if completed_heat_count == total_heat_count %}text-success{% else %}text-sx-muted{% endif %}">
+                    {{ completed_heat_count }} / {{ total_heat_count }} heats scored
+                    {% if completed_heat_count == total_heat_count %}<i class="bi bi-check-circle-fill ms-1"></i>{% endif %}
+                </span>
+            </div>
+            <div class="heat-progress-bar" style="height:6px;">
+                <div class="heat-progress-fill {% if completed_heat_count == total_heat_count %}bg-success{% endif %}"
+                     style="width:{{ progress_pct }}%;{% if completed_heat_count == total_heat_count %} background:var(--bs-success) !important;{% endif %}"></div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     {# ── Signup list mode ── #}
     {% if signup_list_mode %}
     <div class="row">

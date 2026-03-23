@@ -745,6 +745,122 @@ def _parse_payout_form() -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Routes: tournament-level payout manager
+# ---------------------------------------------------------------------------
+
+@scoring_bp.route('/<int:tournament_id>/pro/payout-manager', methods=['GET', 'POST'])
+def tournament_payout_manager(tournament_id):
+    """Tournament-level payout configuration dashboard for all pro events."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    if request.method == 'POST':
+        action = request.form.get('action', '')
+
+        if action == 'bulk_apply':
+            tpl_id = request.form.get('template_id', type=int)
+            event_ids = request.form.getlist('event_ids')
+            try:
+                event_ids = [int(x) for x in event_ids if x]
+            except (TypeError, ValueError):
+                event_ids = []
+            if not tpl_id:
+                flash('Select a template to apply.', 'error')
+                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+            if not event_ids:
+                flash('Select at least one event.', 'error')
+                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+            template = PayoutTemplate.query.get(tpl_id)
+            if not template:
+                flash('Template not found.', 'error')
+                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+            applied = 0
+            for eid in event_ids:
+                ev = Event.query.filter_by(id=eid, tournament_id=tournament_id, event_type='pro').first()
+                if ev:
+                    ev.set_payouts(template.get_payouts())
+                    applied += 1
+            if applied:
+                try:
+                    db.session.commit()
+                    log_action('bulk_payout_template_applied', 'tournament', tournament_id,
+                               {'template_id': tpl_id, 'template_name': template.name, 'event_count': applied})
+                    invalidate_tournament_caches(tournament_id)
+                    flash(f'"{template.name}" applied to {applied} event(s).', 'success')
+                except (StaleDataError, IntegrityError):
+                    db.session.rollback()
+                    flash('Save failed — please retry.', 'error')
+            else:
+                flash('No matching pro events found.', 'error')
+            return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+
+        if action == 'clear_event':
+            eid = request.form.get('event_id', type=int)
+            ev = Event.query.filter_by(id=eid, tournament_id=tournament_id, event_type='pro').first()
+            if ev:
+                ev.set_payouts({})
+                db.session.commit()
+                invalidate_tournament_caches(tournament_id)
+                flash(f'Payouts cleared for {ev.display_name}.', 'success')
+            return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+
+        if action == 'delete_template':
+            tpl_id = request.form.get('template_id', type=int)
+            engine.delete_payout_template(tpl_id)
+            flash('Template deleted.', 'success')
+            return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+
+        if action == 'save_template':
+            tpl_name = (request.form.get('template_name') or '').strip()
+            if not tpl_name:
+                flash('Template name is required.', 'error')
+                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+            payouts = _parse_payout_form()
+            if payouts is None:
+                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+            engine.save_payout_template(tpl_name, payouts)
+            flash(f'Template "{tpl_name}" saved.', 'success')
+            return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+
+        flash('Unknown action.', 'error')
+        return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+
+    pro_events = (Event.query
+                  .filter_by(tournament_id=tournament_id, event_type='pro')
+                  .order_by(Event.name)
+                  .all())
+    templates = engine.list_payout_templates()
+
+    event_summaries = []
+    total_purse = 0.0
+    configured_count = 0
+    for ev in pro_events:
+        payouts = ev.get_payouts()
+        purse = sum(float(v) for v in payouts.values()) if payouts else 0.0
+        places_paid = len([v for v in payouts.values() if float(v) > 0]) if payouts else 0
+        first_place = float(payouts.get('1', 0)) if payouts else 0.0
+        total_purse += purse
+        if purse > 0:
+            configured_count += 1
+        event_summaries.append({
+            'event': ev,
+            'payouts': payouts,
+            'purse': purse,
+            'places_paid': places_paid,
+            'first_place': first_place,
+        })
+
+    return render_template(
+        'scoring/tournament_payouts.html',
+        tournament=tournament,
+        event_summaries=event_summaries,
+        templates=templates,
+        total_purse=total_purse,
+        configured_count=configured_count,
+        total_events=len(pro_events),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Routes: birling bracket
 # ---------------------------------------------------------------------------
 

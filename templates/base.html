@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta name="theme-color" content="#ef2b16">
     <title>{% block title %}{{ COMPETITION.app_title }}{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Orbitron:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -22,22 +24,23 @@
 
     {% block extra_css %}{% endblock %}
 </head>
-<body class="{% if CURRENT_LANG == 'arp' %}lang-arp{% endif %}{% if mobile_view %} portal-mobile{% endif %}">
+<body class="{% if CURRENT_LANG != 'en' %}lang-{{ CURRENT_LANG }}{% endif %}{% if mobile_view %} portal-mobile{% endif %}">
 
     <!-- ── SKIP TO MAIN CONTENT (accessibility) ─────── -->
     <a href="#main-content" class="skip-to-main">Skip to main content</a>
 
-    <!-- ── OWNERSHIP / ATTRIBUTION BAR ───────────────── -->
+    <!-- ── TOP ACCENT STRIPE (slim branding line + live indicator) ──── -->
     <div class="ownership-bar no-print">
         <div class="container-fluid ownership-inner">
-            <span class="ownership-label">Flagship Deployment</span>
-            <div class="ownership-divider"></div>
-            <img class="ownership-logo"
-                 src="{{ url_for('static', filename='img/strathex-logo.png') }}"
-                 alt="STRATHEX"
-                 onerror="this.style.display='none';">
-            <div class="ownership-divider"></div>
-            <span class="ownership-copy">Developed &amp; operated by STRATHEX</span>
+            {% if tournament is defined and tournament and tournament.status in ('college_active', 'pro_active') %}
+            <span class="status-beacon">
+                <span class="status-beacon-dot"></span>
+                {{ 'College Active' if tournament.status == 'college_active' else 'Pro Show Live' }}
+            </span>
+            {% else %}
+            <span class="ownership-label">Missoula Pro-Am</span>
+            {% endif %}
+            <div class="ms-auto ownership-copy" style="font-size:0.6rem;">by STRATHEX</div>
         </div>
     </div>
 
@@ -52,7 +55,7 @@
                 </span>
                 <span class="brand-title">
                     <strong>{{ NAV.brand }}</strong>
-                    <small>Tournament Operations</small>
+                    <small>Tournament Operations System</small>
                 </span>
             </a>
 
@@ -142,22 +145,15 @@
                             <span class="d-none d-lg-inline"> {{ ui('language') }}</span>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
+                            {% for lang_code, lang_name in LANGUAGES.items() %}
                             <li>
-                                <a class="dropdown-item {% if CURRENT_LANG == 'en' %}active{% endif %}"
-                                   data-lang-switch="en"
-                                   href="{{ url_for('main.set_language', lang_code='en', next=request.full_path if request.query_string else request.path) }}">
-                                    {{ ui('language_english') }}
+                                <a class="dropdown-item {% if CURRENT_LANG == lang_code %}active{% endif %}"
+                                   data-lang-switch="{{ lang_code }}"
+                                   href="{{ url_for('main.set_language', lang_code=lang_code, next=request.full_path if request.query_string else request.path) }}">
+                                    {{ lang_name }}
                                 </a>
                             </li>
-                            {% if ARAPAHO_ALLOWED %}
-                            <li>
-                                <a class="dropdown-item {% if CURRENT_LANG == 'arp' %}active{% endif %}"
-                                   data-lang-switch="arp"
-                                   href="{{ url_for('main.set_language', lang_code='arp', next=request.full_path if request.query_string else request.path) }}">
-                                    {{ ui('language_arapaho') }}
-                                </a>
-                            </li>
-                            {% endif %}
+                            {% endfor %}
                         </ul>
                     </div>
 
@@ -231,17 +227,44 @@
     </div>
 
     <!-- ── FOOTER ─────────────────────────────────────── -->
-    <footer class="py-3 mt-5 no-print">
-        <div class="container">
-            <div class="d-flex align-items-center justify-content-center gap-3 flex-wrap">
-                <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
-                     alt="STRATHEX" class="footer-logo"
-                     onerror="this.style.display='none';">
-                <span class="footer-meta">{{ COMPETITION.app_footer }} &copy; 2026</span>
-                <span style="color:var(--sx-border-bright);font-size:0.7rem;">|</span>
-                <small class="footer-meta" style="font-family:'Orbitron',sans-serif;font-size:0.55rem;letter-spacing:0.12em;text-transform:uppercase;color:#ffd8bf;opacity:0.9;">
-                    A STRATHEX Product
-                </small>
+    <footer class="mt-5 no-print" style="background:#07080b; border-top:none;">
+        <div class="footer-divider-line"></div>
+        <div class="container py-2">
+            <div class="footer-inner">
+
+                <!-- Left: Pro Am identity -->
+                <div class="footer-col-left">
+                    <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
+                         alt="Missoula Pro Am"
+                         class="footer-proam-logo"
+                         onerror="this.style.display='none';">
+                    <div>
+                        <div class="footer-event-name">Missoula Pro Am</div>
+                        <div class="footer-tagline">International Timbersports Competition</div>
+                    </div>
+                </div>
+
+                <!-- Center: copyright -->
+                <div class="footer-col-center">
+                    <div class="footer-meta" style="font-size:0.72rem; color:var(--sx-text-3);">
+                        {{ COMPETITION.app_footer }} &copy; 2026
+                    </div>
+                    <div style="color:var(--sx-text-3);font-size:0.6rem;opacity:0.6;margin-top:2px;letter-spacing:0.04em;">
+                        Tournament Management Platform
+                    </div>
+                </div>
+
+                <!-- Right: STRATHEX -->
+                <div class="footer-col-right">
+                    <div>
+                        <div class="footer-powered-label">Powered by</div>
+                        <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                             alt="STRATHEX"
+                             class="footer-strathex-logo"
+                             onerror="this.style.display='none';">
+                    </div>
+                </div>
+
             </div>
         </div>
     </footer>
@@ -599,13 +622,13 @@
         })();
     </script>
 
-    <!-- Reusable Confirmation Modal -->
+    <!-- Reusable Confirmation Modal (supports data-confirm-title and data-confirm-danger) -->
     <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
+            <div class="modal-content" id="confirmModalContent">
                 <div class="modal-header border-bottom" style="border-color:var(--sx-border)!important;">
-                    <h5 class="modal-title">
-                        <i class="bi bi-exclamation-triangle text-warning me-2"></i>Confirm Action
+                    <h5 class="modal-title" id="confirmModalTitle">
+                        <i class="bi bi-exclamation-triangle text-warning me-2" id="confirmModalIcon"></i><span id="confirmModalTitleText">Confirm Action</span>
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
@@ -615,6 +638,32 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-danger btn-sm" id="confirmModalBtn">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Tournament Modal (type-to-confirm) -->
+    <div class="modal fade" id="deleteTournamentModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content" style="border-color:var(--sx-danger);">
+                <div class="modal-header" style="background:rgba(232,53,53,0.12);border-bottom-color:rgba(232,53,53,0.35);">
+                    <h5 class="modal-title" style="color:var(--sx-danger);">
+                        <i class="bi bi-trash3-fill me-2"></i>Delete Tournament
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-1" style="color:var(--sx-text);">This will permanently delete <strong id="deleteTournamentName"></strong> and all associated data. This cannot be undone.</p>
+                    <p class="mb-3 small" style="color:var(--sx-text-2);">Type <code style="color:var(--sx-danger);">DELETE</code> to confirm:</p>
+                    <input type="text" class="form-control" id="deleteTournamentInput" placeholder="Type DELETE" autocomplete="off">
+                    <div class="mt-2 small" id="deleteTournamentError" style="color:var(--sx-danger);display:none;">Please type DELETE to confirm.</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger btn-sm" id="deleteTournamentConfirmBtn" disabled>
+                        <i class="bi bi-trash3 me-1"></i>Delete Permanently
+                    </button>
                 </div>
             </div>
         </div>
@@ -679,10 +728,29 @@
             });
         }());
 
-        // Universal confirm modal — intercepts forms with data-confirm AND submit buttons with data-confirm
+        // Universal confirm modal — supports data-confirm, data-confirm-title, data-confirm-danger
         (function () {
-            function showConfirmModal(msg, onConfirm) {
+            function showConfirmModal(msg, title, isDanger, onConfirm) {
                 document.getElementById('confirmModalBody').textContent = msg;
+                var titleEl   = document.getElementById('confirmModalTitleText');
+                var iconEl    = document.getElementById('confirmModalIcon');
+                var contentEl = document.getElementById('confirmModalContent');
+                var confirmBtn = document.getElementById('confirmModalBtn');
+
+                titleEl.textContent = title || 'Confirm Action';
+
+                if (isDanger) {
+                    iconEl.className = 'bi bi-trash3-fill me-2';
+                    iconEl.style.color = 'var(--sx-danger)';
+                    contentEl.style.borderColor = 'var(--sx-danger)';
+                    confirmBtn.className = 'btn btn-danger btn-sm';
+                } else {
+                    iconEl.className = 'bi bi-exclamation-triangle me-2';
+                    iconEl.style.color = 'var(--sx-amber)';
+                    contentEl.style.borderColor = '';
+                    confirmBtn.className = 'btn btn-danger btn-sm';
+                }
+
                 var btn = document.getElementById('confirmModalBtn');
                 var newBtn = btn.cloneNode(true);
                 btn.parentNode.replaceChild(newBtn, btn);
@@ -699,7 +767,9 @@
                 var msg = form.getAttribute('data-confirm');
                 if (!msg) return;
                 e.preventDefault();
-                showConfirmModal(msg, function () {
+                var title   = form.getAttribute('data-confirm-title') || 'Confirm Action';
+                var isDanger = form.hasAttribute('data-confirm-danger');
+                showConfirmModal(msg, title, isDanger, function () {
                     form.removeAttribute('data-confirm');
                     form.submit();
                 });
@@ -710,11 +780,61 @@
                 var btn = e.target.closest('button[type="submit"][data-confirm]');
                 if (!btn) return;
                 e.preventDefault();
-                var msg = btn.getAttribute('data-confirm');
-                showConfirmModal(msg, function () {
+                var msg     = btn.getAttribute('data-confirm');
+                var title   = btn.getAttribute('data-confirm-title') || 'Confirm Action';
+                var isDanger = btn.hasAttribute('data-confirm-danger');
+                showConfirmModal(msg, title, isDanger, function () {
                     btn.removeAttribute('data-confirm');
                     btn.click();
                 });
+            });
+        }());
+
+        // Delete Tournament modal — type-to-confirm
+        (function () {
+            var modal = document.getElementById('deleteTournamentModal');
+            if (!modal) return;
+            var input     = document.getElementById('deleteTournamentInput');
+            var confirmBtn = document.getElementById('deleteTournamentConfirmBtn');
+            var nameEl    = document.getElementById('deleteTournamentName');
+            var errorEl   = document.getElementById('deleteTournamentError');
+            var _form     = null;
+
+            input.addEventListener('input', function () {
+                var ok = input.value.trim() === 'DELETE';
+                confirmBtn.disabled = !ok;
+                errorEl.style.display = 'none';
+            });
+
+            confirmBtn.addEventListener('click', function () {
+                if (input.value.trim() !== 'DELETE') {
+                    errorEl.style.display = '';
+                    return;
+                }
+                if (_form) {
+                    _form.removeAttribute('data-delete-tournament');
+                    _form.submit();
+                }
+                bootstrap.Modal.getInstance(modal).hide();
+            });
+
+            // Reset on close
+            modal.addEventListener('hidden.bs.modal', function () {
+                input.value = '';
+                confirmBtn.disabled = true;
+                errorEl.style.display = 'none';
+                _form = null;
+            });
+
+            // Intercept forms with data-delete-tournament attribute
+            document.addEventListener('submit', function (e) {
+                var form = e.target;
+                if (!form.hasAttribute('data-delete-tournament')) return;
+                e.preventDefault();
+                _form = form;
+                if (nameEl) nameEl.textContent = form.getAttribute('data-tournament-name') || 'this tournament';
+                new bootstrap.Modal(modal).show();
+                setTimeout(function () { input.focus(); }, 350);
             });
         }());
 
@@ -728,11 +848,41 @@
                 bar.classList.add('active');
             });
         }());
+
+        // Button loading state — disable + show spinner on submit for data-loading forms (item 16)
+        (function () {
+            document.addEventListener('submit', function (e) {
+                var form = e.target;
+                if (!form.hasAttribute('data-loading')) return;
+                // Find the clicked submit button (set by click listener)
+                var clicked = form._clickedBtn;
+                var btns = clicked ? [clicked] : Array.from(form.querySelectorAll('button[type="submit"]'));
+                btns.forEach(function (btn) {
+                    var orig = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.classList.add('btn-loading');
+                    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>' + btn.textContent.trim();
+                    // Restore on page show (back/forward cache)
+                    window.addEventListener('pageshow', function () {
+                        btn.disabled = false;
+                        btn.classList.remove('btn-loading');
+                        btn.innerHTML = orig;
+                    }, { once: true });
+                });
+            });
+            // Track which button was clicked
+            document.addEventListener('click', function (e) {
+                var btn = e.target.closest('button[type="submit"]');
+                if (!btn) return;
+                var form = btn.closest('form');
+                if (form) form._clickedBtn = btn;
+            }, true);
+        }());
     </script>
 
     {% block extra_js %}{% endblock %}
 
-    <!-- Improvement #9: Mobile sidebar drawer JS -->
+    <!-- Mobile sidebar drawer JS + swipe-to-close (items 9, 23) -->
     <script>
     (function () {
         var sidebar  = document.getElementById('appSidebar');
@@ -759,7 +909,22 @@
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape' && sidebar.classList.contains('mobile-open')) closeDrawer();
         });
+
+        // Swipe-left-on-sidebar to close (item 23)
+        var touchStartX = 0;
+        sidebar.addEventListener('touchstart', function (e) {
+            touchStartX = e.touches[0].clientX;
+        }, { passive: true });
+        sidebar.addEventListener('touchend', function (e) {
+            var dx = e.changedTouches[0].clientX - touchStartX;
+            if (dx < -48 && sidebar.classList.contains('mobile-open')) closeDrawer();
+        }, { passive: true });
     }());
+
+    // Global Bootstrap tooltip init (item 19)
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+        new bootstrap.Tooltip(el, { trigger: 'hover focus' });
+    });
     </script>
 
     <!-- #24 Service worker + offline score queue -->

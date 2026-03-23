@@ -141,7 +141,18 @@ class BirlingBracket:
             'needed': False  # Only if losers champ beats winners champ
         }
 
+        # Propagate bye winners forward into subsequent rounds
+        self._propagate_byes()
+
         self._save_bracket_data()
+
+    def _propagate_byes(self):
+        """Advance bye winners from round 1 into their next-round match slots."""
+        winners = self.bracket_data['bracket']['winners']
+        first_round = winners[0] if winners else []
+        for match in first_round:
+            if match.get('is_bye') and match.get('winner') is not None:
+                self._advance_winner(match)
 
     def _generate_losers_bracket(self, bracket_size: int):
         """Generate losers bracket structure."""

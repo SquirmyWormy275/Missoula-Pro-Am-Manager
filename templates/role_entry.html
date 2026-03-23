@@ -2,85 +2,234 @@
 {% block title %}Select Access - {{ COMPETITION.app_title }}{% endblock %}
 {% block extra_css %}
 <style>
-    .role-card {
-        border-top: 3px solid var(--sx-fire);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    /* ── Role Entry Page ─────────────────────────────────────────── */
+    .role-entry-hero {
+        text-align: center;
+        padding: 3.5rem 1rem 2.5rem;
+        position: relative;
     }
-    .role-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 30px rgba(0,0,0,0.5) !important;
-    }
-    .role-icon {
-        width: 52px;
-        height: 52px;
-        border-radius: 12px;
-        background: rgba(239,43,22,0.12);
-        border: 1px solid rgba(239,43,22,0.25);
+    .role-entry-logos {
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 1.4rem;
-        color: var(--sx-fire);
-        margin-bottom: 1rem;
+        gap: 1.25rem;
+        margin-bottom: 2rem;
+    }
+    .entry-logo-proam {
+        width: 96px;
+        height: 96px;
+        border-radius: 18px;
+        background: #fff;
+        border: 1px solid rgba(255,255,255,0.15);
+        display: flex; align-items: center; justify-content: center;
+        overflow: hidden; flex-shrink: 0; padding: 7px;
+        box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+    }
+    .entry-logo-proam img { width:100%; height:100%; object-fit:contain; }
+    .entry-logo-sep {
+        width: 1px; height: 72px;
+        background: linear-gradient(to bottom, transparent, var(--sx-border-bright), transparent);
         flex-shrink: 0;
+    }
+    .entry-logo-strathex {
+        width: 96px; height: 96px; border-radius: 18px;
+        background: linear-gradient(180deg, #07090e 0%, #030407 100%);
+        border: 1px solid rgba(239,43,22,0.42);
+        box-shadow: 0 0 30px rgba(239,43,22,0.2), 0 6px 24px rgba(0,0,0,0.45);
+        display: flex; align-items: center; justify-content: center;
+        overflow: hidden; flex-shrink: 0; padding: 14px;
+    }
+    .entry-logo-strathex img { width:100%; height:100%; object-fit:contain; }
+    .entry-hero-title {
+        font-family: "Orbitron", sans-serif;
+        font-weight: 800;
+        font-size: 1.85rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--sx-text);
+        line-height: 1.1;
+        margin-bottom: 0.5rem;
+    }
+    .entry-hero-sub {
+        color: var(--sx-text-2);
+        font-size: 0.9rem;
+        letter-spacing: 0.01em;
+        margin-bottom: 0;
+    }
+    .entry-event-tags {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 1rem;
+    }
+    .entry-tag {
+        display: inline-flex; align-items: center; gap: 4px;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid var(--sx-border);
+        border-radius: 999px; padding: 3px 11px;
+        font-size: 0.65rem; font-weight: 600;
+        letter-spacing: 0.07em; text-transform: uppercase;
+        color: var(--sx-text-3);
+    }
+    .entry-tag-fire {
+        border-color: rgba(239,43,22,0.3);
+        color: #f0735a;
+        background: rgba(239,43,22,0.07);
+    }
+
+    /* Role cards */
+    .role-card {
+        border-top: 3px solid var(--sx-fire);
+        transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+        cursor: default;
+    }
+    .role-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(239,43,22,0.15) !important;
+        border-top-color: var(--sx-amber);
+    }
+    .role-card-spectator { border-top-color: var(--sx-info); }
+    .role-card-spectator:hover { border-top-color: #6cb6f5; box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(59,142,232,0.15) !important; }
+
+    .role-icon {
+        width: 56px; height: 56px;
+        border-radius: 14px;
+        background: rgba(239,43,22,0.10);
+        border: 1px solid rgba(239,43,22,0.22);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.5rem; color: var(--sx-fire);
+        margin-bottom: 1.1rem; flex-shrink: 0;
+    }
+    .role-icon-blue {
+        background: rgba(59,142,232,0.10);
+        border-color: rgba(59,142,232,0.22);
+        color: var(--sx-info);
     }
     .role-card .card-body p {
         font-size: 0.875rem;
         color: var(--sx-text-2);
-        line-height: 1.55;
+        line-height: 1.6;
+        flex-grow: 1;
+    }
+    .role-card h5 {
+        font-family: "Fraunces", serif;
+        font-size: 1.15rem;
+        margin-bottom: 0.6rem;
+    }
+
+    /* Divider between hero and cards */
+    .entry-divider {
+        height: 1px;
+        background: linear-gradient(90deg, transparent, var(--sx-border), transparent);
+        margin: 0 auto 2.5rem;
+        max-width: 560px;
+    }
+
+    @media (max-width: 575px) {
+        .entry-logo-proam, .entry-logo-strathex { width: 76px; height: 76px; border-radius: 14px; }
+        .entry-logo-strathex { padding: 11px; }
+        .entry-logo-sep { height: 56px; }
+        .entry-hero-title { font-size: 1.4rem; }
     }
 </style>
 {% endblock %}
 {% block content %}
-<div class="container py-5">
-    <div class="text-center mb-5">
-        <h2 class="mb-2">{{ COMPETITION.app_title }}</h2>
-        <p class="text-muted mb-0" style="font-size:0.95rem;">Choose how you want to access the system.</p>
+<div class="container py-4">
+
+    <!-- ── Competition Identity Hero ────────────────────────── -->
+    <div class="role-entry-hero">
+        <div class="role-entry-logos">
+            <div class="entry-logo-proam">
+                <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
+                     alt="Missoula Pro Am"
+                     onerror="this.parentElement.style.opacity='0';">
+            </div>
+            <div class="entry-logo-sep"></div>
+            <div class="entry-logo-strathex">
+                <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                     alt="STRATHEX"
+                     onerror="this.parentElement.style.opacity='0';">
+            </div>
+        </div>
+
+        <div class="entry-hero-title">{{ COMPETITION.app_title }}</div>
+        <p class="entry-hero-sub">Select your access level to continue.</p>
+
+        <div class="entry-event-tags">
+            <span class="entry-tag entry-tag-fire">
+                <i class="bi bi-trophy-fill" style="font-size:0.58rem;"></i>
+                International Timbersports
+            </span>
+            <span class="entry-tag">
+                <i class="bi bi-mortarboard-fill" style="font-size:0.58rem;"></i>
+                College Division
+            </span>
+            <span class="entry-tag">
+                <i class="bi bi-award-fill" style="font-size:0.58rem;"></i>
+                Professional Division
+            </span>
+            {% if active_tournament %}
+            <span class="status-beacon" style="font-size:0.58rem; padding:3px 9px 3px 7px;">
+                <span class="status-beacon-dot"></span>
+                {{ active_tournament.name }} {{ active_tournament.year }}
+            </span>
+            {% endif %}
+        </div>
     </div>
 
-    <div class="row g-3 justify-content-center" style="max-width:960px; margin:0 auto;">
+    <div class="entry-divider"></div>
+
+    <!-- ── Role Selection Cards ──────────────────────────────── -->
+    <div class="row g-4 justify-content-center" style="max-width:980px; margin:0 auto;">
+
         <div class="col-lg-4 col-md-6">
             <div class="card h-100 role-card">
                 <div class="card-body d-flex flex-column p-4">
                     <div class="role-icon"><i class="bi bi-shield-lock-fill"></i></div>
-                    <h5 class="mb-2">Judge / Admin</h5>
+                    <h5>Judge / Admin</h5>
                     <p>Full access to scheduling, registrations, scoring, heat management, and all administrative tools.</p>
-                    <a class="btn btn-proam mt-auto" href="{{ url_for('auth.login', next=url_for('main.judge_dashboard')) }}">
+                    <a class="btn btn-proam mt-3" href="{{ url_for('auth.login', next=url_for('main.judge_dashboard')) }}">
                         <i class="bi bi-box-arrow-in-right me-1"></i> Judge Login
                     </a>
                 </div>
             </div>
         </div>
+
         <div class="col-lg-4 col-md-6">
             <div class="card h-100 role-card">
                 <div class="card-body d-flex flex-column p-4">
                     <div class="role-icon"><i class="bi bi-person-badge-fill"></i></div>
-                    <h5 class="mb-2">Competitor</h5>
+                    <h5>Competitor</h5>
                     <p>Look up your personal schedule, heat assignments, stand numbers, results, and payout information.</p>
-                    <a class="btn btn-proam mt-auto" href="{{ url_for('portal.competitor_access') }}">
+                    <a class="btn btn-proam mt-3" href="{{ url_for('portal.competitor_access') }}">
                         <i class="bi bi-search me-1"></i> Find My Profile
                     </a>
                 </div>
             </div>
         </div>
+
         <div class="col-lg-4 col-md-6">
-            <div class="card h-100 role-card">
+            <div class="card h-100 role-card role-card-spectator">
                 <div class="card-body d-flex flex-column p-4">
-                    <div class="role-icon"><i class="bi bi-broadcast-pin"></i></div>
-                    <h5 class="mb-2">Spectator</h5>
+                    <div class="role-icon role-icon-blue"><i class="bi bi-broadcast-pin"></i></div>
+                    <h5>Spectator</h5>
                     <p>View live standings, rankings, event results, and day-by-day college team and individual scores.</p>
                     {% if active_tournament %}
-                    <a class="btn btn-proam mt-auto" href="{{ url_for('portal.spectator_dashboard', tournament_id=active_tournament.id) }}">
+                    <a class="btn btn-primary mt-3" href="{{ url_for('portal.spectator_dashboard', tournament_id=active_tournament.id) }}">
                         <i class="bi bi-eye me-1"></i> Open Spectator Portal
                     </a>
                     {% else %}
-                    <a class="btn btn-outline-secondary mt-auto" href="{{ url_for('portal.index') }}">
+                    <a class="btn btn-outline-secondary mt-3" href="{{ url_for('portal.index') }}">
                         <i class="bi bi-list me-1"></i> Select Tournament
                     </a>
                     {% endif %}
                 </div>
             </div>
         </div>
+
     </div>
+
 </div>
 {% endblock %}

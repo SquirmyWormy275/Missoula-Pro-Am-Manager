@@ -5,22 +5,27 @@
 {% block content %}
 <div class="container py-4">
   <div class="row justify-content-center">
-    <div class="col-lg-8">
+    <div class="col-lg-10">
 
       <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
-          <li class="breadcrumb-item"><a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}">{{ event.display_name }}</a></li>
+          <li class="breadcrumb-item">
+            <a href="{{ url_for('scoring.tournament_payout_manager', tournament_id=tournament.id) }}">Payout Manager</a>
+          </li>
+          <li class="breadcrumb-item">
+            <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}">{{ event.display_name }}</a>
+          </li>
           <li class="breadcrumb-item active">Configure Payouts</li>
         </ol>
       </nav>
 
       <div class="row g-4">
 
-        {# ── Left: payout entry form ───────────────────────────────────────── #}
+        {# ── Left: payout entry form ──────────────────────────────────────────── #}
         <div class="col-md-7">
           <div class="card">
             <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
-              <h5 class="mb-0"><i class="bi bi-cash-stack"></i> {{ event.display_name }}</h5>
+              <h5 class="mb-0"><i class="bi bi-cash-stack me-2"></i>{{ event.display_name }}</h5>
               {% if current_payouts %}
               <span class="badge bg-dark">
                 Total: ${{ "%.2f"|format(current_payouts.values()|map('float')|sum) }}
@@ -28,7 +33,54 @@
               {% endif %}
             </div>
             <div class="card-body">
-              <p class="text-muted small mb-3">Set payout per placing (1–15). Leave blank = no payout for that place.</p>
+
+              {# ── Quick Presets ─────────────────────────────────────────── #}
+              <div class="mb-3">
+                <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+                  <span class="small fw-semibold text-muted">Presets:</span>
+                  <button type="button" class="btn btn-xs btn-outline-secondary preset-btn"
+                          style="font-size:.72rem;"
+                          data-preset='{"splits":[50,30,20]}' title="50/30/20 top 3">
+                    Top 3
+                  </button>
+                  <button type="button" class="btn btn-xs btn-outline-secondary preset-btn"
+                          style="font-size:.72rem;"
+                          data-preset='{"splits":[40,25,15,12,8]}' title="40/25/15/12/8 top 5">
+                    Top 5
+                  </button>
+                  <button type="button" class="btn btn-xs btn-outline-secondary preset-btn"
+                          style="font-size:.72rem;"
+                          data-preset='{"splits":[30,20,15,12,9,7,4,3]}' title="top 8">
+                    Top 8
+                  </button>
+                  <button type="button" class="btn btn-xs btn-outline-secondary preset-btn"
+                          style="font-size:.72rem;"
+                          data-preset='{"splits":[30,20,14,10,8,6,5,4,2,1]}' title="standard 10-deep">
+                    10 Deep
+                  </button>
+                  <button type="button" class="btn btn-xs btn-outline-danger ms-auto" id="clearAllBtn"
+                          style="font-size:.72rem;" title="Clear all values">
+                    Clear All
+                  </button>
+                </div>
+
+                {# ── Percentage mode ──────────────────────────────────────── #}
+                <div class="card bg-light border-0 p-2">
+                  <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <span class="small text-muted">Purse total: $</span>
+                    <input type="number" id="purseInput" class="form-control form-control-sm"
+                           placeholder="e.g. 5000" min="0" step="1" style="max-width:100px;">
+                    <button type="button" id="applyPresetBtn" class="btn btn-sm btn-outline-warning">
+                      Apply %
+                    </button>
+                    <span class="text-muted small" id="presetHint">
+                      Select a preset above, enter a purse total, then click Apply %.
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <p class="text-muted small mb-2">Set payout per placing (1–15). Leave blank = no payout for that place.</p>
 
               <form method="POST" id="payoutForm">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -37,7 +89,11 @@
                 <div class="table-responsive">
                   <table class="table table-sm align-middle">
                     <thead class="table-light">
-                      <tr><th>Place</th><th>Payout</th><th class="text-muted small text-end" id="runningTotalLabel">Running Total</th></tr>
+                      <tr>
+                        <th>Place</th>
+                        <th>Payout</th>
+                        <th class="text-muted small text-end" id="runningTotalLabel">Running Total</th>
+                      </tr>
                     </thead>
                     <tbody>
                       {% for i in range(1, 16) %}
@@ -87,9 +143,9 @@
                     </button>
                   </div>
 
-                  <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
+                  <a href="{{ url_for('scoring.tournament_payout_manager', tournament_id=tournament.id) }}"
                      class="btn btn-outline-secondary">
-                    <i class="bi bi-arrow-left"></i> Back to Event
+                    <i class="bi bi-arrow-left"></i> Back to Payout Manager
                   </a>
                 </div>
               </form>
@@ -97,46 +153,81 @@
           </div>
         </div>
 
-        {# ── Right: saved templates ────────────────────────────────────────── #}
+        {# ── Right: saved templates ───────────────────────────────────────────── #}
         <div class="col-md-5">
           <div class="card h-100">
-            <div class="card-header">
-              <h6 class="mb-0"><i class="bi bi-bookmarks"></i> Saved Templates</h6>
+            <div class="card-header d-flex align-items-center">
+              <h6 class="mb-0"><i class="bi bi-bookmarks me-2"></i>Saved Templates</h6>
+              <span class="badge bg-secondary ms-auto">{{ templates|length }}</span>
             </div>
             {% if templates %}
             <div class="list-group list-group-flush">
               {% for tpl in templates %}
-              <div class="list-group-item py-2">
-                <div class="d-flex justify-content-between align-items-center">
-                  <div>
+              <div class="list-group-item py-2 px-3">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                  <div class="flex-grow-1" style="min-width:0;">
                     <strong class="small">{{ tpl.name }}</strong>
-                    <div class="text-muted" style="font-size:.75rem">
-                      Total: ${{ "%.2f"|format(tpl.total_purse()) }}
+                    <div class="text-muted" style="font-size:.72rem;">
+                      ${{ "%.2f"|format(tpl.total_purse()) }} &bull; {{ tpl.get_payouts()|length }} places
+                    </div>
+                    {# Expandable breakdown #}
+                    <div class="tpl-breakdown mt-1" id="breakdown-{{ tpl.id }}" style="display:none;">
+                      <table class="table table-sm table-borderless mb-0" style="font-size:.72rem;">
+                        <tbody>
+                          {% for pos, amt in tpl.get_payouts().items()|sort(attribute='0', key=int) %}
+                          <tr>
+                            <td class="py-0 ps-0 text-muted" style="width:36px;">
+                              {% if pos == '1' %}1st
+                              {% elif pos == '2' %}2nd
+                              {% elif pos == '3' %}3rd
+                              {% else %}{{ pos }}th{% endif %}
+                            </td>
+                            <td class="py-0">
+                              <div class="d-flex align-items-center gap-1">
+                                <div class="bg-warning rounded"
+                                     style="height:6px; width:{{ ((amt|float / tpl.total_purse()) * 80)|int }}px; min-width:2px; opacity:0.75;"></div>
+                                <span>${{ "%.2f"|format(amt) }}</span>
+                                <span class="text-muted">({{ "%.0f"|format((amt|float / tpl.total_purse()) * 100) }}%)</span>
+                              </div>
+                            </td>
+                          </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
-                  <div class="d-flex gap-1">
-                    {# Apply #}
-                    <form method="POST" class="d-inline">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                      <input type="hidden" name="action" value="apply_template">
-                      <input type="hidden" name="template_id" value="{{ tpl.id }}">
-                      <button type="submit" class="btn btn-sm btn-outline-warning" title="Apply to this event">
-                        <i class="bi bi-check2-circle"></i>
-                      </button>
-                    </form>
+                  <div class="d-flex flex-column gap-1 flex-shrink-0">
+                    {# Preview toggle #}
+                    <button type="button" class="btn btn-xs btn-outline-secondary toggle-breakdown-btn"
+                            style="font-size:.7rem; padding:1px 6px;"
+                            data-target="breakdown-{{ tpl.id }}" title="Show breakdown">
+                      <i class="bi bi-list-ul"></i>
+                    </button>
                     {# Load into form #}
-                    <button type="button" class="btn btn-sm btn-outline-secondary load-tpl-btn"
+                    <button type="button" class="btn btn-xs btn-outline-primary load-tpl-btn"
+                            style="font-size:.7rem; padding:1px 6px;"
                             title="Load into form"
                             data-payouts="{{ tpl.get_payouts()|tojson }}">
                       <i class="bi bi-pencil"></i>
                     </button>
+                    {# Apply directly to event #}
+                    <form method="POST" class="d-inline">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="action" value="apply_template">
+                      <input type="hidden" name="template_id" value="{{ tpl.id }}">
+                      <button type="submit" class="btn btn-xs btn-outline-warning"
+                              style="font-size:.7rem; padding:1px 6px;" title="Apply directly to this event">
+                        <i class="bi bi-check2-circle"></i>
+                      </button>
+                    </form>
                     {# Delete #}
                     <form method="POST" class="d-inline"
                           data-confirm="Delete template '{{ tpl.name }}'?">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="action" value="delete_template">
                       <input type="hidden" name="template_id" value="{{ tpl.id }}">
-                      <button type="submit" class="btn btn-sm btn-outline-danger">
+                      <button type="submit" class="btn btn-xs btn-outline-danger"
+                              style="font-size:.7rem; padding:1px 6px;">
                         <i class="bi bi-trash"></i>
                       </button>
                     </form>
@@ -163,9 +254,10 @@
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const inputs    = document.querySelectorAll('.payout-input');
-    const grandTot  = document.getElementById('grandTotal');
+    const inputs   = document.querySelectorAll('.payout-input');
+    const grandTot = document.getElementById('grandTotal');
 
+    // ── Running totals ─────────────────────────────────────────────────────
     function updateTotals() {
         let running = 0;
         inputs.forEach((inp, idx) => {
@@ -176,11 +268,10 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         grandTot.textContent = `$${running.toFixed(2)}`;
     }
-
     inputs.forEach(inp => inp.addEventListener('input', updateTotals));
     updateTotals();
 
-    /* Load template into form fields */
+    // ── Load template into form fields ─────────────────────────────────────
     document.querySelectorAll('.load-tpl-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const payouts = JSON.parse(btn.dataset.payouts || '{}');
@@ -193,7 +284,66 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
-    /* data-confirm on delete forms */
+    // ── Preset buttons ────────────────────────────────────────────────────
+    let activeSplits = null;
+    const presetBtns    = document.querySelectorAll('.preset-btn');
+    const purseInput    = document.getElementById('purseInput');
+    const applyPresetBtn = document.getElementById('applyPresetBtn');
+    const presetHint    = document.getElementById('presetHint');
+
+    presetBtns.forEach(btn => {
+        btn.addEventListener('click', function () {
+            presetBtns.forEach(b => {
+                b.classList.remove('btn-warning', 'active');
+                b.classList.add('btn-outline-secondary');
+            });
+            this.classList.remove('btn-outline-secondary');
+            this.classList.add('btn-warning', 'active');
+            const data = JSON.parse(this.dataset.preset);
+            activeSplits = data.splits;
+            presetHint.textContent = `${activeSplits.map(s=>s+'%').join(' / ')} — enter purse total then click Apply %.`;
+        });
+    });
+
+    applyPresetBtn.addEventListener('click', function () {
+        if (!activeSplits) { presetHint.textContent = 'Select a preset first.'; return; }
+        const purse = parseFloat(purseInput.value);
+        if (!purse || purse <= 0) { presetHint.textContent = 'Enter a valid purse total.'; return; }
+        inputs.forEach((inp, idx) => {
+            inp.value = idx < activeSplits.length
+                ? ((activeSplits[idx] / 100) * purse).toFixed(2)
+                : '';
+        });
+        updateTotals();
+        presetHint.textContent = `Applied: $${purse.toFixed(0)} purse across ${activeSplits.length} places.`;
+    });
+
+    // ── Clear all ─────────────────────────────────────────────────────────
+    document.getElementById('clearAllBtn').addEventListener('click', function () {
+        if (!confirm('Clear all payout values?')) return;
+        inputs.forEach(inp => { inp.value = ''; });
+        presetBtns.forEach(b => {
+            b.classList.remove('btn-warning', 'active');
+            b.classList.add('btn-outline-secondary');
+        });
+        activeSplits = null;
+        updateTotals();
+    });
+
+    // ── Template breakdown toggles ────────────────────────────────────────
+    document.querySelectorAll('.toggle-breakdown-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            const target = document.getElementById(this.dataset.target);
+            if (!target) return;
+            const visible = target.style.display !== 'none';
+            target.style.display = visible ? 'none' : 'block';
+            this.innerHTML = visible
+                ? '<i class="bi bi-list-ul"></i>'
+                : '<i class="bi bi-chevron-up"></i>';
+        });
+    });
+
+    // ── Confirm on delete forms ───────────────────────────────────────────
     document.querySelectorAll('form[data-confirm]').forEach(f => {
         f.addEventListener('submit', e => {
             if (!confirm(f.dataset.confirm)) e.preventDefault();

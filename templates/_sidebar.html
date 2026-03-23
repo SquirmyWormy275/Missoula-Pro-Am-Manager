@@ -16,22 +16,33 @@
 
     <!-- ── SIDEBAR HEADER ─────────────────────────────── -->
     <div class="sb-head d-flex align-items-center px-2"
-         style="min-height:50px; flex-shrink:0; border-bottom:1px solid var(--sx-border); gap:6px;">
+         style="min-height:56px; flex-shrink:0; border-bottom:1px solid var(--sx-border); gap:6px;
+                background:linear-gradient(135deg, rgba(232,57,31,0.06) 0%, transparent 60%);">
         <!-- Tournament label (hidden when collapsed) -->
         <div class="sb-text flex-grow-1 overflow-hidden">
             <div class="fw-bold text-truncate"
-                 style="font-size:0.80rem; color:var(--sx-text); font-family:'Fraunces',serif; line-height:1.2;">
+                 style="font-size:0.82rem; color:var(--sx-text); font-family:'Fraunces',serif; line-height:1.2; letter-spacing:0.01em;">
                 {{ tournament.name }} {{ tournament.year }}
             </div>
             <div class="mt-1">
                 {% if tournament.status == 'setup' %}
-                    <span class="badge bg-secondary" style="font-size:0.60rem;">Setup</span>
+                    <span class="badge bg-secondary" style="font-size:0.58rem; padding:2px 6px;"
+                          data-bs-toggle="tooltip" title="Setup: configure events, import competitors, and build heats before game day.">Setup</span>
                 {% elif tournament.status == 'college_active' %}
-                    <span class="badge bg-primary" style="font-size:0.60rem;">College Active</span>
+                    <span class="badge bg-primary" style="font-size:0.58rem; padding:2px 6px;"
+                          data-bs-toggle="tooltip" title="College Active: Friday competition is live. Score events heat by heat.">
+                        <i class="bi bi-circle-fill me-1" style="font-size:0.35rem; vertical-align:middle; color:#6cb6f5;"></i>College Active
+                    </span>
                 {% elif tournament.status == 'pro_active' %}
-                    <span class="badge bg-warning text-dark" style="font-size:0.60rem;">Pro Active</span>
+                    <span class="badge bg-warning" style="font-size:0.58rem; padding:2px 6px;"
+                          data-bs-toggle="tooltip" title="Pro Active: Saturday show is live. Manage flights and payout settlements.">
+                        <i class="bi bi-circle-fill me-1" style="font-size:0.35rem; vertical-align:middle; color:#f0b84c;"></i>Pro Active
+                    </span>
                 {% elif tournament.status == 'completed' %}
-                    <span class="badge bg-success" style="font-size:0.60rem;">Completed</span>
+                    <span class="badge bg-success" style="font-size:0.58rem; padding:2px 6px;"
+                          data-bs-toggle="tooltip" title="Completed: All events finalized. Export results and archive.">
+                        <i class="bi bi-check-circle-fill me-1" style="font-size:0.55rem; vertical-align:middle;"></i>Completed
+                    </span>
                 {% endif %}
             </div>
         </div>
@@ -49,6 +60,7 @@
         <!-- Overview (always visible) -->
         <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}"
            class="nav-link {{ 'active' if request.endpoint == 'main.tournament_detail' else '' }}"
+           {% if request.endpoint == 'main.tournament_detail' %}aria-current="page"{% endif %}
            title="Overview">
             <i class="bi bi-grid-3x3-gap sb-icon"></i>
             <span class="sb-text ms-2">Overview</span>
@@ -63,30 +75,35 @@
         <div id="sb-entries" class="sb-group-body">
             <a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'main.college_dashboard' else '' }}"
+               {% if request.endpoint == 'main.college_dashboard' %}aria-current="page"{% endif %}
                title="College Day">
                 <i class="bi bi-mortarboard sb-icon"></i>
                 <span class="sb-text ms-2">College Day</span>
             </a>
             <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}"
                class="nav-link sidebar-child {{ 'active' if request.endpoint == 'registration.college_registration' else '' }}"
+               {% if request.endpoint == 'registration.college_registration' %}aria-current="page"{% endif %}
                title="College Operations">
                 <i class="bi bi-people sb-icon"></i>
                 <span class="sb-text ms-2">College Operations</span>
             </a>
             <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'main.pro_dashboard' else '' }}"
+               {% if request.endpoint == 'main.pro_dashboard' %}aria-current="page"{% endif %}
                title="Pro Day">
                 <i class="bi bi-trophy sb-icon"></i>
                 <span class="sb-text ms-2">Pro Day</span>
             </a>
             <a href="{{ url_for('registration.pro_registration', tournament_id=tournament.id) }}"
                class="nav-link sidebar-child {{ 'active' if request.endpoint in ('registration.pro_registration', 'import_pro.import_upload', 'import_pro.import_review') else '' }}"
+               {% if request.endpoint in ('registration.pro_registration', 'import_pro.import_upload', 'import_pro.import_review') %}aria-current="page"{% endif %}
                title="Pro Operations">
                 <i class="bi bi-person-plus sb-icon"></i>
                 <span class="sb-text ms-2">Pro Operations</span>
             </a>
             <a href="{{ url_for('reporting.fee_tracker', tournament_id=tournament.id) }}"
                class="nav-link sidebar-child {{ 'active' if request.endpoint == 'reporting.fee_tracker' else '' }}"
+               {% if request.endpoint == 'reporting.fee_tracker' %}aria-current="page"{% endif %}
                title="Fee Tracker">
                 <i class="bi bi-receipt sb-icon"></i>
                 <span class="sb-text ms-2">Fee Tracker</span>
@@ -102,24 +119,28 @@
         <div id="sb-config" class="sb-group-body">
             <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'scheduling.setup_events' else '' }}"
+               {% if request.endpoint == 'scheduling.setup_events' %}aria-current="page"{% endif %}
                title="Configure Events">
                 <i class="bi bi-calendar-plus sb-icon"></i>
                 <span class="sb-text ms-2">Configure Events</span>
             </a>
             <a href="{{ url_for('scheduling.friday_feature', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'scheduling.friday_feature' else '' }}"
+               {% if request.endpoint == 'scheduling.friday_feature' %}aria-current="page"{% endif %}
                title="Fri Feature / Sat Overflow">
                 <i class="bi bi-stars sb-icon"></i>
                 <span class="sb-text ms-2">Fri Feature / Sat Overflow</span>
             </a>
             <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'scheduling.preflight_check' else '' }}"
+               {% if request.endpoint == 'scheduling.preflight_check' %}aria-current="page"{% endif %}
                title="Preflight Check">
                 <i class="bi bi-shield-check sb-icon"></i>
                 <span class="sb-text ms-2">Preflight Check</span>
             </a>
             <a href="{{ url_for('woodboss.report', tid=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint in ('woodboss.report', 'woodboss.config_form', 'woodboss.lottery', 'woodboss.history') else '' }}"
+               {% if request.endpoint in ('woodboss.report', 'woodboss.config_form', 'woodboss.lottery', 'woodboss.history') %}aria-current="page"{% endif %}
                title="Virtual Woodboss">
                 <i class="bi bi-tools sb-icon"></i>
                 <span class="sb-text ms-2">Virtual Woodboss</span>
@@ -135,6 +156,7 @@
         <div id="sb-scoring" class="sb-group-body">
             <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}?tab=build"
                class="nav-link {{ 'active' if request.endpoint == 'scheduling.event_list' and request.args.get('tab', 'build') == 'build' else '' }}"
+               {% if request.endpoint == 'scheduling.event_list' and request.args.get('tab', 'build') == 'build' %}aria-current="page"{% endif %}
                title="Build Schedule"
                style="display:flex; align-items:center;">
                 <i class="bi bi-lightning-charge sb-icon"></i>
@@ -142,6 +164,7 @@
             </a>
             <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}?tab=friday"
                class="nav-link {{ 'active' if request.endpoint == 'scheduling.event_list' and request.args.get('tab') == 'friday' else '' }}"
+               {% if request.endpoint == 'scheduling.event_list' and request.args.get('tab') == 'friday' %}aria-current="page"{% endif %}
                title="Friday Operations"
                style="display:flex; align-items:center;">
                 <i class="bi bi-mortarboard sb-icon"></i>
@@ -152,12 +175,14 @@
             </a>
             <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}?tab=saturday"
                class="nav-link {{ 'active' if request.endpoint == 'scheduling.event_list' and request.args.get('tab') == 'saturday' else '' }}"
+               {% if request.endpoint == 'scheduling.event_list' and request.args.get('tab') == 'saturday' %}aria-current="page"{% endif %}
                title="Saturday Operations">
                 <i class="bi bi-trophy sb-icon"></i>
                 <span class="sb-text ms-2">Saturday Operations</span>
             </a>
             <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
                class="nav-link sidebar-child {{ 'active' if request.endpoint == 'scheduling.heat_sheets' else '' }}"
+               {% if request.endpoint == 'scheduling.heat_sheets' %}aria-current="page"{% endif %}
                title="Heat Sheets">
                 <i class="bi bi-printer sb-icon"></i>
                 <span class="sb-text ms-2">Heat Sheets</span>
@@ -179,18 +204,28 @@
         <div id="sb-results" class="sb-group-body">
             <a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'reporting.all_results' else '' }}"
+               {% if request.endpoint == 'reporting.all_results' %}aria-current="page"{% endif %}
                title="All Results">
                 <i class="bi bi-file-text sb-icon"></i>
                 <span class="sb-text ms-2">All Results</span>
             </a>
             <a href="{{ url_for('reporting.college_standings', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'reporting.college_standings' else '' }}"
+               {% if request.endpoint == 'reporting.college_standings' %}aria-current="page"{% endif %}
                title="College Standings">
                 <i class="bi bi-bar-chart sb-icon"></i>
                 <span class="sb-text ms-2">College Standings</span>
             </a>
+            <a href="{{ url_for('scoring.tournament_payout_manager', tournament_id=tournament.id) }}"
+               class="nav-link {{ 'active' if request.endpoint == 'scoring.tournament_payout_manager' else '' }}"
+               {% if request.endpoint == 'scoring.tournament_payout_manager' %}aria-current="page"{% endif %}
+               title="Configure Payouts">
+                <i class="bi bi-cash-coin sb-icon"></i>
+                <span class="sb-text ms-2">Configure Payouts</span>
+            </a>
             <a href="{{ url_for('reporting.pro_payout_summary', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'reporting.pro_payout_summary' else '' }}"
+               {% if request.endpoint == 'reporting.pro_payout_summary' %}aria-current="page"{% endif %}
                title="Pro Payouts">
                 <i class="bi bi-cash-stack sb-icon"></i>
                 <span class="sb-text ms-2">Pro Payouts</span>
@@ -198,6 +233,7 @@
             {% if current_user.is_authenticated and current_user.is_admin %}
             <a href="{{ url_for('reporting.payout_settlement', tournament_id=tournament.id) }}"
                class="nav-link {{ 'active' if request.endpoint == 'reporting.payout_settlement' else '' }}"
+               {% if request.endpoint == 'reporting.payout_settlement' %}aria-current="page"{% endif %}
                title="Payout Settlement">
                 <i class="bi bi-check2-square sb-icon"></i>
                 <span class="sb-text ms-2">Payout Settlement</span>
@@ -215,12 +251,14 @@
         <div id="sb-admin" class="sb-group-body">
             <a href="{{ url_for('auth.manage_users') }}"
                class="nav-link {{ 'active' if request.endpoint == 'auth.manage_users' else '' }}"
+               {% if request.endpoint == 'auth.manage_users' %}aria-current="page"{% endif %}
                title="Users">
                 <i class="bi bi-people sb-icon"></i>
                 <span class="sb-text ms-2">Users</span>
             </a>
             <a href="{{ url_for('auth.audit_log') }}"
                class="nav-link {{ 'active' if request.endpoint == 'auth.audit_log' else '' }}"
+               {% if request.endpoint == 'auth.audit_log' %}aria-current="page"{% endif %}
                title="Audit Log">
                 <i class="bi bi-journal-text sb-icon"></i>
                 <span class="sb-text ms-2">Audit Log</span>
@@ -231,13 +269,19 @@
     </div>
 
     <!-- ── BOTTOM BACK LINK ───────────────────────────── -->
-    <div style="flex-shrink:0; border-top:1px solid var(--sx-border); padding:0.3rem 0;">
+    <div style="flex-shrink:0; border-top:1px solid var(--sx-border); padding:0.25rem 0 0.35rem;">
         <a href="{{ url_for('main.judge_dashboard') }}"
-           class="nav-link" style="color:var(--sx-text-3); font-size:0.82rem;"
+           class="nav-link" style="color:var(--sx-text-3); font-size:0.80rem;"
            title="All Tournaments">
-            <i class="bi bi-arrow-left sb-icon"></i>
+            <i class="bi bi-arrow-left sb-icon" style="color:var(--sx-text-3);"></i>
             <span class="sb-text ms-2">All Tournaments</span>
         </a>
+        <div class="sb-text px-2 pb-1" style="overflow:hidden;">
+            <div style="font-family:'Orbitron',sans-serif; font-size:0.42rem; letter-spacing:0.14em;
+                        text-transform:uppercase; color:var(--sx-text-3); opacity:0.5; text-align:center; margin-top:3px;">
+                A STRATHEX Platform
+            </div>
+        </div>
     </div>
 
 </nav>

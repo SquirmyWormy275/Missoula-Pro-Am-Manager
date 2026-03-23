@@ -132,9 +132,18 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
         heats_per_flight = 8
         target_flights = math.ceil(total_non_axe / heats_per_flight) if total_non_axe else 0
 
+    # Pre-compute gear-sharing conflict pairs for adjacency penalty.
+    gear_conflict_pairs: dict[int, set[int]] = {}
+    try:
+        from services.gear_sharing import build_gear_conflict_pairs
+        gear_conflict_pairs = build_gear_conflict_pairs(tournament)
+    except Exception:
+        logger.warning('flight_builder: could not load gear conflict pairs', exc_info=True)
+
     # Build optimized heat order using multi-pass greedy algorithm.
     # Springboard opener and Hot Saw closer bonuses are baked into the scoring.
-    ordered_heats = _optimize_heat_order(all_heats, heats_per_flight, N_OPTIMIZATION_PASSES)
+    ordered_heats = _optimize_heat_order(all_heats, heats_per_flight, N_OPTIMIZATION_PASSES,
+                                         gear_conflict_pairs=gear_conflict_pairs)
     total_heats = len(ordered_heats)
 
     # Partnered axe requires one heat per flight, so ensure enough flights.
@@ -275,7 +284,8 @@ def _next_flight_position(flight_id: int) -> int:
 
 
 def _optimize_heat_order(all_heats: list, heats_per_flight: int = 8,
-                         n_passes: int = N_OPTIMIZATION_PASSES) -> list:
+                         n_passes: int = N_OPTIMIZATION_PASSES,
+                         gear_conflict_pairs: dict[int, set[int]] | None = None) -> list:
     """
     Optimize heat order using a multi-pass greedy algorithm.
 
@@ -318,8 +328,10 @@ def _optimize_heat_order(all_heats: list, heats_per_flight: int = 8,
     for pass_num in range(actual_passes):
         # Rotate event_ids to create different greedy starting conditions.
         rotated = event_ids[pass_num:] + event_ids[:pass_num]
-        candidate = _single_pass_optimize(event_queues, rotated, heats_per_flight)
-        score = _score_ordering(candidate, heats_per_flight)
+        candidate = _single_pass_optimize(event_queues, rotated, heats_per_flight,
+                                          gear_conflict_pairs=gear_conflict_pairs)
+        score = _score_ordering(candidate, heats_per_flight,
+                                gear_conflict_pairs=gear_conflict_pairs)
         if score > best_score:
             best_score = score
             best_ordered = candidate
@@ -328,7 +340,8 @@ def _optimize_heat_order(all_heats: list, heats_per_flight: int = 8,
 
 
 def _single_pass_optimize(event_queues: dict, event_id_order: list,
-                           heats_per_flight: int) -> list:
+                           heats_per_flight: int,
+                           gear_conflict_pairs: dict[int, set[int]] | None = None) -> list:
     """
     Execute a single greedy pass through the event queues.
 
@@ -369,6 +382,8 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
                     stand_type_last_position,
                     heats_per_flight,
                     event_last_block,
+                    gear_conflict_pairs=gear_conflict_pairs,
+                    previous_heat_comps=ordered[-1]['competitors'] if ordered else set(),
                 ),
                 remaining_counts[eid],   # tie-break: more remaining = preferred
                 eid,
@@ -416,7 +431,8 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
     return ordered
 
 
-def _score_ordering(ordered: list, heats_per_flight: int) -> float:
+def _score_ordering(ordered: list, heats_per_flight: int,
+                    gear_conflict_pairs: dict[int, set[int]] | None = None) -> float:
     """
     Compute a quality score for a complete heat ordering. Higher is better.
 
@@ -453,6 +469,18 @@ def _score_ordering(ordered: list, heats_per_flight: int) -> float:
             total += 10
             event_blocks_seen[block_key] = True
 
+    # Gear adjacency penalty across the full ordering.
+    if gear_conflict_pairs:
+        for pos in range(1, len(ordered)):
+            prev_comps = ordered[pos - 1]['competitors']
+            curr_comps = ordered[pos]['competitors']
+            for cid in curr_comps:
+                partner_ids = gear_conflict_pairs.get(cid)
+                if partner_ids:
+                    overlap = partner_ids & prev_comps
+                    if overlap:
+                        total -= 30 * len(overlap)
+
     return total
 
 
@@ -460,7 +488,9 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
                            current_position: int, event: Event,
                            stand_type_last_position: dict | None,
                            heats_per_flight: int = 8,
-                           event_last_block: dict | None = None) -> float:
+                           event_last_block: dict | None = None,
+                           gear_conflict_pairs: dict[int, set[int]] | None = None,
+                           previous_heat_comps: set | None = None) -> float:
     """
     Calculate a score for placing a heat at the current position.
 
@@ -545,6 +575,17 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
             last_block = event_last_block.get(event_id)
             if last_block is None or last_block < current_block:
                 score += 30
+
+    # Gear adjacency penalty: penalize placing a heat immediately after one that
+    # contains a gear-sharing partner.  This gives equipment time to be moved
+    # between stands.  Soft penalty (-30 per conflict) — does not hard-block.
+    if gear_conflict_pairs and previous_heat_comps:
+        for comp_id in competitors:
+            partner_ids = gear_conflict_pairs.get(comp_id)
+            if partner_ids:
+                overlap = partner_ids & previous_heat_comps
+                if overlap:
+                    score -= 30 * len(overlap)
 
     return score
 
