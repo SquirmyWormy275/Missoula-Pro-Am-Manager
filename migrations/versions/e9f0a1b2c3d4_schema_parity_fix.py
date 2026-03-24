@@ -50,6 +50,12 @@ def upgrade():
             'UPDATE users SET is_active_user = is_active WHERE is_active_user IS NULL'
         ))
 
+    # --- tournaments table ---
+    _add_column_if_missing('tournaments', 'providing_shirts',
+                           sa.Boolean())
+    _add_column_if_missing('tournaments', 'schedule_config',
+                           sa.Text())
+
     # --- college_competitors table ---
     _add_column_if_missing('college_competitors', 'headshot_filename',
                            sa.String(200))
