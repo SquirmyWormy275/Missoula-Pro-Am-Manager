@@ -137,7 +137,10 @@ body {
     </div>
     {% endfor %}
     {% else %}
-    <div class="text-muted">No completed events yet.</div>
+    <div class="text-center py-3" style="opacity:0.5;">
+        <i class="bi bi-clipboard-check d-block mb-2" style="font-size:1.5rem;"></i>
+        Results will appear as events are finalized.
+    </div>
     {% endif %}
 </div>
 

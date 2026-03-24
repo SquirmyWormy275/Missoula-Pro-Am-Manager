@@ -8,10 +8,10 @@ and SchoolCaptain.
 Run:  pytest tests/test_models_full.py -v
 """
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from flask import Flask
 from database import db as _db
 
 
@@ -21,23 +21,17 @@ from database import db as _db
 
 @pytest.fixture(scope='module')
 def app():
-    """Minimal Flask app with an in-memory SQLite database."""
-    test_app = Flask(__name__)
-    test_app.config.update(
-        TESTING=True,
-        SQLALCHEMY_DATABASE_URI='sqlite:///:memory:',
-        SQLALCHEMY_TRACK_MODIFICATIONS=False,
-        SECRET_KEY='test-secret-full',
-        WTF_CSRF_ENABLED=False,
-    )
-    _db.init_app(test_app)
+    """Test Flask app with temp-file SQLite built via flask db upgrade."""
+    from tests.db_test_utils import create_test_app
+    _app, db_path = create_test_app()
 
-    with test_app.app_context():
-        import models  # noqa: F401 â€” registers all mappers
-        _db.create_all()
-        yield test_app
+    with _app.app_context():
+        yield _app
         _db.session.remove()
-        # _db.drop_all() — skipped; in-memory SQLite is discarded on exit
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 @pytest.fixture(autouse=True)

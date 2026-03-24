@@ -21,7 +21,7 @@ class Tournament(db.Model):
     friday_feature_date = db.Column(db.Date, nullable=True)  # Friday night
 
     # Status tracking — use TournamentStatus constants (from config) not bare strings.
-    status = db.Column(db.String(50), default=TournamentStatus.SETUP)
+    status = db.Column(db.String(50), nullable=False, default=TournamentStatus.SETUP)
 
     # Shirt logistics — True when the show provides shirts; controls shirt-size collection on pro entry
     providing_shirts = db.Column(db.Boolean, nullable=False, default=False)
@@ -30,8 +30,8 @@ class Tournament(db.Model):
     schedule_config = db.Column(db.Text, nullable=True)
 
     # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     teams = db.relationship('Team', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')

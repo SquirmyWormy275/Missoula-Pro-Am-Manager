@@ -13,6 +13,19 @@ from services.audit import log_action
 
 auth_bp = Blueprint('auth', __name__)
 
+# Login rate limiting — import write_limit from api.py (no-op if flask-limiter absent)
+try:
+    from routes.api import write_limit as _write_limit
+except ImportError:
+    import functools as _functools
+    def _write_limit(rate: str = '30 per minute'):
+        def decorator(f):
+            @_functools.wraps(f)
+            def wrapper(*args, **kwargs):
+                return f(*args, **kwargs)
+            return wrapper
+        return decorator
+
 
 def _safe_redirect_target(target: str | None):
     if not target:
@@ -52,6 +65,7 @@ def _require_admin():
 
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
+@_write_limit('10 per minute')
 def login():
     """Log in an existing user."""
     if current_user.is_authenticated:
@@ -323,7 +337,8 @@ def audit_log():
     query = AuditLog.query.order_by(AuditLog.created_at.desc())
 
     if action_filter:
-        query = query.filter(AuditLog.action.ilike(f'%{action_filter}%'))
+        escaped = action_filter.replace('%', r'\%').replace('_', r'\_')
+        query = query.filter(AuditLog.action.ilike(f'%{escaped}%', escape='\\'))
     if entity_type_filter:
         query = query.filter(AuditLog.entity_type == entity_type_filter)
     if user_id_filter:

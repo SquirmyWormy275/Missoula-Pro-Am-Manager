@@ -27,20 +27,20 @@ class CollegeCompetitor(db.Model):
     gender = db.Column(db.String(1), nullable=False)  # 'M' or 'F'
 
     # Scoring
-    individual_points = db.Column(db.Integer, default=0)
+    individual_points = db.Column(db.Integer, nullable=False, default=0)
 
     # Event tracking - stored as JSON
-    events_entered = db.Column(db.Text, default='[]')  # List of event IDs
-    partners = db.Column(db.Text, default='{}')  # Dict: event_id -> partner_name
-    gear_sharing = db.Column(db.Text, default='{}')  # Dict: event_id -> partner sharing gear
+    events_entered = db.Column(db.Text, nullable=False, default='[]')  # List of event IDs
+    partners = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> partner_name
+    gear_sharing = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> partner sharing gear
     portal_pin_hash = db.Column(db.String(255), nullable=True)
 
     # Headshot and SMS (#14, #2)
     headshot_filename = db.Column(db.Text, nullable=True)
-    phone_opted_in = db.Column(db.Boolean, default=False)
+    phone_opted_in = db.Column(db.Boolean, nullable=False, default=False)
 
     # Status
-    status = db.Column(db.String(20), default='active')  # active, scratched
+    status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched
 
     # STRATHMARK global database identifier (see ProCompetitor.strathmark_id for full docs).
     # College competitors gain a strathmark_id only when their name is found in the global DB
@@ -170,39 +170,39 @@ class ProCompetitor(db.Model):
     shirt_size = db.Column(db.String(10), nullable=True)
 
     # Membership and lottery
-    is_ala_member = db.Column(db.Boolean, default=False)  # American Lumberjack Association
-    pro_am_lottery_opt_in = db.Column(db.Boolean, default=False)
+    is_ala_member = db.Column(db.Boolean, nullable=False, default=False)  # American Lumberjack Association
+    pro_am_lottery_opt_in = db.Column(db.Boolean, nullable=False, default=False)
 
     # Springboard specific
-    is_left_handed_springboard = db.Column(db.Boolean, default=False)
-    springboard_slow_heat = db.Column(db.Boolean, default=False)
+    is_left_handed_springboard = db.Column(db.Boolean, nullable=False, default=False)
+    springboard_slow_heat = db.Column(db.Boolean, nullable=False, default=False)
 
     # Event and fee tracking - stored as JSON
-    events_entered = db.Column(db.Text, default='[]')  # List of event IDs
-    entry_fees = db.Column(db.Text, default='{}')  # Dict: event_id -> fee amount
-    fees_paid = db.Column(db.Text, default='{}')  # Dict: event_id -> True/False
-    gear_sharing = db.Column(db.Text, default='{}')  # Dict: event_id -> partner name
-    partners = db.Column(db.Text, default='{}')  # Dict: event_id -> partner_name
+    events_entered = db.Column(db.Text, nullable=False, default='[]')  # List of event IDs
+    entry_fees = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> fee amount
+    fees_paid = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> True/False
+    gear_sharing = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> partner name
+    partners = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> partner_name
     portal_pin_hash = db.Column(db.String(255), nullable=True)
 
     # Earnings
-    total_earnings = db.Column(db.Float, default=0.0)
-    payout_settled = db.Column(db.Boolean, default=False)  # #21 payout settlement checklist
+    total_earnings = db.Column(db.Float, nullable=False, default=0.0)
+    payout_settled = db.Column(db.Boolean, nullable=False, default=False)  # #21 payout settlement checklist
 
     # Headshot and SMS (#14, #2)
     headshot_filename = db.Column(db.Text, nullable=True)
-    phone_opted_in = db.Column(db.Boolean, default=False)
+    phone_opted_in = db.Column(db.Boolean, nullable=False, default=False)
 
     # Status
-    status = db.Column(db.String(20), default='active')  # active, scratched
+    status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched
 
     # Import tracking (populated by Google Forms xlsx importer)
     submission_timestamp = db.Column(db.DateTime, nullable=True)
     gear_sharing_details = db.Column(db.Text, nullable=True)
-    waiver_accepted = db.Column(db.Boolean, default=False)
+    waiver_accepted = db.Column(db.Boolean, nullable=False, default=False)
     waiver_signature = db.Column(db.String(200), nullable=True)
     notes = db.Column(db.Text, nullable=True)
-    total_fees = db.Column(db.Integer, default=0)
+    total_fees = db.Column(db.Integer, nullable=False, default=0)
     import_timestamp = db.Column(db.DateTime, nullable=True)
 
     # STRATHMARK global database identifier — deterministic, portable, non-autoincrement.

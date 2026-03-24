@@ -37,14 +37,14 @@ class Heat(db.Model):
 
     # Heat identification
     heat_number = db.Column(db.Integer, nullable=False)
-    run_number = db.Column(db.Integer, default=1)  # For dual-run events (1 or 2)
+    run_number = db.Column(db.Integer, nullable=False, default=1)  # For dual-run events (1 or 2)
 
     # Competitors and stand assignments - stored as JSON
-    competitors = db.Column(db.Text, default='[]')  # List of competitor IDs
-    stand_assignments = db.Column(db.Text, default='{}')  # Dict: competitor_id -> stand_number
+    competitors = db.Column(db.Text, nullable=False, default='[]')  # List of competitor IDs
+    stand_assignments = db.Column(db.Text, nullable=False, default='{}')  # Dict: competitor_id -> stand_number
 
     # Status
-    status = db.Column(db.String(20), default='pending')  # pending, in_progress, completed
+    status = db.Column(db.String(20), nullable=False, default='pending')  # pending, in_progress, completed
     version_id = db.Column(db.Integer, nullable=False, default=1)
 
     __mapper_args__ = {
@@ -166,7 +166,7 @@ class Flight(db.Model):
     name = db.Column(db.String(100), nullable=True)  # Optional custom name
 
     # Status
-    status = db.Column(db.String(20), default='pending')  # pending, in_progress, completed
+    status = db.Column(db.String(20), nullable=False, default='pending')  # pending, in_progress, completed
 
     # Notes
     notes = db.Column(db.Text, nullable=True)  # For special instructions

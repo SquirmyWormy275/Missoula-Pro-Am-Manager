@@ -540,7 +540,12 @@ def _get_tournament_events(event: Event) -> list:
         _get_tournament_events._cache = {}
     tid = event.tournament_id
     if tid not in _get_tournament_events._cache:
-        _get_tournament_events._cache[tid] = Event.query.filter_by(tournament_id=tid).all()
+        try:
+            _get_tournament_events._cache[tid] = Event.query.filter_by(tournament_id=tid).all()
+        except RuntimeError:
+            # Outside Flask app context (e.g. unit tests with fake events) —
+            # return empty list so gear cascade checks are safely skipped.
+            return []
     return _get_tournament_events._cache[tid]
 
 

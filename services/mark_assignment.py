@@ -304,35 +304,42 @@ def _build_wood_profile(event):
 
 
 def _fetch_start_mark(calculator, strathmark_id: str, event_code: str, name: str) -> Optional[float]:
-    """Call the STRATHMARK API to get a start mark for one competitor.
+    """Single-competitor fallback: call calculator.calculate() for one competitor.
 
     Returns the start mark in seconds (float >= 0) on success, None on failure.
     A return of 0.0 means scratch (no mark assigned by the calculator).
 
     NOTE: This is the legacy single-competitor fallback. The preferred path is
     _batch_calculate_marks() which calls calculator.calculate() for all
-    competitors at once and returns full MarkResult objects.
+    competitors at once and returns full MarkResult objects with predicted_time.
     """
     try:
-        mark = getattr(calculator, 'get_start_mark', None)
-        if mark is None:
-            logger.debug('mark_assignment: calculator has no get_start_mark — use batch path')
-            return None
-        result = mark(
-            competitor_id=strathmark_id,
+        from strathmark.predictor import CompetitorRecord, WoodProfile  # type: ignore[import]
+
+        record = CompetitorRecord(name=name)
+        # Use a default WoodProfile — the batch path is preferred for accurate wood data
+        wood = WoodProfile(species='Pine', diameter_mm=300.0, quality=5)
+
+        mark_results = calculator.calculate(
+            competitors=[record],
+            wood=wood,
             event_code=event_code,
-            show_name='Missoula Pro-Am',
         )
-        if result is None:
+        if not mark_results:
             logger.debug('mark_assignment: no mark returned for %s (%s)', name, strathmark_id)
             return None
-        result = float(result)
-        if result < 0:
+
+        mr = mark_results[0]
+        mark_val = float(mr.mark)
+        if mark_val < 0:
             logger.warning(
-                'mark_assignment: negative mark %.2f for %s — clamping to 0', result, name
+                'mark_assignment: negative mark %.2f for %s — clamping to 0', mark_val, name
             )
-            result = 0.0
-        return result
+            mark_val = 0.0
+        return mark_val
+    except ImportError:
+        logger.debug('mark_assignment: strathmark.predictor not available — skipping single-competitor path')
+        return None
     except Exception as exc:
         logger.warning('mark_assignment: error fetching mark for %s: %s', name, exc)
         return None

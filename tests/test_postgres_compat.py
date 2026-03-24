@@ -318,7 +318,7 @@ class TestConfigValidation:
         with pytest.raises(RuntimeError, match='SECRET_KEY'):
             validate_runtime({
                 'ENV_NAME': 'production',
-                'SECRET_KEY': 'dev-key-change-in-production',
+                'SECRET_KEY': 'changeme',
             })
 
     def test_short_secret_key_rejected(self):

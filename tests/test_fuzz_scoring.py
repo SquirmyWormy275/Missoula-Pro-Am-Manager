@@ -21,21 +21,17 @@ from tests.conftest import (
 
 @pytest.fixture(scope='module')
 def app():
-    from app import create_app
-    _app = create_app()
-    _app.config.update({
-        'TESTING': True,
-        'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
-        'WTF_CSRF_ENABLED': False,
-        'WTF_CSRF_CHECK_DEFAULT': False,
-        'SERVER_NAME': None,
-    })
+    from tests.db_test_utils import create_test_app
     from database import db
+    _app, db_path = create_test_app()
+
     with _app.app_context():
-        db.create_all()
         yield _app
         db.session.remove()
-        db.drop_all()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 @pytest.fixture()

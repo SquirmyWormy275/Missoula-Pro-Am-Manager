@@ -568,6 +568,21 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-03-23 (V2.6.0)
+
+**Design Review — Accessibility, Polish & Empty States**
+
+- Added `color-scheme: dark` to `<html>` element (CSS + inline) for native dark mode form controls, scrollbars, and date pickers
+- Raised touch targets to 44px minimum on `.navbar-proam .nav-link` and `.btn-proam` (from 31px/38px)
+- Added `@media (prefers-reduced-motion: reduce)` to `theme.css` — zeroes all animation/transition durations
+- Added staggered `card-enter` fade-up animation on role entry cards (0.3s ease-out, 80ms stagger)
+- Added hover lift transition on `.card.shadow-sm` (spectator portal cards)
+- Fixed disabled button cursor: `cursor: not-allowed` on `.btn:disabled` / `.btn.disabled`
+- Changed hero title from `<div>` to `<h1>` on role entry page for semantic heading hierarchy
+- Replaced 9 bare empty state strings ("No rankings yet.", "No standings yet.", "No completed events yet.") across `spectator_college.html`, `spectator_pro.html`, `kiosk.html` with warm messages + Bootstrap icons
+
+Files changed: `static/css/theme.css`, `templates/base.html`, `templates/role_entry.html`, `templates/portal/spectator_college.html`, `templates/portal/spectator_pro.html`, `templates/portal/kiosk.html`
+
 ### 2026-03-23 (V2.5.0)
 
 **STRATHEX Design System & Comprehensive Test Suite**

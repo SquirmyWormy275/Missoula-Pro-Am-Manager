@@ -19,19 +19,16 @@ from tests.fixtures.synthetic_data import COLLEGE_TEAMS, COLLEGE_GEAR_NOTES
 
 @pytest.fixture(scope='module')
 def app():
-    from app import create_app
-    _app = create_app()
-    _app.config.update({
-        'TESTING': True,
-        'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
-        'WTF_CSRF_ENABLED': False,
-        'WTF_CSRF_CHECK_DEFAULT': False,
-    })
+    from tests.db_test_utils import create_test_app
+    _app, db_path = create_test_app()
+
     with _app.app_context():
-        _db.create_all()
         yield _app
         _db.session.remove()
-        # _# db.drop_all() � skipped; in-memory SQLite is discarded on exit � skipped; in-memory SQLite is discarded on exit
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 @pytest.fixture()

@@ -52,8 +52,10 @@ def malware_scan(path: str, enabled: bool = False, command_template: str = '') -
     """Optional malware scan hook. Raises RuntimeError if scan command fails."""
     if not enabled or not command_template:
         return
-    command = command_template.replace('{path}', path)
-    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    import shlex
+    command = command_template.replace('{path}', shlex.quote(path))
+    args = shlex.split(command)
+    result = subprocess.run(args, shell=False, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f'Malware scan failed: {result.stderr.strip() or result.stdout.strip()}')
 

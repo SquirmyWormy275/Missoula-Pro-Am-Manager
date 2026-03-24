@@ -15,7 +15,7 @@ class PayoutTemplate(db.Model):
     name = db.Column(db.String(100), nullable=False, unique=True)
     # JSON dict: {"1": 500.0, "2": 300.0, ...}
     payouts = db.Column(db.Text, nullable=False, default='{}')
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
     def __repr__(self):
         return f'<PayoutTemplate {self.name!r}>'

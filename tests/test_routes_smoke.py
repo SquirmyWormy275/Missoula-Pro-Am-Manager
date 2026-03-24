@@ -25,6 +25,7 @@ Design notes:
     full integration tests.
   - WTF_CSRF_ENABLED is disabled for all POST smoke tests.
 """
+import os
 import pytest
 from database import db as _db
 
@@ -35,27 +36,18 @@ from database import db as _db
 
 @pytest.fixture(scope='module')
 def app():
-    """Create a test Flask app with in-memory SQLite and CSRF disabled."""
-    import os
-    os.environ.setdefault('SECRET_KEY', 'test-secret-smoke')
-    os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
-
-    from app import create_app
-    _app = create_app()
-    _app.config.update({
-        'TESTING': True,
-        'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
-        'WTF_CSRF_ENABLED': False,
-        'WTF_CSRF_CHECK_DEFAULT': False,
-        'SERVER_NAME': None,
-    })
+    """Create a test Flask app with temp-file SQLite built via flask db upgrade."""
+    from tests.db_test_utils import create_test_app
+    _app, db_path = create_test_app()
 
     with _app.app_context():
-        _db.create_all()
         _seed_db(_app)
         yield _app
         _db.session.remove()
-        _db.drop_all()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 def _seed_db(app):

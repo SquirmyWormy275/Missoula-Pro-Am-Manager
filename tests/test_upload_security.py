@@ -298,7 +298,7 @@ class TestMalwareScan:
         mock_run.return_value = MagicMock(returncode=0)
         malware_scan("/tmp/file.xlsx", enabled=True, command_template="clamscan {path}")
         mock_run.assert_called_once_with(
-            "clamscan /tmp/file.xlsx", shell=True, capture_output=True, text=True
+            ["clamscan", "/tmp/file.xlsx"], shell=False, capture_output=True, text=True
         )
 
     @patch("services.upload_security.subprocess.run")
@@ -326,8 +326,8 @@ class TestMalwareScan:
             command_template="scanner --file={path} --mode=quick",
         )
         mock_run.assert_called_once_with(
-            "scanner --file=/data/uploads/abc.xlsx --mode=quick",
-            shell=True,
+            ["scanner", "--file=/data/uploads/abc.xlsx", "--mode=quick"],
+            shell=False,
             capture_output=True,
             text=True,
         )
