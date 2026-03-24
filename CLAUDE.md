@@ -713,7 +713,7 @@ The following features remain as planned or implied by the codebase and requirem
 
 ## Deploy Configuration (configured by /setup-deploy)
 - Platform: Railway
-- Production URL: TBD (not yet deployed — update this after first Railway deploy)
+- Production URL: https://missoula-pro-am-manager-production.up.railway.app
 - Deploy workflow: auto-deploy on push to main (Railway watches the GitHub repo)
 - Deploy status command: HTTP health check at production URL
 - Merge method: squash
@@ -725,4 +725,4 @@ The following features remain as planned or implied by the codebase and requirem
 - Pre-merge: `pytest` (run tests before merging)
 - Deploy trigger: automatic on push to main (Railway auto-deploy)
 - Deploy status: poll production URL root for HTTP 200
-- Health check: GET {PRODUCTION_URL}/ — update URL after first deploy
+- Health check: GET https://missoula-pro-am-manager-production.up.railway.app/
