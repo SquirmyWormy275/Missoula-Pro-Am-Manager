@@ -17,11 +17,8 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table('college_competitors', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('portal_pin_hash', sa.String(length=255), nullable=True))
-
-    with op.batch_alter_table('pro_competitors', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('portal_pin_hash', sa.String(length=255), nullable=True))
+    op.add_column('college_competitors', sa.Column('portal_pin_hash', sa.String(length=255), nullable=True))
+    op.add_column('pro_competitors', sa.Column('portal_pin_hash', sa.String(length=255), nullable=True))
 
 
 def downgrade():

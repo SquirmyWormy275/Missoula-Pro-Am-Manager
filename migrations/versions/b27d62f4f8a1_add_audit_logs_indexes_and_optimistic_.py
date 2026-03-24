@@ -31,28 +31,20 @@ def upgrade():
         sa.ForeignKeyConstraint(['actor_user_id'], ['users.id']),
         sa.PrimaryKeyConstraint('id'),
     )
-    with op.batch_alter_table('audit_logs', schema=None) as batch_op:
-        batch_op.create_index('ix_audit_logs_created_at', ['created_at'], unique=False)
-        batch_op.create_index('ix_audit_logs_actor', ['actor_user_id'], unique=False)
-        batch_op.create_index('ix_audit_logs_action', ['action'], unique=False)
+    op.create_index('ix_audit_logs_created_at', 'audit_logs', ['created_at'], unique=False)
+    op.create_index('ix_audit_logs_actor', 'audit_logs', ['actor_user_id'], unique=False)
+    op.create_index('ix_audit_logs_action', 'audit_logs', ['action'], unique=False)
 
-    with op.batch_alter_table('events', schema=None) as batch_op:
-        batch_op.create_index('ix_events_tournament_type_status', ['tournament_id', 'event_type', 'status'], unique=False)
+    op.create_index('ix_events_tournament_type_status', 'events', ['tournament_id', 'event_type', 'status'], unique=False)
 
-    with op.batch_alter_table('event_results', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('version_id', sa.Integer(), nullable=False, server_default='1'))
-        batch_op.create_index('ix_event_results_event_status', ['event_id', 'status'], unique=False)
-        batch_op.create_unique_constraint('uq_event_result_competitor', ['event_id', 'competitor_id', 'competitor_type'])
-    with op.batch_alter_table('event_results', schema=None) as batch_op:
-        batch_op.alter_column('version_id', server_default=None)
+    op.add_column('event_results', sa.Column('version_id', sa.Integer(), nullable=False, server_default='1'))
+    op.create_index('ix_event_results_event_status', 'event_results', ['event_id', 'status'], unique=False)
+    op.create_unique_constraint('uq_event_result_competitor', 'event_results', ['event_id', 'competitor_id', 'competitor_type'])
 
-    with op.batch_alter_table('heats', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('version_id', sa.Integer(), nullable=False, server_default='1'))
-        batch_op.create_index('ix_heats_event_status', ['event_id', 'status'], unique=False)
-        batch_op.create_index('ix_heats_flight_id', ['flight_id'], unique=False)
-        batch_op.create_unique_constraint('uq_event_heat_run', ['event_id', 'heat_number', 'run_number'])
-    with op.batch_alter_table('heats', schema=None) as batch_op:
-        batch_op.alter_column('version_id', server_default=None)
+    op.add_column('heats', sa.Column('version_id', sa.Integer(), nullable=False, server_default='1'))
+    op.create_index('ix_heats_event_status', 'heats', ['event_id', 'status'], unique=False)
+    op.create_index('ix_heats_flight_id', 'heats', ['flight_id'], unique=False)
+    op.create_unique_constraint('uq_event_heat_run', 'heats', ['event_id', 'heat_number', 'run_number'])
 
 
 def downgrade():

@@ -26,22 +26,19 @@ depends_on = None
 
 def upgrade():
     # --- events table ---
-    with op.batch_alter_table('events', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('is_finalized', sa.Boolean(), nullable=False, server_default='0'))
-        batch_op.add_column(sa.Column('requires_triple_runs', sa.Boolean(), nullable=False, server_default='0'))
+    op.add_column('events', sa.Column('is_finalized', sa.Boolean(), nullable=False, server_default='0'))
+    op.add_column('events', sa.Column('requires_triple_runs', sa.Boolean(), nullable=False, server_default='0'))
 
     # --- event_results table ---
-    with op.batch_alter_table('event_results', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('run3_value', sa.Float(), nullable=True))
-        batch_op.add_column(sa.Column('tiebreak_value', sa.Float(), nullable=True))
-        batch_op.add_column(sa.Column('throwoff_pending', sa.Boolean(), nullable=False, server_default='0'))
-        batch_op.add_column(sa.Column('handicap_factor', sa.Float(), nullable=False, server_default='1.0'))
+    op.add_column('event_results', sa.Column('run3_value', sa.Float(), nullable=True))
+    op.add_column('event_results', sa.Column('tiebreak_value', sa.Float(), nullable=True))
+    op.add_column('event_results', sa.Column('throwoff_pending', sa.Boolean(), nullable=False, server_default='0'))
+    op.add_column('event_results', sa.Column('handicap_factor', sa.Float(), nullable=False, server_default='1.0'))
 
     # --- heats table ---
-    with op.batch_alter_table('heats', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('locked_by_user_id', sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column('locked_at', sa.DateTime(), nullable=True))
-        batch_op.create_foreign_key('fk_heats_locked_by_user_id', 'users', ['locked_by_user_id'], ['id'])
+    op.add_column('heats', sa.Column('locked_by_user_id', sa.Integer(), nullable=True))
+    op.add_column('heats', sa.Column('locked_at', sa.DateTime(), nullable=True))
+    op.create_foreign_key('fk_heats_locked_by_user_id', 'heats', 'users', ['locked_by_user_id'], ['id'])
 
     # --- payout_templates table ---
     op.create_table(

@@ -16,13 +16,11 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table('pro_competitors') as batch_op:
-        batch_op.add_column(sa.Column('strathmark_id', sa.String(50), nullable=True))
-        batch_op.create_index('ix_pro_competitors_strathmark_id', ['strathmark_id'])
+    op.add_column('pro_competitors', sa.Column('strathmark_id', sa.String(50), nullable=True))
+    op.create_index('ix_pro_competitors_strathmark_id', 'pro_competitors', ['strathmark_id'])
 
-    with op.batch_alter_table('college_competitors') as batch_op:
-        batch_op.add_column(sa.Column('strathmark_id', sa.String(50), nullable=True))
-        batch_op.create_index('ix_college_competitors_strathmark_id', ['strathmark_id'])
+    op.add_column('college_competitors', sa.Column('strathmark_id', sa.String(50), nullable=True))
+    op.create_index('ix_college_competitors_strathmark_id', 'college_competitors', ['strathmark_id'])
 
 
 def downgrade():

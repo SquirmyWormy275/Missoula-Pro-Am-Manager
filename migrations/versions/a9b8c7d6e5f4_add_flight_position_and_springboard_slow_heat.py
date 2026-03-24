@@ -24,8 +24,6 @@ def upgrade():
         "UPDATE pro_competitors SET springboard_slow_heat = 0 "
         "WHERE springboard_slow_heat IS NULL"
     )
-    with op.batch_alter_table('pro_competitors') as batch_op:
-        batch_op.alter_column('springboard_slow_heat', nullable=False, server_default=None)
 
 
 def downgrade():

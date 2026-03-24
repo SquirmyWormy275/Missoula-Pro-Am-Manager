@@ -35,14 +35,11 @@ def upgrade():
         sa.UniqueConstraint('username'),
     )
 
-    with op.batch_alter_table('users', schema=None) as batch_op:
-        batch_op.create_index('ix_users_role', ['role'], unique=False)
-        batch_op.create_index('ix_users_tournament_id', ['tournament_id'], unique=False)
+    op.create_index('ix_users_role', 'users', ['role'], unique=False)
+    op.create_index('ix_users_tournament_id', 'users', ['tournament_id'], unique=False)
 
 
 def downgrade():
-    with op.batch_alter_table('users', schema=None) as batch_op:
-        batch_op.drop_index('ix_users_tournament_id')
-        batch_op.drop_index('ix_users_role')
-
+    op.drop_index('ix_users_tournament_id', table_name='users')
+    op.drop_index('ix_users_role', table_name='users')
     op.drop_table('users')
