@@ -16,8 +16,8 @@ depends_on = None
 def upgrade():
     op.add_column('pro_competitors', sa.Column('headshot_filename', sa.Text(), nullable=True))
     op.add_column('college_competitors', sa.Column('headshot_filename', sa.Text(), nullable=True))
-    op.add_column('pro_competitors', sa.Column('phone_opted_in', sa.Boolean(), nullable=True, server_default='0'))
-    op.add_column('college_competitors', sa.Column('phone_opted_in', sa.Boolean(), nullable=True, server_default='0'))
+    op.add_column('pro_competitors', sa.Column('phone_opted_in', sa.Boolean(), nullable=True, server_default='false'))
+    op.add_column('college_competitors', sa.Column('phone_opted_in', sa.Boolean(), nullable=True, server_default='false'))
 
 
 def downgrade():

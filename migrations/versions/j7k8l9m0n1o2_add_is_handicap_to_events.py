@@ -18,7 +18,7 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column('events', sa.Column('is_handicap', sa.Boolean(), nullable=False, server_default='0'))
+    op.add_column('events', sa.Column('is_handicap', sa.Boolean(), nullable=False, server_default='false'))
 
 
 def downgrade():

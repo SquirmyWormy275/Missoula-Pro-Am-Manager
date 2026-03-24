@@ -14,8 +14,8 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column('pro_competitors', sa.Column('payout_settled', sa.Boolean(), nullable=True, server_default='0'))
-    op.add_column('event_results', sa.Column('is_flagged', sa.Boolean(), nullable=True, server_default='0'))
+    op.add_column('pro_competitors', sa.Column('payout_settled', sa.Boolean(), nullable=True, server_default='false'))
+    op.add_column('event_results', sa.Column('is_flagged', sa.Boolean(), nullable=True, server_default='false'))
 
 
 def downgrade():

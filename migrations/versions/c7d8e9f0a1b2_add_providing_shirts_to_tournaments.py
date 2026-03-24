@@ -21,7 +21,7 @@ def upgrade():
         'providing_shirts',
         sa.Boolean(),
         nullable=True,
-        server_default=sa.text('0'),
+        server_default=sa.text('false'),
     ))
 
 

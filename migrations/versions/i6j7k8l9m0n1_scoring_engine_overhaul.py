@@ -26,13 +26,13 @@ depends_on = None
 
 def upgrade():
     # --- events table ---
-    op.add_column('events', sa.Column('is_finalized', sa.Boolean(), nullable=False, server_default='0'))
-    op.add_column('events', sa.Column('requires_triple_runs', sa.Boolean(), nullable=False, server_default='0'))
+    op.add_column('events', sa.Column('is_finalized', sa.Boolean(), nullable=False, server_default='false'))
+    op.add_column('events', sa.Column('requires_triple_runs', sa.Boolean(), nullable=False, server_default='false'))
 
     # --- event_results table ---
     op.add_column('event_results', sa.Column('run3_value', sa.Float(), nullable=True))
     op.add_column('event_results', sa.Column('tiebreak_value', sa.Float(), nullable=True))
-    op.add_column('event_results', sa.Column('throwoff_pending', sa.Boolean(), nullable=False, server_default='0'))
+    op.add_column('event_results', sa.Column('throwoff_pending', sa.Boolean(), nullable=False, server_default='false'))
     op.add_column('event_results', sa.Column('handicap_factor', sa.Float(), nullable=False, server_default='1.0'))
 
     # --- heats table ---
