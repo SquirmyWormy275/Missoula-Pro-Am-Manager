@@ -17,11 +17,25 @@ branch_labels = None
 depends_on = None
 
 
+def _get_existing_columns(table):
+    """Get existing column names for a table (works on both SQLite and PostgreSQL)."""
+    conn = op.get_bind()
+    dialect = conn.dialect.name
+    if dialect == 'sqlite':
+        result = conn.execute(sa.text(f'PRAGMA table_info("{table}")'))
+        return {row[1] for row in result}
+    else:
+        # PostgreSQL / other dialects: use information_schema
+        result = conn.execute(sa.text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = :table"
+        ), {'table': table})
+        return {row[0] for row in result}
+
+
 def _add_column_if_missing(table, column_name, column_type):
     """Add a column only if it doesn't already exist (idempotent for patched DBs)."""
-    conn = op.get_bind()
-    result = conn.execute(sa.text(f'PRAGMA table_info("{table}")'))
-    existing = {row[1] for row in result}
+    existing = _get_existing_columns(table)
     if column_name not in existing:
         op.add_column(table, sa.Column(column_name, column_type))
         return True
@@ -42,10 +56,9 @@ def upgrade():
                            sa.Boolean())
 
     # Backfill is_active_user from stale is_active if both exist
-    conn = op.get_bind()
-    result = conn.execute(sa.text('PRAGMA table_info("users")'))
-    cols = {row[1] for row in result}
+    cols = _get_existing_columns('users')
     if 'is_active' in cols and 'is_active_user' in cols:
+        conn = op.get_bind()
         conn.execute(sa.text(
             'UPDATE users SET is_active_user = is_active WHERE is_active_user IS NULL'
         ))
