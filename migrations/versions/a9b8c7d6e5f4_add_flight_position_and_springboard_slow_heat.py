@@ -21,7 +21,7 @@ def upgrade():
         sa.Column('springboard_slow_heat', sa.Boolean(), nullable=True, server_default=sa.false()),
     )
     op.execute(
-        "UPDATE pro_competitors SET springboard_slow_heat = 0 "
+        "UPDATE pro_competitors SET springboard_slow_heat = false "
         "WHERE springboard_slow_heat IS NULL"
     )
 
