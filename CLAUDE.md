@@ -559,6 +559,27 @@ After the migration is verified, update the Migration Chain in MEMORY.md:
 - **Never use `_add_column_if_missing()` or similar idempotent hacks.** If a column is missing, the correct migration was wrong — fix it at the source.
 - **Never alter `nullable` or `server_default` on an existing column unless that is the explicit purpose of the migration.**
 
+#### PostgreSQL Compatibility Rules (MANDATORY — production runs on PostgreSQL)
+
+This project deploys to Railway PostgreSQL. SQLite is dev-only. Every migration MUST work on both. These rules exist because SQLite-specific migrations caused a multi-hour production outage (Session 24, 2026-03-24). Tests in `tests/test_pg_migration_safety.py` enforce these rules automatically.
+
+**NEVER use in upgrade() functions:**
+
+| Banned Pattern | Why | Use Instead |
+|---|---|---|
+| `batch_alter_table` | Reconstructs tables; fails on PG with FKs/indexes | `op.add_column()`, `op.create_index()`, `op.drop_index()` directly |
+| `server_default='0'` on Boolean | PG rejects `0` as boolean; needs `'false'` | `server_default='false'` or `server_default=sa.false()` |
+| `server_default=sa.text('0')` on Boolean | Same — `sa.text('0')` emits literal `0` | `server_default=sa.text('false')` |
+| `PRAGMA table_info(...)` | SQLite-only introspection | `information_schema.columns` query (see `e9f0a1b2c3d4` for dual-dialect pattern) |
+| `SET col = 0` in `op.execute()` on Boolean | PG rejects integer for boolean | `SET col = false` |
+| `ALTER TABLE ... RENAME` via batch | PG doesn't need it; batch can corrupt | `op.alter_column()` directly |
+
+**Before committing any migration:**
+```bash
+pytest tests/test_pg_migration_safety.py -v
+```
+If any test fails, fix the migration before committing. These tests scan all migration files for the patterns above — they catch problems in seconds, not after a 2-hour deploy debugging session.
+
 ### Model Column Declaration Rules
 
 Every `db.Column()` call in `models/*.py` must explicitly declare `nullable`. Omitting it causes SQLAlchemy to default to `nullable=True`, which Alembic then bakes into auto-generated migrations — even when the column clearly should be NOT NULL (e.g., Boolean with `default=False`). This ambiguity is the upstream source of most migration drift.
