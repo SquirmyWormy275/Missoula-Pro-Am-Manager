@@ -3,7 +3,7 @@ Flask application entry point for the Missoula Pro Am Tournament Manager.
 """
 import os
 import time
-from flask import Flask, Response, request, abort, send_from_directory, session
+from flask import Flask, Response, jsonify, request, abort, render_template, send_from_directory, session
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import event as sa_event
 from sqlalchemy.engine import Engine
@@ -45,7 +45,7 @@ login_manager.login_view = 'auth.login'
 login_manager.login_message = 'Please log in to continue.'
 login_manager.login_message_category = 'warning'
 
-MANAGEMENT_BLUEPRINTS = {'main', 'registration', 'scheduling', 'scoring', 'reporting', 'proam_relay', 'partnered_axe', 'validation', 'import_pro', 'woodboss'}
+MANAGEMENT_BLUEPRINTS = {'main', 'registration', 'scheduling', 'scoring', 'reporting', 'proam_relay', 'partnered_axe', 'validation', 'import_pro', 'woodboss', 'demo', 'strathmark'}
 BLUEPRINT_PERMISSIONS = {
     'main': 'is_judge',
     'registration': 'can_register',
@@ -57,6 +57,8 @@ BLUEPRINT_PERMISSIONS = {
     'validation': 'can_report',
     'import_pro': 'can_register',
     'woodboss': 'is_judge',
+    'demo': 'is_judge',
+    'strathmark': 'is_judge',
     'auth': 'can_manage_users',
 }
 
@@ -86,6 +88,12 @@ def create_app():
     configure_error_monitoring(app.config.get('SENTRY_DSN', ''))
     configure_jobs(int(app.config.get('JOB_MAX_WORKERS', 2)))
 
+    # Session cookie hardening
+    app.config.setdefault('SESSION_COOKIE_HTTPONLY', True)
+    app.config.setdefault('SESSION_COOKIE_SAMESITE', 'Lax')
+    if app.config.get('ENV_NAME') == 'production':
+        app.config.setdefault('SESSION_COOKIE_SECURE', True)
+
     # Ensure upload folder exists
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -95,6 +103,7 @@ def create_app():
     # Initialize CSRF protection
     csrf.init_app(app)
     if HAS_FLASK_LOGIN:
+        login_manager.session_protection = 'basic'  # type: ignore[assignment]
         login_manager.init_app(app)
 
         from models.user import User
@@ -158,6 +167,7 @@ def create_app():
     from routes.import_routes import import_pro_bp
     from routes.woodboss import woodboss_bp, woodboss_public_bp
     from routes.strathmark import strathmark_bp
+    from routes.demo_data import demo_bp
     if HAS_FLASK_LOGIN:
         from routes.auth import auth_bp
         from routes.portal import portal_bp
@@ -175,6 +185,7 @@ def create_app():
     app.register_blueprint(woodboss_bp, url_prefix='/woodboss')
     app.register_blueprint(woodboss_public_bp, url_prefix='/woodboss')
     app.register_blueprint(strathmark_bp, url_prefix='/strathmark')
+    app.register_blueprint(demo_bp, url_prefix='/demo')
     if HAS_FLASK_LOGIN:
         app.register_blueprint(auth_bp, url_prefix='/auth')
         app.register_blueprint(portal_bp, url_prefix='/portal')
@@ -255,6 +266,56 @@ def create_app():
         if translated != body:
             response.set_data(translated)
         return response
+
+    # --- Security headers ---
+    @app.after_request
+    def set_security_headers(response: Response):
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+        response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+        if app.config.get('ENV_NAME') == 'production':
+            response.headers.setdefault(
+                'Strict-Transport-Security', 'max-age=31536000; includeSubDomains'
+            )
+        response.headers.setdefault(
+            'Content-Security-Policy',
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'"
+        )
+        return response
+
+    # --- CORS for public API endpoints ---
+    @app.after_request
+    def set_cors_headers(response: Response):
+        if request.path.startswith('/api/public/'):
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
+
+    # --- Custom error handlers ---
+    @app.errorhandler(404)
+    def not_found_error(error):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Not found', 'status': 404}), 404
+        return render_template('errors/404.html'), 404
+
+    @app.errorhandler(403)
+    def forbidden_error(error):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Forbidden', 'status': 403}), 403
+        return render_template('errors/403.html'), 403
+
+    @app.errorhandler(500)
+    def internal_error(error):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Internal server error', 'status': 500}), 500
+        return render_template('errors/500.html'), 500
 
     return app
 

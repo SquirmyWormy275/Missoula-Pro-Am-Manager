@@ -15,7 +15,7 @@ class SchoolCaptain(db.Model):
     tournament_id = db.Column(db.Integer, db.ForeignKey('tournaments.id'), nullable=False)
     school_name = db.Column(db.String(200), nullable=False)  # Matches Team.school_name exactly
     pin_hash = db.Column(db.String(255), nullable=True)
-    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
 
     __table_args__ = (
         db.UniqueConstraint('tournament_id', 'school_name', name='unique_school_captain_per_tournament'),

@@ -32,7 +32,7 @@ def health():
         db_ok = True
     except Exception:
         pass
-    return jsonify({'status': 'ok', 'db': db_ok, 'version': '2.3.0'})
+    return jsonify({'status': 'ok', 'db': db_ok, 'version': '2.6.0'})
 
 
 def _can_access_arapaho_mode() -> bool:

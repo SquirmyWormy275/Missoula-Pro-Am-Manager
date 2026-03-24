@@ -10,7 +10,7 @@ def _normalized_database_url() -> str:
 
 
 class BaseConfig:
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
+    SECRET_KEY = os.environ.get('SECRET_KEY') or os.urandom(32).hex()
     SQLALCHEMY_DATABASE_URI = _normalized_database_url()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {'pool_pre_ping': True}
@@ -62,9 +62,9 @@ def validate_runtime(app_config: dict) -> None:
         return
 
     secret = app_config.get('SECRET_KEY') or ''
-    weak_values = {'dev-key-change-in-production', 'changeme', 'secret', 'default'}
+    weak_values = {'changeme', 'secret', 'default'}
     if len(secret) < 16 or secret.lower() in weak_values:
-        raise RuntimeError('Invalid SECRET_KEY for production. Set a strong random secret.')
+        raise RuntimeError('Invalid SECRET_KEY for production. Set a strong random secret via SECRET_KEY env var.')
 
 # ---------------------------------------------------------------------------
 # Scoring rule helpers

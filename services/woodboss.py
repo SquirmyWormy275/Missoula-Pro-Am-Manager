@@ -267,11 +267,13 @@ def _fmt_size(cfg):
 def generate_share_token(tournament_id, secret_key):
     """
     Generate a deterministic, unforgeable share token for the printable report.
-    Token = first 24 hex chars of HMAC-SHA256(secret_key, tournament_id).
+    Token = first 32 hex chars (128 bits) of HMAC-SHA256(secret_key, tournament_id).
     """
-    key = (secret_key or 'fallback-key').encode('utf-8')
+    if not secret_key:
+        raise ValueError('SECRET_KEY is required for share token generation')
+    key = secret_key.encode('utf-8')
     msg = f'woodboss-share-{tournament_id}'.encode('utf-8')
-    return hmac.new(key, msg, hashlib.sha256).hexdigest()[:24]
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()[:32]
 
 
 # ---------------------------------------------------------------------------

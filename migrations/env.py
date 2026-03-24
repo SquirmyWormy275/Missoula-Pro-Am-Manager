@@ -6,6 +6,44 @@ from flask import current_app
 from alembic import context
 from sqlalchemy import text
 
+# ---------------------------------------------------------------------------
+# Autogenerate comparison tuning
+# ---------------------------------------------------------------------------
+# These hooks reduce false-positive drift detection by Alembic.  Without them,
+# ``flask db migrate`` silently injects alter_column calls for nullable,
+# server_default, and type changes on columns the developer did NOT touch.
+# That is the #1 cause of migration bugs in this project.
+# ---------------------------------------------------------------------------
+
+
+def _compare_type(context, inspected_column, metadata_column, inspected_type, metadata_type):
+    """Never auto-generate type changes.
+
+    SQLite reports all types as TEXT/INTEGER/REAL regardless of what the model
+    declares (VARCHAR(50), String(20), etc.).  Letting Alembic auto-detect
+    type diffs produces noise that gets committed as unintended alter_column
+    calls.  Type changes should always be written manually.
+
+    Return False = "types match, skip this diff".
+    """
+    return False
+
+
+def _compare_server_default(context, inspected_column, metadata_column, inspected_default, metadata_default):
+    """Suppress server_default diffs on SQLite.
+
+    SQLite reports defaults differently than PostgreSQL (e.g. '0' vs
+    "'0'" vs "false").  Auto-detecting these diffs produces false positives
+    that get committed as unintended alter_column calls.
+
+    Return False = "defaults match, skip this diff".
+    """
+    # On SQLite, always suppress — too many false positives.
+    if context.connection.dialect.name == 'sqlite':
+        return False
+    # On PostgreSQL, let Alembic compare normally.
+    return None  # None = "use default comparison"
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -94,6 +132,12 @@ def run_migrations_online():
     conf_args = current_app.extensions['migrate'].configure_args
     if conf_args.get("process_revision_directives") is None:
         conf_args["process_revision_directives"] = process_revision_directives
+
+    # Suppress false-positive type and server_default diffs.
+    # These cause Alembic to auto-inject alter_column calls for columns the
+    # developer did NOT touch — the #1 source of migration drift.
+    conf_args.setdefault("compare_type", _compare_type)
+    conf_args.setdefault("compare_server_default", _compare_server_default)
 
     connectable = get_engine()
 

@@ -23,42 +23,42 @@ class Event(db.Model):
 
     # Scoring configuration
     scoring_type = db.Column(db.String(20), nullable=False)  # 'time', 'score', 'distance', 'hits', 'bracket'
-    scoring_order = db.Column(db.String(20), default='lowest_wins')  # 'lowest_wins' or 'highest_wins'
+    scoring_order = db.Column(db.String(20), nullable=False, default='lowest_wins')  # 'lowest_wins' or 'highest_wins'
 
     # Event classification (college only)
-    is_open = db.Column(db.Boolean, default=False)  # True = OPEN event, False = CLOSED
+    is_open = db.Column(db.Boolean, nullable=False, default=False)  # True = OPEN event, False = CLOSED
 
     # Competition format (underhand, standing block, springboard only)
-    is_handicap = db.Column(db.Boolean, default=False)  # False = Championship, True = Handicap
+    is_handicap = db.Column(db.Boolean, nullable=False, default=False)  # False = Championship, True = Handicap
 
     # Event characteristics
-    is_partnered = db.Column(db.Boolean, default=False)
+    is_partnered = db.Column(db.Boolean, nullable=False, default=False)
     partner_gender_requirement = db.Column(db.String(10), nullable=True)  # 'same', 'mixed', 'any'
 
     # Run configuration
     # requires_dual_runs: two separate heats (run 1 & run 2); best run counts.
     #   Used by: Speed Climb, Chokerman's Race, Caber Toss.
-    requires_dual_runs = db.Column(db.Boolean, default=False)
+    requires_dual_runs = db.Column(db.Boolean, nullable=False, default=False)
     # requires_triple_runs: three throw inputs in a single heat; sum counts.
     #   Used by: Axe Throw, Partnered Axe Throw. Tie detected → throw-off required.
-    requires_triple_runs = db.Column(db.Boolean, default=False)
+    requires_triple_runs = db.Column(db.Boolean, nullable=False, default=False)
 
     # Stand configuration
     stand_type = db.Column(db.String(50), nullable=True)
     max_stands = db.Column(db.Integer, nullable=True)
 
     # Pro event specifics
-    has_prelims = db.Column(db.Boolean, default=False)  # True for Partnered Axe Throw
+    has_prelims = db.Column(db.Boolean, nullable=False, default=False)  # True for Partnered Axe Throw
 
     # Payout configuration (pro only) - stored as JSON
-    payouts = db.Column(db.Text, default='{}')  # Dict: position -> amount
+    payouts = db.Column(db.Text, nullable=False, default='{}')  # Dict: position -> amount
 
     # Status
-    status = db.Column(db.String(20), default='pending')  # pending, in_progress, completed
+    status = db.Column(db.String(20), nullable=False, default='pending')  # pending, in_progress, completed
 
     # Explicit finalization lock — set True after _calculate_positions() succeeds.
     # Editing a result on a finalized event resets this to False, requiring re-finalization.
-    is_finalized = db.Column(db.Boolean, default=False)
+    is_finalized = db.Column(db.Boolean, nullable=False, default=False)
 
     # Relationships
     heats = db.relationship('Heat', backref='event', lazy='dynamic', cascade='all, delete-orphan')
@@ -152,13 +152,13 @@ class EventResult(db.Model):
 
     # Throw-off flag — set True when the system detects a cumulative-score tie on axe throw.
     # Judge must record throw-off positions before is_finalized can be set True.
-    throwoff_pending = db.Column(db.Boolean, default=False)
+    throwoff_pending = db.Column(db.Boolean, nullable=False, default=False)
 
     # STRATHMARK handicap start mark in seconds.
     # _metric() in scoring_engine subtracts this from raw time when event.is_handicap is True
     # and scoring_type == 'time'.  Default 1.0 is the DB placeholder; treated as 0.0 scratch
     # by _metric().  Populated by services/mark_assignment.py → assign_handicap_marks().
-    handicap_factor = db.Column(db.Float, default=1.0, nullable=False)
+    handicap_factor = db.Column(db.Float, nullable=False, default=1.0)
 
     # STRATHMARK predicted completion time in seconds — the raw time HandicapCalculator
     # expected this competitor to post.  Stored here so that after the event runs,
@@ -172,16 +172,16 @@ class EventResult(db.Model):
     final_position = db.Column(db.Integer, nullable=True)  # 1st, 2nd, 3rd, etc.
 
     # Points awarded (college only)
-    points_awarded = db.Column(db.Integer, default=0)
+    points_awarded = db.Column(db.Integer, nullable=False, default=0)
 
     # Payout (pro only)
-    payout_amount = db.Column(db.Float, default=0.0)
+    payout_amount = db.Column(db.Float, nullable=False, default=0.0)
 
     # Score discrepancy flag
-    is_flagged = db.Column(db.Boolean, default=False)
+    is_flagged = db.Column(db.Boolean, nullable=False, default=False)
 
     # Status
-    status = db.Column(db.String(20), default='pending')  # pending, completed, scratched, dnf
+    status = db.Column(db.String(20), nullable=False, default='pending')  # pending, completed, scratched, dnf
     version_id = db.Column(db.Integer, nullable=False, default=1)
 
     __mapper_args__ = {

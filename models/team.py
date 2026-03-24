@@ -18,10 +18,10 @@ class Team(db.Model):
     school_abbreviation = db.Column(db.String(20), nullable=False)  # e.g., "UM", "CSU"
 
     # Scoring
-    total_points = db.Column(db.Integer, default=0)
+    total_points = db.Column(db.Integer, nullable=False, default=0)
 
     # Status
-    status = db.Column(db.String(20), default='active')  # active, scratched, invalid
+    status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched, invalid
 
     # Validation error tracking (JSON list of structured error dicts; None = no errors recorded)
     validation_errors = db.Column(db.Text, nullable=True)

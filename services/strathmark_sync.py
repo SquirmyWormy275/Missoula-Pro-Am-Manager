@@ -394,25 +394,15 @@ def _record_prediction_residuals_for_pro_event(event, event_code: str) -> None:
     Positive: competitor ran slower than predicted (undermarked).
     Negative: competitor ran faster than predicted (overmarked).
 
-    PREDICTED TIME — CURRENT STATE (NOT YET WIRED):
-    predicted_time must be stored on EventResult before finalization for this
-    function to record any data.  As of now, EventResult does not have a
-    predicted_time column — the schema only carries handicap_factor (the start
-    mark in seconds, default 1.0 = unassigned scratch).
-
-    The mark assignment service (services/mark_assignment.py) populates
-    handicap_factor with the start mark but does NOT store the predicted
-    completion time.  Additionally, mark_assignment._get_handicap_calculator()
-    instantiates HandicapCalculator with supabase_url/supabase_key kwargs that
-    HandicapCalculator.__init__ does not accept (it takes event_ceiling, ollama_url,
-    wood_df, results_df), so the constructor raises TypeError and returns None.
-    mark_assignment._fetch_start_mark() also calls calculator.get_start_mark()
-    which does not exist on HandicapCalculator (the correct method is calculate()).
-    Until both issues are resolved:
-        (a) EventResult.predicted_time column added via migration, and
-        (b) mark_assignment.py updated to persist MarkResult.predicted_time,
-    this function will silently skip every competitor (predicted_time is None)
-    and record nothing.  It remains safe to call at any time.
+    PREDICTED TIME:
+    EventResult.predicted_time (Float, nullable) was added in migration
+    d8d4aa7bdb45. The mark assignment service (services/mark_assignment.py)
+    populates both handicap_factor (start mark) and predicted_time (predicted
+    completion time) from STRATHMARK MarkResult objects via the batch
+    calculate path. When marks have been assigned before finalization,
+    this function records residuals (actual - predicted) for STRATHMARK
+    bias-learning. If predicted_time is NULL (marks not assigned), this
+    function silently skips. It remains safe to call at any time.
 
     This function is non-blocking — all exceptions are caught and logged at
     ERROR level; the caller's response path is never interrupted.
@@ -436,10 +426,8 @@ def _record_prediction_residuals_for_pro_event(event, event_code: str) -> None:
                 # strathmark_id absence already logged by push_pro_event_results().
                 continue
 
-            # predicted_time is not yet a column on EventResult.  getattr returns
-            # None until the field exists and mark_assignment stores it.
-            # Do NOT use handicap_factor as a substitute — it is the start mark
-            # (in seconds), not the predicted completion time.
+            # predicted_time is populated by mark_assignment when handicap marks
+            # are assigned before the event. If marks weren't assigned, it's NULL.
             predicted_time = getattr(result, 'predicted_time', None)
             if predicted_time is None:
                 logger.warning(
