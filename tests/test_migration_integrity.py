@@ -18,6 +18,9 @@ import tempfile
 
 import pytest
 
+if os.environ.get('TEST_USE_CREATE_ALL') == '1':
+    pytest.skip('Migration integrity tests require flask db upgrade path', allow_module_level=True)
+
 os.environ.setdefault('SECRET_KEY', 'test-secret-migration')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
