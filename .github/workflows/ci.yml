@@ -30,6 +30,7 @@ jobs:
           FLASK_ENV: testing
           SECRET_KEY: ci-test-secret-key
           DATABASE_URL: sqlite:///test.db
+          TEST_USE_CREATE_ALL: "1"
         run: pytest -x -q --tb=short
 
   lint:

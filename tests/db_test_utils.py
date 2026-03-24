@@ -38,7 +38,11 @@ def create_test_app():
 
     with _app.app_context():
         _db.engine.dispose()
-        from flask_migrate import upgrade
-        upgrade()
+        if os.environ.get('TEST_USE_CREATE_ALL') == '1':
+            # CI fallback: use db.create_all() to avoid migration chain issues
+            _db.create_all()
+        else:
+            from flask_migrate import upgrade
+            upgrade()
 
     return _app, db_path
