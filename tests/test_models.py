@@ -7,8 +7,8 @@ and their pure Python methods exercised without hitting any persisted state.
 
 Run:  pytest tests/test_models.py -v
 """
+import os
 import pytest
-from flask import Flask
 from database import db as _db
 
 
@@ -18,23 +18,16 @@ from database import db as _db
 
 @pytest.fixture(scope='module')
 def app():
-    """Minimal Flask app with an in-memory SQLite database."""
-    test_app = Flask(__name__)
-    test_app.config.update(
-        TESTING=True,
-        SQLALCHEMY_DATABASE_URI='sqlite:///:memory:',
-        SQLALCHEMY_TRACK_MODIFICATIONS=False,
-        SECRET_KEY='test-secret',
-        WTF_CSRF_ENABLED=False,
-    )
-    _db.init_app(test_app)
+    """Create a test Flask app with temp-file SQLite built via flask db upgrade."""
+    from tests.db_test_utils import create_test_app
+    _app, db_path = create_test_app()
 
-    with test_app.app_context():
-        # Import all models so their tables are registered
-        import models  # noqa: F401 â€” side-effect: registers all mappers
-        _db.create_all()
-        yield test_app
-        # _db.drop_all() — skipped; in-memory SQLite is discarded on exit
+    with _app.app_context():
+        yield _app
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 @pytest.fixture()

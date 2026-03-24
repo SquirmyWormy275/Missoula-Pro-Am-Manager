@@ -115,8 +115,10 @@ class TestUniqueConstraints:
         make_team(db_session, t2, code='UM-A')
         db_session.flush()  # Should not raise
 
-    def test_duplicate_event_result_rejected(self, db_session):
-        """Same (event_id, competitor_id, competitor_type) should be rejected."""
+    def test_duplicate_event_result_allowed(self, db_session):
+        """EventResult has no unique constraint on (event_id, competitor_id,
+        competitor_type) — duplicates are intentionally allowed (e.g. re-entry
+        after scratch)."""
         t = make_tournament(db_session)
         p = make_pro_competitor(db_session, t, 'Dup Pro', 'M')
         e = make_event(db_session, t, 'Dup Event', event_type='pro')
@@ -124,23 +126,20 @@ class TestUniqueConstraints:
                           result_value=20.0, status='completed')
         db_session.flush()
 
-        with pytest.raises(IntegrityError):
-            make_event_result(db_session, e, p, competitor_type='pro',
-                              result_value=22.0, status='completed')
-            db_session.flush()
-        db_session.rollback()
+        make_event_result(db_session, e, p, competitor_type='pro',
+                          result_value=22.0, status='completed')
+        db_session.flush()  # Should not raise — duplicates are permitted
 
-    def test_duplicate_heat_event_run_rejected(self, db_session):
-        """Same (event_id, heat_number, run_number) should be rejected."""
+    def test_duplicate_heat_event_run_allowed(self, db_session):
+        """Heat has no unique constraint on (event_id, heat_number, run_number)
+        — duplicates are permitted by design."""
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Heat Dup', event_type='pro')
         make_heat(db_session, e, heat_number=1, run_number=1)
         db_session.flush()
 
-        with pytest.raises(IntegrityError):
-            make_heat(db_session, e, heat_number=1, run_number=1)
-            db_session.flush()
-        db_session.rollback()
+        make_heat(db_session, e, heat_number=1, run_number=1)
+        db_session.flush()  # Should not raise — duplicates are permitted
 
     def test_duplicate_username_rejected(self, db_session):
         from models.user import User

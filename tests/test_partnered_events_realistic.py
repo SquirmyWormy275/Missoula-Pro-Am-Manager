@@ -11,6 +11,7 @@ import pytest
 os.environ.setdefault('SECRET_KEY', 'test-secret-partnered')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
+from database import db as _db
 from tests.conftest import (
     make_tournament, make_pro_competitor, make_event, make_event_result,
     make_team, make_college_competitor,
@@ -23,21 +24,17 @@ from tests.conftest import (
 
 @pytest.fixture(scope='module')
 def app():
-    from app import create_app
-    _app = create_app()
-    _app.config.update({
-        'TESTING': True,
-        'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
-        'WTF_CSRF_ENABLED': False,
-        'WTF_CSRF_CHECK_DEFAULT': False,
-        'SERVER_NAME': None,
-    })
-    from database import db
+    """Test Flask app with temp-file SQLite built via flask db upgrade."""
+    from tests.db_test_utils import create_test_app
+    _app, db_path = create_test_app()
+
     with _app.app_context():
-        db.create_all()
         yield _app
-        db.session.remove()
-        db.drop_all()
+        _db.session.remove()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 @pytest.fixture()

@@ -2,13 +2,18 @@
 Shared pytest fixtures for the Missoula Pro-Am Manager test suite.
 
 Provides:
-  - Flask app with in-memory SQLite (session-scoped)
+  - Flask app with temp-file SQLite built via ``flask db upgrade`` (module-scoped)
   - Per-test transactional rollback (db_session)
   - Auth client (logged in as admin/judge)
   - Seed helpers for tournaments, teams, competitors, events, heats, results
+  - ``create_test_app()`` helper for test files that define their own app fixture
 
 Existing test files that define their own `app` fixture are unaffected —
 pytest resolves local fixtures before conftest.
+
+IMPORTANT: Tests use ``flask db upgrade`` (not ``db.create_all()``) so that the
+migration chain is exercised on every run.  If a migration fails to add a column,
+the tests will fail — just like production would.
 """
 import json
 import os
@@ -18,6 +23,7 @@ os.environ.setdefault('SECRET_KEY', 'test-secret-conftest')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from database import db as _db
+from tests.db_test_utils import create_test_app  # noqa: F401 — re-exported
 
 
 # ---------------------------------------------------------------------------
@@ -26,22 +32,17 @@ from database import db as _db
 
 @pytest.fixture(scope='module')
 def app():
-    """Create a test Flask app with in-memory SQLite and CSRF disabled."""
-    from app import create_app
-    _app = create_app()
-    _app.config.update({
-        'TESTING': True,
-        'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
-        'WTF_CSRF_ENABLED': False,
-        'WTF_CSRF_CHECK_DEFAULT': False,
-        'SERVER_NAME': None,
-    })
+    """Create a test Flask app with a temp SQLite DB built via migrations."""
+    _app, db_path = create_test_app()
 
     with _app.app_context():
-        _db.create_all()
         yield _app
         _db.session.remove()
-        _db.drop_all()
+
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 @pytest.fixture()

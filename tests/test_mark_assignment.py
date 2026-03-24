@@ -25,26 +25,18 @@ from database import db as _db
 
 @pytest.fixture(scope='module')
 def app():
-    """Create a test Flask app with in-memory SQLite."""
+    """Create a test Flask app with temp-file SQLite built via flask db upgrade."""
     import os
-    os.environ.setdefault('SECRET_KEY', 'test-secret-marks')
-    os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
-
-    from app import create_app
-    _app = create_app()
-    _app.config.update({
-        'TESTING': True,
-        'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
-        'WTF_CSRF_ENABLED': False,
-        'WTF_CSRF_CHECK_DEFAULT': False,
-        'SERVER_NAME': None,
-    })
+    from tests.db_test_utils import create_test_app
+    _app, db_path = create_test_app()
 
     with _app.app_context():
-        _db.create_all()
         yield _app
         _db.session.remove()
-        # _db.drop_all() — skipped; in-memory SQLite is discarded on exit
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -490,6 +482,18 @@ class TestAssignHandicapMarksSkipPaths:
 class TestAssignHandicapMarksLogging:
     """Verify that assign_handicap_marks logs mark assignment activity."""
 
+    _LOGGER_NAME = 'services.mark_assignment'
+
+    def _enable_logger(self):
+        """Force the logger to be enabled and at INFO level.
+
+        Flask/pytest may disable loggers or set root to WARNING during test
+        setup.  We need INFO records to flow for these assertions.
+        """
+        lgr = logging.getLogger(self._LOGGER_NAME)
+        lgr.disabled = False
+        lgr.setLevel(logging.INFO)
+
     @patch.dict('os.environ', {
         'STRATHMARK_SUPABASE_URL': 'https://fake.supabase.co',
         'STRATHMARK_SUPABASE_KEY': 'fake-key',
@@ -508,7 +512,8 @@ class TestAssignHandicapMarksLogging:
 
         from services.mark_assignment import assign_handicap_marks
 
-        with caplog.at_level(logging.INFO, logger='services.mark_assignment'):
+        self._enable_logger()
+        with caplog.at_level(logging.INFO, logger=self._LOGGER_NAME):
             assign_handicap_marks(event)
 
         assert any('HandicapCalculator produced 1 marks' in msg for msg in caplog.messages)
@@ -531,7 +536,8 @@ class TestAssignHandicapMarksLogging:
 
         from services.mark_assignment import assign_handicap_marks
 
-        with caplog.at_level(logging.INFO, logger='services.mark_assignment'):
+        self._enable_logger()
+        with caplog.at_level(logging.INFO, logger=self._LOGGER_NAME):
             assign_handicap_marks(event)
 
         assert any('HandicapCalculator produced 0 marks' in msg for msg in caplog.messages)
@@ -544,7 +550,8 @@ class TestAssignHandicapMarksLogging:
 
         from services.mark_assignment import assign_handicap_marks
 
-        with caplog.at_level(logging.INFO, logger='services.mark_assignment'):
+        self._enable_logger()
+        with caplog.at_level(logging.INFO, logger=self._LOGGER_NAME):
             assign_handicap_marks(event)
 
         assert any('STRATHMARK not configured' in msg for msg in caplog.messages)
@@ -555,22 +562,31 @@ class TestAssignHandicapMarksLogging:
 # ---------------------------------------------------------------------------
 
 class TestFetchStartMark:
-    """Direct tests for the _fetch_start_mark() helper."""
+    """Direct tests for the _fetch_start_mark() helper.
+
+    _fetch_start_mark() calls calculator.calculate() with a single
+    CompetitorRecord and unpacks the first MarkResult.mark value.
+    """
 
     def test_returns_float_mark(self, app):
-        """Normal path: calculator returns a positive float."""
+        """Normal path: calculator.calculate() returns a MarkResult with positive mark."""
         from services.mark_assignment import _fetch_start_mark
+        mr = MagicMock()
+        mr.mark = 7
         calc = MagicMock()
-        calc.get_start_mark.return_value = 6.75
+        calc.calculate.return_value = [mr]
         with app.app_context():
             mark = _fetch_start_mark(calc, 'SM123', 'UH', 'Test Comp')
-        assert mark == 6.75
+        assert mark == 7.0
+        calc.calculate.assert_called_once()
 
     def test_returns_zero_scratch(self, app):
         """Zero is a valid mark (scratch competitor)."""
         from services.mark_assignment import _fetch_start_mark
+        mr = MagicMock()
+        mr.mark = 0
         calc = MagicMock()
-        calc.get_start_mark.return_value = 0.0
+        calc.calculate.return_value = [mr]
         with app.app_context():
             mark = _fetch_start_mark(calc, 'SM123', 'UH', 'Test Comp')
         assert mark == 0.0
@@ -578,17 +594,19 @@ class TestFetchStartMark:
     def test_negative_mark_clamped_to_zero(self, app):
         """Negative marks are clamped to 0.0."""
         from services.mark_assignment import _fetch_start_mark
+        mr = MagicMock()
+        mr.mark = -2.5
         calc = MagicMock()
-        calc.get_start_mark.return_value = -2.5
+        calc.calculate.return_value = [mr]
         with app.app_context():
             mark = _fetch_start_mark(calc, 'SM123', 'UH', 'Test Comp')
         assert mark == 0.0
 
-    def test_none_returned_when_calculator_returns_none(self, app):
-        """When calculator returns None, _fetch_start_mark returns None."""
+    def test_none_returned_when_calculator_returns_empty(self, app):
+        """When calculator returns empty list, _fetch_start_mark returns None."""
         from services.mark_assignment import _fetch_start_mark
         calc = MagicMock()
-        calc.get_start_mark.return_value = None
+        calc.calculate.return_value = []
         with app.app_context():
             mark = _fetch_start_mark(calc, 'SM123', 'UH', 'Test Comp')
         assert mark is None
@@ -597,7 +615,7 @@ class TestFetchStartMark:
         """When calculator raises, _fetch_start_mark catches it and returns None."""
         from services.mark_assignment import _fetch_start_mark
         calc = MagicMock()
-        calc.get_start_mark.side_effect = ConnectionError('timeout')
+        calc.calculate.side_effect = ConnectionError('timeout')
         with app.app_context():
             mark = _fetch_start_mark(calc, 'SM123', 'UH', 'Test Comp')
         assert mark is None

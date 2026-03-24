@@ -1,0 +1,44 @@
+"""
+Shared test database helper — creates a Flask app backed by a temp-file
+SQLite DB built via ``flask db upgrade`` (not ``db.create_all()``).
+
+Import this from any test file:
+    from tests.db_test_utils import create_test_app
+"""
+import os
+import tempfile
+
+os.environ.setdefault('SECRET_KEY', 'test-secret-conftest')
+os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
+
+from database import db as _db
+
+
+def create_test_app():
+    """Create a Flask app backed by a temp-file SQLite DB built via migrations.
+
+    Returns ``(app, db_path)`` — caller must delete ``db_path`` when done.
+    Alembic cannot run against ``:memory:`` (it opens its own connection),
+    so we use a temp file that survives the full test module lifetime.
+    """
+    from app import create_app
+
+    tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+    db_path = tmp.name
+    tmp.close()
+
+    _app = create_app()
+    _app.config.update({
+        'TESTING': True,
+        'SQLALCHEMY_DATABASE_URI': f'sqlite:///{db_path}',
+        'WTF_CSRF_ENABLED': False,
+        'WTF_CSRF_CHECK_DEFAULT': False,
+        'SERVER_NAME': None,
+    })
+
+    with _app.app_context():
+        _db.engine.dispose()
+        from flask_migrate import upgrade
+        upgrade()
+
+    return _app, db_path

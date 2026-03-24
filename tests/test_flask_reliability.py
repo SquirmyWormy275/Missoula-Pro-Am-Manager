@@ -450,7 +450,8 @@ class TestContextProcessor:
             assert all(k in ctx for k in ('NAV', 'COMPETITION', 'LANGUAGES', 'ui'))
 
     def test_unscored_heats_zero(self, app):
-        tid = _tid()
+        # Use a tournament_id that definitely has no heats seeded
+        tid = 99999
         with app.test_request_context(f'/tournament/{tid}'):
             from flask import request as _req
             _req.view_args = {'tournament_id': tid}
