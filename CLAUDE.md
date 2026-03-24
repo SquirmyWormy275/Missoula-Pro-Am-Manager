@@ -439,6 +439,9 @@ PayoutTemplate  (tournament-independent, standalone)
 - PostgreSQL migration guide (`docs/POSTGRES_MIGRATION.md`, V2.3.0): full SQLite-to-PG data migration procedure with inline script; Railway deployment checklist
 - `EventResult.predicted_time` (Float, nullable, V2.4.0): stores HandicapCalculator predicted completion time; wired in `assign_handicap_marks()` for loop; used by `_record_prediction_residuals_for_pro_event()` after finalization; migration `d8d4aa7bdb45`
 - `_record_prediction_residuals_for_pro_event()` in `strathmark_sync.py` (V2.4.0): records per-competitor prediction residuals (actual − predicted) to STRATHMARK Supabase bias-learning table after pro SB/UH finalization; called at end of `push_pro_event_results()`; non-blocking
+- Design review accessibility fixes (V2.6.0): `color-scheme: dark` on `html` element for native dark mode control rendering; 44px minimum touch targets on `.navbar-proam .nav-link` and `.btn-proam`; `prefers-reduced-motion` media query zeroes all animation/transition durations; disabled button `cursor: not-allowed`
+- Design review visual polish (V2.6.0): staggered `card-enter` fade-up animation on role cards (80ms stagger); hover lift on `.card.shadow-sm` (spectator portal cards); semantic `<h1>` for hero title on role entry page
+- Design review empty states (V2.6.0): warm empty states with icons + descriptive messages across `spectator_college.html`, `spectator_pro.html`, `kiosk.html` — replaces bare "No rankings yet." / "No completed events yet." text
 - STRATHEX design system (`static/css/theme.css`, V2.5.0): extracted dark theme tokens, fire palette, component overrides from `base.html`; standalone CSS file for maintainability
 - Comprehensive test suite (V2.5.0): 37 new test files + shared `conftest.py` + synthetic data fixtures (`tests/fixtures/synthetic_data.py`); covers models, routes, services, scoring, gear sharing, flight builder, heat gen, templates, infrastructure, security, PostgreSQL compat; `pytest.ini` with smoke/integration/slow markers
 - Tournament payouts hub (`templates/scoring/tournament_payouts.html`, V2.5.0): bulk template application, distribution visualization bars, event summary table, new template builder
@@ -484,6 +487,101 @@ Plain text outputs only in UI — no emojis, no color codes.
 Safe error handling: failures print descriptive messages but allow continued operation. Wrap risky operations in try/except and flash a descriptive error rather than raising to the user or silently swallowing the failure.
 
 Database schema changes: do not use `db.create_all()` for schema modifications on an existing database. `db.create_all()` only creates tables that do not yet exist — it does not alter existing tables. Use Flask-Migrate (Alembic) for all schema changes after initial setup. If Flask-Migrate is not yet initialized in this project, flag it and ask before proceeding with any schema change that would modify an existing table.
+
+### Migration Protocol (MANDATORY — read every time you touch models or migrations)
+
+This protocol exists because auto-generated migrations have repeatedly introduced silent schema drift — changing nullable flags, dropping indexes, and altering defaults on columns unrelated to the intended change. These bugs are expensive to diagnose and fix. **Follow every step exactly.**
+
+#### Step 1: Before generating a migration
+
+- **Only modify model columns you intend to change.** Do not "clean up" nullable, defaults, or server_defaults on existing columns while adding a new column. Each concern gets its own migration with a descriptive name.
+- **Check for existing drift first.** Run `flask db check` (or `flask db migrate --dry-run` if available). If Alembic detects changes you did NOT make, do NOT proceed. Investigate why the models and DB are already out of sync. Fix the root cause (wrong model definition or wrong migration) before generating anything new.
+
+#### Step 2: Generate the migration
+
+```bash
+flask db migrate -m "descriptive_name_of_what_changed"
+```
+
+#### Step 3: Review the generated file (NEVER SKIP THIS)
+
+Open the new file in `migrations/versions/` and verify **every line** of the `upgrade()` and `downgrade()` functions:
+
+1. **Only intended columns appear.** If the migration touches tables or columns you did not modify, DELETE those lines. They are Alembic detecting model/DB drift from a prior session — fixing that drift in an unrelated migration is how bugs 90% of the time are introduced.
+2. **`nullable` matches the model.** If your model says `db.Column(db.Boolean, default=False)` (no `nullable=True`), the migration must say `nullable=False`. Alembic sometimes infers `nullable=True` for SQLite batch operations — correct it.
+3. **`server_default` matches the model.** Boolean columns with `default=False` should have `server_default=sa.text('0')` (or `'false'` for PostgreSQL). If the migration omits `server_default`, add it.
+4. **No index drops unless intentional.** Search for `drop_index` in the generated file. If you did not intend to drop an index, remove that line.
+5. **No type changes unless intentional.** Search for `alter_column` — if it changes `type_`, `nullable`, or `server_default` on a column you did not touch, remove it.
+6. **`down_revision` is correct.** It must point to the current HEAD migration. Check against the Migration Chain in MEMORY.md.
+
+#### Step 4: Apply and verify
+
+```bash
+flask db upgrade
+```
+
+Then run the migration integrity tests:
+```bash
+pytest tests/test_migration_integrity.py -v
+```
+
+These tests compare the migration-produced schema against the ORM model schema and will catch:
+- Missing tables or columns
+- Column type mismatches (TEXT vs VARCHAR, etc.)
+- Nullable mismatches (model says NOT NULL, migration says nullable)
+- Server default mismatches
+- Missing or extra indexes
+
+If any test fails, **fix the migration file** (not the model) before committing.
+
+#### Step 5: Update the migration chain
+
+After the migration is verified, update the Migration Chain in MEMORY.md:
+```
+`new_revision` (description) ← `old_head` ← ...
+```
+
+#### Common mistakes this protocol prevents
+
+| Mistake | How this protocol catches it |
+|---|---|
+| `flask db migrate` silently alters unrelated columns | Step 3.1: review shows unexpected `alter_column` lines |
+| Boolean column becomes nullable in migration | Step 3.2: review + `test_nullable_parity` catches it |
+| Index dropped in wrong migration | Step 3.4: review shows unexpected `drop_index` |
+| Schema parity fix needed later | Step 1: check for drift BEFORE generating |
+| Migration applied without review | Step 3 is mandatory — never run `flask db upgrade` on an unreviewed migration |
+| Fresh DB missing indexes | `test_no_missing_indexes` catches it |
+
+#### What NOT to do
+
+- **Never commit a migration you haven't read line-by-line.** Auto-generated does not mean correct.
+- **Never fix drift from a prior session inside a new feature migration.** Create a separate `fix_xyz_drift` migration.
+- **Never use `_add_column_if_missing()` or similar idempotent hacks.** If a column is missing, the correct migration was wrong — fix it at the source.
+- **Never alter `nullable` or `server_default` on an existing column unless that is the explicit purpose of the migration.**
+
+### Model Column Declaration Rules
+
+Every `db.Column()` call in `models/*.py` must explicitly declare `nullable`. Omitting it causes SQLAlchemy to default to `nullable=True`, which Alembic then bakes into auto-generated migrations — even when the column clearly should be NOT NULL (e.g., Boolean with `default=False`). This ambiguity is the upstream source of most migration drift.
+
+**Required for every new or modified column:**
+
+```python
+# CORRECT — explicit nullable, server_default for Alembic visibility
+is_active = db.Column(db.Boolean, nullable=False, default=False, server_default=sa.text('0'))
+status = db.Column(db.String(20), nullable=False, default='pending', server_default='pending')
+notes = db.Column(db.Text, nullable=True)  # intentionally nullable
+
+# WRONG — implicit nullable, Alembic can't see Python-side default
+is_active = db.Column(db.Boolean, default=False)  # nullable=True by default!
+status = db.Column(db.String(20), default='pending')  # same problem
+```
+
+**Rules:**
+
+1. **Always declare `nullable=True` or `nullable=False`** — never rely on the implicit default.
+2. **Add `server_default` alongside `default`** for any column with a non-NULL default value. `default=` is Python-side only — raw SQL inserts, migrations, and PostgreSQL bypass it entirely. `server_default=` is what Alembic sees and what the database enforces.
+3. **Foreign key columns** may be `nullable=True` (optional relationships) — but declare it explicitly.
+4. **The `TestModelColumnDeclarations` test** in `test_migration_integrity.py` flags columns that have a default but are still nullable. When adding new models, run this test to verify your declarations are correct.
 
 HeatAssignment vs Heat.competitors: `Heat.competitors` (JSON field) is the authoritative source for heat composition and is what the heat generator reads and writes. `HeatAssignment` rows are used only by the validation service. All new code reading or writing heat composition must use `Heat.competitors`. After modifying `Heat.competitors`, call `heat.sync_assignments(event.event_type)` (after `db.session.flush()` so `heat.id` is assigned) to keep the two representations consistent.
 
@@ -568,3 +666,63 @@ The following features remain as planned or implied by the codebase and requirem
 - `_generate_event_heats()` in `heat_generator.py` needs ability-weighting input
 
 **Generalization vision:** The current app is hardcoded to the Missoula Pro Am's specific event list and format. The event list lives in `config.py` (`COLLEGE_OPEN_EVENTS`, `COLLEGE_CLOSED_EVENTS`, `PRO_EVENTS`) and the UI strings in `strings.py`. The long-term STRATHEX platform vision is to make these event lists configurable per-tournament rather than hardcoded, enabling this application to serve any timbersports event, not just Missoula. The `is_open` flag on Event, the configurable payouts system, and the per-tournament event setup flow are all steps in this direction.
+
+---
+
+## 9. GSTACK — QA & DEVELOPER TOOLING
+
+[Gstack](https://github.com/garrytan/gstack) is installed as a Claude Code skill at `~/.claude/skills/gstack/`. It provides a fast headless browser (Playwright Chromium) and a suite of slash commands for QA testing, design review, code review, deployment, and more.
+
+### Available Gstack Skills
+
+| Slash Command | Purpose |
+|---------------|---------|
+| `/gstack` | Headless browser — navigate, interact, screenshot, diff |
+| `/qa` | Systematic QA testing + iterative bug fixing |
+| `/qa-only` | QA report only (no fixes) |
+| `/review` | Pre-landing PR code review |
+| `/design-review` | Visual QA — spacing, hierarchy, consistency fixes |
+| `/design-consultation` | Create a design system / DESIGN.md |
+| `/ship` | Ship workflow — tests, review, version bump, PR |
+| `/land-and-deploy` | Merge PR, wait for CI, verify production |
+| `/investigate` | Systematic root-cause debugging |
+| `/autoplan` | Auto-run CEO + design + eng reviews sequentially |
+| `/plan-ceo-review` | CEO/founder scope review |
+| `/plan-eng-review` | Engineering architecture review |
+| `/plan-design-review` | Designer's eye plan review |
+| `/office-hours` | Brainstorming / idea validation |
+| `/careful` | Safety guardrails for destructive commands |
+| `/freeze` / `/unfreeze` | Restrict/unrestrict editable directories |
+| `/guard` | Combined careful + freeze |
+| `/retro` | Weekly engineering retrospective |
+| `/document-release` | Post-ship documentation sync |
+| `/codex` | Second opinion via OpenAI Codex |
+| `/browse` | Direct headless browser interaction |
+| `/canary` | Post-deploy monitoring |
+| `/benchmark` | Performance regression detection |
+| `/cso` | Security audit (OWASP, STRIDE, supply chain) |
+| `/setup-deploy` | Configure deployment platform |
+| `/setup-browser-cookies` | Import real browser cookies for auth testing |
+| `/gstack-upgrade` | Update gstack to latest version |
+
+### Prerequisites
+
+- **bun** (installed): `~/.bun/bin/bun` — JavaScript runtime for skill scripts
+- **Node.js** (required for browser features on Windows): Install from https://nodejs.org/ — Playwright Chromium needs Node.js on Windows due to a bun pipe bug
+- After installing Node.js, re-run: `cd ~/.claude/skills/gstack && ./setup`
+
+## Deploy Configuration (configured by /setup-deploy)
+- Platform: Railway
+- Production URL: TBD (not yet deployed — update this after first Railway deploy)
+- Deploy workflow: auto-deploy on push to main (Railway watches the GitHub repo)
+- Deploy status command: HTTP health check at production URL
+- Merge method: squash
+- Project type: web app (Flask)
+- Post-deploy health check: GET / (root URL, expect 200)
+- Release command: `flask db upgrade` (configured in railway.toml)
+
+### Custom deploy hooks
+- Pre-merge: `pytest` (run tests before merging)
+- Deploy trigger: automatic on push to main (Railway auto-deploy)
+- Deploy status: poll production URL root for HTTP 200
+- Health check: GET {PRODUCTION_URL}/ — update URL after first deploy
