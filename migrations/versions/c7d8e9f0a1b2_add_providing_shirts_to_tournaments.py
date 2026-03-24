@@ -17,15 +17,13 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table('tournaments', schema=None) as batch_op:
-        batch_op.add_column(sa.Column(
-            'providing_shirts',
-            sa.Boolean(),
-            nullable=False,
-            server_default=sa.text('0'),
-        ))
+    op.add_column('tournaments', sa.Column(
+        'providing_shirts',
+        sa.Boolean(),
+        nullable=True,
+        server_default=sa.text('0'),
+    ))
 
 
 def downgrade():
-    with op.batch_alter_table('tournaments', schema=None) as batch_op:
-        batch_op.drop_column('providing_shirts')
+    op.drop_column('tournaments', 'providing_shirts')
