@@ -30,7 +30,10 @@
                         {% for c in bull %}
                         <li>{{ c.name }} - {{ c.individual_points }} pts</li>
                         {% else %}
-                        <li class="text-muted">No rankings yet.</li>
+                        <li class="list-unstyled text-center py-3">
+                            <i class="bi bi-trophy text-sx-subtle d-block mb-2" style="font-size:1.5rem;opacity:0.4;"></i>
+                            <span class="text-muted">Rankings appear once events are scored.</span>
+                        </li>
                         {% endfor %}
                     </ol>
                 </div>
@@ -46,7 +49,10 @@
                         {% for c in belle %}
                         <li>{{ c.name }} - {{ c.individual_points }} pts</li>
                         {% else %}
-                        <li class="text-muted">No rankings yet.</li>
+                        <li class="list-unstyled text-center py-3">
+                            <i class="bi bi-trophy text-sx-subtle d-block mb-2" style="font-size:1.5rem;opacity:0.4;"></i>
+                            <span class="text-muted">Rankings appear once events are scored.</span>
+                        </li>
                         {% endfor %}
                     </ol>
                 </div>
@@ -62,7 +68,10 @@
                         {% for team in team_standings %}
                         <li>{{ team.team_code }} - {{ team.total_points }} pts</li>
                         {% else %}
-                        <li class="text-muted">No standings yet.</li>
+                        <li class="list-unstyled text-center py-3">
+                            <i class="bi bi-people text-sx-subtle d-block mb-2" style="font-size:1.5rem;opacity:0.4;"></i>
+                            <span class="text-muted">Team standings appear once events are scored.</span>
+                        </li>
                         {% endfor %}
                     </ol>
                 </div>
@@ -86,7 +95,10 @@
                     </div>
                 </a>
                 {% else %}
-                <div class="text-muted">No completed events yet.</div>
+                <div class="text-center py-3">
+                    <i class="bi bi-clipboard-check text-sx-subtle d-block mb-2" style="font-size:1.5rem;opacity:0.4;"></i>
+                    <span class="text-muted">Results will appear here as events are finalized.</span>
+                </div>
                 {% endfor %}
             </div>
             {% else %}
@@ -107,7 +119,10 @@
                             <td><a href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=summary.event_id, view=view_mode) }}">Open</a></td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="3" class="text-muted">No completed events yet.</td></tr>
+                        <tr><td colspan="3" class="text-center py-3">
+                            <i class="bi bi-clipboard-check d-block mb-1" style="font-size:1.2rem;opacity:0.3;"></i>
+                            <span class="text-muted">Results will appear here as events are finalized.</span>
+                        </td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
