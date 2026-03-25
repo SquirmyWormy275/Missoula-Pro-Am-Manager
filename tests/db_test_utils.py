@@ -22,10 +22,15 @@ def create_test_app():
     so we use a temp file that survives the full test module lifetime.
     """
     from app import create_app
+    from flask_migrate import upgrade
 
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     db_path = tmp.name
     tmp.close()
+    migrations_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'migrations',
+    )
 
     _app = create_app()
     _app.config.update({
@@ -42,7 +47,6 @@ def create_test_app():
             # CI fallback: use db.create_all() to avoid migration chain issues
             _db.create_all()
         else:
-            from flask_migrate import upgrade
-            upgrade()
+            upgrade(directory=migrations_dir)
 
     return _app, db_path

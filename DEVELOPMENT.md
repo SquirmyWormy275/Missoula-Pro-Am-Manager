@@ -461,6 +461,10 @@ python app.py
 
 Server runs at `http://localhost:5000`
 
+If your terminal is opened from the parent workspace folder instead of the repo
+root, run `python Missoula-Pro-Am-Manager/app.py`. Local filesystem defaults
+must remain repo-rooted regardless of the shell working directory.
+
 ### Database
 
 The application uses Flask-Migrate (Alembic) for schema management.
@@ -482,7 +486,9 @@ rm -rf instance/proam.db
 flask db upgrade
 ```
 
-The database file is created at `instance/proam.db` for SQLite (dev) or the URL from the `DATABASE_URL` environment variable (production/Railway).
+The database file is created at the absolute repo path `instance/proam.db` for
+SQLite (dev) or the URL from the `DATABASE_URL` environment variable
+(production/Railway).
 
 ---
 
@@ -533,8 +539,11 @@ The database file is created at `instance/proam.db` for SQLite (dev) or the URL 
 ```python
 # Application
 SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
-SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'sqlite:///proam.db')
-UPLOAD_FOLDER = 'uploads'
+SQLALCHEMY_DATABASE_URI = os.environ.get(
+    'DATABASE_URL',
+    'sqlite:///<repo>/instance/proam.db',
+)
+UPLOAD_FOLDER = '<repo>/uploads'
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 
 # Flask-WTF CSRF (enabled by default; uses SECRET_KEY)
@@ -548,6 +557,20 @@ MIN_TEAM_SIZE = 2
 MAX_TEAM_SIZE = 8
 MAX_CLOSED_EVENTS_PER_ATHLETE = 6
 ```
+
+### Path Stability Rule
+
+Any local-path default that is needed for development startup must resolve from
+the project directory, not from the current working directory. This specifically
+applies to:
+
+- SQLite dev database path
+- Alembic migrations directory
+- Upload folder
+- Local backup directory
+- Instance config JSON files
+
+Regression coverage lives in `tests/test_flask_reliability.py`.
 
 ### Stand Configurations
 

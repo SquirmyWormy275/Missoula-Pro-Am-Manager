@@ -15,10 +15,16 @@
             console.warn('[ProAm SW] Registration failed:', err);
         });
 
-        // Listen for sync-complete messages from the SW
+        // Listen for sync messages from the SW
         navigator.serviceWorker.addEventListener('message', function (event) {
-            if (event.data && event.data.type === 'sync-complete') {
-                showSyncBanner(event.data.count || 0);
+            if (!event.data) return;
+            if (event.data.type === 'sync-complete') {
+                if (event.data.success > 0) {
+                    showSyncBanner(event.data.success || event.data.count || 0);
+                }
+            }
+            if (event.data.type === 'replay-failed') {
+                showReplayFailedBanner(event.data.count || 0, event.data.reasons || []);
             }
         });
     }
@@ -72,6 +78,47 @@
         flash.innerHTML = '<i class="bi bi-check-circle-fill"></i> ' + msg;
         document.body.appendChild(flash);
         setTimeout(function () { flash.remove(); }, 6000);
+    }
+
+    function showReplayFailedBanner(count, reasons) {
+        // Remove any existing failure banner
+        var existing = document.getElementById('proam-replay-failed-banner');
+        if (existing) existing.remove();
+
+        var reasonText = '';
+        if (reasons.indexOf('csrf_expired') >= 0) {
+            reasonText = 'Session expired while offline. ';
+        }
+        if (reasons.indexOf('version_conflict') >= 0) {
+            reasonText += 'Another judge updated the same heat. ';
+        }
+
+        var msg = count === 1
+            ? '1 queued score failed to sync. '
+            : count + ' queued scores failed to sync. ';
+
+        var banner = document.createElement('div');
+        banner.id = 'proam-replay-failed-banner';
+        banner.className = 'alert alert-danger position-fixed shadow';
+        banner.style.cssText = 'top:70px;right:20px;z-index:9998;max-width:400px;';
+        banner.innerHTML =
+            '<i class="bi bi-exclamation-triangle-fill"></i> ' + msg + reasonText +
+            '<br><button class="btn btn-sm btn-outline-light mt-2" id="proam-retry-sync">' +
+            '<i class="bi bi-arrow-clockwise"></i> Retry Sync</button>' +
+            '<button class="btn btn-sm btn-outline-secondary mt-2 ms-2" onclick="this.parentElement.remove()">' +
+            'Dismiss</button>';
+        document.body.appendChild(banner);
+
+        // Wire up retry button
+        var retryBtn = document.getElementById('proam-retry-sync');
+        if (retryBtn) {
+            retryBtn.addEventListener('click', function () {
+                if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+                    navigator.serviceWorker.controller.postMessage({ type: 'manual-sync' });
+                }
+                banner.remove();
+            });
+        }
     }
 
     // ── Score-entry form feedback when offline ───────────────────────────────

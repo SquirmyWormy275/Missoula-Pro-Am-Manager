@@ -314,7 +314,7 @@ def _fetch_start_mark(calculator, strathmark_id: str, event_code: str, name: str
     competitors at once and returns full MarkResult objects with predicted_time.
     """
     try:
-        from strathmark.predictor import CompetitorRecord, WoodProfile  # type: ignore[import]
+        from strathmark.calculator import CompetitorRecord, WoodProfile  # type: ignore[import]
 
         record = CompetitorRecord(name=name)
         # Use a default WoodProfile — the batch path is preferred for accurate wood data
@@ -326,7 +326,7 @@ def _fetch_start_mark(calculator, strathmark_id: str, event_code: str, name: str
             event_code=event_code,
         )
         if not mark_results:
-            logger.debug('mark_assignment: no mark returned for %s (%s)', name, strathmark_id)
+            logger.warning('mark_assignment: no mark returned for %s (%s)', name, strathmark_id)
             return None
 
         mr = mark_results[0]
@@ -338,7 +338,7 @@ def _fetch_start_mark(calculator, strathmark_id: str, event_code: str, name: str
             mark_val = 0.0
         return mark_val
     except ImportError:
-        logger.debug('mark_assignment: strathmark.predictor not available — skipping single-competitor path')
+        logger.warning('mark_assignment: strathmark.calculator not available — skipping single-competitor path')
         return None
     except Exception as exc:
         logger.warning('mark_assignment: error fetching mark for %s: %s', name, exc)

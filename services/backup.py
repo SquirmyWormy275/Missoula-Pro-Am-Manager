@@ -1,19 +1,26 @@
 """
 Database backup service.
 
-Supports two backends:
-  1. S3 (boto3) — configure via BACKUP_S3_BUCKET, AWS_ACCESS_KEY_ID, etc.
-  2. Local filesystem fallback — always available; stores .db copy in a directory.
+Supports three backends:
+  1. PostgreSQL via pg_dump → S3 (production on Railway)
+  2. SQLite file copy → S3
+  3. Local filesystem fallback — always available; stores .db/.dump copy locally.
 
 Usage:
-    from services.backup import backup_to_s3, backup_to_local, is_s3_configured
+    from services.backup import (
+        backup_database, is_s3_configured, is_postgres,
+        backup_to_s3, backup_to_local,  # legacy SQLite-only
+    )
 """
 from __future__ import annotations
 
 import logging
 import os
 import shutil
+import subprocess
+import tempfile
 from datetime import datetime
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 def _timestamp() -> str:
     return datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+
+
+def is_postgres(uri: str) -> bool:
+    """Return True if the database URI points to PostgreSQL."""
+    return uri.startswith('postgresql://') or uri.startswith('postgres://')
 
 
 def _db_path_from_uri(uri: str, instance_path: str) -> str | None:
@@ -53,25 +65,15 @@ def is_s3_configured() -> bool:
     )
 
 
-def backup_to_s3(db_path: str, tournament_id: int) -> dict:
-    """
-    Upload *db_path* to S3.
-
-    Returns a dict with keys: ok, bucket, key, size_bytes, error.
-    """
-    if not is_s3_configured():
-        return {'ok': False, 'error': 'S3 not configured (missing boto3 or env vars)'}
-
+def _upload_to_s3(local_path: str, s3_key: str) -> dict:
+    """Upload a local file to S3. Returns result dict."""
     try:
         import boto3  # type: ignore
     except ImportError:
         return {'ok': False, 'error': 'boto3 package not installed'}
 
     bucket = os.environ.get('BACKUP_S3_BUCKET', '').strip()
-    prefix = os.environ.get('BACKUP_S3_PREFIX', 'proam-backups').strip().rstrip('/')
     region = os.environ.get('AWS_DEFAULT_REGION', '').strip() or None
-
-    key = f'{prefix}/tournament_{tournament_id}/proam_{_timestamp()}.db'
 
     try:
         session = boto3.Session(
@@ -80,25 +82,129 @@ def backup_to_s3(db_path: str, tournament_id: int) -> dict:
             region_name=region,
         )
         s3 = session.client('s3')
-        file_size = os.path.getsize(db_path)
-        s3.upload_file(db_path, bucket, key)
-        logger.info('DB backup uploaded to s3://%s/%s (%d bytes)', bucket, key, file_size)
-        return {'ok': True, 'bucket': bucket, 'key': key, 'size_bytes': file_size, 'error': None}
+        file_size = os.path.getsize(local_path)
+        s3.upload_file(local_path, bucket, s3_key)
+        logger.info('Backup uploaded to s3://%s/%s (%d bytes)', bucket, s3_key, file_size)
+        return {'ok': True, 'bucket': bucket, 'key': s3_key, 'size_bytes': file_size, 'error': None}
     except Exception as exc:
-        logger.error('S3 backup failed: %s', exc)
+        logger.error('S3 upload failed: %s', exc)
         return {'ok': False, 'error': str(exc)}
 
 
 # ---------------------------------------------------------------------------
-# Local filesystem fallback
+# PostgreSQL backup via pg_dump
 # ---------------------------------------------------------------------------
 
-def backup_to_local(db_path: str, dest_dir: str, tournament_id: int) -> dict:
-    """
-    Copy *db_path* to *dest_dir*.
+def backup_pg_to_s3(db_uri: str, tournament_id: int) -> dict:
+    """Run pg_dump and upload the custom-format dump to S3.
 
-    Returns a dict with keys: ok, dest, size_bytes, error.
+    Returns a dict with keys: ok, bucket, key, size_bytes, error.
     """
+    if not is_s3_configured():
+        return {'ok': False, 'error': 'S3 not configured (missing boto3 or env vars)'}
+
+    prefix = os.environ.get('BACKUP_S3_PREFIX', 'proam-backups').strip().rstrip('/')
+    s3_key = f'{prefix}/tournament_{tournament_id}/proam_{_timestamp()}.dump'
+
+    dump_file = None
+    try:
+        # pg_dump uses DATABASE_URL directly via --dbname
+        fd, dump_file = tempfile.mkstemp(suffix='.dump', prefix='proam_backup_')
+        os.close(fd)
+
+        result = subprocess.run(
+            ['pg_dump', '--format=custom', f'--file={dump_file}', f'--dbname={db_uri}'],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            logger.error('pg_dump failed: %s', result.stderr)
+            return {'ok': False, 'error': f'pg_dump failed: {result.stderr[:500]}'}
+
+        upload_result = _upload_to_s3(dump_file, s3_key)
+        return upload_result
+
+    except FileNotFoundError:
+        return {'ok': False, 'error': 'pg_dump not found — is PostgreSQL client installed?'}
+    except subprocess.TimeoutExpired:
+        return {'ok': False, 'error': 'pg_dump timed out after 5 minutes'}
+    except Exception as exc:
+        logger.error('PG backup failed: %s', exc)
+        return {'ok': False, 'error': str(exc)}
+    finally:
+        if dump_file and os.path.exists(dump_file):
+            os.unlink(dump_file)
+
+
+def backup_pg_to_local(db_uri: str, dest_dir: str, tournament_id: int) -> dict:
+    """Run pg_dump and save the dump locally."""
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        filename = f'proam_t{tournament_id}_{_timestamp()}.dump'
+        dest = os.path.join(dest_dir, filename)
+
+        result = subprocess.run(
+            ['pg_dump', '--format=custom', f'--file={dest}', f'--dbname={db_uri}'],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            logger.error('pg_dump failed: %s', result.stderr)
+            return {'ok': False, 'error': f'pg_dump failed: {result.stderr[:500]}'}
+
+        size = os.path.getsize(dest)
+        logger.info('PG backup saved to %s (%d bytes)', dest, size)
+        return {'ok': True, 'dest': dest, 'size_bytes': size, 'error': None}
+
+    except FileNotFoundError:
+        return {'ok': False, 'error': 'pg_dump not found — is PostgreSQL client installed?'}
+    except subprocess.TimeoutExpired:
+        return {'ok': False, 'error': 'pg_dump timed out after 5 minutes'}
+    except Exception as exc:
+        logger.error('PG local backup failed: %s', exc)
+        return {'ok': False, 'error': str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Unified backup entry point
+# ---------------------------------------------------------------------------
+
+def backup_database(db_uri: str, tournament_id: int, instance_path: str = '') -> dict:
+    """Detect DB type and run the appropriate backup.
+
+    Tries S3 first, falls back to local. Works for both SQLite and PostgreSQL.
+    """
+    if is_postgres(db_uri):
+        if is_s3_configured():
+            return backup_pg_to_s3(db_uri, tournament_id)
+        else:
+            dest_dir = os.environ.get('LOCAL_BACKUP_DIR', 'instance/backups')
+            return backup_pg_to_local(db_uri, dest_dir, tournament_id)
+    else:
+        db_path = _db_path_from_uri(db_uri, instance_path)
+        if not db_path:
+            return {'ok': False, 'error': 'SQLite database file not found'}
+        if is_s3_configured():
+            return backup_to_s3(db_path, tournament_id)
+        else:
+            dest_dir = os.environ.get('LOCAL_BACKUP_DIR', 'instance/backups')
+            return backup_to_local(db_path, dest_dir, tournament_id)
+
+
+# ---------------------------------------------------------------------------
+# Legacy SQLite-only functions (kept for backward compatibility)
+# ---------------------------------------------------------------------------
+
+def backup_to_s3(db_path: str, tournament_id: int) -> dict:
+    """Upload SQLite *db_path* to S3."""
+    if not is_s3_configured():
+        return {'ok': False, 'error': 'S3 not configured (missing boto3 or env vars)'}
+
+    prefix = os.environ.get('BACKUP_S3_PREFIX', 'proam-backups').strip().rstrip('/')
+    key = f'{prefix}/tournament_{tournament_id}/proam_{_timestamp()}.db'
+    return _upload_to_s3(db_path, key)
+
+
+def backup_to_local(db_path: str, dest_dir: str, tournament_id: int) -> dict:
+    """Copy SQLite *db_path* to *dest_dir*."""
     try:
         os.makedirs(dest_dir, exist_ok=True)
         filename = f'proam_t{tournament_id}_{_timestamp()}.db'

@@ -2,19 +2,45 @@
 import os
 
 
+def _project_path(*parts: str) -> str:
+    """Return an absolute path rooted at the project directory."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), *parts)
+
+
 def _normalized_database_url() -> str:
-    url = os.environ.get('DATABASE_URL', 'sqlite:///proam.db')
+    default_sqlite_path = _project_path('instance', 'proam.db')
+    url = os.environ.get('DATABASE_URL', f"sqlite:///{default_sqlite_path}")
     if url.startswith('postgres://'):
         return url.replace('postgres://', 'postgresql://', 1)
     return url
 
 
+def _require_secret_key() -> str:
+    """Return SECRET_KEY from env, or a random key for local dev.
+
+    In production (DATABASE_URL points to PostgreSQL), a missing SECRET_KEY is
+    fatal — random keys invalidate all sessions on every deploy/restart, breaking
+    CSRF tokens, login sessions, and offline score replay tokens.
+    """
+    key = os.environ.get('SECRET_KEY', '').strip()
+    if key:
+        return key
+    db_url = os.environ.get('DATABASE_URL', '')
+    if db_url.startswith('postgres') and not os.environ.get('TESTING'):
+        raise RuntimeError(
+            'SECRET_KEY environment variable is required in production. '
+            'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+    # Local dev with SQLite — random key is acceptable
+    return os.urandom(32).hex()
+
+
 class BaseConfig:
-    SECRET_KEY = os.environ.get('SECRET_KEY') or os.urandom(32).hex()
+    SECRET_KEY = _require_secret_key()
     SQLALCHEMY_DATABASE_URI = _normalized_database_url()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {'pool_pre_ping': True}
-    UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', 'uploads')
+    UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', _project_path('uploads'))
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max upload
     STRUCTURED_LOGGING = os.environ.get('STRUCTURED_LOGGING', '1') == '1'
     SENTRY_DSN = os.environ.get('SENTRY_DSN', '').strip()
@@ -23,7 +49,10 @@ class BaseConfig:
     PUBLIC_CACHE_TTL_SECONDS = int(os.environ.get('PUBLIC_CACHE_TTL_SECONDS', '5'))
     ENABLE_UPLOAD_MALWARE_SCAN = os.environ.get('ENABLE_UPLOAD_MALWARE_SCAN', '0') == '1'
     MALWARE_SCAN_COMMAND = os.environ.get('MALWARE_SCAN_COMMAND', '').strip()
-    EVENT_ORDER_CONFIG_PATH = os.environ.get('EVENT_ORDER_CONFIG_PATH', 'instance/event_order.json')
+    EVENT_ORDER_CONFIG_PATH = os.environ.get(
+        'EVENT_ORDER_CONFIG_PATH',
+        _project_path('instance', 'event_order.json'),
+    )
     # S3 Cloud Backup (optional — all keys required to enable)
     BACKUP_S3_BUCKET = os.environ.get('BACKUP_S3_BUCKET', '').strip()
     BACKUP_S3_PREFIX = os.environ.get('BACKUP_S3_PREFIX', 'proam-backups').strip()
@@ -31,7 +60,10 @@ class BaseConfig:
     AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '').strip()
     AWS_DEFAULT_REGION = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1').strip()
     # Local backup directory (used as fallback when S3 is not configured)
-    LOCAL_BACKUP_DIR = os.environ.get('LOCAL_BACKUP_DIR', 'instance/backups').strip()
+    LOCAL_BACKUP_DIR = os.environ.get(
+        'LOCAL_BACKUP_DIR',
+        _project_path('instance', 'backups'),
+    ).strip()
     # Twilio SMS (optional — all keys required to enable)
     TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '').strip()
     TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '').strip()

@@ -580,21 +580,11 @@ def cloud_backup(tournament_id):
         abort(403)
 
     uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
-    from services.backup import backup_to_s3, backup_to_local, is_s3_configured, _db_path_from_uri
-    db_path = _db_path_from_uri(uri, current_app.instance_path)
-
-    if not db_path:
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return jsonify({'ok': False, 'error': 'Cloud backup requires a SQLite database.'}), 400
-        flash('Cloud backup requires a SQLite database.', 'error')
-        return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
+    instance_path = current_app.instance_path
+    from services.backup import backup_database
 
     def _run_backup():
-        if is_s3_configured():
-            return backup_to_s3(db_path, tournament_id)
-        else:
-            dest_dir = current_app.config.get('LOCAL_BACKUP_DIR', 'instance/backups')
-            return backup_to_local(db_path, dest_dir, tournament_id)
+        return backup_database(uri, tournament_id, instance_path)
 
     job_id = submit_job(f'backup:t{tournament_id}', _run_backup)
 

@@ -14,6 +14,12 @@ python app.py
 
 Then open your browser to `http://localhost:5000`
 
+If your terminal is opened one folder above the repo, run:
+
+```bash
+python Missoula-Pro-Am-Manager/app.py
+```
+
 ---
 
 ## User Guide
@@ -40,12 +46,14 @@ Welcome! This guide will help you use the Missoula Pro Am Tournament Manager sof
 ### Starting the Program
 
 1. Open a Command Prompt or Terminal window
-2. Navigate to the program folder
+2. Navigate to the `Missoula-Pro-Am-Manager` folder
 3. Type: `python app.py` and press Enter
 4. Open your web browser (Chrome, Firefox, or Edge recommended)
 5. Go to: `http://localhost:5000`
 
 You should see the main dashboard.
+
+If you keep your terminal one folder above the repo, use `python Missoula-Pro-Am-Manager/app.py` instead.
 
 ### Main Dashboard
 
@@ -312,6 +320,7 @@ This event has preliminary rounds, then finals:
 1. Make sure Python is installed: Open Command Prompt, type `python --version`
 2. Make sure you're in the right folder: Use `cd` to navigate to the program folder
 3. Install requirements: Run `pip install -r requirements.txt`
+4. If your terminal is one folder above the repo, start it with `python Missoula-Pro-Am-Manager/app.py`
 
 ### Excel file won't import
 
@@ -350,6 +359,7 @@ This event has preliminary rounds, then finals:
 2. Make sure you're going to `http://localhost:5000` (not https)
 3. Try a different browser
 4. Restart the program (Ctrl+C in Command Prompt, then `python app.py` again)
+5. If you launched it from the parent folder, use `python Missoula-Pro-Am-Manager/app.py`
 
 ### Competitor is in wrong heat
 
@@ -387,7 +397,7 @@ This event has preliminary rounds, then finals:
 Before each competition day, back up your data:
 
 1. Close the program
-2. Find the file called `proam.db` in the program folder
+2. Find the file called `instance/proam.db` in the program folder
 3. Copy it somewhere safe (USB drive, cloud storage, etc.)
 4. Restart the program
 

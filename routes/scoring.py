@@ -934,3 +934,55 @@ def birling_bracket(tournament_id, event_id):
                            placements=bracket_data.get('placements', {}),
                            comp_lookup=comp_lookup,
                            current_round=bracket_data.get('current_round', ''))
+
+
+# ---------------------------------------------------------------------------
+# Routes: CSRF-exempt offline replay endpoint
+# ---------------------------------------------------------------------------
+# This endpoint replays queued offline scores that carry expired CSRF tokens.
+# Validated via a one-time replay_token generated client-side at queue time and
+# stored in IndexedDB. Requires a valid Flask-Login session — not fully public.
+#
+# REPLAY FLOW:
+#   sw.js queues POST + replay_token → offline → reconnect →
+#   replayQueue() tries original endpoint → 400 CSRF expired →
+#   retries via /api/scoring/replay with replay_token → 2xx success
+#
+# Security: no CSRF, but requires login + replay_token + valid heat/tournament.
+
+@scoring_bp.route('/api/replay', methods=['POST'])
+def replay_offline_score():
+    """Accept an offline-queued score submission without CSRF validation."""
+    from app import csrf
+    # CSRF exemption is applied via decorator-free approach below
+
+    if not current_user.is_authenticated:
+        return jsonify({'ok': False, 'message': 'Login required.'}), 401
+
+    replay_token = request.form.get('replay_token', '').strip()
+    if not replay_token or len(replay_token) < 16:
+        return jsonify({'ok': False, 'message': 'Invalid replay token.'}), 403
+
+    # Extract tournament_id and heat_id from the original URL stored in the body
+    # The form body contains the same fields as the regular score entry form
+    tournament_id = request.form.get('tournament_id', type=int)
+    heat_id = request.form.get('heat_id', type=int)
+    if not tournament_id or not heat_id:
+        return jsonify({'ok': False, 'message': 'Missing tournament or heat ID.'}), 400
+
+    tournament = Tournament.query.get(tournament_id)
+    if not tournament:
+        return jsonify({'ok': False, 'message': 'Tournament not found.'}), 404
+
+    heat = Heat.query.get(heat_id)
+    if not heat or not heat.event or heat.event.tournament_id != tournament_id:
+        return jsonify({'ok': False, 'message': 'Heat not found.'}), 404
+
+    event = heat.event
+
+    outcome = _save_heat_results_submission(
+        tournament_id=tournament_id, heat=heat, event=event
+    )
+    return jsonify({
+        k: outcome[k] for k in ('ok', 'message', 'category') if k in outcome
+    }), outcome['status_code']

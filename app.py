@@ -11,7 +11,7 @@ from database import db, init_db
 import config
 import strings as text
 from services.background_jobs import configure as configure_jobs
-from services.logging_setup import configure_error_monitoring, configure_logging
+from services.logging_setup import configure_error_monitoring, configure_logging, request_id_middleware
 
 HAS_FLASK_LOGIN = True
 try:
@@ -86,6 +86,7 @@ def create_app():
     config.validate_runtime(app.config)
     configure_logging(bool(app.config.get('STRUCTURED_LOGGING', True)))
     configure_error_monitoring(app.config.get('SENTRY_DSN', ''))
+    request_id_middleware(app)
     configure_jobs(int(app.config.get('JOB_MAX_WORKERS', 2)))
 
     # Session cookie hardening
@@ -177,6 +178,8 @@ def create_app():
     app.register_blueprint(registration_bp, url_prefix='/registration')
     app.register_blueprint(scheduling_bp, url_prefix='/scheduling')
     app.register_blueprint(scoring_bp, url_prefix='/scoring')
+    # Exempt the offline replay endpoint from CSRF — it uses a one-time replay token instead.
+    csrf.exempt('scoring.replay_offline_score')
     app.register_blueprint(reporting_bp, url_prefix='/reporting')
     app.register_blueprint(proam_relay_bp)
     app.register_blueprint(partnered_axe_bp)

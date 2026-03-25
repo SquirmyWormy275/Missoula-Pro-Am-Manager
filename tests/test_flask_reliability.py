@@ -9,7 +9,9 @@ Run:
 """
 from __future__ import annotations
 
+import importlib
 import os
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -112,6 +114,25 @@ class TestConfiguration:
             from config import _normalized_database_url
             assert _normalized_database_url().startswith('sqlite')
 
+    def test_default_sqlite_uses_project_instance_db(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('DATABASE_URL', None)
+            import config as config_module
+            config_module = importlib.reload(config_module)
+            expected = Path(config_module.__file__).resolve().parent / 'instance' / 'proam.db'
+            assert config_module._normalized_database_url() == f'sqlite:///{expected}'
+
+    def test_default_local_paths_are_project_absolute(self):
+        with patch.dict(os.environ, {}, clear=False):
+            for key in ('UPLOAD_FOLDER', 'EVENT_ORDER_CONFIG_PATH', 'LOCAL_BACKUP_DIR'):
+                os.environ.pop(key, None)
+            import config as config_module
+            config_module = importlib.reload(config_module)
+            project_dir = Path(config_module.__file__).resolve().parent
+            assert Path(config_module.BaseConfig.UPLOAD_FOLDER) == project_dir / 'uploads'
+            assert Path(config_module.BaseConfig.EVENT_ORDER_CONFIG_PATH) == project_dir / 'instance' / 'event_order.json'
+            assert Path(config_module.BaseConfig.LOCAL_BACKUP_DIR) == project_dir / 'instance' / 'backups'
+
     def test_postgres_normalized(self):
         with patch.dict(os.environ, {'DATABASE_URL': 'postgres://u:p@h/d'}):
             from config import _normalized_database_url
@@ -154,6 +175,34 @@ class TestConfiguration:
 
     def test_pool_pre_ping(self, app):
         assert app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {}).get('pool_pre_ping') is True
+
+    def test_create_app_from_parent_directory_uses_project_paths(self, monkeypatch):
+        from app import create_app
+        project_dir = Path(__file__).resolve().parents[1]
+        monkeypatch.chdir(project_dir.parent)
+        app = create_app()
+        assert app.config['SQLALCHEMY_DATABASE_URI'] == f"sqlite:///{project_dir / 'instance' / 'proam.db'}"
+        assert Path(app.config['UPLOAD_FOLDER']) == project_dir / 'uploads'
+
+    def test_test_app_helper_uses_project_migrations_directory(self, monkeypatch):
+        from tests import db_test_utils
+
+        captured: dict[str, object] = {}
+        project_dir = Path(__file__).resolve().parents[1]
+        expected = project_dir / 'migrations'
+        real_create_app = db_test_utils.create_test_app
+
+        def fake_upgrade(*, directory=None):
+            captured['directory'] = directory
+
+        monkeypatch.chdir(project_dir.parent)
+        monkeypatch.setattr('flask_migrate.upgrade', fake_upgrade)
+        app, db_path = real_create_app()
+        try:
+            assert Path(captured['directory']) == expected
+            assert app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///')
+        finally:
+            os.unlink(db_path)
 
 
 # ===========================================================================

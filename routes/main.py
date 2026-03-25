@@ -25,14 +25,43 @@ main_bp = Blueprint('main', __name__)
 
 @main_bp.route('/health')
 def health():
-    """Health check — returns DB connectivity status. No auth, no CSRF, no translation."""
+    """Health check — returns DB connectivity, migration status, version. No auth, no CSRF."""
     db_ok = False
+    migration_current = False
+    migration_head = None
+    migration_current_rev = None
     try:
         db.session.execute(text('SELECT 1'))
         db_ok = True
+        # Check if DB is at migration HEAD
+        try:
+            from flask_migrate import current as alembic_current
+            from alembic.config import Config as AlembicConfig
+            from alembic.script import ScriptDirectory
+            import os
+            migration_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'migrations')
+            alembic_cfg = AlembicConfig()
+            alembic_cfg.set_main_option('script_location', migration_dir)
+            script = ScriptDirectory.from_config(alembic_cfg)
+            head = script.get_current_head()
+            migration_head = head
+
+            row = db.session.execute(text('SELECT version_num FROM alembic_version LIMIT 1')).fetchone()
+            if row:
+                migration_current_rev = row[0]
+                migration_current = (row[0] == head)
+        except Exception:
+            pass
     except Exception:
         pass
-    return jsonify({'status': 'ok', 'db': db_ok, 'version': '2.6.0'})
+    return jsonify({
+        'status': 'ok' if db_ok and migration_current else 'degraded',
+        'db': db_ok,
+        'migration_current': migration_current,
+        'migration_head': migration_head,
+        'migration_rev': migration_current_rev,
+        'version': '2.6.0',
+    })
 
 
 def _can_access_arapaho_mode() -> bool:
@@ -488,3 +517,80 @@ def clone_tournament(tournament_id):
     })
     flash(f'Tournament cloned as "{new_tournament.name}". Update the name and dates before use.', 'success')
     return redirect(url_for('main.tournament_detail', tournament_id=new_tournament.id))
+
+
+# ---------------------------------------------------------------------------
+# Tournament config export to JSON
+# ---------------------------------------------------------------------------
+
+@main_bp.route('/tournament/<int:tournament_id>/export-config')
+def export_tournament_config(tournament_id):
+    """Export the complete tournament configuration as a JSON file.
+
+    Serializes event types, scoring rules, heat gen settings, payout templates,
+    and schedule config. Seeds the modular platform — extract REAL config from a
+    WORKING tournament instead of building abstract config from scratch.
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    events = Event.query.filter_by(tournament_id=tournament_id).order_by(Event.name).all()
+
+    event_configs = []
+    for e in events:
+        event_configs.append({
+            'name': e.name,
+            'event_type': e.event_type,
+            'gender': e.gender,
+            'scoring_type': e.scoring_type,
+            'scoring_order': e.scoring_order,
+            'is_open': e.is_open,
+            'is_handicap': getattr(e, 'is_handicap', False),
+            'is_partnered': e.is_partnered,
+            'partner_gender_requirement': e.partner_gender_requirement,
+            'requires_dual_runs': e.requires_dual_runs,
+            'requires_triple_runs': getattr(e, 'requires_triple_runs', False),
+            'stand_type': e.stand_type,
+            'max_stands': e.max_stands,
+            'has_prelims': e.has_prelims,
+            'payouts': e.get_payouts(),
+        })
+
+    # Wood config
+    from models.wood_config import WoodConfig
+    wood_configs = WoodConfig.query.filter_by(tournament_id=tournament_id).all()
+    wood_data = []
+    for w in wood_configs:
+        wood_data.append({
+            'config_key': w.config_key,
+            'species': w.species,
+            'size_value': w.size_value,
+            'size_unit': w.size_unit,
+            'notes': w.notes,
+            'count_override': w.count_override,
+        })
+
+    # Schedule config
+    schedule_config = tournament.get_schedule_config() if hasattr(tournament, 'get_schedule_config') else {}
+
+    export = {
+        'export_version': '1.0',
+        'exported_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'source': 'Missoula Pro-Am Manager',
+        'tournament': {
+            'name': tournament.name,
+            'year': tournament.year,
+            'status': tournament.status,
+            'providing_shirts': getattr(tournament, 'providing_shirts', False),
+        },
+        'events': event_configs,
+        'wood_configs': wood_data,
+        'schedule_config': schedule_config,
+    }
+
+    from flask import Response
+    import json
+    filename = f'tournament_config_{tournament.name.replace(" ", "_")}_{tournament.year}.json'
+    return Response(
+        json.dumps(export, indent=2, ensure_ascii=False),
+        mimetype='application/json',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )

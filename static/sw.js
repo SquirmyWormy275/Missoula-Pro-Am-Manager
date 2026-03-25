@@ -85,18 +85,34 @@ self.addEventListener('fetch', (event) => {
     // All other requests: default browser handling
 });
 
+function generateReplayToken() {
+    // Cryptographically random token for CSRF-exempt replay
+    const arr = new Uint8Array(24);
+    crypto.getRandomValues(arr);
+    return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function handleScorePost(request) {
     // Try network first
     try {
         return await fetch(request.clone());
     } catch (_networkErr) {
-        // Offline — queue the submission
+        // Offline — queue the submission with a replay token
         const body = await request.text();
+        const replay_token = generateReplayToken();
+        // Extract tournament_id and heat_id from the URL pattern:
+        // /scoring/{tournament_id}/heat/{heat_id}/enter
+        const urlMatch = request.url.match(/\/scoring\/(\d+)\/heat\/(\d+)\/enter/);
+        const tournament_id = urlMatch ? urlMatch[1] : '';
+        const heat_id = urlMatch ? urlMatch[2] : '';
         const db = await openDB();
         await enqueue(db, {
             url: request.url,
             method: 'POST',
             body,
+            replay_token,
+            tournament_id,
+            heat_id,
             timestamp: Date.now(),
         });
 
@@ -139,7 +155,9 @@ self.addEventListener('sync', (event) => {
 async function replayQueue() {
     const db = await openDB();
     const entries = await dequeueAll(db);
-    let syncedCount = 0;
+    let successCount = 0;
+    let failedCount = 0;
+    const failReasons = [];
 
     for (const entry of entries) {
         try {
@@ -148,21 +166,74 @@ async function replayQueue() {
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: entry.body,
             });
-            // Remove from queue if server accepted (2xx or 4xx = not a network error)
-            if (resp.status < 500) {
+
+            if (resp.status >= 200 && resp.status < 300) {
+                // 2xx — server accepted the score. Safe to dequeue.
                 await removeEntry(db, entry.id);
-                syncedCount++;
+                successCount++;
+            } else if (resp.status === 400 || resp.status === 403) {
+                // CSRF token expired or session invalid.
+                // Try the CSRF-exempt replay endpoint if a replay_token exists.
+                if (entry.replay_token) {
+                    const replayBody = entry.body
+                        + '&replay_token=' + encodeURIComponent(entry.replay_token)
+                        + '&tournament_id=' + encodeURIComponent(entry.tournament_id || '')
+                        + '&heat_id=' + encodeURIComponent(entry.heat_id || '');
+                    const replayResp = await fetch('/scoring/api/replay', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: replayBody,
+                    });
+                    if (replayResp.status >= 200 && replayResp.status < 300) {
+                        await removeEntry(db, entry.id);
+                        successCount++;
+                    } else {
+                        // Replay endpoint also rejected — keep in queue
+                        failedCount++;
+                        failReasons.push('csrf_expired');
+                    }
+                } else {
+                    // No replay token — keep in queue, notify user
+                    failedCount++;
+                    failReasons.push('csrf_expired');
+                }
+            } else if (resp.status === 409) {
+                // Version conflict — another judge already updated this heat.
+                // KEEP in queue — do NOT dequeue. User must resolve manually.
+                failedCount++;
+                failReasons.push('version_conflict');
+            } else if (resp.status >= 500) {
+                // Server error — transient, retry later. Keep in queue.
+                // Do not increment failedCount — this is retryable.
+            } else {
+                // Other 4xx (404, 422, etc.) — keep in queue, flag as failed
+                failedCount++;
+                failReasons.push('server_rejected_' + resp.status);
             }
         } catch (_) {
-            // Still offline — leave in queue
+            // Network error — still offline. Leave in queue for next attempt.
         }
     }
 
-    if (syncedCount > 0) {
-        // Notify all open windows
-        const clients = await self.clients.matchAll({ type: 'window' });
+    // Notify all open windows of results
+    const clients = await self.clients.matchAll({ type: 'window' });
+    if (successCount > 0 || failedCount > 0) {
         clients.forEach(client =>
-            client.postMessage({ type: 'sync-complete', count: syncedCount })
+            client.postMessage({
+                type: 'sync-complete',
+                success: successCount,
+                failed: failedCount,
+                reasons: failReasons,
+            })
+        );
+    }
+    if (failedCount > 0) {
+        clients.forEach(client =>
+            client.postMessage({
+                type: 'replay-failed',
+                count: failedCount,
+                reasons: failReasons,
+            })
         );
     }
 }

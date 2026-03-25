@@ -565,14 +565,14 @@ class TestAssignHandicapMarksLogging:
 def _mock_strathmark_imports():
     """Inject mock strathmark modules so _fetch_start_mark can import them."""
     import sys
-    mock_predictor = MagicMock()
-    mock_predictor.CompetitorRecord = MagicMock
-    mock_predictor.WoodProfile = MagicMock
+    mock_calculator = MagicMock()
+    mock_calculator.CompetitorRecord = MagicMock
+    mock_calculator.WoodProfile = MagicMock
     originals = {}
-    for mod_name in ('strathmark', 'strathmark.predictor'):
+    for mod_name in ('strathmark', 'strathmark.calculator'):
         originals[mod_name] = sys.modules.get(mod_name)
     sys.modules['strathmark'] = MagicMock()
-    sys.modules['strathmark.predictor'] = mock_predictor
+    sys.modules['strathmark.calculator'] = mock_calculator
     yield
     for mod_name, orig in originals.items():
         if orig is None:
