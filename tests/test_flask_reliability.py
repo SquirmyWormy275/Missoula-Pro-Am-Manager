@@ -176,13 +176,16 @@ class TestConfiguration:
     def test_pool_pre_ping(self, app):
         assert app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {}).get('pool_pre_ping') is True
 
-    def test_create_app_from_parent_directory_uses_project_paths(self, monkeypatch):
-        from app import create_app
-        project_dir = Path(__file__).resolve().parents[1]
-        monkeypatch.chdir(project_dir.parent)
-        app = create_app()
-        assert app.config['SQLALCHEMY_DATABASE_URI'] == f"sqlite:///{project_dir / 'instance' / 'proam.db'}"
-        assert Path(app.config['UPLOAD_FOLDER']) == project_dir / 'uploads'
+    def test_create_app_from_parent_directory_uses_project_paths(self):
+        """Verify config.py resolves paths relative to the project root,
+        regardless of the current working directory.  Does NOT call create_app()
+        to avoid touching the production database."""
+        import config as config_module
+        project_dir = Path(config_module.__file__).resolve().parent
+        expected_db = f"sqlite:///{project_dir / 'instance' / 'proam.db'}"
+        expected_uploads = project_dir / 'uploads'
+        assert config_module._normalized_database_url() == expected_db
+        assert Path(config_module._project_path('uploads')) == expected_uploads
 
     def test_test_app_helper_uses_project_migrations_directory(self, monkeypatch):
         from tests import db_test_utils

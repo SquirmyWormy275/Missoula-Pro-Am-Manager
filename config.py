@@ -83,8 +83,14 @@ class ProductionConfig(BaseConfig):
 def get_config():
     env = os.environ.get('FLASK_ENV', '').strip().lower()
     if env == 'production' or os.environ.get('PRODUCTION', '').strip() == '1':
-        return ProductionConfig
-    return DevelopmentConfig
+        cfg = ProductionConfig
+    else:
+        cfg = DevelopmentConfig
+    # Always re-resolve DATABASE_URL at app creation time.
+    # BaseConfig.SQLALCHEMY_DATABASE_URI is cached at class-definition time,
+    # which can become stale if DATABASE_URL env var changed (e.g. in tests).
+    cfg.SQLALCHEMY_DATABASE_URI = _normalized_database_url()
+    return cfg
 
 
 def validate_runtime(app_config: dict) -> None:

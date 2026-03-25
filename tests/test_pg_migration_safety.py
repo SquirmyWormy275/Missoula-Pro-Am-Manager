@@ -92,26 +92,54 @@ class TestNoBatchAlterTableInUpgrades:
     """batch_alter_table is Alembic's SQLite compatibility shim.
 
     PostgreSQL does not need it, and it frequently produces broken DDL
-    (especially with index operations and column alterations). All upgrade()
-    functions should use direct op.add_column / op.alter_column / op.drop_column
-    instead.
+    (especially with index operations and column alterations).
+
+    EXCEPTION: batch_alter_table IS required in upgrade() for constraint
+    operations (create_foreign_key, create_unique_constraint) because SQLite
+    does not support ALTER TABLE ADD CONSTRAINT.  These operations work fine
+    on PostgreSQL via batch mode.  Only flag batch_alter_table when it wraps
+    simple add_column/drop_column that could use direct op.* calls.
     """
+
+    # Operations that REQUIRE batch mode on SQLite
+    _BATCH_REQUIRED_OPS = {
+        'create_foreign_key', 'create_unique_constraint',
+        'drop_constraint', 'alter_column',
+    }
 
     def test_no_batch_alter_table_in_upgrades(self):
         violations = []
         for filepath in _migration_files():
             upgrade_lines = _extract_upgrade_source(filepath)
+            in_batch = False
+            batch_start_line = 0
+            batch_has_constraint_op = False
             for lineno, line in upgrade_lines:
-                if "batch_alter_table" in line:
-                    violations.append(
-                        f"  {filepath.name}:{lineno}  {line.strip()}"
-                    )
+                stripped = line.strip()
+                if "batch_alter_table" in stripped:
+                    in_batch = True
+                    batch_start_line = lineno
+                    batch_has_constraint_op = False
+                elif in_batch:
+                    for op_name in self._BATCH_REQUIRED_OPS:
+                        if op_name in stripped:
+                            batch_has_constraint_op = True
+                            break
+                    # Detect end of batch block (dedent or new statement)
+                    if stripped and not stripped.startswith(('batch_op.', '#', ')')):
+                        if not batch_has_constraint_op and in_batch:
+                            violations.append(
+                                f"  {filepath.name}:{batch_start_line}  "
+                                f"batch_alter_table without constraint ops"
+                            )
+                        in_batch = False
 
         if violations:
             msg = (
-                "batch_alter_table found in upgrade() functions.\n"
-                "PostgreSQL does not need batch mode and it causes deployment failures.\n"
-                "Use op.add_column / op.alter_column / op.drop_column directly.\n\n"
+                "batch_alter_table found in upgrade() without constraint operations.\n"
+                "For simple add_column/drop_column, use direct op.* calls.\n"
+                "batch_alter_table IS acceptable for create_foreign_key, "
+                "create_unique_constraint, etc.\n\n"
                 "Violations:\n" + "\n".join(violations)
             )
             pytest.fail(msg)

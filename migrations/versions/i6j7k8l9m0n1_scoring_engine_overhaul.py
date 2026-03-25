@@ -36,9 +36,10 @@ def upgrade():
     op.add_column('event_results', sa.Column('handicap_factor', sa.Float(), nullable=False, server_default='1.0'))
 
     # --- heats table ---
-    op.add_column('heats', sa.Column('locked_by_user_id', sa.Integer(), nullable=True))
-    op.add_column('heats', sa.Column('locked_at', sa.DateTime(), nullable=True))
-    op.create_foreign_key('fk_heats_locked_by_user_id', 'heats', 'users', ['locked_by_user_id'], ['id'])
+    with op.batch_alter_table('heats', schema=None) as batch_op:
+        batch_op.add_column(sa.Column('locked_by_user_id', sa.Integer(), nullable=True))
+        batch_op.add_column(sa.Column('locked_at', sa.DateTime(), nullable=True))
+        batch_op.create_foreign_key('fk_heats_locked_by_user_id', 'users', ['locked_by_user_id'], ['id'])
 
     # --- payout_templates table ---
     op.create_table(

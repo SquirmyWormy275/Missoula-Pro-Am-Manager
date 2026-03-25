@@ -84,6 +84,17 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(config.get_config())
     config.validate_runtime(app.config)
+
+    # SAFEGUARD: Block tests from ever touching the production database.
+    # If TESTING is True, the DB URI must NOT point to the real proam.db.
+    if app.config.get('TESTING'):
+        db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+        if 'instance' in db_uri and 'proam.db' in db_uri:
+            raise RuntimeError(
+                'FATAL: Test is about to use the PRODUCTION database '
+                f'({db_uri}). Tests MUST use a temporary database. '
+                'Use create_test_app() from tests/db_test_utils.py.'
+            )
     configure_logging(bool(app.config.get('STRUCTURED_LOGGING', True)))
     configure_error_monitoring(app.config.get('SENTRY_DSN', ''))
     request_id_middleware(app)

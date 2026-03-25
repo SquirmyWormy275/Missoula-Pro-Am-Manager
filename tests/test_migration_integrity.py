@@ -113,6 +113,9 @@ def _build_migration_schema() -> tuple[dict, dict, dict]:
     tmp_path = tmp.name
     tmp.close()
 
+    # Set DATABASE_URL BEFORE create_app() so it never touches production DB
+    old_db_url = os.environ.get('DATABASE_URL')
+    os.environ['DATABASE_URL'] = f'sqlite:///{tmp_path}'
     try:
         from app import create_app
         app = create_app()
@@ -130,6 +133,10 @@ def _build_migration_schema() -> tuple[dict, dict, dict]:
             _get_indexes(tmp_path),
         )
     finally:
+        if old_db_url is None:
+            os.environ.pop('DATABASE_URL', None)
+        else:
+            os.environ['DATABASE_URL'] = old_db_url
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -142,6 +149,9 @@ def _build_model_schema() -> tuple[dict, dict, dict]:
     tmp_path = tmp.name
     tmp.close()
 
+    # Set DATABASE_URL BEFORE create_app() so it never touches production DB
+    old_db_url = os.environ.get('DATABASE_URL')
+    os.environ['DATABASE_URL'] = f'sqlite:///{tmp_path}'
     try:
         from app import create_app
         app = create_app()
@@ -158,6 +168,10 @@ def _build_model_schema() -> tuple[dict, dict, dict]:
             _get_indexes(tmp_path),
         )
     finally:
+        if old_db_url is None:
+            os.environ.pop('DATABASE_URL', None)
+        else:
+            os.environ['DATABASE_URL'] = old_db_url
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -513,14 +527,23 @@ class TestModelColumnDeclarations:
     """
 
     @pytest.fixture(scope='class', autouse=True)
-    def model_metadata(self, request):
-        """Load model metadata."""
-        from app import create_app
-        app = create_app()
-        from database import db
-        with app.app_context():
-            request.cls.metadata = db.metadata
-            request.cls.app = app
+    def model_metadata(self, request, tmp_path_factory):
+        """Load model metadata using a temp DB (never touches production)."""
+        tmp_db = tmp_path_factory.mktemp('nullable') / 'test.db'
+        old_db_url = os.environ.get('DATABASE_URL')
+        os.environ['DATABASE_URL'] = f'sqlite:///{tmp_db}'
+        try:
+            from app import create_app
+            app = create_app()
+            from database import db
+            with app.app_context():
+                request.cls.metadata = db.metadata
+                request.cls.app = app
+        finally:
+            if old_db_url is None:
+                os.environ.pop('DATABASE_URL', None)
+            else:
+                os.environ['DATABASE_URL'] = old_db_url
 
     def test_all_columns_declare_nullable(self):
         """Every non-PK column should explicitly declare nullable.

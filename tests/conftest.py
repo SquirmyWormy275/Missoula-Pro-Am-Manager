@@ -14,9 +14,15 @@ pytest resolves local fixtures before conftest.
 IMPORTANT: Tests use ``flask db upgrade`` (not ``db.create_all()``) so that the
 migration chain is exercised on every run.  If a migration fails to add a column,
 the tests will fail — just like production would.
+
+SAFEGUARD: Three layers prevent test data from touching the production DB:
+  1. pytest_configure() verifies instance/proam.db is untouched after every session
+  2. create_app() refuses to start with TESTING=True if DB URI points to proam.db
+  3. create_test_app() sets DATABASE_URL env var BEFORE calling create_app()
 """
 import json
 import os
+import pathlib
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-conftest')
@@ -24,6 +30,65 @@ os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from database import db as _db
 from tests.db_test_utils import create_test_app  # noqa: F401 — re-exported
+
+
+# ---------------------------------------------------------------------------
+# SAFEGUARD: Production DB protection
+# ---------------------------------------------------------------------------
+
+_PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_PROD_DB_PATH = _PROJECT_ROOT / 'instance' / 'proam.db'
+
+
+def _prod_db_fingerprint():
+    """Return (exists, size, mtime) for the production DB file."""
+    if _PROD_DB_PATH.exists():
+        stat = _PROD_DB_PATH.stat()
+        return (True, stat.st_size, stat.st_mtime)
+    return (False, 0, 0)
+
+
+def pytest_configure(config):
+    """Record production DB state before tests run."""
+    config._prod_db_before = _prod_db_fingerprint()
+
+
+def pytest_unconfigure(config):
+    """Verify production DB was not modified by the test session."""
+    before = getattr(config, '_prod_db_before', None)
+    if before is None:
+        return
+    after = _prod_db_fingerprint()
+    if before != after:
+        import warnings
+        warnings.warn(
+            f'\n\n*** PRODUCTION DATABASE MODIFIED BY TESTS ***\n'
+            f'Before: exists={before[0]}, size={before[1]}, mtime={before[2]}\n'
+            f'After:  exists={after[0]}, size={after[1]}, mtime={after[2]}\n'
+            f'Path: {_PROD_DB_PATH}\n'
+            f'This should NEVER happen. Investigate immediately.\n',
+            stacklevel=1,
+        )
+
+
+@pytest.fixture(autouse=True, scope='session')
+def _guard_production_db():
+    """Session-scoped autouse fixture: abort if any test touches proam.db.
+
+    Checks the production DB file before and after the entire test session.
+    If size or mtime changes, the test session fails loudly.
+    """
+    before = _prod_db_fingerprint()
+    yield
+    after = _prod_db_fingerprint()
+    if before != after:
+        pytest.fail(
+            f'FATAL: Tests modified the production database!\n'
+            f'Before: exists={before[0]}, size={before[1]}\n'
+            f'After:  exists={after[0]}, size={after[1]}\n'
+            f'Path: {_PROD_DB_PATH}\n'
+            f'All test data MUST use temporary databases via create_test_app().'
+        )
 
 
 # ---------------------------------------------------------------------------

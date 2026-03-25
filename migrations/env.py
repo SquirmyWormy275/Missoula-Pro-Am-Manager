@@ -147,6 +147,7 @@ def run_migrations_online():
         # constraints on referencing tables block the DROP.
         if connectable.dialect.name == 'sqlite':
             connection.execute(text('PRAGMA foreign_keys=OFF'))
+            connection.commit()
 
         context.configure(
             connection=connection,
@@ -159,6 +160,7 @@ def run_migrations_online():
 
         if connectable.dialect.name == 'sqlite':
             connection.execute(text('PRAGMA foreign_keys=ON'))
+            connection.commit()
 
 
 if context.is_offline_mode():
