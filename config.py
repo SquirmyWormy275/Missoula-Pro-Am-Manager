@@ -367,6 +367,8 @@ def event_rank_category(event) -> 'str | None':
         if getattr(event, 'partner_gender', None) == 'mixed':
             return 'jack_jill'
         return 'doublebuck'
+    if st == 'birling':
+        return 'birling'
     return None
 
 
@@ -380,6 +382,7 @@ RANKED_CATEGORIES = {
     'singlebuck',
     'doublebuck',
     'jack_jill',
+    'birling',
 }
 
 CATEGORY_DISPLAY_NAMES = {
@@ -390,6 +393,7 @@ CATEGORY_DISPLAY_NAMES = {
     'singlebuck': 'Single Buck',
     'doublebuck': 'Double Buck',
     'jack_jill': 'Jack & Jill Sawing',
+    'birling': 'Birling',
 }
 
 CATEGORY_DESCRIPTIONS = {
@@ -400,6 +404,7 @@ CATEGORY_DESCRIPTIONS = {
     'singlebuck': "Men's and Women's Single Buck",
     'doublebuck': "Men's and Women's Double Buck",
     'jack_jill': 'Jack & Jill Sawing (mixed gender)',
+    'birling': "Double-elimination bracket seeding (Men's and Women's)",
 }
 
 # Saturday priority ordering defaults (override via EVENT_ORDER_CONFIG_PATH if needed).
@@ -410,4 +415,7 @@ COLLEGE_SATURDAY_PRIORITY_DEFAULT = [
     ('Standing Block Hard Hit', 'F'),
     ('Obstacle Pole', 'M'),
     ('Obstacle Pole', 'F'),
+    ('Double Buck', 'M'),
+    ('Double Buck', 'F'),
+    ('Jack & Jill Sawing', None),
 ]

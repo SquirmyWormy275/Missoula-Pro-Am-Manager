@@ -753,6 +753,12 @@ def tournament_payout_manager(tournament_id):
     """Tournament-level payout configuration dashboard for all pro events."""
     tournament = Tournament.query.get_or_404(tournament_id)
 
+    def _payout_redirect():
+        """Return redirect to payout manager or setup page depending on return_to."""
+        if request.form.get('return_to') == 'setup':
+            return redirect(url_for('main.tournament_setup', tournament_id=tournament_id, tab='payouts'))
+        return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+
     if request.method == 'POST':
         action = request.form.get('action', '')
 
@@ -765,14 +771,14 @@ def tournament_payout_manager(tournament_id):
                 event_ids = []
             if not tpl_id:
                 flash('Select a template to apply.', 'error')
-                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+                return _payout_redirect()
             if not event_ids:
                 flash('Select at least one event.', 'error')
-                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+                return _payout_redirect()
             template = PayoutTemplate.query.get(tpl_id)
             if not template:
                 flash('Template not found.', 'error')
-                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+                return _payout_redirect()
             applied = 0
             for eid in event_ids:
                 ev = Event.query.filter_by(id=eid, tournament_id=tournament_id, event_type='pro').first()
@@ -791,7 +797,7 @@ def tournament_payout_manager(tournament_id):
                     flash('Save failed — please retry.', 'error')
             else:
                 flash('No matching pro events found.', 'error')
-            return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+            return _payout_redirect()
 
         if action == 'clear_event':
             eid = request.form.get('event_id', type=int)
@@ -801,28 +807,28 @@ def tournament_payout_manager(tournament_id):
                 db.session.commit()
                 invalidate_tournament_caches(tournament_id)
                 flash(f'Payouts cleared for {ev.display_name}.', 'success')
-            return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+            return _payout_redirect()
 
         if action == 'delete_template':
             tpl_id = request.form.get('template_id', type=int)
             engine.delete_payout_template(tpl_id)
             flash('Template deleted.', 'success')
-            return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+            return _payout_redirect()
 
         if action == 'save_template':
             tpl_name = (request.form.get('template_name') or '').strip()
             if not tpl_name:
                 flash('Template name is required.', 'error')
-                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+                return _payout_redirect()
             payouts = _parse_payout_form()
             if payouts is None:
-                return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+                return _payout_redirect()
             engine.save_payout_template(tpl_name, payouts)
             flash(f'Template "{tpl_name}" saved.', 'success')
-            return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+            return _payout_redirect()
 
         flash('Unknown action.', 'error')
-        return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
+        return _payout_redirect()
 
     pro_events = (Event.query
                   .filter_by(tournament_id=tournament_id, event_type='pro')
@@ -915,25 +921,9 @@ def heat_sheet_pdf(tournament_id, heat_id):
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/birling-bracket')
 def birling_bracket(tournament_id, event_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = _event_for_tournament_or_404(tournament_id, event_id)
-
-    if event.scoring_type != 'bracket':
-        flash('This event does not use a bracket.', 'warning')
-        return redirect(url_for('scoring.event_results',
-                                tournament_id=tournament_id, event_id=event_id))
-
-    from services.birling_bracket import BirlingBracket
-    bb = BirlingBracket(event)
-    bracket_data = bb.bracket_data
-    comp_lookup = {str(c['id']): c['name'] for c in bracket_data.get('competitors', [])}
-
-    return render_template('scoring/birling_bracket.html',
-                           tournament=tournament, event=event,
-                           bracket=bracket_data['bracket'],
-                           placements=bracket_data.get('placements', {}),
-                           comp_lookup=comp_lookup,
-                           current_round=bracket_data.get('current_round', ''))
+    """Legacy route — redirects to the full birling management page."""
+    return redirect(url_for('scheduling.birling_manage',
+                            tournament_id=tournament_id, event_id=event_id))
 
 
 # ---------------------------------------------------------------------------

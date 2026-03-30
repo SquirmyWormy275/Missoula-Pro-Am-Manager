@@ -110,11 +110,13 @@ def generate_heats(tournament_id, event_id):
 
     try:
         num_heats = generate_event_heats(event)
+        db.session.commit()
         if _is_list_only_event(event):
             flash(f'{event.display_name} uses signups only (no heats).', 'success')
         else:
             flash(text.FLASH['heats_generated'].format(num_heats=num_heats, event_name=event.display_name), 'success')
     except Exception as e:
+        db.session.rollback()
         flash(text.FLASH['heats_error'].format(error=str(e)), 'error')
 
     return redirect(url_for('scheduling.event_heats',
@@ -151,6 +153,8 @@ def generate_college_heats(tournament_id):
             else:
                 errors += 1
                 flash(f'Error generating heats for {event.display_name}: {exc}', 'error')
+
+    db.session.commit()
 
     parts = []
     if generated:

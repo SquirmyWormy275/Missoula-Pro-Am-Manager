@@ -15,6 +15,7 @@ Sub-module layout:
   ability_rankings.py — ability_rankings
   preflight.py       — preflight_check, preflight_json, generate_async, generation_job_status
   assign_marks.py    — assign_marks (handicap start-mark assignment via STRATHMARK)
+  birling.py         — birling_manage, birling_generate, birling_record_match, birling_reset, birling_finalize
 """
 import re
 import json
@@ -256,6 +257,7 @@ from . import show_day        # noqa: F401, E402
 from . import ability_rankings  # noqa: F401, E402
 from . import preflight       # noqa: F401, E402
 from . import assign_marks    # noqa: F401, E402
+from . import birling         # noqa: F401, E402
 
 # Re-export helpers used by routes/main.py (tournament_setup)
 from .events import _with_field_key, _get_existing_event_config  # noqa: F401, E402

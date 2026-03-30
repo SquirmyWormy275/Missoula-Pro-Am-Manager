@@ -107,6 +107,19 @@ def generate_event_heats(event: Event) -> int:
     else:
         heats = _generate_standard_heats(competitors, num_heats, max_per_heat, event=event)
 
+    # Use actual heat count returned by the generator (saw events recalculate internally).
+    actual_heat_count = len(heats)
+
+    # Validate: every competitor must appear in exactly one heat.
+    placed_ids = {c['id'] for heat_comps in heats for c in heat_comps}
+    expected_ids = {c['id'] for c in competitors}
+    missing = expected_ids - placed_ids
+    if missing:
+        logger.warning(
+            'heat_generator: %d competitor(s) not placed in any heat for event %r: %s',
+            len(missing), event.display_name, sorted(missing),
+        )
+
     # Create Heat objects
     stand_numbers = _stand_numbers_for_event(event, max_per_heat, stand_config)
     created_heats = []
@@ -118,9 +131,9 @@ def generate_event_heats(event: Event) -> int:
         )
         heat.set_competitors([c['id'] for c in heat_competitors])
 
-        # Assign stands
+        # Assign stands (slice stand_numbers to actual heat size)
         for i, comp in enumerate(heat_competitors):
-            stand_num = stand_numbers[i]
+            stand_num = stand_numbers[i] if i < len(stand_numbers) else i + 1
             heat.set_stand_assignment(comp['id'], stand_num)
 
         db.session.add(heat)
@@ -128,7 +141,6 @@ def generate_event_heats(event: Event) -> int:
 
     # For dual-run events, create second run heats
     if event.requires_dual_runs:
-        run2_stands = list(reversed(stand_numbers))
         for heat_num, heat_competitors in enumerate(heats, start=1):
             heat = Heat(
                 event_id=event.id,
@@ -137,7 +149,10 @@ def generate_event_heats(event: Event) -> int:
             )
             heat.set_competitors([c['id'] for c in heat_competitors])
 
-            # Swap stand assignments for run 2 (e.g., Course 1 <-> Course 2)
+            # Swap stand assignments for run 2 (e.g., Course 1 <-> Course 2).
+            # Reverse only the stands actually used by THIS heat, not the full list.
+            heat_size = len(heat_competitors)
+            run2_stands = list(reversed(stand_numbers[:heat_size]))
             for i, comp in enumerate(heat_competitors):
                 heat.set_stand_assignment(comp['id'], run2_stands[i])
 
@@ -156,91 +171,68 @@ def generate_event_heats(event: Event) -> int:
     # prevents partial state if a later step in the same request fails.
     db.session.flush()
 
-    return num_heats
+    return actual_heat_count
 
 
 def _get_event_competitors(event: Event) -> list:
-    """Get list of competitors entered in this event with their info."""
+    """Get list of competitors entered in this event with their info.
+
+    Always scans active competitors to discover new registrations that don't
+    yet have EventResult rows (fixes silent omission on heat regeneration).
+    """
     competitors = []
+    seen_ids: set[int] = set()
 
-    # Get from event results (if already assigned)
+    # Phase 1: Collect from existing EventResult rows (preserves scored data).
+    existing_result_comp_ids: set[int] = set()
     for result in event.results.all():
-        if event.event_type == 'college':
-            comp = CollegeCompetitor.query.get(result.competitor_id)
-        else:
-            comp = ProCompetitor.query.get(result.competitor_id)
+        existing_result_comp_ids.add(result.competitor_id)
 
-        if comp and comp.status == 'active' and _competitor_entered_event(event, comp.get_events_entered()):
-            competitors.append({
-                'id': comp.id,
-                'name': comp.name,
-                'gender': comp.gender,
-                'is_left_handed': getattr(comp, 'is_left_handed_springboard', False),
-                'gear_sharing': comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {}
-            })
+    # Phase 2: Scan ALL active competitors for this event to catch new entrants.
+    if event.event_type == 'college':
+        all_comps = CollegeCompetitor.query.filter_by(
+            tournament_id=event.tournament_id,
+            status='active'
+        ).all()
+    else:
+        all_comps = ProCompetitor.query.filter_by(
+            tournament_id=event.tournament_id,
+            status='active'
+        ).all()
 
-    # If no results yet, get from competitor event entries
-    if not competitors:
-        if event.event_type == 'college':
-            all_comps = CollegeCompetitor.query.filter_by(
-                tournament_id=event.tournament_id,
-                status='active'
-            ).all()
+    # Filter by gender if gendered event
+    if event.gender:
+        all_comps = [c for c in all_comps if c.gender == event.gender]
 
-            # Filter by gender if gendered event
-            if event.gender:
-                all_comps = [c for c in all_comps if c.gender == event.gender]
+    for comp in all_comps:
+        if not _competitor_entered_event(event, comp.get_events_entered()):
+            continue
+        if comp.id in seen_ids:
+            continue
+        seen_ids.add(comp.id)
 
-            for comp in all_comps:
-                if not _competitor_entered_event(event, comp.get_events_entered()):
-                    continue
-                # Create result entry for tracking
-                result = EventResult(
-                    event_id=event.id,
-                    competitor_id=comp.id,
-                    competitor_type='college',
-                    competitor_name=comp.name
-                )
-                db.session.add(result)
+        # Create EventResult row if one doesn't exist yet (new entrant).
+        if comp.id not in existing_result_comp_ids:
+            result = EventResult(
+                event_id=event.id,
+                competitor_id=comp.id,
+                competitor_type=event.event_type,
+                competitor_name=comp.name
+            )
+            db.session.add(result)
 
-                competitors.append({
-                    'id': comp.id,
-                    'name': comp.name,
-                    'gender': comp.gender,
-                    'is_left_handed': False,
-                    'gear_sharing': comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {},
-                    'partner_name': _get_partner_name_for_event(comp, event)
-                })
-        else:
-            all_comps = ProCompetitor.query.filter_by(
-                tournament_id=event.tournament_id,
-                status='active'
-            ).all()
+        comp_data = {
+            'id': comp.id,
+            'name': comp.name,
+            'gender': comp.gender,
+            'is_left_handed': getattr(comp, 'is_left_handed_springboard', False),
+            'gear_sharing': comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {},
+            'partner_name': _get_partner_name_for_event(comp, event)
+        }
+        if event.event_type == 'pro':
+            comp_data['is_slow_springboard'] = bool(getattr(comp, 'springboard_slow_heat', False))
 
-            # Filter by gender if gendered event
-            if event.gender:
-                all_comps = [c for c in all_comps if c.gender == event.gender]
-
-            for comp in all_comps:
-                if not _competitor_entered_event(event, comp.get_events_entered()):
-                    continue
-                result = EventResult(
-                    event_id=event.id,
-                    competitor_id=comp.id,
-                    competitor_type='pro',
-                    competitor_name=comp.name
-                )
-                db.session.add(result)
-
-                competitors.append({
-                    'id': comp.id,
-                    'name': comp.name,
-                    'gender': comp.gender,
-                    'is_left_handed': comp.is_left_handed_springboard,
-                    'is_slow_springboard': bool(getattr(comp, 'springboard_slow_heat', False)),
-                    'gear_sharing': comp.get_gear_sharing(),
-                    'partner_name': _get_partner_name_for_event(comp, event)
-                })
+        competitors.append(comp_data)
 
     db.session.flush()
     return competitors

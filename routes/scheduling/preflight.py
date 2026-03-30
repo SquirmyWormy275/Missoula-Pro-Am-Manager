@@ -149,6 +149,8 @@ def _async_generate_all(tournament_id: int) -> dict:
                 else:
                     errors.append(str(exc))
 
+        db.session.commit()  # Persist heats before building flights
+
         pro_flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
         return {
             'ok': True,

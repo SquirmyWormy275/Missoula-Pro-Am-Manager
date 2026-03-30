@@ -255,7 +255,7 @@
                                 <div class="heat-row">
                                     <span class="heat-label">H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}:</span>
                                     {% for comp in heat.competitors %}<span>S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>{% endfor %}
-                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}">Score</a>
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}">Score</a>
                                 </div>
                                 {% endfor %}
                             </div>
@@ -289,7 +289,7 @@
                                 <div class="heat-row">
                                     <span class="heat-label">H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}:</span>
                                     {% for comp in heat.competitors %}<span>S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>{% endfor %}
-                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}">Score</a>
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}">Score</a>
                                 </div>
                                 {% endfor %}
                             </div>
@@ -332,7 +332,7 @@
                                 {% for heat in item.heats %}
                                 <div class="heat-row">
                                     {% for comp in heat.competitors %}<span>S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>{% endfor %}
-                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}">Score</a>
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}">Score</a>
                                 </div>
                                 {% endfor %}
                             </div>

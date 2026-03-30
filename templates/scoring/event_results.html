@@ -80,7 +80,7 @@
             </a>
           {% endif %}
           {% if event.scoring_type == 'bracket' %}
-            <a href="{{ url_for('scoring.birling_bracket', tournament_id=tournament.id, event_id=event.id) }}"
+            <a href="{{ url_for('scheduling.birling_manage', tournament_id=tournament.id, event_id=event.id) }}"
                class="btn btn-outline-info">
               <i class="bi bi-diagram-3"></i> Bracket
             </a>

@@ -1,8 +1,8 @@
 # STRATHEX Design System -- Missoula Pro-Am Manager
 
-**Version:** 1.0.0
-**Last updated:** 2026-03-23
-**Applies to:** Missoula Pro-Am Manager V2.5.0+
+**Version:** 1.1.0
+**Last updated:** 2026-03-27
+**Applies to:** Missoula Pro-Am Manager V2.6.0+
 **Source of truth:** `static/css/theme.css`
 
 This document is the formal design system specification for the Missoula Pro-Am Manager, the first pilot application in the STRATHEX ecosystem. It codifies every visual decision present in production so that new features, templates, and future STRATHEX apps can be built with full consistency.
@@ -11,6 +11,7 @@ This document is the formal design system specification for the Missoula Pro-Am 
 
 ## Table of Contents
 
+0. [Product Context](#product-context)
 1. [Design Philosophy](#1-design-philosophy)
 2. [Color System](#2-color-system)
 3. [Typography](#3-typography)
@@ -23,12 +24,24 @@ This document is the formal design system specification for the Missoula Pro-Am 
 10. [Form Controls](#10-form-controls)
 11. [Table System](#11-table-system)
 12. [Navigation](#12-navigation)
-13. [Motion & Transitions](#13-motion--transitions)
-14. [Responsive Breakpoints](#14-responsive-breakpoints)
-15. [Accessibility](#15-accessibility)
-16. [Print Styles](#16-print-styles)
-17. [i18n Theme Variants](#17-i18n-theme-variants)
-18. [Recommendations for Consistency](#18-recommendations-for-consistency)
+13. [Modal & Overlay System](#13-modal--overlay-system)
+14. [List Group](#14-list-group)
+15. [Motion & Transitions](#15-motion--transitions)
+16. [Responsive Breakpoints](#16-responsive-breakpoints)
+17. [Accessibility](#17-accessibility)
+18. [Print Styles](#18-print-styles)
+19. [i18n Theme Variants](#19-i18n-theme-variants)
+20. [Recommendations for Consistency](#20-recommendations-for-consistency)
+21. [Decisions Log](#21-decisions-log)
+
+---
+
+## Product Context
+
+- **What this is:** A web-based tournament management system for the Missoula Pro Am timbersports competition -- the first pilot application in the STRATHEX ecosystem.
+- **Who it's for:** Tournament judges, scorers, registrars, school captains, competitors, and spectators -- ranging from field-side tablet users to desktop-based ops staff.
+- **Space/industry:** Competitive timbersports (professional logging sports). Peers include Stihl Timbersports Series, AWSC events, and regional collegiate lumberjack competitions.
+- **Project type:** Operations web app (data-dense dashboards, scoring workflows, real-time status) with public-facing spectator portals and competitor self-service.
 
 ---
 
@@ -540,9 +553,50 @@ Items: 6px radius, 1px margin. Active items use fire-tinted background.
 
 ---
 
-## 13. Motion & Transitions
+## 13. Modal & Overlay System
 
-### 13.1 Timing Guidelines
+### 13.1 Modal
+
+```css
+.modal-content:
+  background: var(--sx-surface-2);
+  border: 1px solid var(--sx-border-bright);
+  border-radius: 14px;
+  color: var(--sx-text);
+```
+
+- Header: bottom border `--sx-border`
+- Footer: top border `--sx-border`
+- Close button: `filter: invert(1) grayscale(1) brightness(0.6)` (inverted for dark bg)
+
+### 13.2 Toasts
+
+Toasts use Bootstrap 5 defaults with custom z-index (`1100`). Attributes: `role="alert" aria-live="assertive"`. Hidden in print and portal-mobile modes.
+
+---
+
+## 14. List Group
+
+```css
+.list-group-item:
+  background: var(--sx-surface);
+  border-color: var(--sx-border);
+  color: var(--sx-text);
+```
+
+- Hover/focus: `background: var(--sx-surface-2)`
+- Active item: `background: var(--sx-fire); border-color: var(--sx-fire); color: #fff`
+- Flush variant (`.list-group-flush`): No left/right borders, no border-radius
+
+---
+
+## 15. Motion & Transitions
+
+### 15.1 Reduced Motion
+
+The system respects `prefers-reduced-motion: reduce`. When active, **all** animations and transitions are zeroed (`0.01ms` duration, single iteration). This is a global reset applied via `*, *::before, *::after`.
+
+### 15.2 Timing Guidelines
 
 | Duration     | Easing         | Use case                          |
 |--------------|----------------|-----------------------------------|
@@ -554,7 +608,7 @@ Items: 6px radius, 1px margin. Active items use fire-tinted background.
 | `0.25s`      | `ease`         | Mobile backdrop fade              |
 | `0.4s`       | `ease`         | Progress bar fill                 |
 
-### 13.2 Named Animations
+### 15.3 Named Animations
 
 | Animation           | Duration | Easing            | Description                               |
 |----------------------|---------|-------------------|-------------------------------------------|
@@ -563,18 +617,20 @@ Items: 6px radius, 1px margin. Active items use fire-tinted background.
 | `skeleton-sweep`    | `1.5s`  | `ease-in-out`     | Loading placeholder shimmer               |
 | `beaconPulse`       | `1.6s`  | `ease-in-out`     | Status dot opacity + scale pulse          |
 | `arp-sweep`         | `0.9s`  | `linear`          | Arapaho flag loading bar                  |
+| `card-enter`        | `0.3s`  | `ease-out`        | Role card staggered fade-up (80ms stagger per card) |
 
-### 13.3 Interaction Motion
+### 15.4 Interaction Motion
 
 - **Button lift**: `.btn-proam:hover` -- `translateY(-1px)` with shadow expansion
 - **Quick launch hover**: `translateX(4px)` slide-right
 - **STRATHEX chip hover**: `translateY(-1px)` with glow expansion
 - **Sidebar collapse**: `transition: width 0.2s ease` on `#appSidebar`
 - **Card hover**: Shadow deepens from `0 4px 20px` to `0 10px 36px`
+- **Spectator card hover lift**: `.card.shadow-sm:hover` -- `translateY(-3px)` with deeper shadow (`0 8px 30px`), `0.18s ease` transition
 
 ---
 
-## 14. Responsive Breakpoints
+## 16. Responsive Breakpoints
 
 The system follows Bootstrap 5 breakpoints with these specific adaptations:
 
@@ -586,7 +642,7 @@ The system follows Bootstrap 5 breakpoints with these specific adaptations:
 | `lg`        | `>=992px`     | Desktop sidebar visible, mobile drawer hidden, navbar labels shown |
 | `xl`        | `>=1200px`    | Tournament name visible in navbar              |
 
-### 14.1 Critical Breakpoint: 992px
+### 16.1 Critical Breakpoint: 992px
 
 This is the primary layout shift. Below 992px:
 - Desktop sidebar hides (`d-none d-lg-flex`)
@@ -595,29 +651,48 @@ This is the primary layout shift. Below 992px:
 - Brand subtitle hidden
 - Navbar text labels collapse to icon-only
 
-### 14.2 Portal Mobile Mode
+### 16.2 Portal Mobile Mode
 
 `body.portal-mobile` strips: ownership bar, STRATHEX chip, footer. Navbar becomes sticky top. Background darkens to `#0d1015`. Designed for field-side tablet/phone scoring.
 
 ---
 
-## 15. Accessibility
+## 17. Accessibility
 
-### 15.1 Skip Link
+### 17.1 Native Dark Mode
+
+`html { color-scheme: dark; }` -- tells the browser this is a dark-first application. Native form controls (date pickers, scrollbars, color inputs) render in dark mode automatically without custom overrides.
+
+### 17.2 Touch Targets
+
+Minimum 44px touch target height on interactive elements per WCAG 2.2 SC 2.5.8:
+
+- `.btn-proam`: `min-height: 44px` with `inline-flex` centering
+- `.navbar-proam .nav-link`: `min-height: 44px` with `inline-flex` centering
+
+### 17.3 Reduced Motion
+
+`@media (prefers-reduced-motion: reduce)` zeroes **all** animation and transition durations globally. See Section 15.1 for details.
+
+### 17.4 Skip Link
 
 `.skip-to-main`: Hidden above viewport (`top: -60px`), revealed on `:focus` (`top: 0`). Fire-red background, white text, 700 weight.
 
-### 15.2 Focus Visible
+### 17.5 Focus Visible
 
 Global `:focus-visible` ring: `2px solid var(--sx-fire)` with `2px offset`. Mouse clicks suppress the ring on non-form elements. Form controls use the fire-glow box-shadow instead.
 
-### 15.3 Color Contrast
+### 17.6 Color Contrast
 
 Primary text (`#ece8e0`) on base background (`#0b0d11`): contrast ratio ~14:1 (AAA).
 Secondary text (`#8c95aa`) on base: ~5.5:1 (AA).
 Tertiary text (`#555e72`) on base: ~3.2:1 -- used only for captions and non-essential decorative text.
 
-### 15.4 ARIA Patterns
+### 17.7 Disabled State
+
+Disabled buttons use `cursor: not-allowed` with `pointer-events: auto` (overrides Bootstrap's default `pointer-events: none`) so the cursor change is visible. Opacity remains at Bootstrap's default `0.65`.
+
+### 17.8 ARIA Patterns
 
 - Sidebar: `aria-current="page"` on active nav link
 - Toasts: `role="alert" aria-live="assertive"`
@@ -627,7 +702,7 @@ Tertiary text (`#555e72`) on base: ~3.2:1 -- used only for captions and non-esse
 
 ---
 
-## 16. Print Styles
+## 18. Print Styles
 
 `@media print` resets the entire dark theme:
 
@@ -640,9 +715,9 @@ Tertiary text (`#555e72`) on base: ~3.2:1 -- used only for captions and non-esse
 
 ---
 
-## 17. i18n Theme Variants
+## 19. i18n Theme Variants
 
-### 17.1 Northern Arapaho Mode (`body.lang-arp`)
+### 19.1 Northern Arapaho Mode (`body.lang-arp`)
 
 Token overrides:
 - `--sx-fire: #c40000` (deeper crimson)
@@ -658,41 +733,56 @@ Visual changes:
 
 ---
 
-## 18. Recommendations for Consistency
+## 20. Recommendations for Consistency
 
 The following observations note areas where the current implementation could be tightened for maximum consistency. **These are not bugs** -- they are opportunities for future refinement.
 
-### 18.1 Token Consolidation
+### 20.1 Token Consolidation
 
 - **Light text variants** (`#5cd48a`, `#6cb6f5`, `#f0b84c`, `#f06060`, `#ff7070`, `#68e898`, `#7dc2ff`, `#ffbf60`) are hardcoded hex values throughout the CSS rather than CSS custom properties. Extracting these as `--sx-success-light`, `--sx-info-light`, etc. would make palette changes a single-edit operation.
 
-### 18.2 Card Header Duplication
+### 20.2 Card Header Duplication
 
 - `.card-header.bg-primary` is defined twice (line ~93 and ~1553) with slightly different values. The second definition (Improvement 7) wins via cascade, but the first is dead code. Removing the earlier definition would eliminate confusion.
 
-### 18.3 Border Radius Scale
+### 20.3 Border Radius Scale
 
 - Currently: `6px` (dropdown items), `8px` (sidebar links, various), `10px` (alerts, dropdowns, stat cards), `12px` (cards), `14px` (modals, login card), `16px` (hero badges, empty state icons), `999px` (pills/beacons). Consider defining a formal radius scale as tokens: `--sx-radius-sm: 6px`, `--sx-radius-md: 10px`, `--sx-radius-lg: 14px`, `--sx-radius-pill: 999px`.
 
-### 18.4 Shadow Scale
+### 20.4 Shadow Scale
 
 - Shadows use ad-hoc values. A 3-tier shadow token system (`--sx-shadow-sm`, `--sx-shadow-md`, `--sx-shadow-lg`) would standardize elevation.
 
-### 18.5 Transition Timing
+### 20.5 Transition Timing
 
 - Most transitions use `0.15s` or `0.2s` but there is no shared token. A `--sx-transition-fast: 0.15s` and `--sx-transition-normal: 0.22s` pair would ensure consistency.
 
-### 18.6 Semantic Class Naming
+### 20.6 Semantic Class Naming
 
 - `.btn-proam` is the app-specific primary CTA. For STRATHEX ecosystem portability, consider aliasing it as `.btn-sx-primary` while keeping `.btn-proam` as an app-level alias.
 
-### 18.7 Missing Dark Overrides
+### 20.7 Missing Dark Overrides
 
 - Bootstrap's `.btn-close` uses `filter: invert(1) grayscale(1) brightness(0.6)` which works but produces a slightly different visual weight than the rest of the system. A custom SVG close icon in `--sx-text-2` would be more precise.
 
-### 18.8 Arapaho Mode Specificity
+### 20.8 Arapaho Mode Specificity
 
 - The Arapaho/brainrot CSS constitutes approximately 40% of the theme file by line count. Extracting it to a separate `theme-arp.css` loaded conditionally (only when `CURRENT_LANG == 'arp'`) would reduce the default CSS payload significantly.
+
+---
+
+## 21. Decisions Log
+
+| Date       | Decision                                        | Rationale                                              |
+|------------|-------------------------------------------------|--------------------------------------------------------|
+| 2026-03-23 | Initial STRATHEX design system created          | Codified existing production CSS into formal spec (V2.5.0) |
+| 2026-03-24 | Added `color-scheme: dark` to `<html>`          | Native dark mode for browser controls (scrollbars, date pickers) |
+| 2026-03-24 | 44px minimum touch targets on primary actions   | WCAG 2.2 SC 2.5.8 compliance for field-side tablet use |
+| 2026-03-24 | `prefers-reduced-motion` global reset           | Accessibility: respect user motion preferences system-wide |
+| 2026-03-24 | Staggered `card-enter` animation on role cards  | Adds visual polish to role entry page without performance cost |
+| 2026-03-24 | Disabled button `cursor: not-allowed`           | Visual feedback: makes disabled state obvious before click attempt |
+| 2026-03-24 | Spectator card hover lift                       | Affordance: subtle depth cue signals interactivity on portal cards |
+| 2026-03-27 | DESIGN.md updated to V1.1.0                     | Aligned with V2.6.0 codebase; added Product Context, Modal/List Group docs, Decisions Log |
 
 ---
 

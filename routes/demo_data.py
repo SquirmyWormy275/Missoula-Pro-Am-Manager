@@ -148,6 +148,7 @@ def generate():
                     gender=member['gender'],
                     status='active',
                 )
+                comp.pro_am_lottery_opt_in = member.get('lottery', False)
                 db.session.add(comp)
                 db.session.flush()
                 college_comp_map[member['name']] = comp

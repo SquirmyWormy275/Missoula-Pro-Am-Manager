@@ -209,7 +209,7 @@ def tournament_detail(tournament_id):
 def tournament_setup(tournament_id):
     """Consolidated setup page: events, wood specs, and tournament dates."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    active_tab = request.args.get('tab', 'events')
+    active_tab = request.args.get('tab', 'payouts')
 
     # Events tab data — helpers live in scheduling.py
     from routes.scheduling import _with_field_key, _get_existing_event_config
@@ -218,6 +218,33 @@ def tournament_setup(tournament_id):
     college_closed_events = [_with_field_key(e) for e in app_config.COLLEGE_CLOSED_EVENTS]
     pro_events = [_with_field_key(e) for e in app_config.PRO_EVENTS]
     existing_config = _get_existing_event_config(tournament)
+
+    # Prize money tab data
+    from models.payout_template import PayoutTemplate
+    from services import scoring_engine as engine
+    pro_events_payout = (Event.query
+                         .filter_by(tournament_id=tournament_id, event_type='pro')
+                         .order_by(Event.name)
+                         .all())
+    payout_templates = engine.list_payout_templates()
+    payout_summaries = []
+    total_purse = 0.0
+    configured_count = 0
+    for ev in pro_events_payout:
+        payouts = ev.get_payouts()
+        purse = sum(float(v) for v in payouts.values()) if payouts else 0.0
+        places_paid = len([v for v in payouts.values() if float(v) > 0]) if payouts else 0
+        first_place = float(payouts.get('1', 0)) if payouts else 0.0
+        total_purse += purse
+        if purse > 0:
+            configured_count += 1
+        payout_summaries.append({
+            'event': ev,
+            'payouts': payouts,
+            'purse': purse,
+            'places_paid': places_paid,
+            'first_place': first_place,
+        })
 
     # Wood specs tab data
     import services.woodboss as woodboss_svc
@@ -234,6 +261,12 @@ def tournament_setup(tournament_id):
         'tournament_setup.html',
         tournament=tournament,
         active_tab=active_tab,
+        # payouts
+        payout_summaries=payout_summaries,
+        payout_templates=payout_templates,
+        total_purse=total_purse,
+        configured_count=configured_count,
+        total_payout_events=len(pro_events_payout),
         # events
         college_open_events=college_open_events,
         college_closed_events=college_closed_events,

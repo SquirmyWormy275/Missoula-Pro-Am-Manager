@@ -41,7 +41,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         {# Iterate categories in a fixed display order #}
-        {% set ordered_cats = ['springboard', 'underhand', 'standing_block', 'singlebuck', 'doublebuck', 'jack_jill', 'obstacle_pole'] %}
+        {% set ordered_cats = ['springboard', 'underhand', 'standing_block', 'singlebuck', 'doublebuck', 'jack_jill', 'obstacle_pole', 'birling'] %}
         {% for category in ordered_cats %}
         {% if category in category_groups %}
         {% set genders = category_groups[category] %}

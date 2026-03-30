@@ -159,8 +159,15 @@ def _count_competitors(tournament_id):
     it is matched against Event.name and Event.display_name.
     """
     from models.competitor import CollegeCompetitor, ProCompetitor
+    from models.event import Event
 
     counts = defaultdict(int)
+
+    # Build college event lookup (events_entered stores IDs, not names)
+    college_events = Event.query.filter_by(
+        tournament_id=tournament_id, event_type='college'
+    ).all()
+    college_event_map = {str(e.id): e for e in college_events}
 
     college_comps = (
         CollegeCompetitor.query
@@ -169,8 +176,11 @@ def _count_competitors(tournament_id):
     )
     for comp in college_comps:
         gender = comp.gender or 'M'
-        for event_name in comp.get_events_entered():
-            key = (event_name.lower().strip(), 'college', gender)
+        for event_entry in comp.get_events_entered():
+            event = college_event_map.get(str(event_entry))
+            if not event:
+                continue
+            key = (event.name.lower().strip(), 'college', gender)
             counts[key] += 1
 
     pro_id_map, pro_name_map = _get_pro_event_map(tournament_id)
@@ -208,8 +218,15 @@ def _list_competitors(tournament_id):
     Pro competitor events are resolved from IDs to event names.
     """
     from models.competitor import CollegeCompetitor, ProCompetitor
+    from models.event import Event
 
     result = []
+
+    # Build college event lookup (events_entered stores IDs, not names)
+    college_events = Event.query.filter_by(
+        tournament_id=tournament_id, event_type='college'
+    ).all()
+    college_event_map = {str(e.id): e for e in college_events}
 
     college_comps = (
         CollegeCompetitor.query
@@ -218,12 +235,17 @@ def _list_competitors(tournament_id):
     )
     for comp in college_comps:
         team_code = comp.team.team_code if comp.team else ''
+        event_names = []
+        for event_entry in comp.get_events_entered():
+            event = college_event_map.get(str(event_entry))
+            if event:
+                event_names.append(event.name)
         result.append({
             'name': comp.name,
             'affiliation': team_code,
             'gender': comp.gender or 'M',
             'comp_type': 'college',
-            'events': comp.get_events_entered(),
+            'events': event_names,
         })
 
     pro_id_map, pro_name_map = _get_pro_event_map(tournament_id)
