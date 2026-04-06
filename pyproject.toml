@@ -1,0 +1,46 @@
+[project]
+name = "missoula-pro-am-manager"
+version = "2.6.0"
+description = "Tournament management system for the Missoula Pro-Am timbersports competition"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Alex Kaper" }]
+
+# Runtime dependencies live in requirements.txt — Railway reads that file
+# directly during deploy. Do NOT duplicate them here. This file is for tool
+# configuration and dev-only extras.
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+]
+
+[tool.pytest.ini_options]
+# pytest.ini is the source of truth for pytest config. This block is a
+# fallback for tools that look at pyproject.toml first.
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["routes", "services", "models"]
+omit = ["tests/*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [
+    "migrations/versions",
+    "instance",
+    "uploads",
+    "static",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line-too-long — formatter handles it; many existing strings are long
+]
