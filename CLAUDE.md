@@ -612,6 +612,26 @@ Authentication: Flask-Login is active. New management routes must be covered by 
 
 Cookie Stack and Standing Block stand conflict: any code touching heat generation or flight scheduling must enforce mutual exclusivity of these two events. Cookie Stack (`stand_type: cookie_stack`) and Standing Block (`stand_type: standing_block`) share the same 5 physical stands. Never schedule heats from both events at the same time or within the same flight slot without explicit instruction.
 
+### Test Isolation
+
+Tests MUST NEVER write to or pollute the production database. Always use separate test databases, fixtures, or transactions that roll back. Before writing any test, verify the test config uses an isolated DB connection.
+
+### Project Structure (Multi-Project Workspace)
+
+This workspace contains multiple projects in subdirectories (e.g., KYTHEREX/, STRATHEX/, STRATHMARK/). Always confirm which project/subdirectory the user is referring to before making changes. Check for separate GitHub repos if code isn't found locally.
+
+### Stale Cache
+
+When debugging Python import errors or unexpected behavior where source code looks correct, check for stale `__pycache__`/`.pyc` files first. Run `find . -type d -name __pycache__ -exec rm -rf {} +` as an early diagnostic step.
+
+### Git Workflow
+
+Always check the current branch before running release/deploy workflows. Feature branches are required for PRs and /document-release. Never assume we're on a feature branch.
+
+### Context Retention
+
+When the user references a business name, feature, or prior decision (e.g., 'Pyramid Lumber', 'MT/PNW pivot'), search the codebase and docs for context before claiming ignorance. Check DESIGN.md, README, and recent git history.
+
 ---
 
 ## 7. RELATIONSHIP TO STRATHEX ECOSYSTEM
