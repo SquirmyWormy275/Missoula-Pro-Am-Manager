@@ -51,8 +51,10 @@
                     {% else %}
                         <span class="badge bg-secondary fs-6">Not Eligible</span>
                         <p class="small text-muted mt-2 mb-0">
-                            Only Handicap-format Speed events (underhand, standing block, springboard)
-                            receive start marks.  Check the event configuration in Tournament Setup.
+                            Only Handicap-format Speed events on Standing Block or Underhand
+                            receive start marks.  Springboard handicap support is on the
+                            STRATHMARK roadmap but not yet shipped.  Check the event
+                            configuration in Tournament Setup.
                         </p>
                     {% endif %}
                 </div>
@@ -103,6 +105,7 @@
     <div class="mb-4">
         <form method="post" onsubmit="this.querySelector('button[type=submit]').disabled=true;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="assign">
             <button type="submit" class="btn btn-primary">
                 Assign Marks via STRATHMARK
             </button>
@@ -115,12 +118,126 @@
     {% elif eligible and not configured %}
     <div class="alert alert-warning mb-4">
         STRATHMARK is not configured.  Marks cannot be retrieved until the environment
-        variables are set.  You can manually enter marks in the table below by editing
-        each EventResult record directly.
+        variables are set.  You can upload a pre-computed marks CSV below, or manually
+        enter marks in the table by editing each EventResult record directly.
     </div>
     {% elif not eligible %}
     <div class="alert alert-secondary mb-4">
         This event is not eligible for automatic mark assignment.
+    </div>
+    {% endif %}
+
+    {# CSV upload — pre-computed marks from a local STRATHMARK run #}
+    {% if eligible %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white py-2">
+            <h6 class="mb-0">Upload Pre-Computed Marks (CSV)</h6>
+        </div>
+        <div class="card-body">
+            <p class="small text-muted mb-3">
+                Use this when STRATHMARK is unreachable from this deployment (no Ollama,
+                no Gemini key).  Run STRATHMARK locally on a laptop with full LLM access,
+                export the marks to a CSV with columns
+                <code>competitor_name,proposed_mark</code> (or
+                <code>competitor_id,proposed_mark</code>), and upload it here.
+                You'll get a preview where you can override any individual mark before
+                confirming.
+            </p>
+            <form method="post" enctype="multipart/form-data" class="row g-2 align-items-center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="upload_csv">
+                <div class="col-auto flex-grow-1">
+                    <input type="file"
+                           name="marks_csv"
+                           accept=".csv,text/csv"
+                           class="form-control form-control-sm"
+                           required>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-outline-primary btn-sm">
+                        Parse CSV &amp; Preview
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    {# CSV preview — only present after a successful upload #}
+    {% if csv_preview_rows %}
+    <div class="card border-primary shadow-sm mb-4">
+        <div class="card-header bg-primary text-white py-2">
+            <h6 class="mb-0">CSV Preview — Review &amp; Override Before Confirming</h6>
+        </div>
+        <div class="card-body">
+            <p class="small text-muted mb-3">
+                {{ csv_preview_rows | length }} row(s) parsed.
+                Edit any "Proposed Mark" cell to override the imported value.
+                Rows with warnings are not auto-matched — fix the CSV or type the
+                mark directly in the matched row below.  Confirm to write all
+                non-blank marks to the database.
+            </p>
+
+            <form method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="confirm_csv">
+
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-3">
+                        <thead class="table-light">
+                            <tr>
+                                <th>CSV Name / ID</th>
+                                <th>Matched Competitor</th>
+                                <th>Proposed Mark (s)</th>
+                                <th>Warning</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in csv_preview_rows %}
+                            <tr class="{{ 'table-warning' if row.warning else '' }}">
+                                <td class="small">{{ row.csv_name }}</td>
+                                <td>
+                                    {% if row.matched_result_id %}
+                                        {{ row.competitor_name }}
+                                    {% else %}
+                                        <span class="text-muted fst-italic">unmatched</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.matched_result_id %}
+                                        <input type="number"
+                                               step="0.1"
+                                               min="0"
+                                               name="mark_{{ row.matched_result_id }}"
+                                               value="{{ row.proposed_mark if row.proposed_mark is not none else '' }}"
+                                               class="form-control form-control-sm"
+                                               style="max-width: 120px;">
+                                    {% else %}
+                                        <span class="text-muted small">
+                                            {{ row.proposed_mark if row.proposed_mark is not none else '—' }}
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td class="small text-danger">
+                                    {{ row.warning or '' }}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        Confirm &amp; Write Marks
+                    </button>
+                    <a href="{{ url_for('scheduling.assign_marks', tournament_id=tournament.id, event_id=event.id) }}"
+                       class="btn btn-outline-secondary btn-sm">
+                        Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
     </div>
     {% endif %}
 
