@@ -156,7 +156,7 @@ def _seed_hardening_data(app):
     if not AuditLog.query.first():
         al = AuditLog(
             action='test_action', entity_type='test', entity_id=1,
-            details='{"secret": "admin-only-data"}',
+            details_json='{"secret": "admin-only-data"}',
         )
         _db.session.add(al)
 
