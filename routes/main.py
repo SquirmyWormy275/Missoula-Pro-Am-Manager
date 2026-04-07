@@ -64,7 +64,7 @@ def health():
         'migration_current': migration_current,
         'migration_head': migration_head,
         'migration_rev': migration_current_rev,
-        'version': '2.6.0',
+        'version': '2.7.0',
     })
 
 

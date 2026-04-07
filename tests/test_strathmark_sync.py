@@ -1084,3 +1084,274 @@ class TestNonBlockingGuarantees:
         }):
             # Should not raise — pull failure is handled inside _global_df()
             push_college_event_results(college_sb_speed, 2026)
+
+
+# ---------------------------------------------------------------------------
+# Validated push wrapper (push_results_dicts integration)
+# ---------------------------------------------------------------------------
+
+class TestPushRowsValidated:
+    """Direct tests for the _push_rows_validated wrapper.
+
+    These tests build a fake `strathmark` module that returns plain dicts
+    (the real return type) so the wrapper takes the new dict-API path
+    rather than falling through to the legacy push_results.
+    """
+
+    def _make_rows(self, n=1):
+        return [
+            {
+                'CompetitorID':                                     f'C000{i}',
+                'Event':                                            'SB',
+                'Time (seconds)':                                   20.0 + i,
+                'Size (mm)':                                        275,
+                'Species Code':                                     'S05',
+                'Date (optional)':                                  '2026-04-25',
+                'Notes (Competition, special circumstances, etc.)': 'test',
+            }
+            for i in range(1, n + 1)
+        ]
+
+    @patch.dict('os.environ', {
+        'STRATHMARK_SUPABASE_URL': 'https://x.supabase.co',
+        'STRATHMARK_SUPABASE_KEY': 'key',
+    })
+    def test_dict_api_path_returns_explicit_counts(self):
+        from services.strathmark_sync import _push_rows_validated
+
+        # Real-shaped return value (a plain dict) so the wrapper uses
+        # the dict-API path instead of falling through to legacy.
+        mock_dicts = MagicMock(return_value={
+            'inserted': 2,
+            'skipped':  1,
+            'errors':   [],
+        })
+        mock_strathmark = MagicMock()
+        mock_strathmark.push_results_dicts = mock_dicts
+
+        with patch.dict('sys.modules', {'strathmark': mock_strathmark}):
+            result = _push_rows_validated(self._make_rows(3), event_label='unit')
+
+        mock_dicts.assert_called_once()
+        # Confirm the wrapper sent dict-API payload (snake_case keys), not the
+        # legacy column-name DataFrame format.
+        payload = mock_dicts.call_args[0][0]
+        assert payload[0]['competitor_id'] == 'C0001'
+        assert payload[0]['event_code'] == 'SB'
+        assert payload[0]['time_seconds'] == 21.0
+        assert payload[0]['date'] == '2026-04-25'
+        assert result == {'inserted': 2, 'skipped': 1, 'errors': []}
+
+    @patch.dict('os.environ', {
+        'STRATHMARK_SUPABASE_URL': 'https://x.supabase.co',
+        'STRATHMARK_SUPABASE_KEY': 'key',
+    })
+    def test_dict_api_errors_propagated_in_result(self):
+        from services.strathmark_sync import _push_rows_validated
+
+        mock_dicts = MagicMock(return_value={
+            'inserted': 0,
+            'skipped':  0,
+            'errors':   ['row 0 (C0001): time_seconds 200 outside [3, 180]'],
+        })
+        mock_strathmark = MagicMock()
+        mock_strathmark.push_results_dicts = mock_dicts
+
+        with patch.dict('sys.modules', {'strathmark': mock_strathmark}):
+            result = _push_rows_validated(self._make_rows(1), event_label='unit')
+
+        assert result['inserted'] == 0
+        assert len(result['errors']) == 1
+        assert 'outside' in result['errors'][0]
+
+    @patch.dict('os.environ', {
+        'STRATHMARK_SUPABASE_URL': 'https://x.supabase.co',
+        'STRATHMARK_SUPABASE_KEY': 'key',
+    })
+    def test_dict_api_falls_back_to_legacy_when_return_is_not_dict(self):
+        """If push_results_dicts returns something we cannot interpret, the
+        wrapper falls through to the legacy push_results path."""
+        from services.strathmark_sync import _push_rows_validated
+
+        mock_legacy = MagicMock(return_value=3)
+        mock_strathmark = MagicMock()
+        # push_results_dicts returns a non-dict -- triggers fall-through
+        mock_strathmark.push_results_dicts = MagicMock(return_value='not-a-dict')
+        mock_strathmark.push_results = mock_legacy
+
+        with patch.dict('sys.modules', {
+            'strathmark': mock_strathmark,
+            'pandas': pytest.importorskip('pandas'),
+        }):
+            result = _push_rows_validated(self._make_rows(1), event_label='unit')
+
+        mock_legacy.assert_called_once()
+        assert result['inserted'] == 3
+
+    def test_empty_rows_returns_zero_counts(self):
+        from services.strathmark_sync import _push_rows_validated
+
+        result = _push_rows_validated([], event_label='empty')
+        assert result == {'inserted': 0, 'skipped': 0, 'errors': []}
+
+
+# ---------------------------------------------------------------------------
+# Auto-register college competitors
+# ---------------------------------------------------------------------------
+
+class TestAutoRegisterCollegeCompetitor:
+    """Tests for the auto-register-on-no-match path in push_college_event_results."""
+
+    @patch.dict('os.environ', {
+        'STRATHMARK_SUPABASE_URL': 'https://x.supabase.co',
+        'STRATHMARK_SUPABASE_KEY': 'key',
+    })
+    def test_auto_register_creates_strathmark_id(
+        self, db_session, tournament, college_sb_speed,
+    ):
+        """A college competitor with no global match is auto-registered and
+        their result is included in the push."""
+        import pandas as pd
+
+        from services.strathmark_sync import push_college_event_results
+
+        _make_wood_config(db_session, tournament, 'block_standing_college_M',
+                          'Aspen', 11.0, 'in')
+
+        comp = _make_college(db_session, tournament, 'Brand New', 'M',
+                             strathmark_id=None)
+        _make_result(db_session, college_sb_speed, comp, 18.2)
+
+        # Non-empty global DB but the test competitor's name is absent ->
+        # the per-name match fails -> auto-register fires.
+        global_df = pd.DataFrame([{'CompetitorID': 'AOTHERM', 'Name': 'Some Other'}])
+        mock_register = MagicMock(return_value={
+            'competitor_id': 'BNEWM',
+            'status':        'created',
+            'name':          'Brand New',
+        })
+        mock_pull = MagicMock(return_value=global_df)
+        mock_push = MagicMock(return_value=1)
+        mock_strathmark = MagicMock()
+        mock_strathmark.register_competitor = mock_register
+        mock_strathmark.pull_competitors = mock_pull
+        mock_strathmark.push_results = mock_push
+
+        with patch.dict('sys.modules', {
+            'strathmark': mock_strathmark,
+            'pandas': pd,
+        }):
+            push_college_event_results(college_sb_speed, 2026)
+
+        mock_register.assert_called_once()
+        # The competitor should now have the auto-registered id locally
+        assert comp.strathmark_id == 'BNEWM'
+        # And the legacy push (or dict push) should have been called with the row
+        mock_push.assert_called_once()
+
+    @patch.dict('os.environ', {
+        'STRATHMARK_SUPABASE_URL':         'https://x.supabase.co',
+        'STRATHMARK_SUPABASE_KEY':         'key',
+        'STRATHMARK_AUTO_REGISTER_COLLEGE': '0',
+    })
+    def test_auto_register_disabled_via_env_var(
+        self, db_session, tournament, college_sb_speed,
+    ):
+        """When STRATHMARK_AUTO_REGISTER_COLLEGE=0, an unmapped competitor
+        is skipped and register_competitor is never called."""
+        import pandas as pd
+
+        from services.strathmark_sync import push_college_event_results
+
+        _make_wood_config(db_session, tournament, 'block_standing_college_M',
+                          'Aspen', 11.0, 'in')
+
+        comp = _make_college(db_session, tournament, 'Skip Me', 'M',
+                             strathmark_id=None)
+        _make_result(db_session, college_sb_speed, comp, 18.2)
+
+        global_df = pd.DataFrame(columns=['CompetitorID', 'Name'])
+        mock_register = MagicMock()
+        mock_pull = MagicMock(return_value=global_df)
+        mock_push = MagicMock(return_value=0)
+        mock_strathmark = MagicMock()
+        mock_strathmark.register_competitor = mock_register
+        mock_strathmark.pull_competitors = mock_pull
+        mock_strathmark.push_results = mock_push
+
+        with patch.dict('sys.modules', {
+            'strathmark': mock_strathmark,
+            'pandas': pd,
+        }):
+            push_college_event_results(college_sb_speed, 2026)
+
+        mock_register.assert_not_called()
+        assert comp.strathmark_id is None
+        mock_push.assert_not_called()
+
+    @patch.dict('os.environ', {
+        'STRATHMARK_SUPABASE_URL': 'https://x.supabase.co',
+        'STRATHMARK_SUPABASE_KEY': 'key',
+    })
+    def test_auto_register_failure_falls_back_to_skip(
+        self, db_session, tournament, college_sb_speed,
+    ):
+        """register_competitor raising an exception is non-blocking — the
+        competitor is skipped and the push continues without their row."""
+        import pandas as pd
+
+        from services.strathmark_sync import push_college_event_results
+
+        _make_wood_config(db_session, tournament, 'block_standing_college_M',
+                          'Aspen', 11.0, 'in')
+
+        comp = _make_college(db_session, tournament, 'Boom Boom', 'M',
+                             strathmark_id=None)
+        _make_result(db_session, college_sb_speed, comp, 18.2)
+
+        global_df = pd.DataFrame([{'CompetitorID': 'AOTHERM', 'Name': 'Some Other'}])
+        mock_register = MagicMock(side_effect=RuntimeError('Supabase down'))
+        mock_pull = MagicMock(return_value=global_df)
+        mock_push = MagicMock(return_value=0)
+        mock_strathmark = MagicMock()
+        mock_strathmark.register_competitor = mock_register
+        mock_strathmark.pull_competitors = mock_pull
+        mock_strathmark.push_results = mock_push
+
+        with patch.dict('sys.modules', {
+            'strathmark': mock_strathmark,
+            'pandas': pd,
+        }):
+            push_college_event_results(college_sb_speed, 2026)
+
+        mock_register.assert_called_once()
+        assert comp.strathmark_id is None
+        mock_push.assert_not_called()  # No rows to push -> not called
+
+
+# ---------------------------------------------------------------------------
+# Auto-register helper unit tests
+# ---------------------------------------------------------------------------
+
+class TestAutoRegisterHelper:
+    """Direct tests for the _auto_register_enabled helper."""
+
+    def test_default_enabled(self):
+        with patch.dict('os.environ', {}, clear=True):
+            from services.strathmark_sync import _auto_register_enabled
+            assert _auto_register_enabled() is True
+
+    def test_disabled_zero(self):
+        with patch.dict('os.environ', {'STRATHMARK_AUTO_REGISTER_COLLEGE': '0'}):
+            from services.strathmark_sync import _auto_register_enabled
+            assert _auto_register_enabled() is False
+
+    def test_disabled_false_string(self):
+        with patch.dict('os.environ', {'STRATHMARK_AUTO_REGISTER_COLLEGE': 'false'}):
+            from services.strathmark_sync import _auto_register_enabled
+            assert _auto_register_enabled() is False
+
+    def test_enabled_with_one(self):
+        with patch.dict('os.environ', {'STRATHMARK_AUTO_REGISTER_COLLEGE': '1'}):
+            from services.strathmark_sync import _auto_register_enabled
+            assert _auto_register_enabled() is True

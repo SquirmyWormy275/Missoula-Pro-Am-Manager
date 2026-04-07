@@ -165,9 +165,15 @@ class TestConfiguration:
         with pytest.raises(RuntimeError):
             validate_runtime({'ENV_NAME': 'production', 'SECRET_KEY': 'short'})
 
-    def test_strong_secret_accepted(self):
+    def test_strong_secret_accepted(self, monkeypatch):
         from config import validate_runtime
-        validate_runtime({'ENV_NAME': 'production', 'SECRET_KEY': 'a-very-strong-random-secret-key-here'})
+        monkeypatch.setenv('STRATHMARK_SUPABASE_URL', 'https://x.supabase.co')
+        monkeypatch.setenv('STRATHMARK_SUPABASE_KEY', 'fake')
+        validate_runtime({
+            'ENV_NAME': 'production',
+            'SECRET_KEY': 'a-very-strong-random-secret-key-here',
+            'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
+        })
 
     def test_dev_skips_validation(self):
         from config import validate_runtime

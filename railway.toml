@@ -1,2 +1,22 @@
 [deploy]
 releaseCommand = "flask db upgrade"
+
+# ---------------------------------------------------------------------------
+# STRATHMARK environment variables (set in the Railway dashboard, not here)
+# ---------------------------------------------------------------------------
+# Railway env vars must be configured via the dashboard or `railway variables
+# set` -- they cannot be declared in railway.toml.  The values below are the
+# recommended production settings for the Pro-Am Manager service.
+#
+# Required (enables the integration at all -- without these the strathmark
+# package is installed but every push function silently no-ops):
+#   STRATHMARK_SUPABASE_URL   = https://<project>.supabase.co
+#   STRATHMARK_SUPABASE_KEY   = <service or anon key>
+#
+# Recommended for Railway (Ollama is unreachable from Railway containers).
+# These dial down the LLM cascade so requests fail fast and fall through to
+# the ML / baseline / panel-mark levels instead of waiting on a 30s TCP
+# timeout per call.  Both are read at strathmark.config import time.
+#   STRATHMARK_OLLAMA_TIMEOUT     = 2
+#   STRATHMARK_OLLAMA_MAX_RETRIES = 0
+# ---------------------------------------------------------------------------

@@ -291,6 +291,179 @@ def get_skipped_competitors() -> list:
 
 
 # ---------------------------------------------------------------------------
+# Auto-register fallback for college competitors with no global match
+# ---------------------------------------------------------------------------
+
+_AUTO_REGISTER_ENV_VAR = 'STRATHMARK_AUTO_REGISTER_COLLEGE'
+
+
+def _auto_register_enabled() -> bool:
+    """Return True unless STRATHMARK_AUTO_REGISTER_COLLEGE is set to '0'/'false'.
+
+    Default is enabled so unmapped college competitors get added to Supabase
+    automatically.  Set the env var to ``0`` (or ``false``/``no``/``off``) to
+    restore the prior skip-and-log behaviour.
+    """
+    raw = os.environ.get(_AUTO_REGISTER_ENV_VAR, '').strip().lower()
+    if raw in ('0', 'false', 'no', 'off'):
+        return False
+    return True
+
+
+def _auto_register_college_competitor(comp, display_name: str) -> 'str | None':
+    """Register an unmapped college competitor in Supabase via STRATHMARK.
+
+    Calls strathmark.register_competitor() with the competitor's name and
+    gender.  STRATHMARK's helper is idempotent on case-insensitive name match,
+    so re-running this for an already-existing record returns the existing ID
+    instead of creating a duplicate.
+
+    Returns the new ``competitor_id`` on success, or None when:
+      - the feature is disabled via STRATHMARK_AUTO_REGISTER_COLLEGE=0
+      - register_competitor is unavailable (older STRATHMARK)
+      - any exception is raised by the STRATHMARK call
+
+    Never raises -- failures fall through to the caller's skip-and-log path.
+    """
+    if not _auto_register_enabled():
+        return None
+
+    try:
+        from strathmark import register_competitor
+    except ImportError:
+        logger.info(
+            'STRATHMARK: register_competitor unavailable in installed version; '
+            'skipping auto-register for %s', display_name,
+        )
+        return None
+
+    try:
+        result = register_competitor(
+            name=display_name,
+            country='USA',
+            gender=getattr(comp, 'gender', '') or '',
+        )
+        new_id = result.get('competitor_id') if isinstance(result, dict) else None
+        status = result.get('status', 'unknown') if isinstance(result, dict) else 'unknown'
+        if not new_id:
+            logger.warning(
+                'STRATHMARK: register_competitor returned no id for %s (%s)',
+                display_name, result,
+            )
+            return None
+        logger.info(
+            'STRATHMARK: register_competitor(%s) -> %s (%s)',
+            display_name, new_id, status,
+        )
+        return new_id
+    except Exception as exc:
+        logger.warning(
+            'STRATHMARK: auto-register failed for %s: %s', display_name, exc,
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Validated push helper (uses STRATHMARK push_results_dicts when available,
+# falls back to legacy push_results for older STRATHMARK installs)
+# ---------------------------------------------------------------------------
+
+def _row_to_dict_api(row: dict) -> dict:
+    """Convert a legacy STRATHEX-column row to the push_results_dicts schema.
+
+    The two helpers below build rows in the historical column-name format
+    (CompetitorID, Event, Time (seconds), …) because that's what the legacy
+    DataFrame-based push_results() consumed.  push_results_dicts() expects
+    snake_case keys instead.  This helper does the rename in one place so the
+    callers stay readable.
+    """
+    return {
+        'competitor_id': row['CompetitorID'],
+        'event_code':    row['Event'],
+        'time_seconds':  row['Time (seconds)'],
+        'size_mm':       row['Size (mm)'],
+        'species_code':  row['Species Code'],
+        'date':          row['Date (optional)'],
+        'notes':         row.get('Notes (Competition, special circumstances, etc.)'),
+    }
+
+
+def _push_rows_validated(rows: list, event_label: str) -> dict:
+    """Push a list of legacy-format rows via the validated dict API.
+
+    Returns a result dict with explicit ``inserted`` / ``skipped`` / ``errors``
+    counts so callers can surface them on the status page.  Never raises:
+    any exception is caught, logged at ERROR with the full row list for
+    manual retry, and an error result dict is returned.
+
+    Falls back to the legacy DataFrame ``push_results`` when the installed
+    STRATHMARK predates ``push_results_dicts`` so older deployments still
+    work without an explicit upgrade.
+    """
+    if not rows:
+        return {'inserted': 0, 'skipped': 0, 'errors': []}
+
+    # Preferred path: validated dict API (push_results_dicts).  This is
+    # wrapped in its own try so that any failure falls through to the
+    # legacy DataFrame-based push_results, which is still supported by
+    # every released STRATHMARK version.
+    try:
+        from strathmark import push_results_dicts
+        payload = [_row_to_dict_api(r) for r in rows]
+        result = push_results_dicts(
+            payload,
+            source=SOURCE_APP,
+            show_name=SHOW_NAME,
+        )
+        # Defend against mock-injected return values: a real STRATHMARK call
+        # always returns a plain dict.  Anything else means we're in a test
+        # that has not stubbed push_results_dicts, so fall through to legacy.
+        if not isinstance(result, dict):
+            raise TypeError(
+                f'push_results_dicts returned {type(result).__name__}, expected dict'
+            )
+        inserted = int(result.get('inserted', 0))
+        skipped = int(result.get('skipped', 0))
+        errors = list(result.get('errors', []) or [])
+        _write_sync_cache(datetime.utcnow().isoformat(), inserted)
+        if errors:
+            logger.warning(
+                'STRATHMARK: %s push reported %d errors: %s',
+                event_label, len(errors), errors[:5],
+            )
+        logger.info(
+            'STRATHMARK: %s push -- inserted=%d skipped=%d errors=%d',
+            event_label, inserted, skipped, len(errors),
+        )
+        return {'inserted': inserted, 'skipped': skipped, 'errors': errors}
+    except ImportError:
+        pass  # STRATHMARK predates push_results_dicts -- fall through to legacy
+    except (TypeError, ValueError, AttributeError) as exc:
+        # The dict API returned a value we can't interpret -- try legacy.
+        logger.warning(
+            'STRATHMARK: %s dict-API push raised %s; falling back to legacy push_results',
+            event_label, exc,
+        )
+
+    # Legacy fallback: DataFrame-based push_results
+    try:
+        import pandas as pd
+        from strathmark import push_results
+        df = pd.DataFrame(rows)
+        count = push_results(df, show_name=SHOW_NAME, source_app=SOURCE_APP)
+        _write_sync_cache(datetime.utcnow().isoformat(), count)
+        logger.info('STRATHMARK: %s push -- inserted=%d (legacy API)', event_label, count)
+        return {'inserted': int(count), 'skipped': 0, 'errors': []}
+    except Exception as exc:
+        logger.error(
+            'STRATHMARK: push failed for %s: %s.  '
+            'Rows for manual retry: %r',
+            event_label, exc, rows,
+        )
+        return {'inserted': 0, 'skipped': 0, 'errors': [str(exc)]}
+
+
+# ---------------------------------------------------------------------------
 # Change 2 — Pro SB / UH result push
 # ---------------------------------------------------------------------------
 
@@ -358,21 +531,7 @@ def push_pro_event_results(event, tournament_year: int) -> None:
     if not rows:
         return
 
-    try:
-        import pandas as pd
-        from strathmark import push_results
-        df = pd.DataFrame(rows)
-        count = push_results(df, show_name=SHOW_NAME, source_app=SOURCE_APP)
-        _write_sync_cache(datetime.utcnow().isoformat(), count)
-        logger.info(
-            'STRATHMARK: pushed %d pro result(s) for %s', count, event.display_name
-        )
-    except Exception as exc:
-        logger.error(
-            'STRATHMARK: push_results failed for %s: %s.  '
-            'Rows for manual retry: %r',
-            event.display_name, exc, rows,
-        )
+    _push_rows_validated(rows, event_label=f'pro {event.display_name}')
 
     # Record prediction residuals for STRATHMARK bias-learning (non-blocking).
     _record_prediction_residuals_for_pro_event(event, event_code)
@@ -573,31 +732,53 @@ def push_college_event_results(event, tournament_year: int) -> None:
             matches = gdf[gdf['Name'].str.strip().str.lower() == name_lower]
 
             if matches.empty:
-                log_skipped_competitor(result.competitor_name, event.display_name)
-                logger.info(
-                    'STRATHMARK: no global match for college competitor %s; skipped. '
-                    'Manually enroll them to capture this result.',
-                    result.competitor_name,
-                )
-                continue
-
-            # Match found — persist strathmark_id locally.
-            found_id = matches.iloc[0]['CompetitorID']
-            comp.strathmark_id = found_id
-            try:
-                db.session.commit()
-                logger.info(
-                    'STRATHMARK: resolved college competitor %s -> %s',
-                    result.competitor_name, found_id,
-                )
-            except Exception as exc:
-                db.session.rollback()
-                logger.warning(
-                    'STRATHMARK: could not save strathmark_id for %s: %s',
-                    result.competitor_name, exc,
-                )
-                log_skipped_competitor(result.competitor_name, event.display_name)
-                continue
+                # No global match: try to auto-register the competitor in
+                # Supabase via STRATHMARK's register_competitor() helper.  This
+                # is gated by STRATHMARK_AUTO_REGISTER_COLLEGE (default "1") so
+                # the prior skip-only behaviour can be restored if needed.
+                auto_id = _auto_register_college_competitor(comp, result.competitor_name)
+                if auto_id is None:
+                    log_skipped_competitor(result.competitor_name, event.display_name)
+                    logger.info(
+                        'STRATHMARK: no global match for college competitor %s and '
+                        'auto-register did not produce an ID; skipped.',
+                        result.competitor_name,
+                    )
+                    continue
+                comp.strathmark_id = auto_id
+                try:
+                    db.session.commit()
+                    logger.info(
+                        'STRATHMARK: auto-registered college competitor %s -> %s',
+                        result.competitor_name, auto_id,
+                    )
+                except Exception as exc:
+                    db.session.rollback()
+                    logger.warning(
+                        'STRATHMARK: could not save auto-registered id for %s: %s',
+                        result.competitor_name, exc,
+                    )
+                    log_skipped_competitor(result.competitor_name, event.display_name)
+                    continue
+                # Fall through to row append below — comp.strathmark_id is now set.
+            else:
+                # Match found — persist strathmark_id locally.
+                found_id = matches.iloc[0]['CompetitorID']
+                comp.strathmark_id = found_id
+                try:
+                    db.session.commit()
+                    logger.info(
+                        'STRATHMARK: resolved college competitor %s -> %s',
+                        result.competitor_name, found_id,
+                    )
+                except Exception as exc:
+                    db.session.rollback()
+                    logger.warning(
+                        'STRATHMARK: could not save strathmark_id for %s: %s',
+                        result.competitor_name, exc,
+                    )
+                    log_skipped_competitor(result.competitor_name, event.display_name)
+                    continue
 
         rows.append({
             'CompetitorID':                                     comp.strathmark_id,
@@ -612,18 +793,4 @@ def push_college_event_results(event, tournament_year: int) -> None:
     if not rows:
         return
 
-    try:
-        import pandas as pd
-        from strathmark import push_results
-        df = pd.DataFrame(rows)
-        count = push_results(df, show_name=SHOW_NAME, source_app=SOURCE_APP)
-        _write_sync_cache(datetime.utcnow().isoformat(), count)
-        logger.info(
-            'STRATHMARK: pushed %d college result(s) for %s', count, event.display_name
-        )
-    except Exception as exc:
-        logger.error(
-            'STRATHMARK: push_results failed for college %s: %s.  '
-            'Rows for manual retry: %r',
-            event.display_name, exc, rows,
-        )
+    _push_rows_validated(rows, event_label=f'college {event.display_name}')

@@ -104,6 +104,29 @@ def validate_runtime(app_config: dict) -> None:
     if len(secret) < 16 or secret.lower() in weak_values:
         raise RuntimeError('Invalid SECRET_KEY for production. Set a strong random secret via SECRET_KEY env var.')
 
+    # Production must run on PostgreSQL.  If DATABASE_URL is missing or points
+    # to SQLite, _normalized_database_url() falls back to a local sqlite file —
+    # which on Railway means an ephemeral container DB that vanishes on every
+    # redeploy.  Refuse to start rather than silently lose writes.
+    db_uri = app_config.get('SQLALCHEMY_DATABASE_URI', '') or ''
+    if not db_uri.startswith('postgresql://'):
+        raise RuntimeError(
+            'Production requires PostgreSQL. DATABASE_URL is missing or points to SQLite.'
+        )
+
+    # STRATHMARK integration is the whole reason this app exists in production.
+    # If both env vars are missing, the integration silently no-ops -- enrollment,
+    # result push, mark assignment, and the residual recorder all become dead
+    # code paths and the show director won't notice until the post-event sync
+    # turns up zero rows.  Refuse to start so the deploy fails loudly instead.
+    import os as _os
+    if not _os.environ.get('STRATHMARK_SUPABASE_URL') or not _os.environ.get('STRATHMARK_SUPABASE_KEY'):
+        raise RuntimeError(
+            'Production requires STRATHMARK_SUPABASE_URL and STRATHMARK_SUPABASE_KEY. '
+            'Set both in the Railway dashboard before deploying.'
+        )
+
+
 # ---------------------------------------------------------------------------
 # Scoring rule helpers
 # ---------------------------------------------------------------------------

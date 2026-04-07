@@ -24,6 +24,16 @@ gunicorn==21.2.0
 # Monitoring
 sentry-sdk==2.22.0
 
+# STRATHMARK handicap engine — pinned to a specific commit for reproducible
+# Railway deploys.  Until STRATHMARK ships a PyPI release, pin via git URL.
+# When upgrading, bump the SHA after this fragment.  Extras enabled:
+#   [db] — supabase client used by services/strathmark_sync.py
+#   [ml] — XGBoost / LightGBM / scikit-learn for the prediction cascade's
+#          ML layer; without it predictions fall through to the
+#          weighted-baseline / panel-mark fallback only.  Adds ~80 MB to
+#          the deploy image but is necessary for accurate handicap marks.
+strathmark[db,ml] @ git+https://github.com/SquirmyWormy275/STRATHMARK@a101c8e444f4096f0e321ca03b69632a91640c7c
+
 # Optional: SMS notifications (install to enable Twilio SMS features)
 # twilio>=8.0.0
 
