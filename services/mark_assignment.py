@@ -495,6 +495,7 @@ def _get_handicap_calculator(
     """
     try:
         import os
+
         from strathmark.calculator import HandicapCalculator  # type: ignore[import]
 
         from services.strathmark_wood_data import get_wood_dataframe

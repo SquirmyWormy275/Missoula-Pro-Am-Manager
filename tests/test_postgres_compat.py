@@ -358,6 +358,7 @@ class TestConfigValidation:
     def test_missing_strathmark_url_rejected_in_production(self, monkeypatch):
         """Production refuses to start when STRATHMARK_SUPABASE_URL is unset."""
         import pytest
+
         from config import validate_runtime
         monkeypatch.delenv('STRATHMARK_SUPABASE_URL', raising=False)
         monkeypatch.setenv('STRATHMARK_SUPABASE_KEY', 'fake')
@@ -371,6 +372,7 @@ class TestConfigValidation:
     def test_missing_strathmark_key_rejected_in_production(self, monkeypatch):
         """Production refuses to start when STRATHMARK_SUPABASE_KEY is unset."""
         import pytest
+
         from config import validate_runtime
         monkeypatch.setenv('STRATHMARK_SUPABASE_URL', 'https://x.supabase.co')
         monkeypatch.delenv('STRATHMARK_SUPABASE_KEY', raising=False)
