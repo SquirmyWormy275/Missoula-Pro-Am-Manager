@@ -6,8 +6,9 @@ from __future__ import annotations
 import json
 import os
 import re
-from models import Event, Tournament, Flight
+
 import config
+from models import Event, Flight, Tournament
 
 
 def _load_college_saturday_priority() -> list[tuple[str, str]]:

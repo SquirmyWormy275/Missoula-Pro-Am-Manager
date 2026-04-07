@@ -8,10 +8,11 @@ needed.
 Run:  pytest tests/test_birling_bracket.py -v
 """
 import json
-import pytest
 from unittest.mock import MagicMock, patch
-from services.birling_bracket import BirlingBracket
 
+import pytest
+
+from services.birling_bracket import BirlingBracket
 
 # ---------------------------------------------------------------------------
 # Helper: create a mock event with a mutable payouts field

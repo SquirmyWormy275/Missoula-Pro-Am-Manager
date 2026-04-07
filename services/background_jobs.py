@@ -1,11 +1,10 @@
 """In-process background job execution for long-running tasks."""
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 import threading
 import uuid
-
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 _executor = ThreadPoolExecutor(max_workers=2)
 _jobs = {}

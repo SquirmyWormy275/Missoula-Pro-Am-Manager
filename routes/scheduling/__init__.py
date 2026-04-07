@@ -17,14 +17,16 @@ Sub-module layout:
   assign_marks.py    — assign_marks (handicap start-mark assignment via STRATHMARK)
   birling.py         — birling_manage, birling_generate, birling_record_match, birling_reset, birling_finalize
 """
-import re
 import json
+import re
+
 from flask import Blueprint
-from database import db
-from models import Tournament, Event, Heat, HeatAssignment, Flight
-from models.competitor import CollegeCompetitor, ProCompetitor
+
 import config
 from config import LIST_ONLY_EVENT_NAMES
+from database import db
+from models import Event, Flight, Heat, HeatAssignment, Tournament
+from models.competitor import CollegeCompetitor, ProCompetitor
 
 scheduling_bp = Blueprint('scheduling', __name__)
 
@@ -248,18 +250,20 @@ def _build_pro_flights_if_possible(tournament: Tournament, build_pro_flights_fn)
 # IMPORTANT: these imports must come AFTER scheduling_bp and all shared helpers
 # are defined above, so sub-modules can import them without NameError.
 # ---------------------------------------------------------------------------
-from . import events          # noqa: F401, E402
-from . import heats           # noqa: F401, E402
-from . import flights         # noqa: F401, E402
-from . import heat_sheets     # noqa: F401, E402
-from . import friday_feature  # noqa: F401, E402
-from . import show_day        # noqa: F401, E402
-from . import ability_rankings  # noqa: F401, E402
-from . import preflight       # noqa: F401, E402
-from . import assign_marks    # noqa: F401, E402
-from . import birling         # noqa: F401, E402
+from . import (
+    ability_rankings,  # noqa: F401, E402
+    assign_marks,  # noqa: F401, E402
+    birling,  # noqa: F401, E402
+    events,  # noqa: F401, E402
+    flights,  # noqa: F401, E402
+    friday_feature,  # noqa: F401, E402
+    heat_sheets,  # noqa: F401, E402
+    heats,  # noqa: F401, E402
+    preflight,  # noqa: F401, E402
+    show_day,  # noqa: F401, E402
+)
 
 # Re-export helpers used by routes/main.py (tournament_setup)
-from .events import _with_field_key, _get_existing_event_config  # noqa: F401, E402
+from .events import _get_existing_event_config, _with_field_key  # noqa: F401, E402
 
 __all__ = ['scheduling_bp']

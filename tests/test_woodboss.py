@@ -15,9 +15,10 @@ Requirements:
 """
 import json
 import os
-import pytest
-from database import db as _db
 
+import pytest
+
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -473,7 +474,7 @@ class TestCollegeCompetitorCounting:
     """College competitors use event names directly — no ID resolution needed."""
 
     def test_college_events_counted(self, db_session, tournament):
-        from models import Team, Event
+        from models import Event, Team
         team = Team(
             tournament_id=tournament.id,
             team_code='UM-A',

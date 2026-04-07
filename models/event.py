@@ -1,8 +1,9 @@
 """
 Event and EventResult models for tournament events.
 """
-from database import db
 import json
+
+from database import db
 
 
 class Event(db.Model):

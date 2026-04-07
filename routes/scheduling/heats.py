@@ -3,19 +3,22 @@ Heat management routes: event_heats, generate_heats, generate_college_heats,
 move_competitor_between_heats, heat_sync_check, heat_sync_fix.
 """
 import json
-from flask import render_template, redirect, url_for, flash, request, abort, jsonify
-from database import db
-from models import Tournament, Event, Heat, HeatAssignment
-from models.competitor import CollegeCompetitor, ProCompetitor
+
+from flask import abort, flash, jsonify, redirect, render_template, request, url_for
+
 import config
 import strings as text
+from database import db
+from models import Event, Heat, HeatAssignment, Tournament
+from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
+
 from . import (
-    scheduling_bp,
-    _normalize_name,
-    _is_list_only_event,
     _build_signup_rows,
+    _is_list_only_event,
+    _normalize_name,
     _signed_up_competitors,
+    scheduling_bp,
 )
 
 
@@ -234,8 +237,8 @@ def move_competitor_between_heats(tournament_id, event_id):
     # Check for gear-sharing conflicts created by this move (warn, don't block).
     if event.event_type == 'pro':
         try:
-            from services.gear_sharing import competitors_share_gear_for_event
             from models import Event as EventModel
+            from services.gear_sharing import competitors_share_gear_for_event
             mover = ProCompetitor.query.get(competitor_id)
             if mover:
                 mover_gear = mover.get_gear_sharing()

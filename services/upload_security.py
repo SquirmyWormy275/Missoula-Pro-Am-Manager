@@ -5,9 +5,9 @@ import os
 import subprocess
 import uuid
 from dataclasses import dataclass
+
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
-
 
 _XLSX_MAGIC = b'PK\x03\x04'
 _XLS_MAGIC = b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'

@@ -15,10 +15,10 @@ Requirements:
 """
 import json
 import math
+
 import pytest
 
 from database import db as _db
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -28,6 +28,7 @@ from database import db as _db
 def app():
     """Create a test Flask app with temp-file SQLite built via flask db upgrade."""
     import os
+
     from tests.db_test_utils import create_test_app
     _app, db_path = create_test_app()
 
@@ -607,8 +608,8 @@ class TestGetEventCompetitors:
         ev = _make_event(db_session, t, name='Underhand', stand_type='underhand')
         c = _make_pro(db_session, t, 'New Pro', gender='M', event_ids=[ev.id])
 
-        from services.heat_generator import _get_event_competitors
         from models import EventResult
+        from services.heat_generator import _get_event_competitors
         assert EventResult.query.filter_by(event_id=ev.id).count() == 0
 
         _get_event_competitors(ev)

@@ -1,15 +1,27 @@
 """
 Public/spectator and competitor portal routes.
 """
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from flask_login import current_user, login_required
 from sqlalchemy import func
+
+from config import TournamentStatus
 from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.school_captain import SchoolCaptain
-from config import TournamentStatus
 from routes.api import write_limit
-from services.report_cache import get as cache_get, set as cache_set
+from services.report_cache import get as cache_get
+from services.report_cache import set as cache_set
 
 portal_bp = Blueprint('portal', __name__)
 
@@ -1195,8 +1207,9 @@ def competitor_my_results(tournament_id, competitor_type, competitor_id):
     entered_events = [event_by_id[eid] for eid in sorted(entered_event_ids) if eid in event_by_id]
 
     # Heat assignments — find heats containing this competitor
-    from models import Heat as _Heat
     from sqlalchemy import text as _text
+
+    from models import Heat as _Heat
     my_heats = []
     for event in entered_events:
         for heat in event.heats.order_by(_Heat.heat_number, _Heat.run_number).all():

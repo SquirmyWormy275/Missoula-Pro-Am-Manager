@@ -10,17 +10,17 @@ end-to-end.
 """
 import json
 import types
+
 import pytest
 
-from tests.fixtures.synthetic_data import PRO_COMPETITORS
 from tests.conftest import (
-    make_tournament,
     make_event,
+    make_flight,
     make_heat,
     make_pro_competitor,
-    make_flight,
+    make_tournament,
 )
-
+from tests.fixtures.synthetic_data import PRO_COMPETITORS
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -170,8 +170,8 @@ class TestFlightBuilderScale:
         assert num_flights > 0, "Should create at least one flight"
 
     def test_all_heats_assigned_to_flights(self, db_session):
-        from services.flight_builder import build_pro_flights
         from models.heat import Heat
+        from services.flight_builder import build_pro_flights
         tournament, events_by_name, comps = _seed_full_tournament(db_session)
 
         build_pro_flights(tournament)
@@ -189,8 +189,8 @@ class TestFlightBuilderScale:
 
     def test_no_competitor_in_consecutive_heats(self, db_session):
         """No competitor should appear in back-to-back heats (spacing >= 1)."""
+        from models.heat import Flight, Heat
         from services.flight_builder import build_pro_flights
-        from models.heat import Heat, Flight
         tournament, events_by_name, comps = _seed_full_tournament(db_session)
 
         build_pro_flights(tournament)
@@ -236,8 +236,8 @@ class TestFlightBuilderScale:
         always be possible. We verify the heat generator resolves *most*
         conflicts rather than demanding zero.
         """
-        from services.flight_builder import build_pro_flights
         from models.heat import Heat
+        from services.flight_builder import build_pro_flights
         tournament, events_by_name, comps = _seed_full_tournament(db_session)
 
         build_pro_flights(tournament)
@@ -355,20 +355,20 @@ class TestFlightBuilderSpacing:
         assert target_sp == 5
 
     def test_unknown_type_uses_global_default(self):
-        from services.flight_builder import _get_spacing, MIN_HEAT_SPACING, TARGET_HEAT_SPACING
+        from services.flight_builder import MIN_HEAT_SPACING, TARGET_HEAT_SPACING, _get_spacing
         ev = types.SimpleNamespace(stand_type='something_unknown')
         min_sp, target_sp = _get_spacing(ev)
         assert min_sp == MIN_HEAT_SPACING
         assert target_sp == TARGET_HEAT_SPACING
 
     def test_none_event_uses_default(self):
-        from services.flight_builder import _get_spacing, MIN_HEAT_SPACING, TARGET_HEAT_SPACING
+        from services.flight_builder import MIN_HEAT_SPACING, TARGET_HEAT_SPACING, _get_spacing
         min_sp, target_sp = _get_spacing(None)
         assert min_sp == MIN_HEAT_SPACING
         assert target_sp == TARGET_HEAT_SPACING
 
     def test_no_stand_type_attr_uses_default(self):
-        from services.flight_builder import _get_spacing, MIN_HEAT_SPACING, TARGET_HEAT_SPACING
+        from services.flight_builder import MIN_HEAT_SPACING, TARGET_HEAT_SPACING, _get_spacing
         ev = types.SimpleNamespace()
         min_sp, target_sp = _get_spacing(ev)
         assert min_sp == MIN_HEAT_SPACING
@@ -393,8 +393,8 @@ class TestFlightBuilderEventVariety:
     """Verify each flight block contains heats from multiple different events."""
 
     def test_flights_have_event_variety(self, db_session):
+        from models.heat import Flight, Heat
         from services.flight_builder import build_pro_flights
-        from models.heat import Heat, Flight
         tournament, events_by_name, comps = _seed_full_tournament(db_session)
 
         build_pro_flights(tournament)
@@ -416,9 +416,10 @@ class TestFlightBuilderEventVariety:
 
     def test_no_single_event_dominates_flight(self, db_session):
         """No single event should take up more than half the heats in a flight."""
-        from services.flight_builder import build_pro_flights
-        from models.heat import Heat, Flight
         from collections import Counter
+
+        from models.heat import Flight, Heat
+        from services.flight_builder import build_pro_flights
         tournament, events_by_name, comps = _seed_full_tournament(db_session)
 
         build_pro_flights(tournament)

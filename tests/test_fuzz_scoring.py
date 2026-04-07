@@ -5,15 +5,18 @@ Uses pytest.mark.parametrize for broad coverage without external libraries.
 """
 import json
 import os
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-fuzz')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from tests.conftest import (
-    make_tournament, make_pro_competitor, make_event, make_event_result,
+    make_event,
+    make_event_result,
+    make_pro_competitor,
+    make_tournament,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -21,8 +24,8 @@ from tests.conftest import (
 
 @pytest.fixture(scope='module')
 def app():
-    from tests.db_test_utils import create_test_app
     from database import db
+    from tests.db_test_utils import create_test_app
     _app, db_path = create_test_app()
 
     with _app.app_context():

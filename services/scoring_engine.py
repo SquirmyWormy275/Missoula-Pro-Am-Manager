@@ -27,12 +27,12 @@ import logging
 import statistics
 from typing import Optional
 
-from database import db
-from models.event import Event, EventResult
-from models.competitor import CollegeCompetitor, ProCompetitor
-from models.team import Team
-from models.payout_template import PayoutTemplate
 import config
+from database import db
+from models.competitor import CollegeCompetitor, ProCompetitor
+from models.event import Event, EventResult
+from models.payout_template import PayoutTemplate
+from models.team import Team
 from services.audit import log_action
 
 logger = logging.getLogger(__name__)

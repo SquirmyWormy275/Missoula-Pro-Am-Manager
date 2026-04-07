@@ -17,6 +17,7 @@ Run:
 """
 import json
 import os
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-school')
@@ -40,7 +41,7 @@ def app():
 
 
 def _seed(app):
-    from models import Tournament, Team, Event, EventResult
+    from models import Event, EventResult, Team, Tournament
     from models.competitor import CollegeCompetitor
     from models.school_captain import SchoolCaptain
 

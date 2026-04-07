@@ -221,7 +221,7 @@ class TestMigrationIntegrity:
             if table_missing:
                 missing[table] = sorted(table_missing)
         assert not missing, (
-            f"Columns defined in models but missing after `flask db upgrade`:\n"
+            "Columns defined in models but missing after `flask db upgrade`:\n"
             + "\n".join(f"  {t}: {cols}" for t, cols in sorted(missing.items()))
         )
 
@@ -253,7 +253,7 @@ class TestMigrationIntegrity:
                 extra[table] = sorted(table_extra)
         if extra:
             pytest.skip(
-                f"Extra columns from migrations not in models (may be OK):\n"
+                "Extra columns from migrations not in models (may be OK):\n"
                 + "\n".join(
                     f"  {t}: {cols}" for t, cols in sorted(extra.items())
                 )
@@ -431,8 +431,8 @@ class TestMigrationChain:
     @pytest.fixture(scope='class', autouse=True)
     def migration_graph(self, request):
         """Parse all migration files to build the revision graph."""
-        import importlib.util
         import glob
+        import importlib.util
 
         migrations_dir = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),

@@ -13,11 +13,11 @@ Requirements:
     All app dependencies installed.
 """
 import logging
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from database import db as _db
-
 
 # ---------------------------------------------------------------------------
 # Fixtures (same pattern as test_woodboss.py)
@@ -27,6 +27,7 @@ from database import db as _db
 def app():
     """Create a test Flask app with temp-file SQLite built via flask db upgrade."""
     import os
+
     from tests.db_test_utils import create_test_app
     _app, db_path = create_test_app()
 
@@ -676,8 +677,8 @@ class TestBuildStrathmarkIdLookup:
 
     def test_college_lookup(self, db_session, tournament):
         """College event queries CollegeCompetitor model."""
+        from models import CollegeCompetitor, Team
         from services.mark_assignment import _build_strathmark_id_lookup
-        from models import Team, CollegeCompetitor
 
         team = Team(
             tournament_id=tournament.id,

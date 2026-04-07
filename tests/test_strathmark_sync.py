@@ -15,10 +15,11 @@ Requirements:
 """
 import json
 import os
-import pytest
-from unittest.mock import patch, MagicMock
-from database import db as _db
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # Fixtures (same pattern as test_woodboss.py)
@@ -160,7 +161,7 @@ def _make_pro(db_session, tournament, name, gender, strathmark_id=None):
 
 def _make_college(db_session, tournament, name, gender, strathmark_id=None):
     """Helper: create an active CollegeCompetitor with a team."""
-    from models import Team, CollegeCompetitor
+    from models import CollegeCompetitor, Team
     # Reuse existing team or create one
     team = Team.query.filter_by(tournament_id=tournament.id, team_code='TST-A').first()
     if team is None:
@@ -520,6 +521,7 @@ class TestEnrollProCompetitor:
     def test_successful_enrollment(self, mock_pd, mock_push, db_session, tournament):
         """Enrollment generates ID, calls push_competitors, stores strathmark_id."""
         import importlib
+
         import services.strathmark_sync as mod
 
         comp = _make_pro(db_session, tournament, 'Alex Kaper', 'M')
@@ -753,8 +755,9 @@ class TestPushCollegeEventResults:
     })
     def test_existing_strathmark_id_used(self, db_session, tournament, college_sb_speed):
         """College competitor with an existing strathmark_id skips pull_competitors."""
-        from services.strathmark_sync import push_college_event_results
         import pandas as pd
+
+        from services.strathmark_sync import push_college_event_results
 
         _make_wood_config(db_session, tournament, 'block_standing_college_M',
                           'Aspen', 11.0, 'in')
@@ -786,8 +789,9 @@ class TestPushCollegeEventResults:
     })
     def test_name_match_resolves_id(self, db_session, tournament, college_sb_speed):
         """College competitor without strathmark_id gets matched by name."""
-        from services.strathmark_sync import push_college_event_results
         import pandas as pd
+
+        from services.strathmark_sync import push_college_event_results
 
         _make_wood_config(db_session, tournament, 'block_standing_college_M',
                           'Aspen', 11.0, 'in')
@@ -824,8 +828,9 @@ class TestPushCollegeEventResults:
     })
     def test_no_name_match_skipped(self, db_session, tournament, college_sb_speed):
         """College competitor not found in global DB is skipped."""
-        from services.strathmark_sync import push_college_event_results
         import pandas as pd
+
+        from services.strathmark_sync import push_college_event_results
 
         _make_wood_config(db_session, tournament, 'block_standing_college_M',
                           'Aspen', 11.0, 'in')
@@ -866,8 +871,9 @@ class TestPushCollegeEventResults:
     })
     def test_push_failure_non_blocking(self, db_session, tournament, college_sb_speed):
         """push_results raising does not propagate."""
-        from services.strathmark_sync import push_college_event_results
         import pandas as pd
+
+        from services.strathmark_sync import push_college_event_results
 
         _make_wood_config(db_session, tournament, 'block_standing_college_M',
                           'Aspen', 11.0, 'in')
@@ -1058,8 +1064,9 @@ class TestNonBlockingGuarantees:
     })
     def test_push_college_with_pull_failure(self, db_session, tournament, college_sb_speed):
         """pull_competitors failure still allows graceful completion."""
-        from services.strathmark_sync import push_college_event_results
         import pandas as pd
+
+        from services.strathmark_sync import push_college_event_results
 
         _make_wood_config(db_session, tournament, 'block_standing_college_M',
                           'Aspen', 11.0, 'in')

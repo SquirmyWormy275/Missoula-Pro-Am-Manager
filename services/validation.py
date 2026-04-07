@@ -7,11 +7,12 @@ Provides comprehensive validation for:
 - Competitor data (required fields)
 - Heat assignments (stand constraints, gear sharing)
 """
-from typing import List, Dict, Optional, Tuple
-from models import Tournament, Event, Heat, HeatAssignment
-from models.team import Team
-from models.competitor import CollegeCompetitor, ProCompetitor
+from typing import Dict, List, Optional, Tuple
+
 import config
+from models import Event, Heat, HeatAssignment, Tournament
+from models.competitor import CollegeCompetitor, ProCompetitor
+from models.team import Team
 from services.gear_sharing import competitors_share_gear_for_event
 
 

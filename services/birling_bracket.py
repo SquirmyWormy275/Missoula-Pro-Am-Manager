@@ -2,10 +2,11 @@
 Birling double-elimination bracket service.
 Handles bracket generation and match progression for Birling events.
 """
+import json
+import math
+
 from database import db
 from models import Event, EventResult
-import math
-import json
 
 
 class BirlingBracket:

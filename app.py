@@ -3,15 +3,30 @@ Flask application entry point for the Missoula Pro Am Tournament Manager.
 """
 import os
 import time
-from flask import Flask, Response, jsonify, request, abort, render_template, send_from_directory, session
+
+from flask import (
+    Flask,
+    Response,
+    abort,
+    jsonify,
+    render_template,
+    request,
+    send_from_directory,
+    session,
+)
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import event as sa_event
 from sqlalchemy.engine import Engine
-from database import db, init_db
+
 import config
 import strings as text
+from database import db, init_db
 from services.background_jobs import configure as configure_jobs
-from services.logging_setup import configure_error_monitoring, configure_logging, request_id_middleware
+from services.logging_setup import (
+    configure_error_monitoring,
+    configure_logging,
+    request_id_middleware,
+)
 
 HAS_FLASK_LOGIN = True
 try:
@@ -144,8 +159,8 @@ def create_app():
         try:
             tid = request.view_args.get('tournament_id') if request.view_args else None
             if tid:
-                from models import Heat
                 from models import Event as _Event
+                from models import Heat
                 unscored_heats = Heat.query.join(_Event, Heat.event_id == _Event.id) \
                     .filter(_Event.tournament_id == tid, Heat.status == 'pending').count()
         except Exception:
@@ -168,22 +183,22 @@ def create_app():
         }
 
     # Register blueprints
+    from routes.demo_data import demo_bp
+    from routes.import_routes import import_pro_bp
     from routes.main import main_bp
+    from routes.partnered_axe import bp as partnered_axe_bp
+    from routes.proam_relay import bp as proam_relay_bp
     from routes.registration import registration_bp
+    from routes.reporting import reporting_bp
     from routes.scheduling import scheduling_bp
     from routes.scoring import scoring_bp
-    from routes.reporting import reporting_bp
-    from routes.proam_relay import bp as proam_relay_bp
-    from routes.partnered_axe import bp as partnered_axe_bp
-    from routes.validation import bp as validation_bp
-    from routes.import_routes import import_pro_bp
-    from routes.woodboss import woodboss_bp, woodboss_public_bp
     from routes.strathmark import strathmark_bp
-    from routes.demo_data import demo_bp
+    from routes.validation import bp as validation_bp
+    from routes.woodboss import woodboss_bp, woodboss_public_bp
     if HAS_FLASK_LOGIN:
+        from routes.api import api_bp
         from routes.auth import auth_bp
         from routes.portal import portal_bp
-        from routes.api import api_bp
 
     app.register_blueprint(main_bp)
     app.register_blueprint(registration_bp, url_prefix='/registration')

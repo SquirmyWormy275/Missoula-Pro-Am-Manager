@@ -1,10 +1,11 @@
 """
 Heat and Flight models for scheduling competition runs.
 """
-from database import db
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
+
 from config import HEAT_LOCK_TTL_SECONDS  # noqa: F401 — single source in config.py
+from database import db
 
 
 class HeatAssignment(db.Model):

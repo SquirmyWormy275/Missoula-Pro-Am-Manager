@@ -3,11 +3,14 @@ Friday Night Feature scheduling route.
 """
 import json
 import os
-from flask import render_template, redirect, url_for, flash, request, session
-from database import db
-from models import Tournament, Event
+
+from flask import flash, redirect, render_template, request, session, url_for
+
 import config
+from database import db
+from models import Event, Tournament
 from services.audit import log_action
+
 from . import scheduling_bp
 
 

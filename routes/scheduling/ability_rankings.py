@@ -1,14 +1,15 @@
 """
 Pro ability rankings route — judge-assigned per-event ranks for heat snake-draft sort.
 """
-from flask import render_template, redirect, url_for, flash, request
-from database import db
-from models import Tournament, Event
-from models.competitor import ProCompetitor
-from config import event_rank_category as _event_rank_category
-from services.audit import log_action
-from . import scheduling_bp
+from flask import flash, redirect, render_template, request, url_for
 
+from config import event_rank_category as _event_rank_category
+from database import db
+from models import Event, Tournament
+from models.competitor import ProCompetitor
+from services.audit import log_action
+
+from . import scheduling_bp
 
 # ---------------------------------------------------------------------------
 # Ability Rankings — per-event judge-assigned ranks for heat snake-draft sort
@@ -18,7 +19,10 @@ from . import scheduling_bp
 def ability_rankings(tournament_id):
     """View and set per-event ability rankings for pro competitors."""
     from models.pro_event_rank import (
-        ProEventRank, RANKED_CATEGORIES, CATEGORY_DISPLAY_NAMES, CATEGORY_DESCRIPTIONS
+        CATEGORY_DESCRIPTIONS,
+        CATEGORY_DISPLAY_NAMES,
+        RANKED_CATEGORIES,
+        ProEventRank,
     )
 
     tournament = Tournament.query.get_or_404(tournament_id)

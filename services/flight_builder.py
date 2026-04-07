@@ -6,13 +6,13 @@ Ensures competitors have maximum rest between their events using tiered spacing:
   Tier 2 (saw_hand):     min=5, target=7 heats between appearances
   Tier 3 (all others):   min=4, target=5 heats between appearances
 """
+import json
 import logging
 import math
-import json
 from collections import defaultdict
 
 from database import db
-from models import Tournament, Event, Heat, HeatAssignment, Flight
+from models import Event, Flight, Heat, HeatAssignment, Tournament
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,17 @@
+# Mark text vs binary so git diffs and merges them correctly. We do NOT
+# enforce eol=lf because the existing repo has mixed CRLF/LF and a bulk
+# renormalization 18 days before live deploy is too risky. Re-evaluate after
+# the show.
+
+* text=auto
+
+# Binary file types — never diff or convert
+*.xlsx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.db binary
+*.sqlite3 binary

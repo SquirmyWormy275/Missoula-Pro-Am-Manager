@@ -9,14 +9,15 @@ _event_pool, _set_partner_bidirectional) are excluded.
 
 Run:  pytest tests/test_partner_matching.py -v
 """
-import pytest
 from types import SimpleNamespace
+
+import pytest
+
 from services.partner_matching import (
-    _normalize_name,
     _is_entered,
+    _normalize_name,
     _read_partner_name,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

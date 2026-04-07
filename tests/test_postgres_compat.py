@@ -16,11 +16,18 @@ Run:
     pytest tests/test_postgres_compat.py -v
 """
 import json
+
 import pytest
+
 from database import db as _db
 from tests.conftest import (
-    make_tournament, make_team, make_college_competitor,
-    make_pro_competitor, make_event, make_event_result, make_heat,
+    make_college_competitor,
+    make_event,
+    make_event_result,
+    make_heat,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
 )
 
 

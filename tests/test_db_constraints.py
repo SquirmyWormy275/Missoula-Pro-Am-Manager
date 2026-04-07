@@ -17,11 +17,19 @@ Run:
 from __future__ import annotations
 
 import os
+
 import pytest
 from sqlalchemy.exc import IntegrityError
+
 from tests.conftest import (
-    make_tournament, make_team, make_college_competitor,
-    make_pro_competitor, make_event, make_heat, make_event_result, make_flight,
+    make_college_competitor,
+    make_event,
+    make_event_result,
+    make_flight,
+    make_heat,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
 )
 
 pytestmark = pytest.mark.integration
@@ -74,8 +82,8 @@ class TestForeignKeyCascades:
         assert ProCompetitor.query.get(pc_id) is None
 
     def test_delete_event_cascades_to_heats_and_results(self, db_session):
-        from models.heat import Heat
         from models.event import EventResult
+        from models.heat import Heat
         t = make_tournament(db_session)
         p = make_pro_competitor(db_session, t, 'Pro X', 'M')
         e = make_event(db_session, t, 'Del Event', event_type='pro')

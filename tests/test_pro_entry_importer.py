@@ -9,16 +9,16 @@ values that would be generated from config.PRO_EVENTS.
 Run:  pytest tests/test_pro_entry_importer.py -v
 """
 import pytest
+
 from services.pro_entry_importer import (
-    _yes,
-    _get,
-    _find_column_index,
     _EVENT_MAP,
     _PARTNER_COLS,
     _TRUE_MARKERS,
+    _find_column_index,
+    _get,
+    _yes,
     compute_review_flags,
 )
-
 
 # ---------------------------------------------------------------------------
 # _yes() helper

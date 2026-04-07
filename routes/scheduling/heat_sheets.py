@@ -1,11 +1,13 @@
 """
 Heat sheet and day schedule print routes, plus schedule hydration helpers.
 """
-from flask import render_template, redirect, url_for, session
+from flask import redirect, render_template, session, url_for
+
 from database import db
-from models import Tournament, Event, Heat, Flight
+from models import Event, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
-from . import scheduling_bp, _load_competitor_lookup
+
+from . import _load_competitor_lookup, scheduling_bp
 
 
 def _hydrate_schedule_for_display(tournament: Tournament, schedule: dict) -> dict:
@@ -64,6 +66,7 @@ def _serialize_heat_detail(tournament: Tournament, event: Event, heat: Heat) -> 
 def heat_sheets(tournament_id):
     """Print-ready heat sheets for all flights and events."""
     from datetime import datetime
+
     from services.flight_builder import _STAND_CONFLICT_GAP
 
     tournament = Tournament.query.get_or_404(tournament_id)

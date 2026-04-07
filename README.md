@@ -457,6 +457,64 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for technical documentation including:
 - Configuration reference
 - Changelog and future development considerations
 
+See [CLAUDE.md](CLAUDE.md) for the in-repo project context: domain knowledge,
+data model summary, current state, known gaps, and development rules.
+
+### Local development
+
+```bash
+# Production deps (Railway also reads requirements.txt)
+pip install -r requirements.txt
+
+# Dev tooling — pytest, ruff, coverage
+pip install -e ".[dev]"
+
+# Initialize the local SQLite DB
+flask db upgrade
+
+# Start the dev server (http://localhost:5000)
+python app.py
+```
+
+### Tests
+
+```bash
+pytest                       # full suite
+pytest -m smoke              # quick sanity checks
+pytest tests/test_scoring.py # one file
+```
+
+`pytest.ini` defines the markers (`smoke`, `integration`, `slow`). The test
+suite uses an in-memory SQLite DB via the `app` fixture in
+[tests/conftest.py](tests/conftest.py) — never the production DB.
+
+### Linting
+
+```bash
+ruff check .          # lint
+ruff check . --fix    # lint + apply safe autofixes
+```
+
+Ruff config lives in [pyproject.toml](pyproject.toml). The ignore list
+intentionally excludes several pre-existing violation classes
+(F401/F811/F841/E702/E722/E711/E741) so the lint gate is meaningful but
+achievable. Tighten the list incrementally after the live deploy.
+
+### CI / CD
+
+GitHub Actions runs three jobs on every push and PR to `main` (see
+[.github/workflows/ci.yml](.github/workflows/ci.yml)):
+
+1. **lint** — `python -m py_compile app.py` + `ruff check .`
+2. **test** — pytest against in-memory SQLite (with a curated ignore list
+   for pre-existing failing test files)
+3. **postgres-smoke** — spins up PostgreSQL 15, applies migrations via
+   `flask db upgrade`, runs `tests/test_postgres_runtime_smoke.py`
+
+Production deploy is handled by Railway, which auto-deploys from `main`
+on push. There is no GitHub Actions deploy step. The Railway release
+command is `flask db upgrade` (configured in `railway.toml`).
+
 ---
 
 *Last updated: March 2026 — V2.6.0*

@@ -15,13 +15,13 @@ Run:
 """
 import json
 import os
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-competitor')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from database import db as _db
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -44,10 +44,10 @@ def app():
 
 def _seed_competitor_data(app):
     """Seed tournament, teams, competitors, events, heats, results."""
-    from models.user import User
-    from models import Tournament, Team, Event, EventResult, Heat
+    from models import Event, EventResult, Heat, Team, Tournament
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.school_captain import SchoolCaptain
+    from models.user import User
 
     # Admin user for judge-override tests
     if not User.query.filter_by(username='comp_admin').first():

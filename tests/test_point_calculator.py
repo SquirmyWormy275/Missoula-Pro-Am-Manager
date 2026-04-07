@@ -21,9 +21,10 @@ Requirements:
     All app dependencies installed.
 """
 import os
-import pytest
-from database import db as _db
 
+import pytest
+
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # Fixtures (same pattern as test_woodboss.py)
@@ -633,8 +634,8 @@ class TestCrossTeamPointAggregation:
 
     def test_multi_team_standings(self, db_session, tournament):
         """Teams from different schools accumulate points separately."""
-        from services.scoring_engine import calculate_positions
         from services.point_calculator import get_team_standings
+        from services.scoring_engine import calculate_positions
 
         t1 = _make_team(db_session, tournament, 'UM-A', 'University of Montana', 'UM')
         t2 = _make_team(db_session, tournament, 'MSU-A', 'Montana State University', 'MSU')
@@ -660,8 +661,8 @@ class TestCrossTeamPointAggregation:
 
     def test_multi_event_team_accumulation(self, db_session, tournament):
         """Team points accumulate across multiple events."""
-        from services.scoring_engine import calculate_positions
         from services.point_calculator import get_team_standings
+        from services.scoring_engine import calculate_positions
 
         t1 = _make_team(db_session, tournament, 'UM-A', 'University of Montana', 'UM')
         t2 = _make_team(db_session, tournament, 'MSU-A', 'Montana State University', 'MSU')
@@ -691,8 +692,8 @@ class TestCrossTeamPointAggregation:
 
     def test_multiple_members_contribute(self, db_session, tournament):
         """Multiple members on the same team all contribute to team total."""
-        from services.scoring_engine import calculate_positions
         from services.point_calculator import get_team_standings
+        from services.scoring_engine import calculate_positions
 
         team = _make_team(db_session, tournament, 'UM-A', 'University of Montana', 'UM')
         event = _make_college_event(db_session, tournament, 'Underhand Speed', 'M')
@@ -720,8 +721,8 @@ class TestBullBelleOfTheWoods:
 
     def test_bull_of_the_woods(self, db_session, tournament):
         """Top male competitor by individual_points."""
-        from services.scoring_engine import calculate_positions
         from services.point_calculator import get_individual_standings
+        from services.scoring_engine import calculate_positions
 
         team = _make_team(db_session, tournament, 'UM-A', 'University of Montana', 'UM')
         event = _make_college_event(db_session, tournament, 'Underhand Speed', 'M')
@@ -739,8 +740,8 @@ class TestBullBelleOfTheWoods:
 
     def test_belle_of_the_woods(self, db_session, tournament):
         """Top female competitor by individual_points."""
-        from services.scoring_engine import calculate_positions
         from services.point_calculator import get_individual_standings
+        from services.scoring_engine import calculate_positions
 
         team = _make_team(db_session, tournament, 'UM-A', 'University of Montana', 'UM')
         event = _make_college_event(db_session, tournament, 'Underhand Speed', 'F')

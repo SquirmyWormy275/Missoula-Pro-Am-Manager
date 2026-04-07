@@ -16,14 +16,14 @@ Event categories:
 Competitors with no rank record for a category are treated as unranked and
 placed after all ranked competitors before the snake draft begins.
 """
-from database import db
 # Re-export constants from the canonical location so existing imports from this module
 # continue to work while routes/services can also import directly from config.
 from config import (  # noqa: F401
-    RANKED_CATEGORIES,
-    CATEGORY_DISPLAY_NAMES,
     CATEGORY_DESCRIPTIONS,
+    CATEGORY_DISPLAY_NAMES,
+    RANKED_CATEGORIES,
 )
+from database import db
 
 
 class ProEventRank(db.Model):

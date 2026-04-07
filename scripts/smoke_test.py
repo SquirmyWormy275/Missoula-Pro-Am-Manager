@@ -12,11 +12,11 @@ Exit code 0 = all checks passed, 1 = one or more failed.
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
-import urllib.request
 import urllib.error
-import json
+import urllib.request
 
 
 def check(base_url: str, path: str, expected_status: int = 200,
@@ -90,7 +90,8 @@ def main():
         print('\nFAILED CHECKS:')
         for r in results:
             if not r['ok']:
-                print(f"  - {r['path']}: {r.get('error') or f'HTTP {r['status']}'}")
+                status_msg = r.get('error') or f"HTTP {r['status']}"
+                print(f"  - {r['path']}: {status_msg}")
         sys.exit(1)
     else:
         print('All smoke tests passed.')

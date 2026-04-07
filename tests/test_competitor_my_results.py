@@ -16,6 +16,7 @@ Run:
 """
 import json
 import os
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-myresults')
@@ -39,7 +40,7 @@ def app():
 
 
 def _seed(app):
-    from models import Tournament, Team, Event, EventResult, Heat
+    from models import Event, EventResult, Heat, Team, Tournament
     from models.competitor import CollegeCompetitor, ProCompetitor
 
     t = Tournament.query.filter_by(name='MyResults Test').first()

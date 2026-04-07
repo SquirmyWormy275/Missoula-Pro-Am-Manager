@@ -14,9 +14,10 @@ Requirements:
 """
 import json
 import os
-import pytest
-from database import db as _db
 
+import pytest
+
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # Fixtures

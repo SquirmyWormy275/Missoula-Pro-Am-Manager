@@ -14,7 +14,6 @@ import json
 import re
 from typing import Iterable
 
-
 _CATEGORY_KEYS = {'category:crosscut', 'category:chainsaw', 'category:springboard'}
 
 
@@ -583,8 +582,8 @@ def auto_populate_partners_from_gear(tournament) -> dict:
     for partnered events without overwriting existing partner entries.
     Caller must commit.  Returns {updated: int}.
     """
-    from models.competitor import ProCompetitor
     from models import Event
+    from models.competitor import ProCompetitor
 
     partnered_events = Event.query.filter_by(
         tournament_id=tournament.id, event_type='pro', is_partnered=True
@@ -625,8 +624,8 @@ def build_parse_review(tournament) -> list:
         {competitor, details_text, proposed_gear_map, warnings,
          already_structured, event_labels}
     """
-    from models.competitor import ProCompetitor
     from models import Event
+    from models.competitor import ProCompetitor
 
     pro_comps = ProCompetitor.query.filter_by(
         tournament_id=tournament.id, status='active'
@@ -794,8 +793,8 @@ def build_gear_report(tournament) -> dict:
         college_constraints — all college gear-sharing entries (read-only)
         stats             — summary counts
     """
-    from models.competitor import CollegeCompetitor, ProCompetitor
     from models import Event, Heat
+    from models.competitor import CollegeCompetitor, ProCompetitor
 
     pro_comps = ProCompetitor.query.filter_by(
         tournament_id=tournament.id, status='active'
@@ -915,7 +914,7 @@ def build_gear_report(tournament) -> dict:
                             'comp_b': c2,
                             'suggestions': [
                                 f'Move {c2.name} to a different heat via the Heats page',
-                                f'Use Sync Heat Conflicts to auto-resolve',
+                                'Use Sync Heat Conflicts to auto-resolve',
                             ],
                         })
                         conflict_pair_ids.add((min(c1.id, c2.id), max(c1.id, c2.id)))
@@ -1013,8 +1012,8 @@ def parse_all_gear_details(tournament) -> dict:
     Caller is responsible for db.session.commit().
     Returns a summary dict: parsed, skipped, warnings.
     """
-    from models.competitor import ProCompetitor
     from models import Event
+    from models.competitor import ProCompetitor
 
     pro_comps = ProCompetitor.query.filter_by(
         tournament_id=tournament.id, status='active'
@@ -1077,8 +1076,8 @@ def fix_heat_gear_conflicts(tournament) -> dict:
     """
     import config
     from database import db
-    from models.competitor import ProCompetitor
     from models import Event, Heat
+    from models.competitor import ProCompetitor
 
     pro_comps = ProCompetitor.query.filter_by(
         tournament_id=tournament.id, status='active'
@@ -1254,7 +1253,7 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                                 )
                             if any('new conflicts' in r for r in reasons):
                                 suggestions.append(
-                                    f'Remove another gear conflict first so a swap target opens up'
+                                    'Remove another gear conflict first so a swap target opens up'
                                 )
                             suggestions.append(
                                 f'Manually move {c2.name} to a different heat on the Heats page'

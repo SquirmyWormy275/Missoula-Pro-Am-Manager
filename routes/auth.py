@@ -2,13 +2,15 @@
 Authentication and user-management routes.
 """
 from urllib.parse import urlsplit
+
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
+
 from database import db
 from models import Tournament
+from models.audit_log import AuditLog
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.user import User
-from models.audit_log import AuditLog
 from services.audit import log_action
 
 auth_bp = Blueprint('auth', __name__)

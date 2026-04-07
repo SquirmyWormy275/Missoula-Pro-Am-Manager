@@ -5,11 +5,12 @@ English is the fallback language for any untranslated key.
 """
 from __future__ import annotations
 
-from copy import deepcopy
-from collections.abc import Mapping
 import json
-from pathlib import Path
 import re
+from collections.abc import Mapping
+from copy import deepcopy
+from pathlib import Path
+
 from flask import has_request_context, session
 
 DEFAULT_LANGUAGE = 'en'

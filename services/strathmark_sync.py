@@ -152,6 +152,7 @@ def enroll_pro_competitor(competitor) -> bool:
     try:
         import pandas as pd
         from strathmark import push_competitors
+
         from database import db
 
         existing = _get_existing_strathmark_ids()

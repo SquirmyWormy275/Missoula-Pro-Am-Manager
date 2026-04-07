@@ -9,14 +9,22 @@ import os
 import uuid
 from datetime import datetime
 
-from flask import (Blueprint, current_app, flash, redirect, render_template,
-                   request, session, url_for)
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 
 from database import db
 from models import Event, EventResult, ProCompetitor, Tournament
 from services.audit import log_action
-from services.upload_security import malware_scan, save_upload, validate_excel_upload
 from services.gear_sharing import build_name_index, parse_gear_sharing_details, resolve_partner_name
+from services.upload_security import malware_scan, save_upload, validate_excel_upload
 
 import_pro_bp = Blueprint('import_pro', __name__)
 

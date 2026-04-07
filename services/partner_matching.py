@@ -4,6 +4,7 @@ Partner matching helpers for pro partnered events.
 from __future__ import annotations
 
 import re
+
 from database import db
 from models import Event, Tournament
 from models.competitor import ProCompetitor

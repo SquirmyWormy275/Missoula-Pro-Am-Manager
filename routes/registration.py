@@ -1,16 +1,27 @@
 """
 Registration routes for uploading and managing competitor entries.
 """
-from flask import Blueprint, render_template, redirect, url_for, flash, request, current_app, jsonify
 import json
-from database import db
-from models import Tournament, Team, CollegeCompetitor, ProCompetitor, Event, EventResult, Heat
+
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
+
 import strings as text
+from database import db
+from models import CollegeCompetitor, Event, EventResult, Heat, ProCompetitor, Team, Tournament
+from routes.api import write_limit
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
-from services.upload_security import malware_scan, save_upload, validate_excel_upload
 from services.gear_sharing import build_name_index, normalize_person_name, resolve_partner_name
-from routes.api import write_limit
+from services.upload_security import malware_scan, save_upload, validate_excel_upload
 
 registration_bp = Blueprint('registration', __name__)
 
@@ -688,8 +699,9 @@ def pro_gear_update(tournament_id):
         return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
 
     from services.gear_sharing import (
-        normalize_gear_key_to_event_id, sync_gear_bidirectional,
+        normalize_gear_key_to_event_id,
         normalize_person_name,
+        sync_gear_bidirectional,
     )
     pro_events = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
     event_key = normalize_gear_key_to_event_id(raw_event_key, pro_events)
@@ -761,7 +773,8 @@ def pro_gear_update_ajax(tournament_id):
         return jsonify({'ok': False, 'error': 'No event key specified'}), 400
 
     from services.gear_sharing import (
-        normalize_gear_key_to_event_id, normalize_person_name,
+        normalize_gear_key_to_event_id,
+        normalize_person_name,
         sync_gear_bidirectional,
     )
     pro_events = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
@@ -927,7 +940,9 @@ def pro_gear_parse_confirm(tournament_id):
     """Commit approved parse rows from the parse-review page."""
     tournament = Tournament.query.get_or_404(tournament_id)
     from services.gear_sharing import (
-        build_parse_review, sync_all_gear_for_competitor, normalize_person_name,
+        build_parse_review,
+        normalize_person_name,
+        sync_all_gear_for_competitor,
     )
     all_pro_comps = ProCompetitor.query.filter_by(
         tournament_id=tournament_id, status='active'
@@ -1267,8 +1282,8 @@ def upload_pro_headshot(tournament_id, competitor_id):
         return redirect(url_for('registration.pro_competitor_detail',
                                 tournament_id=tournament_id, competitor_id=competitor_id))
 
-    import uuid as _uuid
     import os
+    import uuid as _uuid
     ext = f.filename.rsplit('.', 1)[1].lower()
     filename = f'headshot_{_uuid.uuid4().hex}.{ext}'
     headshots_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], 'headshots')
@@ -1297,7 +1312,9 @@ def upload_pro_headshot(tournament_id, competitor_id):
 def serve_headshot(filename):
     """Serve uploaded headshot images."""
     import os
-    from flask import send_from_directory, abort as flask_abort
+
+    from flask import abort as flask_abort
+    from flask import send_from_directory
     headshots_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], 'headshots')
     # Security: disallow path traversal
     if '..' in filename or filename.startswith('/'):

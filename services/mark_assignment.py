@@ -36,9 +36,9 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from models.event import Event, EventResult
-from models.competitor import ProCompetitor, CollegeCompetitor
 import config
+from models.competitor import CollegeCompetitor, ProCompetitor
+from models.event import Event, EventResult
 
 logger = logging.getLogger(__name__)
 

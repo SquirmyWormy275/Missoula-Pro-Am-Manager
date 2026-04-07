@@ -10,13 +10,12 @@ import cProfile
 import io
 import pstats
 import statistics
+import sys
 import time
 from collections import Counter
 from pathlib import Path
-import sys
 
 from sqlalchemy import event
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:

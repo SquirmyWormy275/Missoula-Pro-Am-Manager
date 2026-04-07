@@ -2,22 +2,25 @@
 Preflight validation routes and async heat/flight generation jobs.
 """
 import json
-from flask import render_template, redirect, url_for, flash, request, session, jsonify
-from database import db
-from models import Tournament, Event, Heat, HeatAssignment
+
+from flask import flash, jsonify, redirect, render_template, request, session, url_for
+
 import config
+from database import db
+from models import Event, Heat, HeatAssignment, Tournament
 from services.audit import log_action
 from services.background_jobs import submit as submit_job
-from . import scheduling_bp, _generate_all_heats, _build_pro_flights_if_possible
+
+from . import _build_pro_flights_if_possible, _generate_all_heats, scheduling_bp
 
 
 @scheduling_bp.route('/<int:tournament_id>/preflight', methods=['GET', 'POST'])
 def preflight_check(tournament_id):
     """Run preflight checks and offer one-click auto-fix actions."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    from services.preflight import build_preflight_report
-    from services.partner_matching import auto_assign_pro_partners
     from services.flight_builder import integrate_college_spillover_into_flights
+    from services.partner_matching import auto_assign_pro_partners
+    from services.preflight import build_preflight_report
 
     session_key = f'schedule_options_{tournament_id}'
     saved = session.get(session_key, {})
@@ -130,9 +133,10 @@ def _async_generate_all(tournament_id: int) -> dict:
     from flask import current_app
     app = current_app._get_current_object()
     with app.app_context():
-        from models import Tournament as _Tournament, Event as _Event
-        from services.heat_generator import generate_event_heats
+        from models import Event as _Event
+        from models import Tournament as _Tournament
         from services.flight_builder import build_pro_flights
+        from services.heat_generator import generate_event_heats
 
         tournament = _Tournament.query.get(tournament_id)
         if not tournament:

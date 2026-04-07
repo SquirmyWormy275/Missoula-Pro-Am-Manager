@@ -11,6 +11,8 @@ env/
 # Flask instance folder (local SQLite DB)
 instance/
 proam.db
+*.db
+*.sqlite3
 
 # Uploaded files
 uploads/
@@ -28,6 +30,17 @@ Thumbs.db
 
 # Distribution
 *.egg-info/
+*.egg
 dist/
 build/
 .gstack/
+.claude/
+
+# Test / lint / coverage caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log

@@ -1,11 +1,12 @@
 """
 Routes for Pro-Am Relay lottery and management.
 """
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+
 from database import db
 from models import Tournament
-from services.proam_relay import get_proam_relay, create_proam_relay_event
 from services.cache_invalidation import invalidate_tournament_caches
+from services.proam_relay import create_proam_relay_event, get_proam_relay
 
 bp = Blueprint('proam_relay', __name__, url_prefix='/tournament/<int:tournament_id>/proam-relay')
 

@@ -6,15 +6,16 @@ gear sharing notes, partner extraction, and validation constraints.
 """
 import json
 import os
-import pytest
-import openpyxl
 import tempfile
+
+import openpyxl
+import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from database import db as _db
-from tests.fixtures.synthetic_data import COLLEGE_TEAMS, COLLEGE_GEAR_NOTES
+from tests.fixtures.synthetic_data import COLLEGE_GEAR_NOTES, COLLEGE_TEAMS
 
 
 @pytest.fixture(scope='module')
@@ -121,8 +122,8 @@ class TestCollegeImportSingleTeam:
             os.unlink(filepath)
 
     def test_competitor_genders(self, db_session):
-        from services.excel_io import process_college_entry_form
         from models.competitor import CollegeCompetitor
+        from services.excel_io import process_college_entry_form
         tournament = _make_tournament(db_session)
 
         jt_members = COLLEGE_TEAMS['JT-A']['members']
@@ -142,8 +143,8 @@ class TestCollegeImportMultiTeam:
     """Test importing a school with multiple teams (CMC has A, B, C)."""
 
     def test_import_three_teams(self, db_session):
-        from services.excel_io import process_college_entry_form
         from models.team import Team
+        from services.excel_io import process_college_entry_form
         tournament = _make_tournament(db_session)
 
         cmc_teams = {
@@ -161,8 +162,8 @@ class TestCollegeImportMultiTeam:
             os.unlink(filepath)
 
     def test_team_codes_unique(self, db_session):
-        from services.excel_io import process_college_entry_form
         from models.team import Team
+        from services.excel_io import process_college_entry_form
         tournament = _make_tournament(db_session)
 
         cmc_teams = {
@@ -199,8 +200,8 @@ class TestCollegeImportTwoSchools:
 
     def test_undersized_team_validation(self, db_session):
         """CCU-B has 5M + 2F — should pass min gender constraint (2+2)."""
-        from services.excel_io import process_college_entry_form
         from models.team import Team
+        from services.excel_io import process_college_entry_form
         tournament = _make_tournament(db_session)
 
         ccu_teams = {
@@ -228,8 +229,8 @@ class TestCollegeImportValidation:
         the min-per-gender check fires, invalid_teams >= 1. If the importer
         doesn't find a valid header, it may raise ValueError or return 0 teams.
         """
-        from services.excel_io import process_college_entry_form
         from models.team import Team
+        from services.excel_io import process_college_entry_form
         tournament = _make_tournament(db_session)
 
         tiny_team = {
@@ -252,8 +253,8 @@ class TestCollegeImportValidation:
 
     def test_oversized_team_members_counted(self, db_session):
         """A team with 10 members should have all members imported."""
-        from services.excel_io import process_college_entry_form
         from models.team import Team
+        from services.excel_io import process_college_entry_form
         tournament = _make_tournament(db_session)
 
         big_team = {
@@ -278,8 +279,8 @@ class TestCollegeImportIdempotent:
     """Test that reimporting the same file doesn't create duplicates."""
 
     def test_reimport_no_duplicates(self, db_session):
-        from services.excel_io import process_college_entry_form
         from models.competitor import CollegeCompetitor
+        from services.excel_io import process_college_entry_form
         tournament = _make_tournament(db_session)
 
         filepath = _build_college_xlsx('Jesuit Tech', {'JT-A': COLLEGE_TEAMS['JT-A']['members']})

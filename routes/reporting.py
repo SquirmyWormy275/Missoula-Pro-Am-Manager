@@ -4,7 +4,21 @@ Reporting routes for standings, results, and exports.
 import json
 import os
 import tempfile
-from flask import Blueprint, render_template, Response, abort, send_file, after_this_request, redirect, url_for, flash, current_app, request
+
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    after_this_request,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
+
 try:
     from flask_login import current_user
 except ModuleNotFoundError:
@@ -14,12 +28,14 @@ except ModuleNotFoundError:
 
     current_user = _AnonymousCurrentUser()
 from database import db
-from models import Tournament, Event
+from models import Event, Tournament
+from services.audit import log_action
+from services.background_jobs import get as get_job
+from services.background_jobs import submit as submit_job
 from services.excel_io import export_results_to_excel
 from services.handicap_export import build_chopping_rows, export_chopping_results_to_excel
-from services.audit import log_action
-from services.background_jobs import get as get_job, submit as submit_job
-from services.report_cache import get as cache_get, set as cache_set
+from services.report_cache import get as cache_get
+from services.report_cache import set as cache_set
 from services.upload_security import malware_scan
 
 reporting_bp = Blueprint('reporting', __name__)

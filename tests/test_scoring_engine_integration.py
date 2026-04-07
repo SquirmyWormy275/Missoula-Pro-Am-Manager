@@ -8,13 +8,19 @@ Run:
     pytest tests/test_scoring_engine_integration.py -v
 """
 import json
+
 import pytest
+
 from database import db as _db
 from tests.conftest import (
-    make_tournament, make_team, make_college_competitor,
-    make_pro_competitor, make_event, make_event_result, make_heat,
+    make_college_competitor,
+    make_event,
+    make_event_result,
+    make_heat,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures (use conftest app/db_session)
@@ -507,7 +513,7 @@ class TestPayoutTemplateCRUD:
     """Payout template save, list, apply, delete."""
 
     def test_save_and_list(self, db_session):
-        from services.scoring_engine import save_payout_template, list_payout_templates
+        from services.scoring_engine import list_payout_templates, save_payout_template
         t = save_payout_template('Standard 5', {1: 500, 2: 300, 3: 200, 4: 100, 5: 50})
         db_session.flush()
 
@@ -515,7 +521,7 @@ class TestPayoutTemplateCRUD:
         assert any(tp.name == 'Standard 5' for tp in templates)
 
     def test_apply_template(self, db_session, tournament):
-        from services.scoring_engine import save_payout_template, apply_payout_template
+        from services.scoring_engine import apply_payout_template, save_payout_template
         t = save_payout_template('Apply Test', {1: 1000, 2: 500})
         db_session.flush()
 
@@ -528,7 +534,7 @@ class TestPayoutTemplateCRUD:
         assert event.get_payouts().get('1') == 1000 or event.get_payouts().get(1) == 1000
 
     def test_delete_template(self, db_session):
-        from services.scoring_engine import save_payout_template, delete_payout_template
+        from services.scoring_engine import delete_payout_template, save_payout_template
         t = save_payout_template('Delete Me', {1: 100})
         db_session.flush()
         tid = t.id

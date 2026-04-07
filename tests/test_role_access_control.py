@@ -19,13 +19,13 @@ Run:
     pytest tests/test_role_access_control.py -v
 """
 import os
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-rbac')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from database import db as _db
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -48,8 +48,8 @@ def app():
 
 def _seed_rbac_data(app):
     """Create one user per role and a tournament."""
-    from models.user import User
     from models import Tournament
+    from models.user import User
 
     roles = {
         'rbac_admin': 'admin',

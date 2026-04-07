@@ -2,8 +2,9 @@
 SchoolCaptain model — one PIN-protected profile per school per tournament.
 Grants the captain access to all teams from their school.
 """
-from database import db
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from database import db
 
 
 class SchoolCaptain(db.Model):

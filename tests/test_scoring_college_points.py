@@ -7,15 +7,19 @@ and tied competitors receive identical positions and points.
 """
 import pytest
 
+import config
 from tests.conftest import (
-    make_tournament, make_team, make_college_competitor,
-    make_event, make_event_result,
+    make_college_competitor,
+    make_event,
+    make_event_result,
+    make_team,
+    make_tournament,
 )
 from tests.fixtures.synthetic_data import (
-    COLLEGE_TEAMS, COLLEGE_SCORES, EXPECTED_TEAM_TOTALS,
+    COLLEGE_SCORES,
+    COLLEGE_TEAMS,
+    EXPECTED_TEAM_TOTALS,
 )
-import config
-
 
 # ---------------------------------------------------------------------------
 # Helpers

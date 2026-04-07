@@ -14,9 +14,10 @@ Run:
 """
 import json
 import os
-import pytest
-from database import db as _db
 
+import pytest
+
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # Self-contained app fixture (avoids conftest collision)
@@ -40,8 +41,8 @@ def app():
 
 def _seed_admin(app):
     """Seed an admin user and a tournament."""
-    from models.user import User
     from models import Tournament
+    from models.user import User
 
     if not User.query.filter_by(username='post_admin').first():
         u = User(username='post_admin', role='admin')
