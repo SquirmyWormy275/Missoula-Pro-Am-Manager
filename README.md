@@ -1,4 +1,4 @@
-# Missoula Pro Am Manager — V2.6.0
+# Missoula Pro Am Manager — V2.7.0
 
 A web-based tournament management system for the Missoula Pro Am timbersports competition.
 
