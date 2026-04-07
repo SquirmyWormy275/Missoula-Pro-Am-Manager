@@ -344,10 +344,47 @@ class TestConfigValidation:
             'SECRET_KEY': 'dev-key-change-in-production',
         })
 
-    def test_strong_production_key_passes(self):
+    def test_strong_production_key_passes(self, monkeypatch):
         from config import validate_runtime
+        monkeypatch.setenv('STRATHMARK_SUPABASE_URL', 'https://x.supabase.co')
+        monkeypatch.setenv('STRATHMARK_SUPABASE_KEY', 'fake')
         # Should not raise
         validate_runtime({
             'ENV_NAME': 'production',
             'SECRET_KEY': 'a-very-strong-random-secret-key-1234567890!@#',
+            'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
         })
+
+    def test_missing_strathmark_url_rejected_in_production(self, monkeypatch):
+        """Production refuses to start when STRATHMARK_SUPABASE_URL is unset."""
+        import pytest
+        from config import validate_runtime
+        monkeypatch.delenv('STRATHMARK_SUPABASE_URL', raising=False)
+        monkeypatch.setenv('STRATHMARK_SUPABASE_KEY', 'fake')
+        with pytest.raises(RuntimeError, match='STRATHMARK_SUPABASE'):
+            validate_runtime({
+                'ENV_NAME': 'production',
+                'SECRET_KEY': 'a-very-strong-random-secret-key-1234567890!@#',
+                'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
+            })
+
+    def test_missing_strathmark_key_rejected_in_production(self, monkeypatch):
+        """Production refuses to start when STRATHMARK_SUPABASE_KEY is unset."""
+        import pytest
+        from config import validate_runtime
+        monkeypatch.setenv('STRATHMARK_SUPABASE_URL', 'https://x.supabase.co')
+        monkeypatch.delenv('STRATHMARK_SUPABASE_KEY', raising=False)
+        with pytest.raises(RuntimeError, match='STRATHMARK_SUPABASE'):
+            validate_runtime({
+                'ENV_NAME': 'production',
+                'SECRET_KEY': 'a-very-strong-random-secret-key-1234567890!@#',
+                'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
+            })
+
+    def test_strathmark_check_skipped_in_development(self, monkeypatch):
+        """Development env never enforces the STRATHMARK var requirement."""
+        from config import validate_runtime
+        monkeypatch.delenv('STRATHMARK_SUPABASE_URL', raising=False)
+        monkeypatch.delenv('STRATHMARK_SUPABASE_KEY', raising=False)
+        # Should not raise
+        validate_runtime({'ENV_NAME': 'development', 'SECRET_KEY': 'dev'})
