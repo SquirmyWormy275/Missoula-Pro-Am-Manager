@@ -2,233 +2,285 @@
 {% block title %}Select Access - {{ COMPETITION.app_title }}{% endblock %}
 {% block extra_css %}
 <style>
-    /* ── Role Entry Page ─────────────────────────────────────────── */
+    /* ── Role Entry Page ──────────────────────────────────────────
+       Design rules in effect (V2.6.x design pass):
+       - Single brand mark in hero (no duplicated STRATHEX).
+       - Hide the navbar STRATHEX chip + top-bar "by STRATHEX" copy
+         on this page only — they create three competing brand marks
+         above the fold otherwise.
+       - Asymmetric hierarchy: Competitor is the dominant card
+         (it's the most-used path). Judge + Spectator are secondary
+         tiles below.
+       - Warm palette only — no lone-blue Spectator button.
+       - One-line card copy. Whole tile is the click target.
+    */
+
+    /* Suppress duplicated STRATHEX branding above the fold (page-only) */
+    .ownership-bar .ownership-copy { display: none !important; }
+    .strathex-chip { display: none !important; }
+
     .role-entry-hero {
         text-align: center;
-        padding: 3.5rem 1rem 2.5rem;
+        padding: 2.5rem 1rem 1.25rem;
         position: relative;
     }
-    .role-entry-logos {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 1.25rem;
-        margin-bottom: 2rem;
-    }
+    /* Logo lockup: large round white surface, fire ring, soft radial glow
+       behind it on the dark backdrop. Sits on the page rather than feeling
+       pasted on top of it. */
     .entry-logo-proam {
-        width: 96px;
-        height: 96px;
-        border-radius: 18px;
-        background: #fff;
-        border: 1px solid rgba(255,255,255,0.15);
-        display: flex; align-items: center; justify-content: center;
-        overflow: hidden; flex-shrink: 0; padding: 7px;
-        box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+        position: relative;
+        width: 168px;
+        height: 168px;
+        border-radius: 50%;
+        background:
+            radial-gradient(circle at 50% 45%, #ffffff 0%, #fafafa 70%, #efefef 100%);
+        border: 1px solid rgba(239,43,22,0.55);
+        display: inline-flex; align-items: center; justify-content: center;
+        overflow: hidden; padding: 14px;
+        box-shadow:
+            0 0 0 6px rgba(239,43,22,0.08),
+            0 0 60px 12px rgba(239,43,22,0.22),
+            0 18px 50px rgba(0,0,0,0.65),
+            inset 0 0 0 1px rgba(0,0,0,0.06);
+        margin-bottom: 1.35rem;
+    }
+    /* Outer aura — large soft fire glow that bleeds into the dark bg */
+    .entry-logo-proam::before {
+        content: "";
+        position: absolute;
+        inset: -38px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(239,43,22,0.22) 0%, rgba(239,43,22,0.08) 40%, transparent 70%);
+        z-index: -1;
+        pointer-events: none;
     }
     .entry-logo-proam img { width:100%; height:100%; object-fit:contain; }
-    .entry-logo-sep {
-        width: 1px; height: 72px;
-        background: linear-gradient(to bottom, transparent, var(--sx-border-bright), transparent);
-        flex-shrink: 0;
-    }
-    .entry-logo-strathex {
-        width: 96px; height: 96px; border-radius: 18px;
-        background: linear-gradient(180deg, #07090e 0%, #030407 100%);
-        border: 1px solid rgba(239,43,22,0.42);
-        box-shadow: 0 0 30px rgba(239,43,22,0.2), 0 6px 24px rgba(0,0,0,0.45);
-        display: flex; align-items: center; justify-content: center;
-        overflow: hidden; flex-shrink: 0; padding: 14px;
-    }
-    .entry-logo-strathex img { width:100%; height:100%; object-fit:contain; }
+
     .entry-hero-title {
         font-family: "Orbitron", sans-serif;
         font-weight: 800;
-        font-size: 1.85rem;
+        font-size: 1.55rem;
         letter-spacing: 0.04em;
         text-transform: uppercase;
         color: var(--sx-text);
         line-height: 1.1;
-        margin-bottom: 0.5rem;
+        margin: 0 0 0.55rem;
     }
-    .entry-hero-sub {
-        color: var(--sx-text-2);
-        font-size: 0.9rem;
-        letter-spacing: 0.01em;
-        margin-bottom: 0;
-    }
-    .entry-event-tags {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.5rem;
-        flex-wrap: wrap;
-        margin-top: 1rem;
-    }
-    .entry-tag {
-        display: inline-flex; align-items: center; gap: 4px;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid var(--sx-border);
-        border-radius: 999px; padding: 3px 11px;
-        font-size: 0.65rem; font-weight: 600;
-        letter-spacing: 0.07em; text-transform: uppercase;
-        color: var(--sx-text-3);
-    }
-    .entry-tag-fire {
-        border-color: rgba(239,43,22,0.3);
-        color: #f0735a;
-        background: rgba(239,43,22,0.07);
-    }
-
-    /* Role cards */
-    .role-card {
-        border-top: 3px solid var(--sx-fire);
-        transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
-        cursor: default;
-    }
-    .role-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(239,43,22,0.15) !important;
-        border-top-color: var(--sx-amber);
-    }
-    .role-card-spectator { border-top-color: var(--sx-info); }
-    .role-card-spectator:hover { border-top-color: #6cb6f5; box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(59,142,232,0.15) !important; }
-
-    .role-icon {
-        width: 56px; height: 56px;
-        border-radius: 14px;
+    .entry-active-chip {
+        display: inline-flex; align-items: center; gap: 6px;
         background: rgba(239,43,22,0.10);
-        border: 1px solid rgba(239,43,22,0.22);
+        border: 1px solid rgba(239,43,22,0.35);
+        border-radius: 999px;
+        padding: 4px 12px 4px 10px;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #f0735a;
+    }
+    .entry-active-chip .pulse {
+        width: 7px; height: 7px; border-radius: 50%;
+        background: var(--sx-success, #46c46c);
+        box-shadow: 0 0 0 0 rgba(70,196,108,0.7);
+        animation: entry-pulse 2s infinite;
+    }
+    @keyframes entry-pulse {
+        0%   { box-shadow: 0 0 0 0 rgba(70,196,108,0.55); }
+        70%  { box-shadow: 0 0 0 6px rgba(70,196,108,0); }
+        100% { box-shadow: 0 0 0 0 rgba(70,196,108,0); }
+    }
+    /* ── Featured (Competitor) tile ─────────────────────────────── */
+    .role-featured {
+        max-width: 560px;
+        margin: 1.75rem auto 1.25rem;
+        display: block;
+        text-decoration: none;
+        background: linear-gradient(180deg, rgba(239,43,22,0.10) 0%, rgba(239,43,22,0.02) 100%);
+        border: 1px solid rgba(239,43,22,0.45);
+        border-radius: 18px;
+        padding: 1.6rem 1.75rem 1.5rem;
+        box-shadow: 0 10px 36px rgba(0,0,0,0.55), 0 0 0 1px rgba(239,43,22,0.15);
+        transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+        color: var(--sx-text);
+    }
+    .role-featured:hover {
+        transform: translateY(-3px);
+        border-color: rgba(239,43,22,0.7);
+        box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 0 1px rgba(239,43,22,0.30);
+        color: var(--sx-text);
+        text-decoration: none;
+    }
+    .role-featured:focus-visible {
+        outline: 2px solid var(--sx-fire);
+        outline-offset: 3px;
+    }
+    .role-featured-row {
+        display: flex; align-items: center; gap: 1.1rem;
+    }
+    .role-featured-icon {
+        width: 64px; height: 64px;
+        border-radius: 16px;
+        background: rgba(239,43,22,0.18);
+        border: 1px solid rgba(239,43,22,0.40);
+        color: var(--sx-fire);
         display: flex; align-items: center; justify-content: center;
-        font-size: 1.5rem; color: var(--sx-fire);
-        margin-bottom: 1.1rem; flex-shrink: 0;
+        font-size: 1.85rem; flex-shrink: 0;
     }
-    .role-icon-blue {
-        background: rgba(59,142,232,0.10);
-        border-color: rgba(59,142,232,0.22);
-        color: var(--sx-info);
+    .role-featured-text { flex: 1; min-width: 0; text-align: left; }
+    .role-featured-eyebrow {
+        font-size: 0.65rem; font-weight: 700;
+        letter-spacing: 0.12em; text-transform: uppercase;
+        color: #f0735a; margin-bottom: 0.25rem;
     }
-    .role-card .card-body p {
-        font-size: 0.875rem;
-        color: var(--sx-text-2);
-        line-height: 1.6;
-        flex-grow: 1;
-    }
-    .role-card h5 {
+    .role-featured h2 {
         font-family: "Fraunces", serif;
-        font-size: 1.15rem;
-        margin-bottom: 0.6rem;
+        font-size: 1.5rem;
+        margin: 0 0 0.3rem;
+        color: var(--sx-text);
+    }
+    .role-featured p {
+        margin: 0;
+        color: var(--sx-text-2);
+        font-size: 0.92rem;
+        line-height: 1.45;
+    }
+    .role-featured-cta {
+        display: flex; align-items: center;
+        color: var(--sx-fire); font-size: 1.6rem; flex-shrink: 0;
     }
 
-    /* Divider between hero and cards */
-    .entry-divider {
-        height: 1px;
-        background: linear-gradient(90deg, transparent, var(--sx-border), transparent);
-        margin: 0 auto 2.5rem;
+    /* ── Secondary tiles (Judge / Spectator) ────────────────────── */
+    .role-secondary-row {
         max-width: 560px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.85rem;
+    }
+    .role-secondary {
+        display: flex; align-items: center; gap: 0.75rem;
+        padding: 0.95rem 1.05rem;
+        background: rgba(255,255,255,0.025);
+        border: 1px solid var(--sx-border);
+        border-radius: 14px;
+        text-decoration: none;
+        color: var(--sx-text);
+        transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+        min-height: 44px;
+    }
+    .role-secondary:hover {
+        transform: translateY(-2px);
+        border-color: rgba(239,43,22,0.45);
+        background: rgba(239,43,22,0.06);
+        color: var(--sx-text);
+        text-decoration: none;
+    }
+    .role-secondary:focus-visible {
+        outline: 2px solid var(--sx-fire);
+        outline-offset: 2px;
+    }
+    .role-secondary-icon {
+        width: 38px; height: 38px;
+        border-radius: 10px;
+        background: rgba(239,43,22,0.10);
+        border: 1px solid rgba(239,43,22,0.25);
+        color: var(--sx-fire);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.05rem; flex-shrink: 0;
+    }
+    .role-secondary-text { min-width: 0; text-align: left; line-height: 1.2; }
+    .role-secondary-text strong {
+        display: block;
+        font-family: "Fraunces", serif;
+        font-size: 0.98rem;
+        font-weight: 600;
+        color: var(--sx-text);
+    }
+    .role-secondary-text small {
+        display: block;
+        font-size: 0.72rem;
+        color: var(--sx-text-3);
+        letter-spacing: 0.01em;
+        margin-top: 1px;
     }
 
     @media (max-width: 575px) {
-        .entry-logo-proam, .entry-logo-strathex { width: 76px; height: 76px; border-radius: 14px; }
-        .entry-logo-strathex { padding: 11px; }
-        .entry-logo-sep { height: 56px; }
-        .entry-hero-title { font-size: 1.4rem; }
+        .entry-logo-proam { width: 132px; height: 132px; padding: 11px; }
+        .entry-logo-proam::before { inset: -28px; }
+        .entry-hero-title { font-size: 1.25rem; }
+        .role-featured { padding: 1.3rem 1.25rem 1.2rem; }
+        .role-featured h2 { font-size: 1.3rem; }
+        .role-featured-icon { width: 54px; height: 54px; font-size: 1.55rem; }
+        .role-secondary-row { grid-template-columns: 1fr; }
     }
 </style>
 {% endblock %}
 {% block content %}
-<div class="container py-4">
+<div class="container py-3">
 
-    <!-- ── Competition Identity Hero ────────────────────────── -->
+    <!-- ── Hero: single brand mark, title, active chip ──────── -->
     <div class="role-entry-hero">
-        <div class="role-entry-logos">
-            <div class="entry-logo-proam">
-                <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
-                     alt="Missoula Pro Am"
-                     onerror="this.parentElement.style.opacity='0';">
-            </div>
-            <div class="entry-logo-sep"></div>
-            <div class="entry-logo-strathex">
-                <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
-                     alt="STRATHEX"
-                     onerror="this.parentElement.style.opacity='0';">
-            </div>
+        <div class="entry-logo-proam">
+            <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
+                 alt="Missoula Pro Am"
+                 onerror="this.parentElement.style.opacity='0';">
         </div>
 
         <h1 class="entry-hero-title">{{ COMPETITION.app_title }}</h1>
-        <p class="entry-hero-sub">Select your access level to continue.</p>
 
-        <div class="entry-event-tags">
-            <span class="entry-tag entry-tag-fire">
-                <i class="bi bi-trophy-fill" style="font-size:0.58rem;"></i>
-                International Timbersports
-            </span>
-            <span class="entry-tag">
-                <i class="bi bi-mortarboard-fill" style="font-size:0.58rem;"></i>
-                College Division
-            </span>
-            <span class="entry-tag">
-                <i class="bi bi-award-fill" style="font-size:0.58rem;"></i>
-                Professional Division
-            </span>
-            {% if active_tournament %}
-            <span class="status-beacon" style="font-size:0.58rem; padding:3px 9px 3px 7px;">
-                <span class="status-beacon-dot"></span>
+        {% if active_tournament %}
+        <div>
+            <span class="entry-active-chip">
+                <span class="pulse"></span>
                 {{ active_tournament.name }}
             </span>
-            {% endif %}
         </div>
+        {% endif %}
+
     </div>
 
-    <div class="entry-divider"></div>
-
-    <!-- ── Role Selection Cards ──────────────────────────────── -->
-    <div class="row g-4 justify-content-center" style="max-width:980px; margin:0 auto;">
-
-        <div class="col-lg-4 col-md-6">
-            <div class="card h-100 role-card">
-                <div class="card-body d-flex flex-column p-4">
-                    <div class="role-icon"><i class="bi bi-shield-lock-fill"></i></div>
-                    <h5>Judge / Admin</h5>
-                    <p>Full access to scheduling, registrations, scoring, heat management, and all administrative tools.</p>
-                    <a class="btn btn-proam mt-3" href="{{ url_for('auth.login', next=url_for('main.judge_dashboard')) }}">
-                        <i class="bi bi-box-arrow-in-right me-1"></i> Judge Login
-                    </a>
-                </div>
+    <!-- ── Featured: Competitor (the most-used entry point) ── -->
+    <a class="role-featured" href="{{ url_for('portal.competitor_access') }}">
+        <div class="role-featured-row">
+            <div class="role-featured-icon"><i class="bi bi-person-badge-fill"></i></div>
+            <div class="role-featured-text">
+                <div class="role-featured-eyebrow">I'm a competitor</div>
+                <h2>Find My Profile</h2>
+                <p>Your schedule, stand assignments, results, and payouts.</p>
             </div>
+            <div class="role-featured-cta"><i class="bi bi-arrow-right-circle-fill"></i></div>
         </div>
+    </a>
 
-        <div class="col-lg-4 col-md-6">
-            <div class="card h-100 role-card">
-                <div class="card-body d-flex flex-column p-4">
-                    <div class="role-icon"><i class="bi bi-person-badge-fill"></i></div>
-                    <h5>Competitor</h5>
-                    <p>Look up your personal schedule, heat assignments, stand numbers, results, and payout information.</p>
-                    <a class="btn btn-proam mt-3" href="{{ url_for('portal.competitor_access') }}">
-                        <i class="bi bi-search me-1"></i> Find My Profile
-                    </a>
-                </div>
+    <!-- ── Secondary: Judge + Spectator ──────────────────────── -->
+    <div class="role-secondary-row">
+        <a class="role-secondary"
+           href="{{ url_for('auth.login', next=url_for('main.judge_dashboard')) }}">
+            <div class="role-secondary-icon"><i class="bi bi-shield-lock-fill"></i></div>
+            <div class="role-secondary-text">
+                <strong>Judge / Admin</strong>
+                <small>Scoring &amp; operations login</small>
             </div>
-        </div>
+        </a>
 
-        <div class="col-lg-4 col-md-6">
-            <div class="card h-100 role-card role-card-spectator">
-                <div class="card-body d-flex flex-column p-4">
-                    <div class="role-icon role-icon-blue"><i class="bi bi-broadcast-pin"></i></div>
-                    <h5>Spectator</h5>
-                    <p>View live standings, rankings, event results, and day-by-day college team and individual scores.</p>
-                    {% if active_tournament %}
-                    <a class="btn btn-primary mt-3" href="{{ url_for('portal.spectator_dashboard', tournament_id=active_tournament.id) }}">
-                        <i class="bi bi-eye me-1"></i> Open Spectator Portal
-                    </a>
-                    {% else %}
-                    <a class="btn btn-outline-secondary mt-3" href="{{ url_for('portal.index') }}">
-                        <i class="bi bi-list me-1"></i> Select Tournament
-                    </a>
-                    {% endif %}
-                </div>
+        {% if active_tournament %}
+        <a class="role-secondary"
+           href="{{ url_for('portal.spectator_dashboard', tournament_id=active_tournament.id) }}">
+            <div class="role-secondary-icon"><i class="bi bi-broadcast-pin"></i></div>
+            <div class="role-secondary-text">
+                <strong>Spectator</strong>
+                <small>Live standings &amp; results</small>
             </div>
-        </div>
-
+        </a>
+        {% else %}
+        <a class="role-secondary" href="{{ url_for('portal.index') }}">
+            <div class="role-secondary-icon"><i class="bi bi-broadcast-pin"></i></div>
+            <div class="role-secondary-text">
+                <strong>Spectator</strong>
+                <small>Choose a tournament</small>
+            </div>
+        </a>
+        {% endif %}
     </div>
 
 </div>
