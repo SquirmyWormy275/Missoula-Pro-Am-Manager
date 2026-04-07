@@ -1,22 +1,17 @@
-* text=auto eol=lf
-*.py text eol=lf
-*.html text eol=lf
-*.css text eol=lf
-*.js text eol=lf
-*.toml text eol=lf
-*.yml text eol=lf
-*.yaml text eol=lf
-*.md text eol=lf
-*.txt text eol=lf
-*.json text eol=lf
-*.cfg text eol=lf
-*.ini text eol=lf
+# Mark text vs binary so git diffs and merges them correctly. We do NOT
+# enforce eol=lf because the existing repo has mixed CRLF/LF and a bulk
+# renormalization 18 days before live deploy is too risky. Re-evaluate after
+# the show.
+
+* text=auto
+
+# Binary file types — never diff or convert
 *.xlsx binary
 *.png binary
 *.jpg binary
 *.jpeg binary
 *.webp binary
-*.svg text eol=lf
 *.ico binary
 *.pdf binary
 *.db binary
+*.sqlite3 binary
