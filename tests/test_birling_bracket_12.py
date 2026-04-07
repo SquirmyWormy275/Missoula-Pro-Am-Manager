@@ -11,12 +11,12 @@ in tests/fixtures/synthetic_data.py (12 competitors each).
 Run:  pytest tests/test_birling_bracket_12.py -v
 """
 import math
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from services.birling_bracket import BirlingBracket
 from tests.fixtures.synthetic_data import BIRLING_MEN_BRACKET, BIRLING_WOMEN_BRACKET
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -2,28 +2,31 @@
 Event configuration routes: event_list, setup_events, day_schedule, apply_saturday_priority,
 and all event-setup helper functions.
 """
-import re
 import json
 import os as _os
-from flask import render_template, redirect, url_for, flash, request, session
-from database import db
-from models import Tournament, Event, Heat, HeatAssignment, Flight
-from models.competitor import CollegeCompetitor, ProCompetitor
+import re
+
+from flask import flash, redirect, render_template, request, session, url_for
+
 import config
 import strings as text
+from database import db
+from models import Event, Flight, Heat, HeatAssignment, Tournament
+from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
+
 from . import (
-    scheduling_bp,
-    _normalize_name,
+    _build_assignment_details,
+    _build_pro_flights_if_possible,
+    _build_signup_rows,
+    _competitor_entered_event,
+    _generate_all_heats,
     _is_list_only_event,
     _load_competitor_lookup,
-    _build_signup_rows,
-    _signed_up_competitors,
-    _competitor_entered_event,
+    _normalize_name,
     _resolve_partner_name,
-    _build_assignment_details,
-    _generate_all_heats,
-    _build_pro_flights_if_possible,
+    _signed_up_competitors,
+    scheduling_bp,
 )
 
 
@@ -103,8 +106,8 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
 @scheduling_bp.route('/<int:tournament_id>/events', methods=['GET', 'POST'])
 def event_list(tournament_id):
     """Unified Events & Schedule page — heat status, schedule options, generation actions."""
-    from services.heat_generator import generate_event_heats
     from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
+    from services.heat_generator import generate_event_heats
 
     tournament = Tournament.query.get_or_404(tournament_id)
     session_key = f'schedule_options_{tournament_id}'
@@ -460,9 +463,9 @@ def day_schedule(tournament_id):
 
 def _day_schedule_legacy(tournament_id):
     """Legacy day-schedule logic — kept for reference, no longer routed."""
-    from services.schedule_builder import build_day_schedule, COLLEGE_SATURDAY_PRIORITY
-    from services.heat_generator import generate_event_heats
     from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
+    from services.heat_generator import generate_event_heats
+    from services.schedule_builder import COLLEGE_SATURDAY_PRIORITY, build_day_schedule
 
     tournament = Tournament.query.get_or_404(tournament_id)
     friday_feature_names = set(config.FRIDAY_NIGHT_EVENTS)

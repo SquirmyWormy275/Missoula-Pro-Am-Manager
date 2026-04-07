@@ -6,6 +6,7 @@ normalize_person_name(), and infer_equipment_categories() against the full
 25-competitor pool from tests/fixtures/synthetic_data.py.
 """
 import types
+
 import pytest
 
 from services.gear_sharing import (
@@ -16,7 +17,6 @@ from services.gear_sharing import (
     resolve_partner_name,
 )
 from tests.fixtures.synthetic_data import PRO_COMPETITORS, PRO_GEAR_SHARING_TEXTS
-
 
 # ---------------------------------------------------------------------------
 # Helpers

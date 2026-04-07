@@ -10,9 +10,11 @@ Run:
     pytest tests/test_partnered_axe_state.py -v
 """
 import json
+
 import pytest
+
 from database import db as _db
-from tests.conftest import make_tournament, make_pro_competitor, make_event
+from tests.conftest import make_event, make_pro_competitor, make_tournament
 
 
 @pytest.fixture(autouse=True)

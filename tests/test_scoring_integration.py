@@ -18,9 +18,14 @@ Run:
 from __future__ import annotations
 
 import pytest
+
 from tests.conftest import (
-    make_tournament, make_team, make_college_competitor,
-    make_pro_competitor, make_event, make_event_result,
+    make_college_competitor,
+    make_event,
+    make_event_result,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
 )
 
 pytestmark = pytest.mark.integration

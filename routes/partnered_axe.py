@@ -1,12 +1,13 @@
 """
 Routes for Partnered Axe Throw prelims/finals management.
 """
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+
 from database import db
 from models import Tournament
 from models.competitor import ProCompetitor
-from services.partnered_axe import get_partnered_axe_throw
 from services.cache_invalidation import invalidate_tournament_caches
+from services.partnered_axe import get_partnered_axe_throw
 
 bp = Blueprint('partnered_axe', __name__, url_prefix='/tournament/<int:tournament_id>/partnered-axe')
 
@@ -102,7 +103,7 @@ def advance_to_finals(tournament_id):
     try:
         finalists = pat.advance_to_finals()
         invalidate_tournament_caches(tournament_id)
-        flash(f'Top 4 pairs advanced to finals!', 'success')
+        flash('Top 4 pairs advanced to finals!', 'success')
     except ValueError as e:
         flash(str(e), 'danger')
 

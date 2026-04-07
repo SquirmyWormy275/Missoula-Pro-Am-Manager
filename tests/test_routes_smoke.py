@@ -26,9 +26,10 @@ Design notes:
   - WTF_CSRF_ENABLED is disabled for all POST smoke tests.
 """
 import os
-import pytest
-from database import db as _db
 
+import pytest
+
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # App + DB fixtures
@@ -52,8 +53,8 @@ def app():
 
 def _seed_db(app):
     """Insert minimal seed data: one admin user, one tournament."""
-    from models.user import User
     from models import Tournament
+    from models.user import User
 
     # Admin user — role='admin' grants is_admin, is_judge, can_score, etc.
     if not User.query.filter_by(username='smoke_admin').first():

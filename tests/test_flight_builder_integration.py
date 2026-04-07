@@ -16,11 +16,11 @@ Requirements:
     All app dependencies installed.
 """
 import json
-import pytest
 from collections import defaultdict
 
-from database import db as _db
+import pytest
 
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # Fixtures (same pattern as test_woodboss.py)
@@ -30,6 +30,7 @@ from database import db as _db
 def app():
     """Create a test Flask app with temp-file SQLite built via flask db upgrade."""
     import os
+
     from tests.db_test_utils import create_test_app
     _app, db_path = create_test_app()
 
@@ -214,7 +215,7 @@ class TestFlightBuilderBuild:
 
     def test_builds_flights_and_assigns_heats(self, db_session):
         """Build flights for a standard show -- all heats get assigned to flights."""
-        from models import Heat, Flight
+        from models import Flight, Heat
         from services.flight_builder import FlightBuilder
 
         data = _seed_standard_show(db_session)
@@ -286,8 +287,8 @@ class TestFlightBuilderBuild:
 
     def test_cookie_stack_standing_block_not_adjacent(self, db_session):
         """Cookie Stack and Standing Block heats should be separated by the conflict gap."""
-        from models import Heat, Flight
-        from services.flight_builder import FlightBuilder, _STAND_CONFLICT_GAP
+        from models import Flight, Heat
+        from services.flight_builder import _STAND_CONFLICT_GAP, FlightBuilder
 
         data = _seed_standard_show(db_session)
         fb = FlightBuilder(data['tournament'])
@@ -329,6 +330,7 @@ class TestFlightBuilderBuild:
     def test_default_flight_count(self, db_session):
         """When num_flights is None, the builder uses 8 heats per flight."""
         import math
+
         from models import Flight, Heat
         from services.flight_builder import FlightBuilder
 
@@ -419,7 +421,7 @@ class TestFlightBuilderSpillover:
 
     def test_college_overflow_integrated_into_pro_flights(self, db_session):
         """College Saturday overflow events get placed into existing pro flights."""
-        from models import Heat, Flight
+        from models import Flight, Heat
         from services.flight_builder import FlightBuilder
 
         data = _seed_standard_show(db_session)
@@ -447,7 +449,7 @@ class TestFlightBuilderSpillover:
 
     def test_chokerman_run2_at_end_of_last_flight(self, db_session):
         """Chokerman's Race Run 2 heats are always placed at the end of the last flight."""
-        from models import Heat, Flight
+        from models import Flight, Heat
         from services.flight_builder import FlightBuilder
 
         data = _seed_standard_show(db_session)

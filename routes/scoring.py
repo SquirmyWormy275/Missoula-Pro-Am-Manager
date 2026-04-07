@@ -8,22 +8,33 @@ import csv
 import io
 from datetime import datetime, timezone
 
-from flask import (Blueprint, render_template, redirect, url_for, flash,
-                   request, abort, jsonify, session, Response, stream_with_context)
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    stream_with_context,
+    url_for,
+)
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+import config
+import services.scoring_engine as engine
+import strings as text
 from database import db
-from models import Tournament, Event, EventResult, Heat
+from models import Event, EventResult, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.payout_template import PayoutTemplate
-import config
-import strings as text
+from routes.api import write_limit
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
-import services.scoring_engine as engine
-from routes.api import write_limit
 
 scoring_bp = Blueprint('scoring', __name__)
 

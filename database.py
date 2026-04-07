@@ -3,8 +3,9 @@ Database setup and initialization for the Missoula Pro Am Tournament Manager.
 """
 import logging
 import os
-from flask_sqlalchemy import SQLAlchemy
+
 from flask_migrate import Migrate
+from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
 migrate = Migrate()
@@ -18,9 +19,23 @@ def init_db(app):
     migrate.init_app(app, db)
     migration_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations')
     # Import all models to register them with SQLAlchemy
-    from models import (Tournament, Team, CollegeCompetitor, ProCompetitor,
-                        Event, EventResult, Heat, HeatAssignment, Flight, User, AuditLog,
-                        SchoolCaptain, WoodConfig, ProEventRank, PayoutTemplate)
+    from models import (
+        AuditLog,
+        CollegeCompetitor,
+        Event,
+        EventResult,
+        Flight,
+        Heat,
+        HeatAssignment,
+        PayoutTemplate,
+        ProCompetitor,
+        ProEventRank,
+        SchoolCaptain,
+        Team,
+        Tournament,
+        User,
+        WoodConfig,
+    )
 
     # Migrations are handled by Railway's releaseCommand (`flask db upgrade`
     # in railway.toml) — NOT at app startup.  Running migrations here caused a

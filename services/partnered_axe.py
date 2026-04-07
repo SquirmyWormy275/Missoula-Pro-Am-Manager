@@ -9,10 +9,11 @@ The Partnered Axe Throw event has a unique format:
 Each pair consists of two competitors throwing at the same target,
 alternating throws. Score is total hits combined.
 """
-from database import db
-from models import Event, Heat, HeatAssignment, EventResult
-from models.competitor import ProCompetitor
 import json
+
+from database import db
+from models import Event, EventResult, Heat, HeatAssignment
+from models.competitor import ProCompetitor
 
 
 class PartneredAxeThrow:

@@ -20,13 +20,13 @@ Run:
 """
 import json
 import os
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-spectator')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from database import db as _db
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -49,7 +49,7 @@ def app():
 
 def _seed_spectator_data(app):
     """Seed a tournament with teams, competitors, events, heats, results."""
-    from models import Tournament, Team, Event, EventResult, Heat
+    from models import Event, EventResult, Heat, Team, Tournament
     from models.competitor import CollegeCompetitor, ProCompetitor
 
     # Tournament — active so spectator portal auto-redirects

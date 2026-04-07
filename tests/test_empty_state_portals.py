@@ -15,6 +15,7 @@ Run:
     pytest tests/test_empty_state_portals.py -v
 """
 import os
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-empty')

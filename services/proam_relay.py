@@ -8,11 +8,12 @@ Each team has 8 members:
 - 2 College Men
 - 2 College Women
 """
-from database import db
-from models import Tournament, Event, EventResult
-from models.competitor import CollegeCompetitor, ProCompetitor
-import random
 import json
+import random
+
+from database import db
+from models import Event, EventResult, Tournament
+from models.competitor import CollegeCompetitor, ProCompetitor
 
 
 class ProAmRelay:

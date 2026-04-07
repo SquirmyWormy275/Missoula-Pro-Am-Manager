@@ -7,11 +7,11 @@ entries, distance format parsing, and tie handling.
 """
 import csv
 import io
+
 import pytest
 
-from tests.conftest import make_tournament, make_pro_competitor, make_event, make_event_result
-from tests.fixtures.synthetic_data import PRO_SCORES, PRO_COMPETITORS
-
+from tests.conftest import make_event, make_event_result, make_pro_competitor, make_tournament
+from tests.fixtures.synthetic_data import PRO_COMPETITORS, PRO_SCORES
 
 # ---------------------------------------------------------------------------
 # Helpers

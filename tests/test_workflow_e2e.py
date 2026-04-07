@@ -20,10 +20,18 @@ Run:
 from __future__ import annotations
 
 import json
+
 import pytest
+
 from tests.conftest import (
-    make_tournament, make_team, make_college_competitor,
-    make_pro_competitor, make_event, make_heat, make_event_result, make_flight,
+    make_college_competitor,
+    make_event,
+    make_event_result,
+    make_flight,
+    make_heat,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
 )
 
 pytestmark = pytest.mark.integration

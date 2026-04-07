@@ -9,21 +9,21 @@ Run:  pytest tests/test_excel_io.py -v
 """
 import pandas as pd
 import pytest
+
 from services.excel_io import (
-    _normalize_label,
-    _looks_like_team_code,
-    _parse_gender,
-    _parse_relay_opt_in,
     _abbreviate_school,
     _canonicalize_event_name,
-    _is_valid_competitor_name,
-    _parse_events,
-    _parse_event_markers,
     _event_column_gender_hint,
-    _normalize_person_name,
     _infer_default_gender,
+    _is_valid_competitor_name,
+    _looks_like_team_code,
+    _normalize_label,
+    _normalize_person_name,
+    _parse_event_markers,
+    _parse_events,
+    _parse_gender,
+    _parse_relay_opt_in,
 )
-
 
 # ---------------------------------------------------------------------------
 # _normalize_label

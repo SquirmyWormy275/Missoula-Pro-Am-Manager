@@ -10,11 +10,11 @@ is needed.
 
 Run:  pytest tests/test_proam_relay.py -v
 """
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from services.proam_relay import ProAmRelay
-
 
 # ---------------------------------------------------------------------------
 # Helpers

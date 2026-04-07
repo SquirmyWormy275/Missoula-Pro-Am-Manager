@@ -6,6 +6,7 @@ Double Buck F with DQ handling.
 """
 import json
 import os
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-partnered')
@@ -13,10 +14,13 @@ os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from database import db as _db
 from tests.conftest import (
-    make_tournament, make_pro_competitor, make_event, make_event_result,
-    make_team, make_college_competitor,
+    make_college_competitor,
+    make_event,
+    make_event_result,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

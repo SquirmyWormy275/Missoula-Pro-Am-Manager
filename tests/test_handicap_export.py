@@ -7,10 +7,11 @@ tournament/event objects with DB-backed relationships and are excluded.
 
 Run:  pytest tests/test_handicap_export.py -v
 """
-import pytest
 from types import SimpleNamespace
-from services.handicap_export import _normalized, is_chopping_event
 
+import pytest
+
+from services.handicap_export import _normalized, is_chopping_event
 
 # ---------------------------------------------------------------------------
 # _normalized

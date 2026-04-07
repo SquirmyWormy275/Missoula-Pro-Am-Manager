@@ -6,10 +6,11 @@ mocked with simple namespace objects so the logic can be exercised in isolation.
 
 Run:  pytest tests/test_scoring.py -v
 """
-import pytest
 from types import SimpleNamespace
-import services.scoring_engine as engine
 
+import pytest
+
+import services.scoring_engine as engine
 
 # ---------------------------------------------------------------------------
 # Helpers — create lightweight fakes that behave like SQLAlchemy models

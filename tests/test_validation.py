@@ -8,17 +8,17 @@ those are skipped here.
 
 Run:  pytest tests/test_validation.py -v
 """
-import pytest
 from types import SimpleNamespace
 
+import pytest
+
 from services.validation import (
-    ValidationError,
-    ValidationResult,
-    TeamValidator,
     CollegeCompetitorValidator,
     ProCompetitorValidator,
+    TeamValidator,
+    ValidationError,
+    ValidationResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # ValidationError

@@ -16,9 +16,9 @@ Design notes:
     (sms_notify depends only on env vars and the twilio package).
 """
 import os
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 # =====================================================================
 # SMS Notify Tests
@@ -60,8 +60,9 @@ class TestSmsIsConfigured:
     })
     def test_returns_false_when_twilio_not_installed(self):
         """is_configured() returns False when twilio package is not importable."""
-        from services.sms_notify import is_configured
         import builtins
+
+        from services.sms_notify import is_configured
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
@@ -238,8 +239,9 @@ class TestBackupIsS3Configured:
     })
     def test_returns_false_when_boto3_not_installed(self):
         """is_s3_configured() returns False when boto3 is not importable."""
-        from services.backup import is_s3_configured
         import builtins
+
+        from services.backup import is_s3_configured
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
@@ -267,6 +269,7 @@ class TestBackupTimestamp:
     def test_timestamp_uses_utcnow(self):
         """_timestamp() uses datetime.utcnow() for consistency."""
         from datetime import datetime
+
         from services.backup import _timestamp
         with patch('services.backup.datetime') as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 3, 20, 14, 30, 45)

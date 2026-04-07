@@ -23,6 +23,7 @@ SAFEGUARD: Three layers prevent test data from touching the production DB:
 import json
 import os
 import pathlib
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-conftest')
@@ -30,7 +31,6 @@ os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from database import db as _db
 from tests.db_test_utils import create_test_app  # noqa: F401 — re-exported
-
 
 # ---------------------------------------------------------------------------
 # SAFEGUARD: Production DB protection

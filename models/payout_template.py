@@ -1,9 +1,10 @@
 """
 PayoutTemplate model — reusable payout structures for pro events.
 """
-from database import db
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
+
+from database import db
 
 
 class PayoutTemplate(db.Model):

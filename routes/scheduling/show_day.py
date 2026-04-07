@@ -2,9 +2,10 @@
 Show Day live operations dashboard route.
 """
 from flask import render_template
-from models import Tournament, Event, Heat, Flight
-from . import scheduling_bp
 
+from models import Event, Flight, Heat, Tournament
+
+from . import scheduling_bp
 
 # ---------------------------------------------------------------------------
 # Show Day — live operations dashboard

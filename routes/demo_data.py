@@ -9,12 +9,13 @@ import json
 import logging
 from datetime import date
 
-from flask import Blueprint, flash, redirect, url_for, request
+from flask import Blueprint, flash, redirect, request, url_for
+
 from database import db
-from models.tournament import Tournament
-from models.team import Team
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.event import Event, EventResult
+from models.team import Team
+from models.tournament import Tournament
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,8 @@ DEMO_PREFIX = '[DEMO] '
 def _load_synthetic():
     """Import synthetic data from the test fixtures module."""
     import importlib
-    import sys
     import os
+    import sys
 
     # Ensure the tests directory is importable
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -378,7 +379,7 @@ def clear():
                 EventResult.query.filter(EventResult.event_id.in_(event_ids)).delete(synchronize_session=False)
 
             # Heats and HeatAssignments
-            from models.heat import Heat, HeatAssignment, Flight
+            from models.heat import Flight, Heat, HeatAssignment
             heat_ids = [h.id for h in Heat.query.filter(Heat.event_id.in_(event_ids)).all()] if event_ids else []
             if heat_ids:
                 HeatAssignment.query.filter(HeatAssignment.heat_id.in_(heat_ids)).delete(synchronize_session=False)

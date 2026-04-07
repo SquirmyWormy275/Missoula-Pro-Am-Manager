@@ -7,12 +7,14 @@ handicap-format event.  Accessible at:
     GET  /scheduling/<tid>/events/<eid>/assign-marks   — status page
     POST /scheduling/<tid>/events/<eid>/assign-marks   — run assignment
 """
-from flask import render_template, redirect, url_for, flash, request
+from flask import flash, redirect, render_template, request, url_for
+
 from database import db
-from models import Tournament, Event
+from models import Event, Tournament
+from services.audit import log_action
 from services.mark_assignment import assign_handicap_marks, is_mark_assignment_eligible
 from services.strathmark_sync import is_configured as strathmark_is_configured
-from services.audit import log_action
+
 from . import scheduling_bp
 
 

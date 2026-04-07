@@ -2,13 +2,15 @@
 Flight management routes: flight_list, build_flights, start_flight, complete_flight,
 reorder_flight_heats, and the SMS notification helper.
 """
-from flask import render_template, redirect, url_for, flash, request, jsonify
-from database import db
-from models import Tournament, Event, Heat, Flight
-from models.competitor import CollegeCompetitor, ProCompetitor
+from flask import flash, jsonify, redirect, render_template, request, url_for
+
 import strings as text
+from database import db
+from models import Event, Flight, Heat, Tournament
+from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.background_jobs import submit as submit_job
+
 from . import scheduling_bp
 
 
@@ -178,7 +180,8 @@ def complete_flight(tournament_id, flight_id):
 def _send_upcoming_heat_sms(tournament_id: int, current_flight_number: int) -> None:
     """Notify opted-in competitors whose flight is SMS_NOTIFY_FLIGHTS_AHEAD ahead."""
     from flask import current_app
-    from services.sms_notify import send_sms, is_configured
+
+    from services.sms_notify import is_configured, send_sms
 
     if not is_configured():
         return

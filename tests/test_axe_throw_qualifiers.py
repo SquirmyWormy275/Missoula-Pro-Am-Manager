@@ -13,15 +13,19 @@ require the scoring engine to interact with real model objects.
 Run:  pytest tests/test_axe_throw_qualifiers.py -v
 """
 import json
-import pytest
 from unittest.mock import MagicMock, patch
 
-from tests.conftest import (
-    make_tournament, make_team, make_pro_competitor, make_college_competitor,
-    make_event, make_event_result,
-)
-from tests.fixtures.synthetic_data import PRO_SCORES, PRO_COMPETITORS
+import pytest
 
+from tests.conftest import (
+    make_college_competitor,
+    make_event,
+    make_event_result,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
+)
+from tests.fixtures.synthetic_data import PRO_COMPETITORS, PRO_SCORES
 
 # ---------------------------------------------------------------------------
 # Partnered Axe Throw prelim data from synthetic_data.py:
@@ -388,8 +392,8 @@ class TestAxeThrowThrowoffResolution:
         assert r3.final_position == 3
 
     def test_throwoff_updates_points_correctly(self, app, db_session):
-        from services.scoring_engine import calculate_positions, record_throwoff_result
         import config
+        from services.scoring_engine import calculate_positions, record_throwoff_result
 
         tournament = make_tournament(db_session)
         event = make_event(

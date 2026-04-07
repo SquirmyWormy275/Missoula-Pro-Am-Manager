@@ -1,12 +1,13 @@
 """
 Competitor models for both college and professional competitors.
 """
+import json
 import logging
 
-from database import db
-import json
 from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from database import db
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,9 @@ Shared helpers for chopping-focused exports used by handicap tooling.
 from __future__ import annotations
 
 import re
+
 import pandas as pd
+
 from models import Event, Tournament
 
 _CHOPPING_KEYWORDS = (

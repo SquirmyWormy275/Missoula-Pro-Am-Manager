@@ -4,8 +4,10 @@ Pro competitor entry importer for Google Forms xlsx exports.
 Reads the first sheet of an xlsx workbook (Google always puts "Form Responses 1"
 first) and returns a list of parsed entry dicts ready for review and DB commit.
 """
-import openpyxl
 from datetime import datetime
+
+import openpyxl
+
 from services.gear_sharing import infer_equipment_categories
 
 # Waiver column is identified by this prefix (full text is too long to quote here)

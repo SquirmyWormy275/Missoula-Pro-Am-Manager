@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import importlib
 import os
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -27,8 +27,8 @@ pytestmark = pytest.mark.smoke
 @pytest.fixture()
 def seed(app, db_session):
     """Seed users + tournament — only used by tests that need DB data."""
+    from models import Team, Tournament
     from models.user import User
-    from models import Tournament, Team
 
     roles = {
         'admin_user': 'admin',
@@ -147,12 +147,12 @@ class TestConfiguration:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop('FLASK_ENV', None)
             os.environ.pop('PRODUCTION', None)
-            from config import get_config, DevelopmentConfig
+            from config import DevelopmentConfig, get_config
             assert get_config() is DevelopmentConfig
 
     def test_production_config(self):
         with patch.dict(os.environ, {'PRODUCTION': '1'}):
-            from config import get_config, ProductionConfig
+            from config import ProductionConfig, get_config
             assert get_config() is ProductionConfig
 
     def test_weak_secret_rejected(self):
@@ -374,8 +374,8 @@ class TestJSONFieldResilience:
         assert Tournament(name='T', year=2026, schedule_config='[[').get_schedule_config() == {}
 
     def test_null_fields(self):
-        from models.heat import Heat
         from models.event import Event
+        from models.heat import Heat
         assert Heat(event_id=1, heat_number=1, competitors=None).get_competitors() == []
         assert Event(tournament_id=1, name='T', event_type='pro', scoring_type='time', payouts=None).get_payouts() == {}
 
@@ -386,7 +386,7 @@ class TestJSONFieldResilience:
 
 class TestModelValidation:
     def test_name_truncated(self):
-        from models.competitor import CollegeCompetitor, ProCompetitor, MAX_NAME_LENGTH
+        from models.competitor import MAX_NAME_LENGTH, CollegeCompetitor, ProCompetitor
         assert len(CollegeCompetitor(tournament_id=1, team_id=1, name='A'*200, gender='M').name) == MAX_NAME_LENGTH
         assert len(ProCompetitor(tournament_id=1, name='B'*200, gender='F').name) == MAX_NAME_LENGTH
 
@@ -463,8 +463,8 @@ class TestHeatLocking:
         assert not h.acquire_lock(2)
 
     def test_expires(self):
-        from models.heat import Heat
         from config import HEAT_LOCK_TTL_SECONDS
+        from models.heat import Heat
         h = Heat(event_id=1, heat_number=1)
         h.acquire_lock(1)
         h.locked_at = datetime.now(timezone.utc) - timedelta(seconds=HEAT_LOCK_TTL_SECONDS + 10)
@@ -594,18 +594,18 @@ class TestEventProperties:
 
 class TestConfigEventLists:
     def test_required_keys(self):
-        from config import COLLEGE_OPEN_EVENTS, COLLEGE_CLOSED_EVENTS, PRO_EVENTS
+        from config import COLLEGE_CLOSED_EVENTS, COLLEGE_OPEN_EVENTS, PRO_EVENTS
         for evt in COLLEGE_OPEN_EVENTS + COLLEGE_CLOSED_EVENTS + PRO_EVENTS:
             assert all(k in evt for k in ('name', 'scoring_type', 'stand_type'))
 
     def test_no_duplicates(self):
-        from config import COLLEGE_OPEN_EVENTS, COLLEGE_CLOSED_EVENTS, PRO_EVENTS
+        from config import COLLEGE_CLOSED_EVENTS, COLLEGE_OPEN_EVENTS, PRO_EVENTS
         for evts in [COLLEGE_OPEN_EVENTS, COLLEGE_CLOSED_EVENTS, PRO_EVENTS]:
             names = [e['name'] for e in evts]
             assert len(names) == len(set(names))
 
     def test_stand_types_valid(self):
-        from config import COLLEGE_OPEN_EVENTS, COLLEGE_CLOSED_EVENTS, PRO_EVENTS, STAND_CONFIGS
+        from config import COLLEGE_CLOSED_EVENTS, COLLEGE_OPEN_EVENTS, PRO_EVENTS, STAND_CONFIGS
         for evt in COLLEGE_OPEN_EVENTS + COLLEGE_CLOSED_EVENTS + PRO_EVENTS:
             assert evt['stand_type'] in STAND_CONFIGS
 
@@ -614,14 +614,14 @@ class TestConfigEventLists:
         assert all(e['stand_type'] != 'birling' for e in PRO_EVENTS)
 
     def test_scoring_types_valid(self):
-        from config import COLLEGE_OPEN_EVENTS, COLLEGE_CLOSED_EVENTS, PRO_EVENTS
+        from config import COLLEGE_CLOSED_EVENTS, COLLEGE_OPEN_EVENTS, PRO_EVENTS
         valid = {'time', 'score', 'distance', 'hits', 'bracket'}
         for evt in COLLEGE_OPEN_EVENTS + COLLEGE_CLOSED_EVENTS + PRO_EVENTS:
             assert evt['scoring_type'] in valid
 
 class TestBlueprintPermissionCoverage:
     def test_all_have_permission(self):
-        from app import MANAGEMENT_BLUEPRINTS, BLUEPRINT_PERMISSIONS
+        from app import BLUEPRINT_PERMISSIONS, MANAGEMENT_BLUEPRINTS
         assert all(bp in BLUEPRINT_PERMISSIONS for bp in MANAGEMENT_BLUEPRINTS)
 
     def test_attrs_exist(self):
@@ -653,8 +653,9 @@ class TestHeatJSONRoundTrip:
 
 class TestEventRankCategory:
     def test_mappings(self):
-        from config import event_rank_category
         from types import SimpleNamespace as NS
+
+        from config import event_rank_category
         assert event_rank_category(NS(stand_type='springboard', is_partnered=False)) == 'springboard'
         assert event_rank_category(NS(stand_type='saw_hand', is_partnered=False)) == 'singlebuck'
         assert event_rank_category(NS(stand_type='saw_hand', is_partnered=True, partner_gender='mixed')) == 'jack_jill'

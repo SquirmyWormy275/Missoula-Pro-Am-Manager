@@ -12,8 +12,8 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from database import db as _db
 
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # App / DB fixtures

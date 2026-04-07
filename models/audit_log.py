@@ -1,5 +1,6 @@
 """Audit log model for critical state changes."""
 from datetime import datetime
+
 from database import db
 
 

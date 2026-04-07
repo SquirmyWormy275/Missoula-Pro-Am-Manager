@@ -2,8 +2,9 @@
 Tournament model for managing overall tournament state.
 """
 from datetime import datetime
-from database import db
+
 from config import TournamentStatus  # noqa: F401 — re-exported for convenience
+from database import db
 
 
 class Tournament(db.Model):

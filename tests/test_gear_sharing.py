@@ -5,21 +5,22 @@ No database required — all tested functions are pure Python.
 
 Run:  pytest tests/test_gear_sharing.py -v
 """
-import pytest
 from types import SimpleNamespace
+
+import pytest
+
 from services.gear_sharing import (
-    normalize_person_name,
-    normalize_event_text,
     build_name_index,
-    resolve_partner_name,
-    infer_equipment_categories,
     competitors_share_gear_for_event,
     event_matches_gear_key,
-    get_gear_family,
     get_family_events,
+    get_gear_family,
+    infer_equipment_categories,
     is_no_constraint_event,
+    normalize_event_text,
+    normalize_person_name,
+    resolve_partner_name,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -8,9 +8,10 @@ and their pure Python methods exercised without hitting any persisted state.
 Run:  pytest tests/test_models.py -v
 """
 import os
-import pytest
-from database import db as _db
 
+import pytest
+
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # App / DB fixtures

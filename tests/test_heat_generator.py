@@ -7,23 +7,24 @@ Only the pure algorithmic helpers are exercised here.
 
 Run:  pytest tests/test_heat_generator.py -v
 """
-import pytest
 from types import SimpleNamespace
+
+import pytest
+
 from services.heat_generator import (
     _advance_snake_index,
-    _normalize_name,
-    _norm_name,
-    _competitor_entered_event,
-    _is_list_only_event,
-    _stand_numbers_for_event,
-    _has_gear_sharing_conflict,
-    _competitors_share_gear_for_event,
     _build_partner_units,
-    _generate_standard_heats,
-    _generate_springboard_heats,
+    _competitor_entered_event,
+    _competitors_share_gear_for_event,
     _generate_saw_heats,
+    _generate_springboard_heats,
+    _generate_standard_heats,
+    _has_gear_sharing_conflict,
+    _is_list_only_event,
+    _norm_name,
+    _normalize_name,
+    _stand_numbers_for_event,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers — lightweight fake event

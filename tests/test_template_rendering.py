@@ -17,9 +17,16 @@ Run:
 from __future__ import annotations
 
 import pytest
+
 from tests.conftest import (
-    make_tournament, make_team, make_college_competitor,
-    make_pro_competitor, make_event, make_heat, make_event_result, make_flight,
+    make_college_competitor,
+    make_event,
+    make_event_result,
+    make_flight,
+    make_heat,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
 )
 
 pytestmark = pytest.mark.slow
@@ -68,8 +75,8 @@ def seeded_app(app, db_session):
 @pytest.fixture()
 def admin_client(seeded_app):
     """Authenticated test client with seeded data."""
-    from models.user import User
     from database import db
+    from models.user import User
     app = seeded_app['app']
     c = app.test_client()
 

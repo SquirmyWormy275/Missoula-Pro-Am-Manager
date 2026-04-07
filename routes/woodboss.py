@@ -9,13 +9,13 @@ Uses HMAC token validation instead of login.
 
 URL prefix: /woodboss  (both blueprints share the same prefix)
 """
-from flask import (Blueprint, current_app, render_template, request,
-                   redirect, url_for, flash, abort)
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
+
+import services.woodboss as woodboss_svc
+from database import db
 from models.tournament import Tournament
 from models.wood_config import WoodConfig
-from database import db
 from services.audit import log_action
-import services.woodboss as woodboss_svc
 
 woodboss_bp = Blueprint('woodboss', __name__)
 woodboss_public_bp = Blueprint('woodboss_public', __name__)

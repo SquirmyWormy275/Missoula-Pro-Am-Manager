@@ -1,6 +1,8 @@
 """Helpers for writing security audit logs."""
 import json
+
 from flask import request
+
 try:
     from flask_login import current_user
 except ModuleNotFoundError:

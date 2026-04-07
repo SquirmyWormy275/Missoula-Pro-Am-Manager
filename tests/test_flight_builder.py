@@ -7,20 +7,21 @@ Functions that require DB (build_pro_flights, get_flight_summary, etc.) are excl
 Run:  pytest tests/test_flight_builder.py -v
 """
 import json
-import pytest
 from types import SimpleNamespace
+
+import pytest
+
 from services.flight_builder import (
-    _get_spacing,
-    _calculate_heat_score,
-    _score_ordering,
-    _get_partnered_axe_qualifier_pairs,
+    _CONFLICTING_STANDS,
+    _STAND_CONFLICT_GAP,
     EVENT_SPACING_TIERS,
     MIN_HEAT_SPACING,
     TARGET_HEAT_SPACING,
-    _CONFLICTING_STANDS,
-    _STAND_CONFLICT_GAP,
+    _calculate_heat_score,
+    _get_partnered_axe_qualifier_pairs,
+    _get_spacing,
+    _score_ordering,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

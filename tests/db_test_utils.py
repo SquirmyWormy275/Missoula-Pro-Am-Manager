@@ -43,8 +43,9 @@ def create_test_app():
     os.environ['DATABASE_URL'] = f'sqlite:///{db_path}'
 
     try:
-        from app import create_app
         from flask_migrate import upgrade
+
+        from app import create_app
 
         _app = create_app()
         _app.config.update({

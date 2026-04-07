@@ -3,9 +3,10 @@ Excel import/export service for college and pro registration.
 Maintains compatibility with existing college entry form format.
 """
 import pandas as pd
+
 import config
 from database import db
-from models import Tournament, Team, CollegeCompetitor, ProCompetitor
+from models import CollegeCompetitor, ProCompetitor, Team, Tournament
 from services.gear_sharing import infer_equipment_categories, normalize_person_name
 
 

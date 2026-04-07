@@ -9,10 +9,15 @@ Run:
     pytest tests/test_gear_sharing_advanced.py -v
 """
 import json
+
 import pytest
+
 from database import db as _db
 from tests.conftest import (
-    make_tournament, make_pro_competitor, make_event, make_heat,
+    make_event,
+    make_heat,
+    make_pro_competitor,
+    make_tournament,
 )
 
 
@@ -285,7 +290,7 @@ class TestParseGearSharingWithEvents:
     """parse_gear_sharing_details() with real event objects."""
 
     def test_parse_simple_text(self, db_session, tournament):
-        from services.gear_sharing import parse_gear_sharing_details, build_name_index
+        from services.gear_sharing import build_name_index, parse_gear_sharing_details
         event = make_event(db_session, tournament, 'Springboard Parse',
                            stand_type='springboard')
         c1 = make_pro_competitor(db_session, tournament, 'Parser1', 'M',

@@ -1,14 +1,15 @@
 """
 Routes for validation and data integrity checks.
 """
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, jsonify, render_template, request
+
 from models import Tournament
 from services.validation import (
-    TournamentValidator,
-    TeamValidator,
     CollegeCompetitorValidator,
     ProCompetitorValidator,
-    validate_tournament
+    TeamValidator,
+    TournamentValidator,
+    validate_tournament,
 )
 
 bp = Blueprint('validation', __name__, url_prefix='/tournament/<int:tournament_id>/validation')

@@ -12,13 +12,13 @@ Requirements:
     All app dependencies installed.
 """
 import json
-import time
 import threading
+import time
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from database import db as _db
-
 
 # ---------------------------------------------------------------------------
 # Fixtures (Flask app + DB -- same pattern as test_woodboss.py)
@@ -28,6 +28,7 @@ from database import db as _db
 def app():
     """Create a test Flask app with temp-file SQLite built via flask db upgrade."""
     import os
+
     from tests.db_test_utils import create_test_app
     _app, db_path = create_test_app()
 
@@ -106,7 +107,7 @@ class TestReportCache:
             assert report_cache.get('test:ttl') is None
 
     def test_invalidate_prefix_removes_matching_keys(self):
-        from services.report_cache import get, set, invalidate_prefix
+        from services.report_cache import get, invalidate_prefix, set
         set('reports:1:standings', 'data1', ttl_seconds=60)
         set('reports:1:payouts', 'data2', ttl_seconds=60)
         set('reports:2:standings', 'data3', ttl_seconds=60)
@@ -120,7 +121,7 @@ class TestReportCache:
 
     def test_clear_via_invalidate_prefix_empty_string(self):
         """invalidate_prefix('') should match all keys."""
-        from services.report_cache import get, set, invalidate_prefix
+        from services.report_cache import get, invalidate_prefix, set
         set('a', 1, ttl_seconds=60)
         set('b', 2, ttl_seconds=60)
         invalidate_prefix('')
@@ -163,8 +164,8 @@ class TestAudit:
     """Tests for log_action() — requires Flask app context + DB."""
 
     def test_log_action_creates_audit_record(self, app, db_session):
-        from services.audit import log_action
         from models.audit_log import AuditLog
+        from services.audit import log_action
 
         with app.test_request_context('/test', method='POST'):
             log_action('test_action', 'Tournament', entity_id=42,
@@ -178,8 +179,8 @@ class TestAudit:
         assert json.loads(record.details_json) == {'key': 'value'}
 
     def test_log_action_minimal_params(self, app, db_session):
-        from services.audit import log_action
         from models.audit_log import AuditLog
+        from services.audit import log_action
 
         with app.test_request_context('/test'):
             log_action('minimal_action', 'Event')
@@ -191,8 +192,8 @@ class TestAudit:
         assert json.loads(record.details_json) == {}
 
     def test_log_action_with_all_optional_params(self, app, db_session):
-        from services.audit import log_action
         from models.audit_log import AuditLog
+        from services.audit import log_action
 
         details = {'old_value': 10, 'new_value': 20}
         with app.test_request_context('/test', headers={'X-Forwarded-For': '10.0.0.1'}):
@@ -209,8 +210,8 @@ class TestAudit:
 
     def test_log_action_does_not_commit(self, app):
         """log_action() adds to session but does not commit — caller controls transaction."""
-        from services import audit
         from models.audit_log import AuditLog
+        from services import audit
 
         with app.test_request_context('/test'):
             before_count = AuditLog.query.count()
@@ -222,8 +223,8 @@ class TestAudit:
     def test_log_action_outside_request_context(self, app):
         """log_action() should work even without a Flask request context
         (ip_address and user_agent will be None)."""
-        from services.audit import log_action
         from models.audit_log import AuditLog
+        from services.audit import log_action
 
         with app.app_context():
             # No test_request_context -- request will not be available
@@ -257,7 +258,7 @@ class TestBackgroundJobs:
         assert len(job_id) == 32  # uuid4 hex
 
     def test_get_returns_dict_with_status(self):
-        from services.background_jobs import submit, get
+        from services.background_jobs import get, submit
         job_id = submit('simple-job', lambda: 'ok')
         info = get(job_id)
         assert isinstance(info, dict)
@@ -269,7 +270,7 @@ class TestBackgroundJobs:
         assert get('nonexistent_id') is None
 
     def test_submitted_job_eventually_completes(self):
-        from services.background_jobs import submit, get
+        from services.background_jobs import get, submit
         event = threading.Event()
         job_id = submit('completing', lambda: (event.set(), 'done')[1])
 
@@ -285,7 +286,7 @@ class TestBackgroundJobs:
         assert info['finished_at'] is not None
 
     def test_failed_job_returns_error_status(self):
-        from services.background_jobs import submit, get
+        from services.background_jobs import get, submit
         event = threading.Event()
 
         def failing_fn():
@@ -304,7 +305,7 @@ class TestBackgroundJobs:
         assert info['result'] is None
 
     def test_multiple_jobs_tracked_independently(self):
-        from services.background_jobs import submit, get
+        from services.background_jobs import get, submit
         barrier = threading.Barrier(2, timeout=2.0)
 
         def job_a():

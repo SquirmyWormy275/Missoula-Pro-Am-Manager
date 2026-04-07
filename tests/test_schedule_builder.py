@@ -18,9 +18,10 @@ Requirements:
     All app dependencies installed.
 """
 import os
-import pytest
-from database import db as _db
 
+import pytest
+
+from database import db as _db
 
 # ---------------------------------------------------------------------------
 # Fixtures

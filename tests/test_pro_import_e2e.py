@@ -6,14 +6,20 @@ that mimics actual Google Forms export structure.
 """
 import json
 import os
-import pytest
-import openpyxl
 import tempfile
+
+import openpyxl
+import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
-from services.pro_entry_importer import parse_pro_entries, compute_review_flags, _EVENT_MAP, _PARTNER_COLS
+from services.pro_entry_importer import (
+    _EVENT_MAP,
+    _PARTNER_COLS,
+    compute_review_flags,
+    parse_pro_entries,
+)
 from tests.fixtures.synthetic_data import PRO_COMPETITORS
 
 

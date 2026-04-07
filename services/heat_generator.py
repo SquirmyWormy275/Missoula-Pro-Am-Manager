@@ -5,11 +5,12 @@ Adapted from STRATHEX tournament_ui.py patterns.
 import logging
 import math
 
-from database import db
-from models import Event, Heat, HeatAssignment, EventResult
-from models.competitor import CollegeCompetitor, ProCompetitor
 import config
-from config import LIST_ONLY_EVENT_NAMES, event_rank_category as _rank_category_for_event
+from config import LIST_ONLY_EVENT_NAMES
+from config import event_rank_category as _rank_category_for_event
+from database import db
+from models import Event, EventResult, Heat, HeatAssignment
+from models.competitor import CollegeCompetitor, ProCompetitor
 from services.gear_sharing import competitors_share_gear_for_event
 
 logger = logging.getLogger(__name__)

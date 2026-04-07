@@ -26,9 +26,9 @@ _SHOW_NAME = 'Missoula Pro-Am'
 def status():
     """Render the STRATHMARK sync status page."""
     from services.strathmark_sync import (
+        get_skipped_competitors,
         is_configured,
         read_sync_cache,
-        get_skipped_competitors,
     )
 
     configured = is_configured()

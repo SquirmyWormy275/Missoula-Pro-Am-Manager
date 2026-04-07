@@ -9,13 +9,16 @@ insufficient-pool validation, competitor replacement, and result recording.
 Run:  pytest tests/test_relay_lottery_realistic.py -v
 """
 import json
+
 import pytest
 
 from tests.conftest import (
-    make_tournament, make_team, make_pro_competitor, make_college_competitor,
+    make_college_competitor,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
 )
-from tests.fixtures.synthetic_data import PRO_COMPETITORS, COLLEGE_TEAMS
-
+from tests.fixtures.synthetic_data import COLLEGE_TEAMS, PRO_COMPETITORS
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -172,8 +175,8 @@ class TestRelayLotteryDraw:
         assert relay.relay_data['status'] == 'drawn'
 
     def test_all_drawn_competitors_were_opted_in(self, app, db_session):
-        from services.proam_relay import ProAmRelay
         from models.competitor import ProCompetitor
+        from services.proam_relay import ProAmRelay
 
         tournament, pros, teams, college = _seed_all(db_session)
 

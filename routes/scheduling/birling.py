@@ -5,12 +5,14 @@ College birling is gender-segregated (separate men's and women's brackets).
 Judges rank/seed competitors before generating the double-elimination bracket,
 then record match results to advance competitors through the bracket.
 """
-from flask import render_template, redirect, url_for, flash, request, abort, jsonify
+from flask import abort, flash, jsonify, redirect, render_template, request, url_for
+
 from database import db
-from models import Tournament, Event, EventResult
+from models import Event, EventResult, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
-from . import scheduling_bp, _signed_up_competitors
+
+from . import _signed_up_competitors, scheduling_bp
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling', methods=['GET'])

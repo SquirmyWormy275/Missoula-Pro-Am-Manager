@@ -18,6 +18,7 @@ Run:
 """
 import json
 import os
+
 import pytest
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-lifecycle')
@@ -41,7 +42,7 @@ def app():
 
 
 def _seed(app):
-    from models import Tournament, Team, Event, EventResult
+    from models import Event, EventResult, Team, Tournament
     from models.competitor import CollegeCompetitor, ProCompetitor
 
     t = Tournament.query.filter_by(name='Lifecycle Test').first()

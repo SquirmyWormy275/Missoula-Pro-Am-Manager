@@ -4,11 +4,14 @@ import threading
 import time
 from collections import defaultdict
 from datetime import datetime
+
 from flask import Blueprint, Response, current_app, jsonify, stream_with_context
+
 from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import ProCompetitor
-from services.report_cache import get as cache_get, set as cache_set
 from services.handicap_export import build_chopping_rows
+from services.report_cache import get as cache_get
+from services.report_cache import set as cache_set
 
 # ---------------------------------------------------------------------------
 # SSE connection counter — caps concurrent long-lived streams at SSE_MAX_CONNECTIONS

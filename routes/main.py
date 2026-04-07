@@ -2,14 +2,17 @@
 Main routes for dashboard and navigation.
 """
 import time
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session, jsonify
 from urllib.parse import urlsplit
+
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import text
-from database import db
-from models import Tournament, Event, Heat, HeatAssignment, Flight
-from models.competitor import CollegeCompetitor, ProCompetitor
-from config import TournamentStatus
+
 import strings as text
+from config import TournamentStatus
+from database import db
+from models import Event, Flight, Heat, HeatAssignment, Tournament
+from models.competitor import CollegeCompetitor, ProCompetitor
+
 try:
     from flask_login import current_user
 except ModuleNotFoundError:  # pragma: no cover - fallback for stripped environments
@@ -35,10 +38,11 @@ def health():
         db_ok = True
         # Check if DB is at migration HEAD
         try:
-            from flask_migrate import current as alembic_current
+            import os
+
             from alembic.config import Config as AlembicConfig
             from alembic.script import ScriptDirectory
-            import os
+            from flask_migrate import current as alembic_current
             migration_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'migrations')
             alembic_cfg = AlembicConfig()
             alembic_cfg.set_main_option('script_location', migration_dir)
@@ -212,8 +216,8 @@ def tournament_setup(tournament_id):
     active_tab = request.args.get('tab', 'payouts')
 
     # Events tab data — helpers live in scheduling.py
-    from routes.scheduling import _with_field_key, _get_existing_event_config
     import config as app_config
+    from routes.scheduling import _get_existing_event_config, _with_field_key
     college_open_events = [_with_field_key(e) for e in app_config.COLLEGE_OPEN_EVENTS]
     college_closed_events = [_with_field_key(e) for e in app_config.COLLEGE_CLOSED_EVENTS]
     pro_events = [_with_field_key(e) for e in app_config.PRO_EVENTS]
@@ -619,8 +623,9 @@ def export_tournament_config(tournament_id):
         'schedule_config': schedule_config,
     }
 
-    from flask import Response
     import json
+
+    from flask import Response
     filename = f'tournament_config_{tournament.name.replace(" ", "_")}_{tournament.year}.json'
     return Response(
         json.dumps(export, indent=2, ensure_ascii=False),
