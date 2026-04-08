@@ -371,3 +371,83 @@ class TestUndoHeatResults:
             follow_redirects=True,
         )
         _ok(resp)
+
+
+# ---------------------------------------------------------------------------
+# Gear sharing regression tests (gear audit fixes G1 + G4 — 2026-04-07)
+# These guard against the silent-drop bug where new_pro_competitor and
+# college_gear_update wrote nothing for the gear-sharing fields and no test
+# caught it because the route still returned 302.
+# ---------------------------------------------------------------------------
+
+class TestGearSharingFormPersistence:
+    """G1 — new_pro_competitor must persist gear_sharing_details from the form."""
+
+    def test_new_pro_competitor_saves_gear_details(self, auth_client, tid, db_session):
+        from models.competitor import ProCompetitor
+        resp = auth_client.post(f'/registration/{tid}/pro/new', data={
+            'name': 'G1 Regression Pro',
+            'gender': 'M',
+            'address': '1 Test Way',
+            'phone': '5550001111',
+            'email': 'g1-regression@example.com',
+            'gear_sharing_details': 'sharing springboard with Test Partner',
+        }, follow_redirects=True)
+        _ok(resp)
+        comp = ProCompetitor.query.filter_by(
+            tournament_id=tid, name='G1 Regression Pro'
+        ).first()
+        assert comp is not None, 'competitor was not created'
+        assert comp.gear_sharing_details == 'sharing springboard with Test Partner', (
+            'gear_sharing_details was silently dropped from the new pro form '
+            '(gear audit G1)'
+        )
+
+
+class TestCollegeGearMirror:
+    """G4 — college_gear_update must mirror onto the partner's row."""
+
+    def _make_team(self, session, tid, code='UM-A', school='UM Test'):
+        from models.team import Team
+        t = Team(tournament_id=tid, team_code=code, school_name=school,
+                 school_abbreviation='UM', total_points=0, status='active')
+        session.add(t)
+        session.flush()
+        return t
+
+    def _make_college(self, session, tid, team_id, name, gender='M'):
+        from models.competitor import CollegeCompetitor
+        c = CollegeCompetitor(
+            tournament_id=tid, team_id=team_id, name=name, gender=gender,
+            events_entered=json.dumps([]), status='active',
+            individual_points=0, gear_sharing='{}',
+        )
+        session.add(c)
+        session.flush()
+        return c
+
+    def test_college_gear_update_mirrors_to_partner(self, auth_client, tid, db_session):
+        from models.competitor import CollegeCompetitor
+        team = self._make_team(db_session, tid)
+        comp_a = self._make_college(db_session, tid, team.id, 'G4 Comp A')
+        comp_b = self._make_college(db_session, tid, team.id, 'G4 Comp B')
+        db_session.commit()
+
+        resp = auth_client.post(
+            f'/registration/{tid}/college/gear-sharing/update',
+            data={
+                'competitor_id': str(comp_a.id),
+                'event_key': 'springboard',
+                'partner_name': 'G4 Comp B',
+            },
+            follow_redirects=True,
+        )
+        _ok(resp)
+
+        # Re-fetch to bypass any session caching.
+        a = CollegeCompetitor.query.get(comp_a.id)
+        b = CollegeCompetitor.query.get(comp_b.id)
+        assert a.get_gear_sharing().get('springboard') == 'G4 Comp B'
+        assert b.get_gear_sharing().get('springboard') == 'G4 Comp A', (
+            'college gear update did not mirror onto partner row (gear audit G4)'
+        )

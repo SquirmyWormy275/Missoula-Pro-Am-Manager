@@ -2,6 +2,7 @@
 Registration routes for uploading and managing competitor entries.
 """
 import json
+import logging
 
 from flask import (
     Blueprint,
@@ -24,8 +25,59 @@ from services.gear_sharing import build_name_index, normalize_person_name, resol
 from services.upload_security import malware_scan, save_upload, validate_excel_upload
 
 registration_bp = Blueprint('registration', __name__)
+logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {'xlsx', 'xls'}
+
+
+def _mirror_college_gear_set(comp, event_key: str, partner_name: str) -> None:
+    """Mirror a college gear-sharing set onto the partner's row.
+
+    Looks up the partner CollegeCompetitor by normalized name within the same
+    tournament.  If found, writes comp.name onto partner.gear_sharing[event_key].
+    Missing partners are logged at DEBUG and silently skipped — the one-sided
+    state is still detectable at heat-gen time (gear audit fix G4 — 2026-04-07).
+    Caller is responsible for db.session.commit().
+    """
+    partner_norm = normalize_person_name(partner_name)
+    if not partner_norm:
+        return
+    partner = CollegeCompetitor.query.filter_by(
+        tournament_id=comp.tournament_id, status='active'
+    ).all()
+    partner_comp = next((p for p in partner if normalize_person_name(p.name) == partner_norm), None)
+    if not partner_comp or partner_comp.id == comp.id:
+        logger.debug('college gear mirror: partner %r not on roster for tournament %s',
+                     partner_name, comp.tournament_id)
+        return
+    partner_gear = partner_comp.get_gear_sharing()
+    partner_gear[event_key] = comp.name
+    partner_comp.gear_sharing = json.dumps(partner_gear)
+
+
+def _mirror_college_gear_remove(comp, event_key: str, partner_name: str) -> None:
+    """Mirror a college gear-sharing remove onto the partner's row.
+
+    Removes comp.name from partner.gear_sharing[event_key] if present.
+    Missing partners are logged at DEBUG and silently skipped (gear audit
+    fix G4 — 2026-04-07).  Caller is responsible for db.session.commit().
+    """
+    partner_norm = normalize_person_name(partner_name)
+    if not partner_norm:
+        return
+    candidates = CollegeCompetitor.query.filter_by(
+        tournament_id=comp.tournament_id, status='active'
+    ).all()
+    partner_comp = next((p for p in candidates if normalize_person_name(p.name) == partner_norm), None)
+    if not partner_comp or partner_comp.id == comp.id:
+        logger.debug('college gear mirror remove: partner %r not on roster for tournament %s',
+                     partner_name, comp.tournament_id)
+        return
+    partner_gear = partner_comp.get_gear_sharing()
+    existing = str(partner_gear.get(event_key, '') or '').strip()
+    if normalize_person_name(existing) == normalize_person_name(comp.name):
+        del partner_gear[event_key]
+        partner_comp.gear_sharing = json.dumps(partner_gear)
 
 
 def allowed_file(filename):
@@ -441,6 +493,15 @@ def new_pro_competitor(tournament_id):
         # Non-blocking — any failure is logged and registration continues normally.
         from services.strathmark_sync import enroll_pro_competitor
         enroll_pro_competitor(competitor)
+
+        # Persist free-text gear sharing details from the form so the auto-parser
+        # has something to work with.  Resolution of partner names is deferred to
+        # the competitor detail page (G1 audit fix 2026-04-07).
+        gear_details_raw = (request.form.get('gear_sharing_details') or '').strip()
+        if gear_details_raw:
+            competitor.gear_sharing_details = gear_details_raw
+            db.session.commit()
+            flash('Gear sharing details saved — open competitor profile to resolve partners.', 'info')
 
         # Auto-parse gear-sharing details into structured map (non-blocking).
         try:
@@ -1104,6 +1165,9 @@ def college_gear_update(tournament_id):
     if partner_name:
         gear[event_key] = partner_name
         comp.gear_sharing = json.dumps(gear)
+        # Mirror onto partner's row so college gear sharing is bidirectional
+        # (gear audit fix G4 — 2026-04-07).
+        _mirror_college_gear_set(comp, event_key, partner_name)
         db.session.commit()
         invalidate_tournament_caches(tournament_id)
         log_action('college_gear_updated', 'college_competitor', competitor_id, {
@@ -1140,6 +1204,9 @@ def college_gear_update_ajax(tournament_id):
     gear = comp.get_gear_sharing()
     gear[event_key] = partner_name
     comp.gear_sharing = json.dumps(gear)
+    # Mirror onto partner's row so college gear sharing is bidirectional
+    # (gear audit fix G4 — 2026-04-07).
+    _mirror_college_gear_set(comp, event_key, partner_name)
     db.session.commit()
     invalidate_tournament_caches(tournament_id)
     log_action('college_gear_updated', 'college_competitor', competitor_id, {
@@ -1167,8 +1234,13 @@ def college_gear_remove(tournament_id):
     event_key = (request.form.get('event_key') or '').strip()
     gear = comp.get_gear_sharing()
     if event_key in gear:
+        old_partner = str(gear.get(event_key, '') or '').strip()
         del gear[event_key]
         comp.gear_sharing = json.dumps(gear)
+        # Mirror remove onto the partner's row so college gear sharing stays
+        # bidirectional (gear audit fix G4 — 2026-04-07).
+        if old_partner:
+            _mirror_college_gear_remove(comp, event_key, old_partner)
         db.session.commit()
         invalidate_tournament_caches(tournament_id)
         log_action('college_gear_removed', 'college_competitor', competitor_id, {'event_key': event_key})

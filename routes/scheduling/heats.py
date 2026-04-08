@@ -109,7 +109,7 @@ def generate_heats(tournament_id, event_id):
                                         event_id=event_id))
 
     # Import heat generation service
-    from services.heat_generator import generate_event_heats
+    from services.heat_generator import generate_event_heats, get_last_gear_violations
 
     try:
         num_heats = generate_event_heats(event)
@@ -118,6 +118,14 @@ def generate_heats(tournament_id, event_id):
             flash(f'{event.display_name} uses signups only (no heats).', 'success')
         else:
             flash(text.FLASH['heats_generated'].format(num_heats=num_heats, event_name=event.display_name), 'success')
+        # Surface any forced gear-sharing fallback placements (gear audit G2/G3).
+        violations = get_last_gear_violations(event.id)
+        if violations:
+            flash(
+                f'WARNING: {len(violations)} gear-sharing conflict(s) could not be avoided '
+                f'during heat generation. Review the gear manager before running the show.',
+                'warning'
+            )
     except Exception as e:
         db.session.rollback()
         flash(text.FLASH['heats_error'].format(error=str(e)), 'error')

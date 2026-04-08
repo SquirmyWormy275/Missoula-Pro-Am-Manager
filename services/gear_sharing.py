@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import re
 from typing import Iterable
+
+logger = logging.getLogger(__name__)
 
 _CATEGORY_KEYS = {'category:crosscut', 'category:chainsaw', 'category:springboard'}
 
@@ -114,6 +117,12 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
 
     direct = name_index.get(normalize_person_name(candidate))
     if direct:
+        # Auditable log line so a judge reviewing import logs can spot a wrong
+        # match before race day (gear audit fix G8 — 2026-04-07).
+        logger.info(
+            "Gear partner resolved: %r -> %r (method: exact, score: 1.00)",
+            candidate, direct,
+        )
         return direct
 
     keys = list(name_index.keys())
@@ -126,7 +135,13 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
 
     close = difflib.get_close_matches(wanted, keys, n=1, cutoff=cutoff)
     if close:
-        return name_index[close[0]]
+        score = difflib.SequenceMatcher(None, wanted, close[0]).ratio()
+        resolved = name_index[close[0]]
+        logger.info(
+            "Gear partner resolved: %r -> %r (method: fuzzy, score: %.2f)",
+            candidate, resolved, score,
+        )
+        return resolved
 
     # Last-name-only fallback: "Smith" → matches "John Smith" when unambiguous.
     candidate_tokens = candidate.strip().split()
@@ -135,7 +150,12 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
         if len(last_norm) >= 3:
             last_matches = [k for k in keys if k.endswith(last_norm)]
             if len(last_matches) == 1:
-                return name_index[last_matches[0]]
+                resolved = name_index[last_matches[0]]
+                logger.info(
+                    "Gear partner resolved: %r -> %r (method: last_name_only, score: 1.00)",
+                    candidate, resolved,
+                )
+                return resolved
 
     # Initials fallback: "J. Smith" or "J Smith" → matches "John Smith" when unambiguous.
     if len(candidate_tokens) == 2:
@@ -147,7 +167,12 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
                 if k.startswith(first_initial) and k.endswith(last_norm)
             ]
             if len(initial_matches) == 1:
-                return name_index[initial_matches[0]]
+                resolved = name_index[initial_matches[0]]
+                logger.info(
+                    "Gear partner resolved: %r -> %r (method: initial_last, score: 1.00)",
+                    candidate, resolved,
+                )
+                return resolved
 
     return candidate
 
@@ -748,6 +773,8 @@ def build_gear_conflict_pairs(tournament) -> dict[int, set[int]]:
         Dict mapping each pro competitor ID to the set of all competitor IDs
         they share gear with.
     """
+    import config
+    from models import Event
     from models.competitor import ProCompetitor
 
     pro_comps = ProCompetitor.query.filter_by(
@@ -777,6 +804,55 @@ def build_gear_conflict_pairs(tournament) -> dict[int, set[int]]:
             if partner_comp and partner_comp.id != comp.id:
                 conflicts.setdefault(comp.id, set()).add(partner_comp.id)
                 conflicts.setdefault(partner_comp.id, set()).add(comp.id)
+
+    # Cascade pass — ensures pairs that share gear in any cascade family
+    # (e.g. the chopping family: springboard / underhand / standing block)
+    # are paired in the conflict dict regardless of which event they declared
+    # the share on.  The dict is event-blind, so the existing pass already
+    # mirrors most cases; this pass uses the canonical config.GEAR_FAMILIES
+    # taxonomy as the source of truth and catches any pair that the literal
+    # name-match loop above missed (e.g. a comp with one declaration only
+    # whose declared key resolves to a cascade-family event id)
+    # — gear audit fix G6 — 2026-04-07.
+    cascade_stand_types: set[str] = set()
+    for fam in config.GEAR_FAMILIES.values():
+        if fam.get('cascade'):
+            cascade_stand_types.update(fam.get('stand_types', set()))
+
+    if cascade_stand_types:
+        try:
+            tournament_events = Event.query.filter_by(tournament_id=tournament.id).all()
+        except Exception:
+            tournament_events = []
+        cascade_event_ids: set[str] = {
+            str(ev.id) for ev in tournament_events
+            if str(getattr(ev, 'stand_type', '') or '').strip().lower() in cascade_stand_types
+        }
+
+        for comp in pro_comps:
+            gear = comp.get_gear_sharing()
+            if not isinstance(gear, dict):
+                continue
+            declares_cascade = False
+            for key in gear.keys():
+                key_str = str(key or '').strip()
+                if key_str in cascade_event_ids:
+                    declares_cascade = True
+                    break
+                # Category keys for cascade families also count.
+                if key_str in {'category:crosscut', 'category:springboard'}:
+                    declares_cascade = True
+                    break
+            if not declares_cascade:
+                continue
+            for raw_partner in gear.values():
+                pt = str(raw_partner or '').strip()
+                if not pt or pt.startswith('group:'):
+                    continue
+                partner_comp = pro_by_norm.get(normalize_person_name(pt))
+                if partner_comp and partner_comp.id != comp.id:
+                    conflicts.setdefault(comp.id, set()).add(partner_comp.id)
+                    conflicts.setdefault(partner_comp.id, set()).add(comp.id)
 
     return conflicts
 

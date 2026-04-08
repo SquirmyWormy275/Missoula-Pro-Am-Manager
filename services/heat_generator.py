@@ -16,6 +16,17 @@ from services.gear_sharing import competitors_share_gear_for_event
 logger = logging.getLogger(__name__)
 # LIST_ONLY_EVENT_NAMES and _rank_category_for_event imported from config above.
 
+# Per-event gear-sharing violation log populated by the snake-draft fallbacks.
+# Routes call get_last_gear_violations(event.id) after generate_event_heats() to
+# surface a warning flash to the judge (gear audit fix G2/G3 — 2026-04-07).
+_last_gear_violations: dict[int, list[dict]] = {}
+
+
+def get_last_gear_violations(event_id: int) -> list[dict]:
+    """Return the gear-sharing violations recorded by the most recent
+    generate_event_heats(event) call for this event_id, or an empty list."""
+    return list(_last_gear_violations.get(event_id, []))
+
 
 def _sort_by_ability(competitors: list, event: Event) -> list:
     """
@@ -100,13 +111,22 @@ def generate_event_heats(event: Event) -> int:
     # Clear existing heats
     _delete_event_heats(event.id)
 
+    # Per-event gear-sharing fallback violations recorded by the snake-draft
+    # helpers.  Entries are dicts with keys: comp_id, comp_name, heat_index.
+    # Cleared on every generate_event_heats() call (gear audit fix G2/G3).
+    gear_violations: list[dict] = []
+    _last_gear_violations.pop(event.id, None)
+
     # Apply special constraints
     if event.stand_type == 'springboard':
-        heats = _generate_springboard_heats(competitors, num_heats, max_per_heat, stand_config, event=event)
+        heats = _generate_springboard_heats(competitors, num_heats, max_per_heat, stand_config, event=event,
+                                            gear_violations=gear_violations)
     elif event.stand_type in ['saw_hand']:
-        heats = _generate_saw_heats(competitors, num_heats, max_per_heat, stand_config, event=event)
+        heats = _generate_saw_heats(competitors, num_heats, max_per_heat, stand_config, event=event,
+                                    gear_violations=gear_violations)
     else:
-        heats = _generate_standard_heats(competitors, num_heats, max_per_heat, event=event)
+        heats = _generate_standard_heats(competitors, num_heats, max_per_heat, event=event,
+                                         gear_violations=gear_violations)
 
     # Use actual heat count returned by the generator (saw events recalculate internally).
     actual_heat_count = len(heats)
@@ -166,6 +186,31 @@ def generate_event_heats(event: Event) -> int:
     comp_type = event.event_type  # 'pro' or 'college'
     for heat in created_heats:
         heat.sync_assignments(comp_type)
+
+    # Promote any fallback gear-sharing violations recorded by the snake-draft
+    # helpers into the module-level lookup so the route layer can surface a
+    # WARNING flash to the judge (gear audit fix G2/G3 — 2026-04-07).  Each
+    # violation's heat_index is mapped to the freshly created Heat row's id.
+    if gear_violations:
+        resolved: list[dict] = []
+        for v in gear_violations:
+            idx = v.get('heat_index')
+            heat_id = None
+            heat_number = None
+            if isinstance(idx, int) and 0 <= idx < len(created_heats):
+                heat_id = created_heats[idx].id
+                heat_number = created_heats[idx].heat_number
+            resolved.append({
+                'comp_id': v.get('comp_id'),
+                'comp_name': v.get('comp_name', ''),
+                'heat_id': heat_id,
+                'heat_number': heat_number,
+            })
+            logger.warning(
+                'GEAR CONFLICT FORCED: %s placed in heat %s — manual review required',
+                v.get('comp_name', ''), heat_id,
+            )
+        _last_gear_violations[event.id] = resolved
 
     # Flush but do NOT commit — the calling route owns the transaction boundary and
     # will commit (or roll back) after all scheduling actions are complete.  This
@@ -239,7 +284,8 @@ def _get_event_competitors(event: Event) -> list:
     return competitors
 
 
-def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: int, event: Event = None) -> list:
+def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: int, event: Event = None,
+                              gear_violations: list | None = None) -> list:
     """
     Generate heats using snake draft distribution.
 
@@ -271,9 +317,19 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
             heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
 
         # Fallback: place despite conflict if every heat conflicts/full.
+        # Record any gear-sharing conflict introduced here so the caller can
+        # surface a warning to the judge (gear audit fix G2 — 2026-04-07).
         if not placed:
             for _ in range(num_heats):
                 if (len(heats[heat_idx]) + len(unit)) <= max_per_heat:
+                    if gear_violations is not None:
+                        for comp in unit:
+                            if _has_gear_sharing_conflict(comp, heats[heat_idx], event):
+                                gear_violations.append({
+                                    'comp_id': comp.get('id'),
+                                    'comp_name': comp.get('name', ''),
+                                    'heat_index': heat_idx,
+                                })
                     heats[heat_idx].extend(unit)
                     placed = True
                     break
@@ -377,7 +433,8 @@ def _get_partner_name_for_event(competitor, event: Event) -> str:
 
 
 def _generate_springboard_heats(competitors: list, num_heats: int,
-                                 max_per_heat: int, stand_config: dict, event: Event = None) -> list:
+                                 max_per_heat: int, stand_config: dict, event: Event = None,
+                                 gear_violations: list | None = None) -> list:
     """
     Generate springboard heats with left-handed cutter grouping.
 
@@ -438,20 +495,47 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
     heat_idx = 0
     direction = 1
     for comp in remaining:
-        attempts = 0
-        while attempts < num_heats and len(heats[heat_idx]) >= max_per_heat:
+        # First pass: find a heat with capacity AND no gear-sharing conflict.
+        # Springboards are the highest-stakes shared-equipment event, so this
+        # check matches the standard heat generator (gear audit fix G3).
+        placed = False
+        for _ in range(num_heats):
+            if (
+                len(heats[heat_idx]) < max_per_heat and
+                not _has_gear_sharing_conflict(comp, heats[heat_idx], event)
+            ):
+                heats[heat_idx].append(comp)
+                placed = True
+                break
             heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
-            attempts += 1
-        if attempts >= num_heats:
+
+        # Fallback: place despite conflict if every heat conflicts/full.
+        # Record any gear-sharing conflict introduced here so the caller can
+        # surface a warning to the judge (gear audit fix G3 — 2026-04-07).
+        if not placed:
+            for _ in range(num_heats):
+                if len(heats[heat_idx]) < max_per_heat:
+                    if gear_violations is not None and _has_gear_sharing_conflict(comp, heats[heat_idx], event):
+                        gear_violations.append({
+                            'comp_id': comp.get('id'),
+                            'comp_name': comp.get('name', ''),
+                            'heat_index': heat_idx,
+                        })
+                    heats[heat_idx].append(comp)
+                    placed = True
+                    break
+                heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
+
+        if not placed:
             break
-        heats[heat_idx].append(comp)
         heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
 
     return heats
 
 
 def _generate_saw_heats(competitors: list, num_heats: int,
-                        max_per_heat: int, stand_config: dict, event: Event = None) -> list:
+                        max_per_heat: int, stand_config: dict, event: Event = None,
+                        gear_violations: list | None = None) -> list:
     """
     Generate saw heats respecting stand group constraints.
 
@@ -461,7 +545,8 @@ def _generate_saw_heats(competitors: list, num_heats: int,
     actual_max = min(max_per_heat, 4)  # Saw groups are 4 each
     num_heats = math.ceil(len(competitors) / actual_max)
 
-    return _generate_standard_heats(competitors, num_heats, actual_max, event=event)
+    return _generate_standard_heats(competitors, num_heats, actual_max, event=event,
+                                    gear_violations=gear_violations)
 
 
 def _advance_snake_index(heat_idx: int, direction: int, num_heats: int):
