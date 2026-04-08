@@ -201,6 +201,9 @@ def confirm_pro_entries(tournament_id):
     updated  = 0
     errors   = []
     gear_parse_warnings = 0
+    # Competitors whose gear_sharing was just written and need to be mirrored
+    # to their partners after the main commit (gear audit fix G5 — 2026-04-07).
+    gear_synced_competitors: list = []
     now      = datetime.utcnow()
 
     existing_names = [c.name for c in ProCompetitor.query.filter_by(tournament_id=tournament_id).all()]
@@ -285,6 +288,8 @@ def confirm_pro_entries(tournament_id):
                 )
                 for gear_key, partner_name in parsed_gear.items():
                     competitor.set_gear_sharing(gear_key, partner_name)
+                if parsed_gear:
+                    gear_synced_competitors.append(competitor)
                 if warnings:
                     gear_parse_warnings += 1
 
@@ -337,6 +342,38 @@ def confirm_pro_entries(tournament_id):
     if gear_post['parsed']:
         db.session.commit()
         post_parsed_msg = f' Auto-parsed gear-sharing details for {gear_post["parsed"]} competitor(s).'
+
+    # Mirror gear-sharing entries onto each partner's row so the gear manager
+    # shows both sides without requiring a manual "Complete one-sided pairs"
+    # click (gear audit fix G5 — 2026-04-07).  Build the lookup once after the
+    # main commit so newly imported competitors are present in the tournament.
+    try:
+        from services.gear_sharing import (
+            normalize_person_name as _norm,
+        )
+        from services.gear_sharing import (
+            sync_all_gear_for_competitor,
+        )
+        all_pro_now = ProCompetitor.query.filter_by(
+            tournament_id=tournament_id, status='active'
+        ).all()
+        pro_lookup = {_norm(c.name): c for c in all_pro_now}
+        # Combine per-entry parses + post-import parses (lookup current rows by id).
+        gear_synced_ids = {c.id for c in gear_synced_competitors if getattr(c, 'id', None)}
+        synced_set = [c for c in all_pro_now if c.id in gear_synced_ids]
+        # Add any competitor whose gear_sharing was populated by parse_all_gear_details.
+        if gear_post['parsed']:
+            for c in all_pro_now:
+                if c.id not in gear_synced_ids and c.get_gear_sharing():
+                    synced_set.append(c)
+        for c in synced_set:
+            sync_all_gear_for_competitor(c, pro_lookup, old_gear={})
+        if synced_set:
+            db.session.commit()
+            flash('Gear sharing imported and mirrored for all matched partners.', 'info')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Gear sharing mirror skipped: {exc}', 'warning')
 
     # Clean up temp file and session key
     try:

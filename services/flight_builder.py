@@ -470,6 +470,8 @@ def _score_ordering(ordered: list, heats_per_flight: int,
             event_blocks_seen[block_key] = True
 
     # Gear adjacency penalty across the full ordering.
+    # Raised from -30 per gear audit 2026-04-07 — must outweigh spacing bonus
+    # so back-to-back gear-share heats are an exception, not normal output.
     if gear_conflict_pairs:
         for pos in range(1, len(ordered)):
             prev_comps = ordered[pos - 1]['competitors']
@@ -479,7 +481,7 @@ def _score_ordering(ordered: list, heats_per_flight: int,
                 if partner_ids:
                     overlap = partner_ids & prev_comps
                     if overlap:
-                        total -= 30 * len(overlap)
+                        total -= 200 * len(overlap)
 
     return total
 
@@ -578,14 +580,16 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
 
     # Gear adjacency penalty: penalize placing a heat immediately after one that
     # contains a gear-sharing partner.  This gives equipment time to be moved
-    # between stands.  Soft penalty (-30 per conflict) — does not hard-block.
+    # between stands.  Penalty (-200 per conflict) — does not hard-block, but
+    # is large enough to outweigh spacing bonuses.  Raised from -30 per gear
+    # audit 2026-04-07 — must outweigh spacing bonus.
     if gear_conflict_pairs and previous_heat_comps:
         for comp_id in competitors:
             partner_ids = gear_conflict_pairs.get(comp_id)
             if partner_ids:
                 overlap = partner_ids & previous_heat_comps
                 if overlap:
-                    score -= 30 * len(overlap)
+                    score -= 200 * len(overlap)
 
     return score
 
