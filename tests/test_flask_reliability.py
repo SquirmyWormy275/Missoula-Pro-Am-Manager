@@ -147,11 +147,20 @@ class TestConfiguration:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop('FLASK_ENV', None)
             os.environ.pop('PRODUCTION', None)
+            os.environ.pop('TESTING', None)
+            os.environ.pop('RAILWAY_ENVIRONMENT', None)
+            os.environ.pop('DATABASE_URL', None)
             from config import DevelopmentConfig, get_config
             assert get_config() is DevelopmentConfig
 
     def test_production_config(self):
-        with patch.dict(os.environ, {'PRODUCTION': '1'}):
+        # Must clear FLASK_ENV and TESTING because PR #11's precedence rules
+        # honor FLASK_ENV=testing (which CI sets globally) before checking
+        # PRODUCTION=1. Without clearing, this test would always see
+        # DevelopmentConfig under CI.
+        with patch.dict(os.environ, {'PRODUCTION': '1'}, clear=False):
+            os.environ.pop('FLASK_ENV', None)
+            os.environ.pop('TESTING', None)
             from config import ProductionConfig, get_config
             assert get_config() is ProductionConfig
 
@@ -182,11 +191,21 @@ class TestConfiguration:
     def test_pool_pre_ping(self, app):
         assert app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {}).get('pool_pre_ping') is True
 
-    def test_create_app_from_parent_directory_uses_project_paths(self):
+    def test_create_app_from_parent_directory_uses_project_paths(self, monkeypatch):
         """Verify config.py resolves paths relative to the project root,
-        regardless of the current working directory.  Does NOT call create_app()
-        to avoid touching the production database."""
+        regardless of the current working directory.
+
+        IMPORTANT: this test must clear DATABASE_URL before asserting because
+        the function under test honors that env var as the highest-priority
+        signal. CI runs with DATABASE_URL=sqlite:///test.db which would
+        otherwise short-circuit the assertion. (Pre-fix this test failed on
+        every CI run for ~2 weeks until it was put on the ignore list.)
+        """
+        monkeypatch.delenv('DATABASE_URL', raising=False)
+        # Force reimport so the module-level BaseConfig.SQLALCHEMY_DATABASE_URI
+        # cache is rebuilt against the now-clean environment.
         import config as config_module
+        config_module = importlib.reload(config_module)
         project_dir = Path(config_module.__file__).resolve().parent
         expected_db = f"sqlite:///{project_dir / 'instance' / 'proam.db'}"
         expected_uploads = project_dir / 'uploads'
@@ -194,6 +213,19 @@ class TestConfiguration:
         assert Path(config_module._project_path('uploads')) == expected_uploads
 
     def test_test_app_helper_uses_project_migrations_directory(self, monkeypatch):
+        """Verify db_test_utils.create_test_app() points Alembic at the project
+        migrations directory.
+
+        IMPORTANT: this test must clear TEST_USE_CREATE_ALL — the helper takes
+        a fast `db.create_all()` shortcut when that env var is set, which
+        bypasses the upgrade() call this test is trying to inspect. CI sets
+        TEST_USE_CREATE_ALL=1 globally, which is why this test failed on every
+        CI run for ~2 weeks until it was put on the ignore list.
+
+        Also: on Windows the temp DB file remains locked by SQLite until the
+        engine disposes, so we dispose explicitly before unlinking.
+        """
+        monkeypatch.delenv('TEST_USE_CREATE_ALL', raising=False)
         from tests import db_test_utils
 
         captured: dict[str, object] = {}
@@ -205,13 +237,28 @@ class TestConfiguration:
             captured['directory'] = directory
 
         monkeypatch.chdir(project_dir.parent)
+        # Patch the symbol where it's looked up — db_test_utils does
+        # `from flask_migrate import upgrade`, so it has its own binding.
         monkeypatch.setattr('flask_migrate.upgrade', fake_upgrade)
+        monkeypatch.setattr('tests.db_test_utils.upgrade', fake_upgrade, raising=False)
         app, db_path = real_create_app()
         try:
+            assert 'directory' in captured, (
+                'flask_migrate.upgrade was never called by create_test_app(); '
+                'either the patch missed (check the import path the helper '
+                'uses) or TEST_USE_CREATE_ALL is still set in the environment.'
+            )
             assert Path(captured['directory']) == expected
             assert app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///')
         finally:
-            os.unlink(db_path)
+            # Dispose engine so SQLite releases the file lock on Windows.
+            from database import db as _db
+            with app.app_context():
+                _db.engine.dispose()
+            try:
+                os.unlink(db_path)
+            except (OSError, PermissionError):
+                pass  # Best-effort temp cleanup; the OS will reap it eventually.
 
 
 # ===========================================================================

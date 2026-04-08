@@ -116,6 +116,7 @@ PUBLIC_MAIN_ENDPOINTS = {
     'main.index',
     'main.set_language',
     'main.health',
+    'main.health_diag',
 }
 
 
@@ -129,8 +130,71 @@ def _can_access_arapaho_mode(endpoint: str) -> bool:
         return False
     return bool(getattr(current_user, 'is_judge', False) or getattr(current_user, 'is_admin', False))
 
+def _print_startup_error_banner(error: BaseException) -> None:
+    """Print an impossible-to-miss boxed error banner to stderr.
+
+    Designed for Railway / gunicorn deploy logs where a tight 1-line traceback
+    is easy to scroll past. The banner makes the error visible at a glance and
+    tells the operator exactly which env var to set to fix it.
+
+    Always writes to stderr (not the structured logger) so it appears even if
+    logging configuration itself crashed during boot.
+    """
+    import sys as _sys
+    import traceback as _tb
+
+    msg = str(error) or error.__class__.__name__
+    width = max(80, min(120, max(len(line) for line in msg.split('\n')) + 4))
+    bar = '#' * width
+    title = ' STARTUP FAILED — Missoula Pro-Am Manager '
+    title_bar = '#' + title.center(width - 2, '#') + '#'
+
+    lines: list[str] = []
+    lines.append('')
+    lines.append(bar)
+    lines.append(title_bar)
+    lines.append(bar)
+    lines.append('')
+    for raw in msg.split('\n'):
+        # Wrap manually so the banner stays inside `width` chars.
+        while len(raw) > width - 4:
+            lines.append('  ' + raw[:width - 4])
+            raw = raw[width - 4:]
+        lines.append('  ' + raw)
+    lines.append('')
+    lines.append('  TROUBLESHOOTING:')
+    lines.append('    1. SECRET_KEY too short or weak?')
+    lines.append('       Set SECRET_KEY env var (>=16 chars). Generate with:')
+    lines.append('         python -c "import secrets; print(secrets.token_hex(32))"')
+    lines.append('    2. DATABASE_URL not postgres in production?')
+    lines.append('       Attach a PostgreSQL service in the Railway dashboard.')
+    lines.append('       Railway sets DATABASE_URL automatically when you do.')
+    lines.append('    3. Other env-var issue?')
+    lines.append('       Curl /health/diag on the deployed app for full state.')
+    lines.append('')
+    lines.append('  Full traceback below:')
+    lines.append(bar)
+    print('\n'.join(lines), file=_sys.stderr, flush=True)
+    _tb.print_exc(file=_sys.stderr)
+    print(bar, file=_sys.stderr, flush=True)
+    print('', file=_sys.stderr, flush=True)
+
+
 def create_app():
     """Create and configure the Flask application."""
+    try:
+        return _create_app_inner()
+    except BaseException as exc:
+        # Catch BaseException (not just Exception) so SystemExit / KeyboardInterrupt
+        # also surface a clear banner instead of vanishing into gunicorn's worker
+        # restart loop. The banner is the LAST thing operators see before the
+        # container crashes — make it count.
+        _print_startup_error_banner(exc)
+        raise
+
+
+def _create_app_inner():
+    """Inner factory — wrapped by create_app() with the startup error banner."""
     app = Flask(__name__)
     app.config.from_object(config.get_config())
     config.validate_runtime(app.config)
