@@ -1,6 +1,8 @@
 """
 Team model for college competition teams.
 """
+import sqlalchemy as sa
+
 from database import db
 
 
@@ -17,8 +19,17 @@ class Team(db.Model):
     school_name = db.Column(db.String(200), nullable=False)  # e.g., "University of Montana"
     school_abbreviation = db.Column(db.String(20), nullable=False)  # e.g., "UM", "CSU"
 
-    # Scoring
-    total_points = db.Column(db.Integer, nullable=False, default=0)
+    # Scoring.
+    # Changed Integer → Numeric(8, 2) in V2.8.0 (Phase 1B of scoring fix) so that
+    # team totals can hold the fractional individual_points produced by split-tie
+    # placements.  Numeric(8, 2) supports values up to 999999.99 — far above any
+    # plausible team total even after many split ties across all members.
+    total_points = db.Column(
+        db.Numeric(8, 2),
+        nullable=False,
+        default=0,
+        server_default=sa.text("'0.00'"),
+    )
 
     # Status
     status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched, invalid
