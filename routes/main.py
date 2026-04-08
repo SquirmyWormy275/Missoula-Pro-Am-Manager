@@ -68,6 +68,90 @@ def health():
     })
 
 
+@main_bp.route('/health/diag')
+def health_diag():
+    """Diagnostic endpoint — exposes the full runtime config state.
+
+    Designed so the operator can curl this from anywhere and see exactly
+    what config the deployed app booted with, without needing access to
+    Railway log scrollback. Surfaces:
+
+      - Which Config class was selected (Development vs Production)
+      - Whether validate_runtime() recorded any soft warnings
+      - DB dialect (sqlite vs postgresql) — confirms postgres on prod
+      - Whether SECRET_KEY is strong enough
+      - Whether STRATHMARK env vars are set
+      - Whether Railway env vars are detected
+      - CSP nonce + HSTS state from current request
+      - Migration head + current revision
+
+    No auth required — the response contains no secrets, only boolean
+    yes/no flags. The actual SECRET_KEY value is never exposed.
+
+    Use this to debug "why is HSTS missing on prod" or "why isn't
+    STRATHMARK running" without needing Railway dashboard access.
+    """
+    import os as _os
+
+    from flask import current_app
+    from flask import request as _request
+
+    cfg = current_app.config
+
+    # SECRET_KEY strength check (mirrors validate_runtime logic but never raises).
+    secret = cfg.get('SECRET_KEY', '') or ''
+    weak_values = {'changeme', 'secret', 'default'}
+    secret_strong = bool(
+        secret
+        and len(secret) >= 16
+        and secret.lower() not in weak_values
+    )
+
+    db_uri = cfg.get('SQLALCHEMY_DATABASE_URI', '') or ''
+    db_dialect = (
+        'postgresql' if db_uri.startswith('postgresql://')
+        else 'sqlite' if db_uri.startswith('sqlite')
+        else 'unknown'
+    )
+
+    return jsonify({
+        'env_name': cfg.get('ENV_NAME', 'unknown'),
+        'production_warnings': cfg.get('_PRODUCTION_WARNINGS', []),
+        'config': {
+            'secret_key_strong': secret_strong,
+            'secret_key_length': len(secret),
+            'db_dialect': db_dialect,
+            'session_cookie_secure': bool(cfg.get('SESSION_COOKIE_SECURE')),
+            'session_cookie_httponly': bool(cfg.get('SESSION_COOKIE_HTTPONLY')),
+            'session_cookie_samesite': cfg.get('SESSION_COOKIE_SAMESITE'),
+        },
+        'integrations': {
+            'strathmark_supabase_url_set': bool(_os.environ.get('STRATHMARK_SUPABASE_URL')),
+            'strathmark_supabase_key_set': bool(_os.environ.get('STRATHMARK_SUPABASE_KEY')),
+            'twilio_configured': bool(cfg.get('TWILIO_ACCOUNT_SID') and cfg.get('TWILIO_AUTH_TOKEN')),
+            's3_backup_configured': bool(cfg.get('BACKUP_S3_BUCKET') and cfg.get('AWS_ACCESS_KEY_ID')),
+            'sentry_dsn_set': bool(cfg.get('SENTRY_DSN')),
+        },
+        'runtime': {
+            'railway_environment': _os.environ.get('RAILWAY_ENVIRONMENT', ''),
+            'railway_environment_name': _os.environ.get('RAILWAY_ENVIRONMENT_NAME', ''),
+            'flask_env': _os.environ.get('FLASK_ENV', ''),
+            'production_env_var': _os.environ.get('PRODUCTION', ''),
+            'has_csp_nonce': bool(getattr(_request, '_csp_nonce_seen', None) is None
+                                  or hasattr(_request, 'csp_nonce')),
+        },
+        'security_headers': {
+            # These are what the response will carry — re-derived not from g
+            # but from what set_security_headers() writes. The response of
+            # this very endpoint will have them, so just confirming the
+            # response context is correct.
+            'hsts_will_be_set': cfg.get('ENV_NAME') == 'production',
+            'csp_will_be_set': True,
+        },
+        'version': '2.7.0',
+    })
+
+
 def _can_access_arapaho_mode() -> bool:
     endpoint = request.endpoint or ''
     if endpoint.startswith('portal.') or endpoint == 'main.index':

@@ -125,37 +125,77 @@ def get_config():
 
 
 def validate_runtime(app_config: dict) -> None:
-    """Fail fast for production misconfiguration."""
+    """Fail fast for production misconfiguration that would lose data or
+    weaken security. Soft-warn for production misconfiguration that the app
+    can survive (e.g. STRATHMARK env vars — the integration is non-blocking
+    by design and silently no-ops when not configured).
+
+    Two tiers of checks:
+
+      HARD FAIL (raises RuntimeError, crashes deploy):
+        - SECRET_KEY missing or weak — sessions, CSRF, and replay tokens
+          would all be unsigned and forgeable.
+        - DATABASE_URL not postgresql:// — production runs on Railway PG.
+          A SQLite fallback would write to an ephemeral container disk and
+          vanish on every redeploy.
+
+      SOFT WARN (logger.error + push to startup health record, deploy continues):
+        - STRATHMARK_SUPABASE_URL / STRATHMARK_SUPABASE_KEY missing — the
+          integration silently no-ops; result push and mark assignment will
+          not run, but the app stays functional. The show director can fix
+          the env var post-deploy without an outage.
+
+    The hard/soft split exists because the previous implementation hard-failed
+    on STRATHMARK config, which turned every Railway deploy without those env
+    vars into a complete outage. The integration is non-blocking by design
+    (`services/strathmark_sync.py` catches all exceptions), so a config gap
+    should warn the operator, not kill the deploy.
+
+    Soft warnings are also written to ``app_config['_PRODUCTION_WARNINGS']``
+    so the /health/diag endpoint can surface them without the operator
+    needing access to Railway log scrollback.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
     env_name = app_config.get('ENV_NAME', 'development')
     if env_name != 'production':
         return
 
+    # ----- HARD FAIL CHECKS -------------------------------------------------
     secret = app_config.get('SECRET_KEY') or ''
     weak_values = {'changeme', 'secret', 'default'}
     if len(secret) < 16 or secret.lower() in weak_values:
-        raise RuntimeError('Invalid SECRET_KEY for production. Set a strong random secret via SECRET_KEY env var.')
+        raise RuntimeError(
+            'Invalid SECRET_KEY for production. Set a strong random secret '
+            'via SECRET_KEY env var. Generate with: '
+            'python -c "import secrets; print(secrets.token_hex(32))"'
+        )
 
-    # Production must run on PostgreSQL.  If DATABASE_URL is missing or points
-    # to SQLite, _normalized_database_url() falls back to a local sqlite file —
-    # which on Railway means an ephemeral container DB that vanishes on every
-    # redeploy.  Refuse to start rather than silently lose writes.
     db_uri = app_config.get('SQLALCHEMY_DATABASE_URI', '') or ''
     if not db_uri.startswith('postgresql://'):
         raise RuntimeError(
-            'Production requires PostgreSQL. DATABASE_URL is missing or points to SQLite.'
+            'Production requires PostgreSQL. DATABASE_URL is missing or '
+            'points to SQLite. On Railway, attach a PostgreSQL service to '
+            'this project — Railway sets DATABASE_URL automatically.'
         )
 
-    # STRATHMARK integration is the whole reason this app exists in production.
-    # If both env vars are missing, the integration silently no-ops -- enrollment,
-    # result push, mark assignment, and the residual recorder all become dead
-    # code paths and the show director won't notice until the post-event sync
-    # turns up zero rows.  Refuse to start so the deploy fails loudly instead.
-    import os as _os
-    if not _os.environ.get('STRATHMARK_SUPABASE_URL') or not _os.environ.get('STRATHMARK_SUPABASE_KEY'):
-        raise RuntimeError(
-            'Production requires STRATHMARK_SUPABASE_URL and STRATHMARK_SUPABASE_KEY. '
-            'Set both in the Railway dashboard before deploying.'
+    # ----- SOFT WARN CHECKS -------------------------------------------------
+    warnings: list[str] = []
+
+    if not os.environ.get('STRATHMARK_SUPABASE_URL') or not os.environ.get('STRATHMARK_SUPABASE_KEY'):
+        msg = (
+            'STRATHMARK_SUPABASE_URL or STRATHMARK_SUPABASE_KEY is not set. '
+            'STRATHMARK enrollment, result push, and mark assignment will '
+            'silently no-op until both env vars are set in the Railway '
+            'dashboard. The app remains fully operational for tournament '
+            'logistics — only the global STRATHMARK sync is degraded.'
         )
+        warnings.append(msg)
+        logger.error('PRODUCTION CONFIG WARNING: %s', msg)
+
+    # Stash warnings on the config so /health/diag can surface them.
+    app_config['_PRODUCTION_WARNINGS'] = warnings
 
 
 # ---------------------------------------------------------------------------

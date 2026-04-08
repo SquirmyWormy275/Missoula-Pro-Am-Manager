@@ -355,32 +355,81 @@ class TestConfigValidation:
             'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
         })
 
-    def test_missing_strathmark_url_rejected_in_production(self, monkeypatch):
-        """Production refuses to start when STRATHMARK_SUPABASE_URL is unset."""
-        import pytest
+    def test_missing_strathmark_url_warns_but_does_not_crash(self, monkeypatch):
+        """Production logs a warning when STRATHMARK_SUPABASE_URL is unset
+        but does NOT crash. The integration is non-blocking by design and a
+        missing config gap should not take down the whole deploy.
 
+        Soft warnings are stashed on app_config['_PRODUCTION_WARNINGS'] so
+        the /health/diag endpoint can surface them without operator access
+        to Railway log scrollback.
+        """
         from config import validate_runtime
         monkeypatch.delenv('STRATHMARK_SUPABASE_URL', raising=False)
         monkeypatch.setenv('STRATHMARK_SUPABASE_KEY', 'fake')
-        with pytest.raises(RuntimeError, match='STRATHMARK_SUPABASE'):
-            validate_runtime({
-                'ENV_NAME': 'production',
-                'SECRET_KEY': 'a-very-strong-random-secret-key-1234567890!@#',
-                'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
-            })
+        cfg = {
+            'ENV_NAME': 'production',
+            'SECRET_KEY': 'a-very-strong-random-secret-key-1234567890!@#',
+            'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
+        }
+        validate_runtime(cfg)  # must NOT raise
+        warnings = cfg.get('_PRODUCTION_WARNINGS', [])
+        assert any('STRATHMARK' in w for w in warnings), warnings
 
-    def test_missing_strathmark_key_rejected_in_production(self, monkeypatch):
-        """Production refuses to start when STRATHMARK_SUPABASE_KEY is unset."""
-        import pytest
-
+    def test_missing_strathmark_key_warns_but_does_not_crash(self, monkeypatch):
+        """Same soft-warn contract for the KEY half of the pair."""
         from config import validate_runtime
         monkeypatch.setenv('STRATHMARK_SUPABASE_URL', 'https://x.supabase.co')
         monkeypatch.delenv('STRATHMARK_SUPABASE_KEY', raising=False)
-        with pytest.raises(RuntimeError, match='STRATHMARK_SUPABASE'):
+        cfg = {
+            'ENV_NAME': 'production',
+            'SECRET_KEY': 'a-very-strong-random-secret-key-1234567890!@#',
+            'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
+        }
+        validate_runtime(cfg)  # must NOT raise
+        warnings = cfg.get('_PRODUCTION_WARNINGS', [])
+        assert any('STRATHMARK' in w for w in warnings), warnings
+
+    def test_strathmark_configured_clears_warnings(self, monkeypatch):
+        """When both env vars are set, no STRATHMARK warning is recorded."""
+        from config import validate_runtime
+        monkeypatch.setenv('STRATHMARK_SUPABASE_URL', 'https://x.supabase.co')
+        monkeypatch.setenv('STRATHMARK_SUPABASE_KEY', 'fake')
+        cfg = {
+            'ENV_NAME': 'production',
+            'SECRET_KEY': 'a-very-strong-random-secret-key-1234567890!@#',
+            'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
+        }
+        validate_runtime(cfg)
+        warnings = cfg.get('_PRODUCTION_WARNINGS', [])
+        assert not any('STRATHMARK' in w for w in warnings), warnings
+
+    def test_hard_fail_still_raises_for_weak_secret(self):
+        """SECRET_KEY weakness is still a hard fail — that's a real security
+        issue (sessions/CSRF/replay tokens unsigned), not a non-blocking
+        integration gap."""
+        import pytest
+
+        from config import validate_runtime
+        with pytest.raises(RuntimeError, match='SECRET_KEY'):
+            validate_runtime({
+                'ENV_NAME': 'production',
+                'SECRET_KEY': 'short',
+                'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
+            })
+
+    def test_hard_fail_still_raises_for_sqlite_in_production(self):
+        """Postgres requirement is still a hard fail — Railway containers are
+        ephemeral, so a SQLite fallback would silently lose all writes on
+        every redeploy."""
+        import pytest
+
+        from config import validate_runtime
+        with pytest.raises(RuntimeError, match='PostgreSQL'):
             validate_runtime({
                 'ENV_NAME': 'production',
                 'SECRET_KEY': 'a-very-strong-random-secret-key-1234567890!@#',
-                'SQLALCHEMY_DATABASE_URI': 'postgresql://u:p@h/db',
+                'SQLALCHEMY_DATABASE_URI': 'sqlite:////tmp/oops.db',
             })
 
     def test_strathmark_check_skipped_in_development(self, monkeypatch):
