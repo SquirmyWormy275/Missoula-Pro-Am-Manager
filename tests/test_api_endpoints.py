@@ -7,6 +7,7 @@ Run:
     pytest tests/test_api_endpoints.py -v
 """
 import json
+import os
 
 import pytest
 
@@ -202,6 +203,16 @@ class TestAPIResponseFormat:
 class TestHealthEndpoint:
     """GET /health — application health check."""
 
+    @pytest.mark.skipif(
+        os.environ.get('TEST_USE_CREATE_ALL') == '1',
+        reason=(
+            "/health reads alembic_version to set migration_current; that "
+            "table is only created by `flask db upgrade`, not by db.create_all(). "
+            "Under TEST_USE_CREATE_ALL=1 the endpoint correctly reports "
+            "'degraded' because there is no migration history. The endpoint "
+            "is exercised against a real schema by tests/test_postgres_runtime_smoke.py."
+        ),
+    )
     def test_health_returns_ok(self, client):
         resp = client.get('/health')
         assert resp.status_code == 200
