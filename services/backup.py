@@ -95,6 +95,34 @@ def _upload_to_s3(local_path: str, s3_key: str) -> dict:
 # PostgreSQL backup via pg_dump
 # ---------------------------------------------------------------------------
 
+def _pg_dump_args_and_env(db_uri):
+    """
+    Split a postgres URL into pg_dump-safe args + env.
+
+    Returns (args_prefix, env_overlay) where args_prefix is the list of
+    connection flags (--host/--port/--username/--dbname) and env_overlay
+    is a dict containing PGPASSWORD if a password was present. Callers
+    should append --format=custom and --file=... to args_prefix and merge
+    env_overlay into os.environ.copy() before invoking pg_dump.
+    """
+    from urllib.parse import unquote, urlparse
+    parsed = urlparse(db_uri)
+    host = parsed.hostname or 'localhost'
+    port = str(parsed.port or 5432)
+    user = unquote(parsed.username or '')
+    password = unquote(parsed.password or '')
+    dbname = (parsed.path or '').lstrip('/') or ''
+    args = ['--host', host, '--port', port]
+    if user:
+        args.extend(['--username', user])
+    if dbname:
+        args.extend(['--dbname', dbname])
+    env_overlay = {}
+    if password:
+        env_overlay['PGPASSWORD'] = password
+    return args, env_overlay
+
+
 def backup_pg_to_s3(db_uri: str, tournament_id: int) -> dict:
     """Run pg_dump and upload the custom-format dump to S3.
 
@@ -112,9 +140,12 @@ def backup_pg_to_s3(db_uri: str, tournament_id: int) -> dict:
         fd, dump_file = tempfile.mkstemp(suffix='.dump', prefix='proam_backup_')
         os.close(fd)
 
+        connection_args, env_overlay = _pg_dump_args_and_env(db_uri)
+        env = os.environ.copy()
+        env.update(env_overlay)
         result = subprocess.run(
-            ['pg_dump', '--format=custom', f'--file={dump_file}', f'--dbname={db_uri}'],
-            capture_output=True, text=True, timeout=300,
+            ['pg_dump', '--format=custom', f'--file={dump_file}', *connection_args],
+            capture_output=True, text=True, timeout=300, env=env,
         )
         if result.returncode != 0:
             logger.error('pg_dump failed: %s', result.stderr)
@@ -142,9 +173,12 @@ def backup_pg_to_local(db_uri: str, dest_dir: str, tournament_id: int) -> dict:
         filename = f'proam_t{tournament_id}_{_timestamp()}.dump'
         dest = os.path.join(dest_dir, filename)
 
+        connection_args, env_overlay = _pg_dump_args_and_env(db_uri)
+        env = os.environ.copy()
+        env.update(env_overlay)
         result = subprocess.run(
-            ['pg_dump', '--format=custom', f'--file={dest}', f'--dbname={db_uri}'],
-            capture_output=True, text=True, timeout=300,
+            ['pg_dump', '--format=custom', f'--file={dest}', *connection_args],
+            capture_output=True, text=True, timeout=300, env=env,
         )
         if result.returncode != 0:
             logger.error('pg_dump failed: %s', result.stderr)

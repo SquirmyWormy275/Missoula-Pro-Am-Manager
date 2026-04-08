@@ -2035,3 +2035,12 @@
             transform: translateY(-3px);
             box-shadow: 0 8px 30px rgba(0,0,0,0.5) !important;
         }
+
+        /* SECURITY FIX (CSO #7): replaces inline onmouseover/onmouseout
+           background tweak. Used by tournament_detail.html row hovers. */
+        .hover-bg-subtle {
+            transition: background 0.15s;
+        }
+        .hover-bg-subtle:hover {
+            background: rgba(255,255,255,0.04);
+        }

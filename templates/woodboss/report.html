@@ -58,7 +58,7 @@
         </div>
         <div class="col-auto d-flex gap-2">
             <!-- Share link -->
-            <button class="btn btn-outline-info btn-sm" onclick="copyShareLink()" title="Copy shareable link for block prep crew">
+            <button class="btn btn-outline-info btn-sm" data-action="copy-share-link" title="Copy shareable link for block prep crew">
                 <i class="bi bi-link-45deg"></i> Copy Share Link
             </button>
             <a href="{{ url_for('woodboss.config_form', tid=tournament.id) }}"
@@ -456,5 +456,9 @@ function copyShareLink() {
         prompt('Share link (copy this):', url);
     }
 }
+document.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-action="copy-share-link"]');
+    if (t) { e.preventDefault(); copyShareLink(); }
+});
 </script>
 {% endblock %}

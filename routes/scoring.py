@@ -12,6 +12,7 @@ from flask import (
     Blueprint,
     Response,
     abort,
+    current_app,
     flash,
     jsonify,
     redirect,
@@ -951,6 +952,28 @@ def birling_bracket(tournament_id, event_id):
 #
 # Security: no CSRF, but requires login + replay_token + valid heat/tournament.
 
+@scoring_bp.route('/api/replay-token', methods=['GET'])
+def issue_replay_token():
+    """Issue a fresh HMAC-bound replay token for offline score queueing.
+
+    The token is valid for 7 days and tied to the requesting user. The offline
+    queue stashes it in IndexedDB at queue time and submits it via the
+    replay_offline_score endpoint when connectivity returns.
+    """
+    if not current_user.is_authenticated:
+        return jsonify({'ok': False, 'message': 'Login required.'}), 401
+    import hashlib
+    import hmac as _hmac
+    import time as _time
+    secret = current_app.config.get('SECRET_KEY', '')
+    if not secret:
+        return jsonify({'ok': False, 'message': 'Server not configured.'}), 500
+    ts = int(_time.time())
+    msg = f'{current_user.id}:{ts}'.encode('utf-8')
+    sig = _hmac.new(secret.encode('utf-8'), msg, hashlib.sha256).hexdigest()[:32]
+    return jsonify({'ok': True, 'replay_token': f'{ts}.{sig}'})
+
+
 @scoring_bp.route('/api/replay', methods=['POST'])
 def replay_offline_score():
     """Accept an offline-queued score submission without CSRF validation."""
@@ -961,7 +984,28 @@ def replay_offline_score():
         return jsonify({'ok': False, 'message': 'Login required.'}), 401
 
     replay_token = request.form.get('replay_token', '').strip()
-    if not replay_token or len(replay_token) < 16:
+    # SECURITY (CSO #6): replay_token must be a real HMAC bound to (user_id, ts).
+    # Length-only validation previously accepted any 16+ char string, leaving
+    # the CSRF-exempt endpoint open to cross-site POST attacks against logged-in
+    # scorers. Token format: "{ts}.{hex_sig}" where sig is HMAC-SHA256 truncated
+    # to 32 hex chars over f"{user_id}:{ts}" using SECRET_KEY.
+    if not replay_token or '.' not in replay_token:
+        return jsonify({'ok': False, 'message': 'Missing or malformed replay token.'}), 403
+    import hashlib
+    import hmac as _hmac
+    import time as _time
+    try:
+        ts_str, sig = replay_token.split('.', 1)
+        ts = int(ts_str)
+    except (ValueError, TypeError):
+        return jsonify({'ok': False, 'message': 'Malformed replay token.'}), 403
+    # Reject tokens older than 7 days (race weekend buffer + offline replay window)
+    if _time.time() - ts > 7 * 24 * 60 * 60:
+        return jsonify({'ok': False, 'message': 'Replay token expired.'}), 403
+    secret = current_app.config.get('SECRET_KEY', '')
+    expected_msg = f'{current_user.id}:{ts}'.encode('utf-8')
+    expected_sig = _hmac.new(secret.encode('utf-8'), expected_msg, hashlib.sha256).hexdigest()[:32]
+    if not _hmac.compare_digest(sig, expected_sig):
         return jsonify({'ok': False, 'message': 'Invalid replay token.'}), 403
 
     # Extract tournament_id and heat_id from the original URL stored in the body

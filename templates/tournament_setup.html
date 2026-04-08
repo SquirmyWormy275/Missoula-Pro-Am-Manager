@@ -770,7 +770,7 @@
                 <div class="d-flex gap-2 flex-wrap">
                     {% if other_tournaments %}
                     <form method="POST" action="{{ url_for('woodboss.copy_from', tid=tournament.id) }}"
-                          onsubmit="return confirm('This will overwrite all current wood specs with specs from the selected tournament. Continue?')">
+                          data-confirm="This will overwrite all current wood specs with specs from the selected tournament. Continue?">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="return_to" value="setup">
                         <div class="input-group">

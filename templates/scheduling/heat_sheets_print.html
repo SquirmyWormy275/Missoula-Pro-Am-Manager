@@ -214,15 +214,15 @@
         <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Heat Sheets</h4>
         <div class="d-flex gap-2 flex-wrap">
             <label class="d-flex align-items-center gap-2 mb-0" style="font-size:0.85rem; cursor:pointer; font-weight:500;">
-                <input type="checkbox" id="notesToggle" onchange="document.body.classList.toggle('notes-mode', this.checked)">
+                <input type="checkbox" id="notesToggle" data-toggle-body-class="notes-mode">
                 Notes lines
             </label>
-            <button id="printFlightBtn" class="btn btn-outline-primary btn-sm" onclick="window.print()" style="display:none;">
+            <button id="printFlightBtn" class="btn btn-outline-primary btn-sm" data-print style="display:none;">
                 <i class="bi bi-printer"></i> Print This Flight
             </button>
-            <a href="javascript:window.print()" class="btn btn-primary btn-sm">
+            <button type="button" data-print class="btn btn-primary btn-sm">
                 <i class="bi bi-printer"></i> Print All
-            </a>
+            </button>
             <a href="?autoprint=1" class="btn btn-outline-secondary btn-sm" title="Reload and auto-open print dialog">
                 <i class="bi bi-printer-fill"></i> Auto-Print
             </a>
@@ -235,9 +235,9 @@
     {% if flight_data %}
     <div class="no-print mb-3 d-flex flex-wrap gap-1 align-items-center">
         <span class="text-muted me-1" style="font-size:0.8rem; font-weight:600;">Filter:</span>
-        <button class="btn btn-sm btn-primary flight-filter-btn" data-filter="all" onclick="filterFlights('all',this)">All Flights</button>
+        <button class="btn btn-sm btn-primary flight-filter-btn" data-filter="all" data-filter-flights="all">All Flights</button>
         {% for fd in flight_data %}
-        <button class="btn btn-sm btn-outline-secondary flight-filter-btn" data-filter="{{ fd.flight.id }}" onclick="filterFlights('{{ fd.flight.id }}',this)">
+        <button class="btn btn-sm btn-outline-secondary flight-filter-btn" data-filter="{{ fd.flight.id }}" data-filter-flights="{{ fd.flight.id }}">
             Flight {{ fd.flight.flight_number }}
         </button>
         {% endfor %}
@@ -503,5 +503,13 @@ document.querySelectorAll('.flight-screen-grid').forEach(function(grid) {
     });
 });
 {% endif %}
+document.addEventListener('click', function (e) {
+    var ff = e.target.closest('[data-filter-flights]');
+    if (ff) { filterFlights(ff.dataset.filterFlights, ff); }
+});
+document.addEventListener('change', function (e) {
+    var t = e.target.closest('[data-toggle-body-class]');
+    if (t) { document.body.classList.toggle(t.dataset.toggleBodyClass, t.checked); }
+});
 </script>
 {% endblock %}

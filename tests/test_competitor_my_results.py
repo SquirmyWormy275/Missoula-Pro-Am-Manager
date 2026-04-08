@@ -163,21 +163,30 @@ def _ok(r):
 
 
 # ---------------------------------------------------------------------------
-# Open access (no PIN set)
+# IDOR protection (no PIN set)
 # ---------------------------------------------------------------------------
+# SECURITY FIX (CSO #3): competitors without a PIN are no longer granted open
+# access by ID enumeration. The route now redirects to the claim flow which
+# forces a name lookup + PIN-set before any personal data is read.
 
 class TestMyResultsOpenAccess:
-    """Competitors without a PIN get open access to my-results."""
+    """Competitors without a PIN are redirected to the claim flow."""
 
-    def test_no_pin_auto_access(self, client, tid, pro_open):
+    def test_no_pin_redirects_to_claim(self, client, tid, pro_open):
         r = client.get(f'/portal/competitor/{tid}/pro/{pro_open.id}/my-results')
-        assert r.status_code == 200
-        assert b'Pro Open' in r.data
+        assert r.status_code == 302
+        # Redirect target must be the claim flow for this competitor
+        assert '/portal/competitor/claim' in r.headers['Location']
+        assert f'tournament_id={tid}' in r.headers['Location']
+        assert 'competitor_type=pro' in r.headers['Location']
+        assert f'competitor_id={pro_open.id}' in r.headers['Location']
 
-    def test_college_no_pin_access(self, client, tid, college_kid):
+    def test_college_no_pin_redirects_to_claim(self, client, tid, college_kid):
         r = client.get(f'/portal/competitor/{tid}/college/{college_kid.id}/my-results')
-        assert r.status_code == 200
-        assert b'College Kid' in r.data
+        assert r.status_code == 302
+        assert '/portal/competitor/claim' in r.headers['Location']
+        assert 'competitor_type=college' in r.headers['Location']
+        assert f'competitor_id={college_kid.id}' in r.headers['Location']
 
 
 # ---------------------------------------------------------------------------

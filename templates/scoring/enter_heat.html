@@ -234,9 +234,13 @@
           </div>
 
           {# ── Entry form ────────────────────────────────────────────────── #}
-          <form method="POST" id="heatEntryForm" {% if lock_blocked %}inert{% endif %}>
+          <form method="POST" id="heatEntryForm" data-heat-form {% if lock_blocked %}inert{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="heat_version" value="{{ heat_version }}">
+            {# SECURITY (CSO #6): HMAC-bound replay token fetched on page load.
+               The offline queue captures the form body verbatim, so this hidden
+               input propagates automatically through IDB and the replay POST. #}
+            <input type="hidden" name="replay_token" value="">
 
             <div class="table-responsive">
             <table class="table align-middle">
@@ -497,6 +501,30 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     if (lockBlocked) return; // read-only, no JS wiring needed
+
+    /* ── SECURITY FIX (CSO #6): fetch a real HMAC replay token ───────────── */
+    // The offline queue stashes the form body in IndexedDB at queue time, so
+    // the replay_token hidden input propagates automatically to the replay POST.
+    (async function () {
+        try {
+            const r = await fetch('/scoring/api/replay-token', {credentials: 'same-origin'});
+            if (!r.ok) return;
+            const data = await r.json();
+            if (data && data.ok && data.replay_token) {
+                const heatForm = document.querySelector('form[data-heat-form]') || document.getElementById('heatEntryForm');
+                if (heatForm) {
+                    let input = heatForm.querySelector('input[name="replay_token"]');
+                    if (!input) {
+                        input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'replay_token';
+                        heatForm.appendChild(input);
+                    }
+                    input.value = data.replay_token;
+                }
+            }
+        } catch (_) { /* offline at load — replay will fail until next online load */ }
+    })();
 
     /* ── DOM refs ────────────────────────────────────────────────────────── */
     const form          = document.getElementById('heatEntryForm');

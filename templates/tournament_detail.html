@@ -154,26 +154,26 @@
         <div class="col-12">
             <div class="stats-bar">
                 <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}"
-                   class="stat-item text-decoration-none" title="Go to College Registration"
-                   style="transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''">
+                   class="stat-item text-decoration-none hover-bg-subtle" title="Go to College Registration"
+                   style="transition:background 0.15s;">
                     <span class="stat-value text-primary">{{ stats.college_teams }}</span>
                     <span class="stat-label">Teams</span>
                 </a>
                 <a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}"
-                   class="stat-item text-decoration-none" title="Go to College Dashboard"
-                   style="transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''">
+                   class="stat-item text-decoration-none hover-bg-subtle" title="Go to College Dashboard"
+                   style="transition:background 0.15s;">
                     <span class="stat-value text-primary">{{ stats.college_competitors }}</span>
                     <span class="stat-label">College</span>
                 </a>
                 <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}"
-                   class="stat-item text-decoration-none" title="Go to Pro Dashboard"
-                   style="transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''">
+                   class="stat-item text-decoration-none hover-bg-subtle" title="Go to Pro Dashboard"
+                   style="transition:background 0.15s;">
                     <span class="stat-value" style="color:var(--sx-amber);">{{ stats.pro_competitors }}</span>
                     <span class="stat-label">Pro</span>
                 </a>
                 <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
-                   class="stat-item text-decoration-none" title="Go to Events & Schedule"
-                   style="transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''">
+                   class="stat-item text-decoration-none hover-bg-subtle" title="Go to Events & Schedule"
+                   style="transition:background 0.15s;">
                     <span class="stat-value text-success">
                         {{ stats.completed_events }}<span style="font-size:0.9rem;font-weight:400;color:var(--sx-text-2);"> / {{ stats.events }}</span>
                     </span>

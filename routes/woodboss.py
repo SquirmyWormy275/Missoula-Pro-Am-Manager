@@ -256,10 +256,9 @@ def history():
 @woodboss_public_bp.route('/<int:tid>/share')
 def share(tid):
     token = request.args.get('token', '')
-    expected = woodboss_svc.generate_share_token(
-        tid, current_app.config.get('SECRET_KEY', '')
-    )
-    if not token or not hmac_compare(token, expected):
+    if not woodboss_svc.verify_share_token(
+        token, tid, current_app.config.get('SECRET_KEY', '')
+    ):
         abort(403)
     tournament = Tournament.query.get_or_404(tid)
     report_data = woodboss_svc.get_wood_report(tid)
@@ -270,10 +269,3 @@ def share(tid):
     )
 
 
-def hmac_compare(a, b):
-    """Constant-time string comparison to prevent timing attacks."""
-    import hmac as _hmac
-    return _hmac.compare_digest(
-        a.encode('utf-8') if isinstance(a, str) else a,
-        b.encode('utf-8') if isinstance(b, str) else b,
-    )

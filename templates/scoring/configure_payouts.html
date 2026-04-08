@@ -138,7 +138,7 @@
                     <input type="text" class="form-control" name="template_name"
                            placeholder="Template name (e.g. Standard Pro 10-deep)">
                     <button type="submit" class="btn btn-outline-secondary"
-                            onclick="this.form.querySelector('[name=action]').value='save_template'">
+                            data-set-form-action="save_template">
                       <i class="bi bi-bookmark-plus"></i> Save as Template
                     </button>
                   </div>
@@ -348,6 +348,15 @@ document.addEventListener('DOMContentLoaded', function () {
         f.addEventListener('submit', e => {
             if (!confirm(f.dataset.confirm)) e.preventDefault();
         });
+    });
+
+    // ── Set form action value from data-set-form-action ───────────────────
+    document.addEventListener('click', function (e) {
+        var t = e.target.closest('[data-set-form-action]');
+        if (t && t.form) {
+            var actionInput = t.form.querySelector('[name=action]');
+            if (actionInput) actionInput.value = t.dataset.setFormAction;
+        }
     });
 });
 </script>

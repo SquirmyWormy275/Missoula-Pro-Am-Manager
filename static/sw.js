@@ -173,10 +173,11 @@ async function replayQueue() {
                 successCount++;
             } else if (resp.status === 400 || resp.status === 403) {
                 // CSRF token expired or session invalid.
-                // Try the CSRF-exempt replay endpoint if a replay_token exists.
+                // Try the CSRF-exempt replay endpoint. The HMAC replay_token is
+                // already embedded in entry.body (from the form hidden input
+                // populated via /scoring/api/replay-token on page load — CSO #6).
                 if (entry.replay_token) {
                     const replayBody = entry.body
-                        + '&replay_token=' + encodeURIComponent(entry.replay_token)
                         + '&tournament_id=' + encodeURIComponent(entry.tournament_id || '')
                         + '&heat_id=' + encodeURIComponent(entry.heat_id || '');
                     const replayResp = await fetch('/scoring/api/replay', {

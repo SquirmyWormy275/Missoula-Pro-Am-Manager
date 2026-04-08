@@ -424,7 +424,7 @@
                         <form method="POST" action="{{ url_for('demo.clear') }}" style="display:inline;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-outline-warning btn-sm"
-                                    onclick="return confirm('Remove all demo data?')">
+                                    data-confirm="Remove all demo data?">
                                 <i class="bi bi-eraser me-1"></i> Clear Demo
                             </button>
                         </form>

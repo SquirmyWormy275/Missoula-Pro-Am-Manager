@@ -96,6 +96,16 @@
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/offline_queue_shared.js') }}"></script>
 <script>
+// SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
+function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 document.addEventListener('DOMContentLoaded', function () {
     const TOURNAMENT_ID = {{ tournament.id }};
     const EVENT_DIRECTORY = {{ event_directory|tojson }};
@@ -156,6 +166,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
+        // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
         queueBody.innerHTML = queue.map(function (entry) {
             const queuedAt = entry.queued_at || entry.saved_at || '';
             const timeLabel = queuedAt ? new Date(queuedAt).toLocaleString() : '-';
@@ -164,14 +175,14 @@ document.addEventListener('DOMContentLoaded', function () {
             const key = encodeURIComponent((entry.url || '') + '|' + (entry.heat_id || ''));
             return '' +
                 '<tr>' +
-                    '<td>' + timeLabel + '</td>' +
-                    '<td>' + eventLabel(entry) + '</td>' +
-                    '<td>' + heatLabel + '</td>' +
-                    '<td>' + entries + '</td>' +
+                    '<td>' + escapeHtml(timeLabel) + '</td>' +
+                    '<td>' + escapeHtml(eventLabel(entry)) + '</td>' +
+                    '<td>' + escapeHtml(heatLabel) + '</td>' +
+                    '<td>' + escapeHtml(entries) + '</td>' +
                     '<td><span class="badge bg-warning text-dark">Pending</span></td>' +
                     '<td class="d-flex gap-2">' +
-                        '<button class="btn btn-sm btn-outline-info sync-one" data-key="' + key + '"><i class="bi bi-arrow-repeat"></i> Sync</button>' +
-                        '<button class="btn btn-sm btn-outline-danger drop-one" data-key="' + key + '"><i class="bi bi-x-circle"></i> Remove</button>' +
+                        '<button class="btn btn-sm btn-outline-info sync-one" data-key="' + escapeHtml(key) + '"><i class="bi bi-arrow-repeat"></i> Sync</button>' +
+                        '<button class="btn btn-sm btn-outline-danger drop-one" data-key="' + escapeHtml(key) + '"><i class="bi bi-x-circle"></i> Remove</button>' +
                     '</td>' +
                 '</tr>';
         }).join('');

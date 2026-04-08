@@ -384,6 +384,16 @@
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/offline_queue_shared.js') }}"></script>
 <script>
+// SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
+function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 document.addEventListener('DOMContentLoaded', function () {
     const currentEventId   = {{ event.id }};
     const scoringOrder     = {{ event.scoring_order|tojson }};
@@ -409,7 +419,8 @@ document.addEventListener('DOMContentLoaded', function () {
             const pos   = r.position;
             const medal = pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `${pos}.`;
             const val   = r.result_value !== null ? Number(r.result_value).toFixed(requiresTriple ? 0 : 2) : '—';
-            html += `<tr><td class="ps-3" style="width:40px">${medal}</td><td><strong>${r.competitor_name}</strong>${flag}</td><td class="text-end pe-3 text-muted small">${val}</td></tr>`;
+            // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
+            html += `<tr><td class="ps-3" style="width:40px">${medal}</td><td><strong>${escapeHtml(r.competitor_name)}</strong>${flag}</td><td class="text-end pe-3 text-muted small">${val}</td></tr>`;
         });
         html += '</tbody></table>';
         liveBody.innerHTML = html;
@@ -461,7 +472,8 @@ document.addEventListener('DOMContentLoaded', function () {
             if (data.outliers && data.outliers.length) {
                 html += '<div class="alert alert-warning"><strong><i class="bi bi-exclamation-triangle"></i> Outlier Scores Detected</strong><ul class="mb-0 mt-2">';
                 data.outliers.forEach(o => {
-                    html += `<li>${o.competitor_name}: <strong>${o.result_value}</strong> (${o.deviation}σ from mean ${o.mean})</li>`;
+                    // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
+                    html += `<li>${escapeHtml(o.competitor_name)}: <strong>${escapeHtml(o.result_value)}</strong> (${escapeHtml(o.deviation)}σ from mean ${escapeHtml(o.mean)})</li>`;
                 });
                 html += '</ul><p class="mb-0 mt-1 small">These will be flagged ⚠ after finalization. Verify before confirming.</p></div>';
             }
@@ -469,7 +481,8 @@ document.addEventListener('DOMContentLoaded', function () {
             // Throw-off warnings
             if (data.throwoffs && data.throwoffs.length) {
                 html += '<div class="alert alert-danger"><strong><i class="bi bi-exclamation-circle"></i> Throw-Off Pending</strong><p class="mb-0 mt-1 small">Resolve the throw-off before finalizing, or finalize now for provisional positions.</p><ul class="mb-0 mt-1">';
-                data.throwoffs.forEach(t => { html += `<li>${t.name} — score: ${t.score}</li>`; });
+                // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
+                data.throwoffs.forEach(t => { html += `<li>${escapeHtml(t.name)} — score: ${escapeHtml(t.score)}</li>`; });
                 html += '</ul></div>';
             }
 
@@ -483,7 +496,8 @@ document.addEventListener('DOMContentLoaded', function () {
                     const pos   = r.position;
                     const badge = pos === 1 ? 'badge-gold' : pos === 2 ? 'badge-silver' : pos === 3 ? 'badge-bronze' : 'bg-secondary';
                     const score = r.result_value !== null ? Number(r.result_value).toFixed(requiresTriple ? 0 : 2) : '—';
-                    html += `<tr><td><span class="badge ${badge}">${pos}</span></td><td>${r.competitor_name}</td><td>${score}</td>`;
+                    // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
+                    html += `<tr><td><span class="badge ${badge}">${pos}</span></td><td>${escapeHtml(r.competitor_name)}</td><td>${score}</td>`;
                     if (r.points !== undefined) html += `<td>${r.points} pts</td>`;
                     if (r.payout !== undefined) html += `<td>$${Number(r.payout).toFixed(2)}</td>`;
                     html += '</tr>';
@@ -564,8 +578,9 @@ document.addEventListener('DOMContentLoaded', function () {
         q.forEach(e => applyQueuedHeat(map, e));
         const ranked = Object.values(map).filter(r => r.status === 'completed' && r.result_value !== null);
         ranked.sort((a,b) => scoringOrder === 'lowest_wins' ? a.result_value - b.result_value : b.result_value - a.result_value);
+        // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
         offlineBody.innerHTML = ranked.slice(0,12).map((r,i) =>
-            `<div>${i+1}. ${r.competitor_name} — ${Number(r.result_value).toFixed(requiresTriple ? 0 : 2)}</div>`
+            `<div>${i+1}. ${escapeHtml(r.competitor_name)} — ${Number(r.result_value).toFixed(requiresTriple ? 0 : 2)}</div>`
         ).join('') || '<div>No complete provisional results yet.</div>';
         pendingBadge.textContent = `${q.length} pending`;
         offlineCard.classList.remove('d-none');

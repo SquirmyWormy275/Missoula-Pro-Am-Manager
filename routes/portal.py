@@ -254,6 +254,8 @@ def competitor_public():
 
 
 @portal_bp.route('/competitor/claim', methods=['GET', 'POST'])
+# Rate limit: blocks 4-digit PIN brute force (10000 combos / 5 per min = 33 hours).
+@write_limit('5 per minute')
 def competitor_claim():
     """Set or verify a competitor PIN before granting access."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
@@ -858,6 +860,8 @@ def school_access():
 
 
 @portal_bp.route('/school/claim', methods=['GET', 'POST'])
+# Rate limit: blocks 4-digit PIN brute force (10000 combos / 5 per min = 33 hours).
+@write_limit('5 per minute')
 def school_claim():
     """Create or verify the school captain PIN."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
@@ -1136,6 +1140,8 @@ def user_guide():
 
 @portal_bp.route('/competitor/<int:tournament_id>/<competitor_type>/<int:competitor_id>/my-results',
                  methods=['GET', 'POST'])
+# Rate limit: blocks 4-digit PIN brute force (10000 combos / 5 per min = 33 hours).
+@write_limit('5 per minute')
 def competitor_my_results(tournament_id, competitor_type, competitor_id):
     """
     Self-service page for a competitor to view their own:
@@ -1179,8 +1185,16 @@ def competitor_my_results(tournament_id, competitor_type, competitor_id):
                     view_mode=view_mode, mobile_view=view_mode == 'mobile',
                 )
         elif not competitor.has_portal_pin:
-            # No PIN set — allow access (open portal)
-            session[session_key] = True
+            # SECURITY FIX (CSO #3): refuse open access by ID enumeration. Send the
+            # visitor through the claim flow which forces them to prove identity by
+            # name lookup AND set a PIN before reading any personal data.
+            flash('Set a PIN before viewing your results.', 'info')
+            return redirect(url_for(
+                'portal.competitor_claim',
+                tournament_id=tournament_id,
+                competitor_type=competitor_type,
+                competitor_id=competitor_id,
+            ))
         else:
             return render_template(
                 'portal/competitor_pin_gate.html',

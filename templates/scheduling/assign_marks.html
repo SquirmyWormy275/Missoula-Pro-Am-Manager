@@ -103,7 +103,7 @@
     {# STRATHMARK live-run button (legacy path) #}
     {% if eligible and configured %}
     <div class="mb-3">
-        <form method="post" onsubmit="this.querySelector('button[type=submit]').disabled=true;">
+        <form method="post" data-disable-on-submit>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="strathmark">
             <button type="submit" class="btn btn-primary">
@@ -347,4 +347,13 @@
     {% endif %}
 
 </div>
+<script>
+document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (f.matches && f.matches('[data-disable-on-submit]')) {
+        var btn = f.querySelector('button[type=submit]');
+        if (btn) btn.disabled = true;
+    }
+});
+</script>
 {% endblock %}
