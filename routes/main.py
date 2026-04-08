@@ -91,8 +91,10 @@ def health_diag():
     Use this to debug "why is HSTS missing on prod" or "why isn't
     STRATHMARK running" without needing Railway dashboard access.
     """
-    from flask import current_app, request as _request
     import os as _os
+
+    from flask import current_app
+    from flask import request as _request
 
     cfg = current_app.config
 
