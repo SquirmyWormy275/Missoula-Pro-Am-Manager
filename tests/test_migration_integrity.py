@@ -301,13 +301,13 @@ class TestMigrationIntegrity:
     # still catches NEW drift but does not block CI on the historical tail.
     # Retire entries by writing real fix-up migrations and removing them here.
     KNOWN_NULLABLE_DRIFT = {
-        ('college_competitors', 'individual_points'),
+        # ('college_competitors', 'individual_points'),  # RETIRED V2.8.0 — fixed by migration f0a1b2c3d4e6
         ('college_competitors', 'events_entered'),
         ('college_competitors', 'partners'),
         ('college_competitors', 'gear_sharing'),
         ('college_competitors', 'phone_opted_in'),
         ('college_competitors', 'status'),
-        ('event_results', 'points_awarded'),
+        # ('event_results', 'points_awarded'),  # RETIRED V2.8.0 — fixed by migration f0a1b2c3d4e6
         ('event_results', 'payout_amount'),
         ('event_results', 'is_flagged'),
         ('event_results', 'status'),
@@ -340,7 +340,7 @@ class TestMigrationIntegrity:
         ('pro_competitors', 'waiver_accepted'),
         ('pro_competitors', 'total_fees'),
         ('school_captains', 'created_at'),
-        ('teams', 'total_points'),
+        # ('teams', 'total_points'),  # RETIRED V2.8.0 — fixed by migration f0a1b2c3d4e6
         ('teams', 'status'),
         ('tournaments', 'status'),
         ('tournaments', 'providing_shirts'),
