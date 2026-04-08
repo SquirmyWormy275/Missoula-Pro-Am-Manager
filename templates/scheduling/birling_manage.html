@@ -410,7 +410,7 @@
         <form method="POST" action="{{ url_for('scheduling.birling_finalize', tournament_id=tournament.id, event_id=event.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-success btn-sm"
-                    onclick="return confirm('Finalize this bracket? This will write placements to event results.')">
+                    data-confirm="Finalize this bracket? This will write placements to event results.">
                 <i class="bi bi-check-circle me-1"></i> Finalize Results
             </button>
         </form>
@@ -423,7 +423,7 @@
         <form method="POST" action="{{ url_for('scheduling.birling_reset', tournament_id=tournament.id, event_id=event.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger btn-sm"
-                    onclick="return confirm('Reset the entire bracket? All match results will be lost.')">
+                    data-confirm="Reset the entire bracket? All match results will be lost.">
                 <i class="bi bi-arrow-counterclockwise me-1"></i> Reset Bracket
             </button>
         </form>

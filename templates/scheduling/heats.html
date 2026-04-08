@@ -146,7 +146,7 @@
                     {% else %}
                     <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST" style="display:inline;">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-warning" onclick="return confirm('This will regenerate all heats. Continue?')">
+                        <button type="submit" class="btn btn-outline-warning" data-confirm="This will regenerate all heats. Continue?">
                             <i class="bi bi-arrow-repeat"></i> Regenerate
                         </button>
                     </form>
@@ -158,7 +158,7 @@
                         <i class="bi bi-printer"></i> Print Heat Sheets
                     </a>
                     <button type="button" class="btn btn-outline-info btn-sm"
-                            onclick="checkHeatSync({{ tournament.id }}, {{ event.id }})">
+                            data-check-heat-sync data-tournament-id="{{ tournament.id }}" data-event-id="{{ event.id }}">
                         <i class="bi bi-arrow-repeat"></i> Sync Check
                     </button>
                 </div>
@@ -523,7 +523,7 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                     <button type="button" class="btn btn-warning" id="syncFixBtn" style="display:none;"
-                            onclick="document.getElementById('syncFixForm').submit()">
+                            data-submit-form="syncFixForm">
                         Fix Mismatches
                     </button>
                 </div>
@@ -535,6 +535,16 @@
 
 {% block scripts %}
 <script>
+// SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
+function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 function checkHeatSync(tournamentId, eventId) {
     const url = `/scheduling/${tournamentId}/event/${eventId}/heats/sync-check`;
     fetch(url).then(r => r.json()).then(data => {
@@ -545,8 +555,9 @@ function checkHeatSync(tournamentId, eventId) {
             fixBtn.style.display = 'none';
         } else {
             let html = `<p class="text-danger fw-semibold">${data.mismatches.length} mismatch(es) found:</p><ul>`;
+            // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
             data.mismatches.forEach(m => {
-                html += `<li>Heat ${m.heat_number} Run ${m.run_number}: JSON-only IDs: [${m.json_only}] | Table-only IDs: [${m.table_only}]</li>`;
+                html += `<li>Heat ${escapeHtml(m.heat_number)} Run ${escapeHtml(m.run_number)}: JSON-only IDs: [${escapeHtml(m.json_only)}] | Table-only IDs: [${escapeHtml(m.table_only)}]</li>`;
             });
             html += '</ul><p class="text-muted small">Click "Fix Mismatches" to overwrite the table from the authoritative JSON.</p>';
             body.innerHTML = html;
@@ -558,5 +569,17 @@ function checkHeatSync(tournamentId, eventId) {
         alert('Sync check failed. Check the console for errors.');
     });
 }
+document.addEventListener('click', function (e) {
+    var sync = e.target.closest('[data-check-heat-sync]');
+    if (sync) {
+        checkHeatSync(sync.dataset.tournamentId, sync.dataset.eventId);
+        return;
+    }
+    var sub = e.target.closest('[data-submit-form]');
+    if (sub) {
+        var f = document.getElementById(sub.dataset.submitForm);
+        if (f) f.submit();
+    }
+});
 </script>
 {% endblock %}

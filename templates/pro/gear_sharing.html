@@ -40,7 +40,7 @@
             <!-- Complete all one-sided pairs -->
             <form method="POST"
                   action="{{ url_for('registration.pro_gear_complete_pairs', tournament_id=tournament.id) }}"
-                  onsubmit="return confirm('Write reciprocal entries for all one-sided gear pairs?');">
+                  data-confirm="Write reciprocal entries for all one-sided gear pairs?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-primary btn-sm">Complete All Pairs</button>
             </form>
@@ -48,7 +48,7 @@
             <!-- Auto-populate partner fields from gear sharing -->
             <form method="POST"
                   action="{{ url_for('registration.pro_gear_auto_partners', tournament_id=tournament.id) }}"
-                  onsubmit="return confirm('Copy gear-sharing entries into partner fields for partnered events?');">
+                  data-confirm="Copy gear-sharing entries into partner fields for partnered events?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-primary btn-sm">Auto-Populate Partners</button>
             </form>
@@ -56,7 +56,7 @@
             <!-- Cleanup scratched competitors' gear entries -->
             <form method="POST"
                   action="{{ url_for('registration.pro_gear_cleanup_scratched', tournament_id=tournament.id) }}"
-                  onsubmit="return confirm('Remove all gear-sharing entries referencing scratched competitors?');">
+                  data-confirm="Remove all gear-sharing entries referencing scratched competitors?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-secondary btn-sm">Cleanup Scratched</button>
             </form>
@@ -64,7 +64,7 @@
             <!-- Auto-assign heat partners -->
             <form method="POST"
                   action="{{ url_for('registration.auto_assign_pro_partners_route', tournament_id=tournament.id) }}"
-                  onsubmit="return confirm('Auto-assign partners for all partnered pro events? Existing assignments will not be overwritten.');">
+                  data-confirm="Auto-assign partners for all partnered pro events? Existing assignments will not be overwritten.">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-primary btn-sm">Auto-Assign Partners</button>
             </form>
@@ -73,7 +73,7 @@
             {% if report.stats.conflicts > 0 %}
             <form method="POST"
                   action="{{ url_for('registration.pro_gear_sync_heats', tournament_id=tournament.id) }}"
-                  onsubmit="return confirm('Attempt to auto-fix {{ report.stats.conflicts }} gear conflict(s) by swapping competitors between heats?');">
+                  data-confirm="Attempt to auto-fix {{ report.stats.conflicts }} gear conflict(s) by swapping competitors between heats?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-danger btn-sm">
                     Sync Heat Conflicts ({{ report.stats.conflicts }})
@@ -82,7 +82,7 @@
             {% else %}
             <form method="POST"
                   action="{{ url_for('registration.pro_gear_sync_heats', tournament_id=tournament.id) }}"
-                  onsubmit="return confirm('Scan all pro heats for gear conflicts?');">
+                  data-confirm="Scan all pro heats for gear conflicts?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-secondary btn-sm">Sync Heats</button>
             </form>
@@ -254,7 +254,7 @@
                                 <form method="POST"
                                       action="{{ url_for('registration.pro_gear_remove', tournament_id=tournament.id) }}"
                                       class="d-inline"
-                                      onsubmit="return confirm('Remove this gear sharing entry for {{ entry.competitor.name }}?');">
+                                      data-confirm="Remove this gear sharing entry for {{ entry.competitor.name }}?">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="competitor_id" value="{{ entry.competitor.id }}">
                                     <input type="hidden" name="event_key" value="{{ entry.event_key }}">
@@ -331,7 +331,7 @@
                                     <form method="POST"
                                           action="{{ url_for('registration.pro_gear_remove', tournament_id=tournament.id) }}"
                                           class="d-inline"
-                                          onsubmit="return confirm('Remove gear sharing between {{ pair.comp_a.name }} and {{ pair.comp_b.name }}?');">
+                                          data-confirm="Remove gear sharing between {{ pair.comp_a.name }} and {{ pair.comp_b.name }}?">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="competitor_id" value="{{ pair.comp_a.id }}">
                                         <input type="hidden" name="event_key" value="{{ pair.event_key }}">
@@ -389,7 +389,7 @@
                                 <form method="POST"
                                       action="{{ url_for('registration.pro_gear_group_remove', tournament_id=tournament.id) }}"
                                       class="d-inline"
-                                      onsubmit="return confirm('Remove all members from gear group {{ gname }}?');">
+                                      data-confirm="Remove all members from gear group {{ gname }}?">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="group_name" value="{{ gname }}">
                                     <input type="hidden" name="event_key" value="{{ members[0].event_key if members else '' }}">
@@ -567,7 +567,7 @@
                                     <form method="POST"
                                           action="{{ url_for('registration.college_gear_remove', tournament_id=tournament.id) }}"
                                           class="d-inline"
-                                          onsubmit="return confirm('Remove this college gear entry for {{ row.competitor.name }}?');">
+                                          data-confirm="Remove this college gear entry for {{ row.competitor.name }}?">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="competitor_id" value="{{ row.competitor.id }}">
                                         <input type="hidden" name="event_key" value="{{ row.event_key }}">
@@ -748,12 +748,28 @@
     var CSRF_TOKEN = '{{ csrf_token() }}';
     var UPDATE_AJAX_URL = '{{ url_for("registration.pro_gear_update_ajax", tournament_id=tournament.id) }}';
 
-    function showInlineFlash(type, msg) {
+    // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
+    function escapeHtml(s) {
+        if (s === null || s === undefined) return '';
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // showInlineFlash accepts either a plain text message (default, safest)
+    // or an already-escaped HTML fragment when isHtml=true. Callers passing
+    // user-controlled data MUST escape before setting isHtml=true.
+    function showInlineFlash(type, msg, isHtml) {
         var div = document.createElement('div');
         div.className = 'alert alert-' + type + ' alert-dismissible fade show position-fixed bottom-0 end-0 m-3 shadow';
         div.style.zIndex = '9999';
         div.style.maxWidth = '380px';
-        div.innerHTML = msg + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+        // SECURITY FIX (CSO #1): default to escaping to prevent stored XSS
+        var safeMsg = isHtml ? msg : escapeHtml(msg);
+        div.innerHTML = safeMsg + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
         document.body.appendChild(div);
         setTimeout(function () { if (div.parentNode) div.remove(); }, 4500);
     }
@@ -807,7 +823,8 @@
                         if (tbody && tbody.querySelectorAll('tr').length === 0) {
                             tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-3">All entries resolved.</td></tr>';
                         }
-                        showInlineFlash('success', 'Gear entry updated for <strong>' + compName + '</strong>. Reload to see updated pairs.');
+                        // SECURITY FIX (CSO #1): escape server-supplied compName before innerHTML
+                        showInlineFlash('success', 'Gear entry updated for <strong>' + escapeHtml(compName) + '</strong>. Reload to see updated pairs.', true);
                     } else {
                         showInlineFlash('danger', 'Error: ' + (data.error || 'Unknown error'));
                         btn.disabled = false;

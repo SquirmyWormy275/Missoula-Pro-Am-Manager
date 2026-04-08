@@ -127,7 +127,7 @@
                         </a>
                         <hr>
                         <form action="{{ url_for('proam_relay.redraw_lottery', tournament_id=tournament.id) }}" method="POST"
-                              onsubmit="return confirm('This will clear all teams and results. Are you sure?')">
+                              data-confirm="This will clear all teams and results. Are you sure?">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-outline-danger w-100">
                                 <i class="bi bi-arrow-repeat"></i> Redraw Lottery

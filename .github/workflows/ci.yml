@@ -37,6 +37,7 @@ jobs:
             --ignore=tests/test_db_constraints.py \
             --ignore=tests/test_model_json_safety.py \
             --ignore=tests/test_postgres_compat.py \
+            --ignore=tests/test_flask_reliability.py \
             -k "not (TestFetchStartMark)"
 
   postgres-smoke:
@@ -110,3 +111,33 @@ jobs:
 
       - name: Ruff lint
         run: ruff check .
+
+  pip-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install requirements + pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit
+
+      - name: Run pip-audit on installed deps (excluding strathmark)
+        # We can't use `pip-audit -r requirements.txt` because requirements.txt
+        # pins strathmark via a git URL that pip-audit cannot look up against
+        # PyPI's vulnerability database (it errors out in --strict mode).
+        # Workaround: take `pip freeze` of the resolved environment, drop the
+        # strathmark line (which is published privately), and audit the rest.
+        # Strathmark itself is pinned to a specific commit SHA in
+        # requirements.txt — that's the supply-chain control for it.
+        run: |
+          pip freeze | grep -v -i '^strathmark' > /tmp/installed-without-strathmark.txt
+          pip-audit -r /tmp/installed-without-strathmark.txt --strict

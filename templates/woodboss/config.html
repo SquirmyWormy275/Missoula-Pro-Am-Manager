@@ -76,7 +76,7 @@
         {% if other_tournaments %}
         <div class="col-auto">
             <form method="POST" action="{{ url_for('woodboss.copy_from', tid=tournament.id) }}"
-                  onsubmit="return confirm('This will overwrite all current wood specs with specs from the selected tournament. Continue?')">
+                  data-confirm="This will overwrite all current wood specs with specs from the selected tournament. Continue?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="input-group">
                     <select name="source_tid" class="form-select form-select-sm"

@@ -178,7 +178,7 @@
                         <div class="d-flex gap-2 flex-wrap align-items-start">
                             <div>
                                 <button type="submit" name="action" value="generate_all" class="btn btn-primary"
-                                        onclick="return confirm('Generate heats for all events and rebuild pro flights? Existing heats will be regenerated.');">
+                                        data-confirm="Generate heats for all events and rebuild pro flights? Existing heats will be regenerated.">
                                     <i class="bi bi-lightning-charge"></i> Generate All Heats + Build Flights
                                 </button>
                                 <div class="text-muted small mt-1">Generates heats for every event and builds Saturday pro flight groupings.</div>
@@ -186,7 +186,7 @@
                             <div class="vr d-none d-md-block mx-1"></div>
                             <div>
                                 <button type="submit" name="action" value="rebuild_flights" class="btn btn-outline-secondary"
-                                        onclick="return confirm('Rebuild pro flights from existing pro heats?');">
+                                        data-confirm="Rebuild pro flights from existing pro heats?">
                                     <i class="bi bi-shuffle"></i> Rebuild Pro Flights Only
                                 </button>
                                 <div class="text-muted small mt-1">Re-runs flight grouping without touching heats.</div>
@@ -194,7 +194,7 @@
                             <div class="vr d-none d-md-block mx-1"></div>
                             <div>
                                 <button type="submit" name="action" value="integrate_spillover" class="btn btn-outline-secondary"
-                                        onclick="return confirm('Integrate selected college spillover heats into existing Saturday flights?');">
+                                        data-confirm="Integrate selected college spillover heats into existing Saturday flights?">
                                     <i class="bi bi-link-45deg"></i> Integrate College Spillover
                                 </button>
                                 <div class="text-muted small mt-1">Adds checked college events to Saturday flights without regenerating heats.</div>

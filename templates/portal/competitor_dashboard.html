@@ -7,7 +7,7 @@
         <div class="d-flex gap-2">
             {% if competitor_type == 'pro' %}
             <button class="btn btn-sm btn-outline-secondary"
-                    onclick="ProAmOnboarding.reopen('pro_competitor', _proSteps)"
+                    data-action="onboarding-reopen-pro"
                     title="How to use this page">
                 <i class="bi bi-question-circle"></i>
             </button>
@@ -222,6 +222,10 @@ var _proSteps = [
     }
 ];
 ProAmOnboarding.show('pro_competitor', _proSteps);
+document.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-action="onboarding-reopen-pro"]');
+    if (t) { e.preventDefault(); ProAmOnboarding.reopen('pro_competitor', _proSteps); }
+});
 </script>
 {% endif %}
 {% endblock %}

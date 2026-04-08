@@ -272,7 +272,7 @@
                                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                                         <div class="mb-2">
                                                             <select name="event_name" class="form-select form-select-sm"
-                                                                    onchange="proamTogglePartner(this, '{{ member.id }}')" required>
+                                                                    data-toggle-partner="{{ member.id }}" required>
                                                                 <option value="">-- select event --</option>
                                                                 {% for ev in college_events %}
                                                                 {%- if ev.name not in already_entered_keys and (ev.id | string) not in already_entered_keys %}
@@ -673,6 +673,10 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
     });
+});
+document.addEventListener('change', function (e) {
+    var t = e.target.closest('[data-toggle-partner]');
+    if (t) { proamTogglePartner(t, t.dataset.togglePartner); }
 });
 </script>
 {% endblock %}

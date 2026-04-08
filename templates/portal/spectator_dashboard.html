@@ -6,7 +6,7 @@
         <h3 class="mb-0">{{ tournament.name }} {{ tournament.year }} - Spectator Portal</h3>
         <div class="d-flex gap-2">
             <button class="btn btn-sm btn-outline-secondary"
-                    onclick="ProAmOnboarding.reopen('spectator', _spectatorSteps)"
+                    data-action="onboarding-reopen-spectator"
                     title="How to use this page">
                 <i class="bi bi-question-circle"></i>
             </button>
@@ -80,6 +80,10 @@ var _spectatorSteps = [
     }
 ];
 ProAmOnboarding.show('spectator', _spectatorSteps);
+document.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-action="onboarding-reopen-spectator"]');
+    if (t) { e.preventDefault(); ProAmOnboarding.reopen('spectator', _spectatorSteps); }
+});
 </script>
 {% endblock %}
 {% endblock %}

@@ -29,7 +29,7 @@
                     <div class="d-flex gap-2">
                         <form action="{{ url_for('registration.auto_assign_pro_partners_route', tournament_id=tournament.id) }}"
                               method="POST" style="display:inline;"
-                              onsubmit="return confirm('Auto-assign partners for all partnered pro events?');">
+                              data-confirm="Auto-assign partners for all partnered pro events?">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-outline-primary">
                                 <i class="bi bi-person-check"></i> Auto-Assign Partners

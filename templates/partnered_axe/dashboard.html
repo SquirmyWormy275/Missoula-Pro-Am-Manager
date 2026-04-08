@@ -129,7 +129,7 @@
                     </a>
                     <hr>
                     <form action="{{ url_for('partnered_axe.reset', tournament_id=tournament.id) }}" method="POST"
-                          onsubmit="return confirm('This will delete all pairs and results. Are you sure?')">
+                          data-confirm="This will delete all pairs and results. Are you sure?">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline-danger w-100">
                             <i class="bi bi-arrow-counterclockwise"></i> Reset Event

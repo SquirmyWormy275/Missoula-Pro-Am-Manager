@@ -17,8 +17,6 @@ Formulas (per head judge specification):
   - Chopping blocks: 1 block per enrolled competitor
   - Relay blocks: count_override (set manually — lottery-determined team count)
 """
-import hashlib
-import hmac
 import math
 from collections import defaultdict
 
@@ -288,14 +286,40 @@ def _fmt_size(cfg):
 
 def generate_share_token(tournament_id, secret_key):
     """
-    Generate a deterministic, unforgeable share token for the printable report.
-    Token = first 32 hex chars (128 bits) of HMAC-SHA256(secret_key, tournament_id).
+    Generate a 7-day-valid share token for the printable wood report.
+
+    Uses itsdangerous.URLSafeTimedSerializer so the token carries an embedded
+    timestamp the server can verify on read. Tokens older than 7 days are
+    rejected by verify_share_token().
     """
     if not secret_key:
         raise ValueError('SECRET_KEY is required for share token generation')
-    key = secret_key.encode('utf-8')
-    msg = f'woodboss-share-{tournament_id}'.encode('utf-8')
-    return hmac.new(key, msg, hashlib.sha256).hexdigest()[:32]
+    from itsdangerous import URLSafeTimedSerializer
+    serializer = URLSafeTimedSerializer(secret_key, salt='woodboss-share')
+    return serializer.dumps({'tid': int(tournament_id)})
+
+
+def verify_share_token(token, tournament_id, secret_key, max_age_seconds=7 * 24 * 60 * 60):
+    """
+    Verify a share token issued by generate_share_token().
+
+    Returns True only if (1) the signature is valid, (2) the embedded
+    tournament_id matches the requested one, and (3) the token is younger than
+    max_age_seconds (default 7 days).
+    """
+    if not token or not secret_key:
+        return False
+    from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+    serializer = URLSafeTimedSerializer(secret_key, salt='woodboss-share')
+    try:
+        payload = serializer.loads(token, max_age=max_age_seconds)
+    except SignatureExpired:
+        return False
+    except BadSignature:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return payload.get('tid') == int(tournament_id)
 
 
 # ---------------------------------------------------------------------------

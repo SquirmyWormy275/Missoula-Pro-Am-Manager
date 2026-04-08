@@ -2,12 +2,15 @@
 Flask application entry point for the Missoula Pro Am Tournament Manager.
 """
 import os
+import re
+import secrets as _secrets
 import time
 
 from flask import (
     Flask,
     Response,
     abort,
+    g,
     jsonify,
     render_template,
     request,
@@ -27,6 +30,38 @@ from services.logging_setup import (
     configure_logging,
     request_id_middleware,
 )
+
+# SECURITY FIX (CSO #7): pre-compiled regexes for after_request CSP nonce injection.
+# Each inline <script> and <style> tag in the response body gets the per-request
+# nonce stamped onto it so a strict CSP without 'unsafe-inline' still allows them.
+_SCRIPT_OPEN_RE = re.compile(r'<script\b([^>]*)>', re.IGNORECASE)
+_STYLE_OPEN_RE = re.compile(r'<style\b([^>]*)>', re.IGNORECASE)
+
+
+def _inject_csp_nonce(body: str, nonce: str) -> str:
+    """Stamp nonce="<nonce>" onto every inline <script> and <style> open tag.
+
+    Skips tags that already carry a nonce= attribute. External scripts (with
+    src=) get a nonce too — harmless and keeps things uniform.
+    """
+    if not nonce or not body:
+        return body
+
+    def _script(match):
+        attrs = match.group(1) or ''
+        if 'nonce=' in attrs.lower():
+            return match.group(0)
+        return f'<script nonce="{nonce}"{attrs}>'
+
+    def _style(match):
+        attrs = match.group(1) or ''
+        if 'nonce=' in attrs.lower():
+            return match.group(0)
+        return f'<style nonce="{nonce}"{attrs}>'
+
+    body = _SCRIPT_OPEN_RE.sub(_script, body)
+    body = _STYLE_OPEN_RE.sub(_style, body)
+    return body
 
 HAS_FLASK_LOGIN = True
 try:
@@ -272,6 +307,12 @@ def create_app():
         return None
 
     @app.before_request
+    def _generate_csp_nonce():
+        """Generate a per-request CSP nonce. Used by both the CSP header and
+        the after_request inline-tag injector."""
+        g.csp_nonce = _secrets.token_urlsafe(16)
+
+    @app.before_request
     def enforce_language_access():
         """Force English if a restricted language is active outside Judge/Admin context."""
         endpoint = request.endpoint or ''
@@ -280,10 +321,18 @@ def create_app():
         return None
 
     @app.after_request
-    def apply_language_translation(response: Response):
-        """Apply full-page translation for HTML responses."""
-        if text.get_language() != 'arp':
-            return response
+    def apply_html_post_processing(response: Response):
+        """Final HTML body transforms: language translation + CSP nonce injection.
+
+        Both transforms need to mutate the response body, so they share a single
+        round-trip through response.get_data() / set_data() to keep cost down.
+
+        SECURITY FIX (CSO #7): the CSP nonce injector stamps every inline
+        <script> and <style> open tag with the per-request nonce so a strict
+        CSP without 'unsafe-inline' still permits them. Inline event handlers
+        (onclick=, onsubmit=, ...) are NOT covered by nonce — they were
+        converted to data-attribute delegation in csp_handlers.js.
+        """
         content_type = response.content_type or ''
         if response.direct_passthrough or 'text/html' not in content_type:
             return response
@@ -291,9 +340,25 @@ def create_app():
             return response
 
         body = response.get_data(as_text=True)
-        translated = text.translate_html(body)
-        if translated != body:
-            response.set_data(translated)
+        changed = False
+
+        # 1. Optional Arapaho translation
+        if text.get_language() == 'arp':
+            translated = text.translate_html(body)
+            if translated != body:
+                body = translated
+                changed = True
+
+        # 2. CSP nonce injection (always, when a nonce was generated)
+        nonce = getattr(g, 'csp_nonce', None)
+        if nonce:
+            new_body = _inject_csp_nonce(body, nonce)
+            if new_body != body:
+                body = new_body
+                changed = True
+
+        if changed:
+            response.set_data(body)
         return response
 
     # --- Security headers ---
@@ -306,10 +371,25 @@ def create_app():
             response.headers.setdefault(
                 'Strict-Transport-Security', 'max-age=31536000; includeSubDomains'
             )
+        # SECURITY FIX (CSO #7): nonce-based CSP for script-src.
+        #
+        # 'unsafe-inline' is dropped from script-src — inline <script> blocks
+        # are stamped with the per-request nonce by apply_html_post_processing,
+        # and inline event handlers (onclick=, onsubmit=, ...) were converted
+        # to data-attribute delegation in static/js/csp_handlers.js.
+        #
+        # style-src KEEPS 'unsafe-inline' (no nonce) because CSP3 browsers
+        # ignore 'unsafe-inline' once a nonce is present, which would break
+        # every style="..." attribute in the templates (there are hundreds —
+        # Bootstrap relies on inline styles for display:none toggles, transient
+        # widths, etc.). Style-based XSS is rare and low-impact compared to
+        # script execution; this trade-off is intentional.
+        nonce = getattr(g, 'csp_nonce', '')
+        script_nonce = f"'nonce-{nonce}' " if nonce else ''
         response.headers.setdefault(
             'Content-Security-Policy',
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            f"script-src 'self' {script_nonce}https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
             "img-src 'self' data:; "
