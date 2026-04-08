@@ -484,7 +484,10 @@ class TestCollegeCompetitorCounting:
         db_session.add(team)
         db_session.flush()
 
-        # Create college events
+        # Create college events — capture by (name, gender) so we can pass IDs
+        # to _make_college below.  CollegeCompetitor.events_entered stores event
+        # IDs, not names; _count_competitors() resolves them via the Event table.
+        events_by_key = {}
         for name, gender in [
             ('Underhand Hard Hit', 'M'),
             ('Underhand Hard Hit', 'F'),
@@ -497,10 +500,16 @@ class TestCollegeCompetitorCounting:
                 stand_type='underhand',
             )
             db_session.add(e)
+            events_by_key[(name, gender)] = e
         db_session.flush()
 
-        _make_college(db_session, tournament, team, 'Alice', 'F', ['Underhand Hard Hit', 'Underhand Speed'])
-        _make_college(db_session, tournament, team, 'Bob', 'M', ['Underhand Hard Hit'])
+        alice_events = [
+            str(events_by_key[('Underhand Hard Hit', 'F')].id),
+            str(events_by_key[('Underhand Speed', 'F')].id),
+        ]
+        bob_events = [str(events_by_key[('Underhand Hard Hit', 'M')].id)]
+        _make_college(db_session, tournament, team, 'Alice', 'F', alice_events)
+        _make_college(db_session, tournament, team, 'Bob', 'M', bob_events)
 
         from services.woodboss import _count_competitors
         counts = _count_competitors(tournament.id)

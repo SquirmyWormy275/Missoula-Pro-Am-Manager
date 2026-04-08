@@ -5,7 +5,7 @@ import time
 from urllib.parse import urlsplit
 
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
-from sqlalchemy import text
+from sqlalchemy import text as sql_text
 
 import strings as text
 from config import TournamentStatus
@@ -34,7 +34,7 @@ def health():
     migration_head = None
     migration_current_rev = None
     try:
-        db.session.execute(text('SELECT 1'))
+        db.session.execute(sql_text('SELECT 1'))
         db_ok = True
         # Check if DB is at migration HEAD
         try:
@@ -50,7 +50,7 @@ def health():
             head = script.get_current_head()
             migration_head = head
 
-            row = db.session.execute(text('SELECT version_num FROM alembic_version LIMIT 1')).fetchone()
+            row = db.session.execute(sql_text('SELECT version_num FROM alembic_version LIMIT 1')).fetchone()
             if row:
                 migration_current_rev = row[0]
                 migration_current = (row[0] == head)
