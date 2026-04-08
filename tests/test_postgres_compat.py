@@ -390,3 +390,100 @@ class TestConfigValidation:
         monkeypatch.delenv('STRATHMARK_SUPABASE_KEY', raising=False)
         # Should not raise
         validate_runtime({'ENV_NAME': 'development', 'SECRET_KEY': 'dev'})
+
+
+# ---------------------------------------------------------------------------
+# Production detection (CSO follow-up: HSTS / SESSION_COOKIE_SECURE / validate_runtime
+# were silently disabled on Railway because FLASK_ENV wasn't set. The detection
+# now also auto-fires on RAILWAY_ENVIRONMENT and on a postgresql:// DATABASE_URL.)
+# ---------------------------------------------------------------------------
+
+class TestProductionDetection:
+    """_is_production_environment auto-detects Railway / postgres."""
+
+    def _clear_env(self, monkeypatch):
+        for var in ('FLASK_ENV', 'PRODUCTION', 'RAILWAY_ENVIRONMENT', 'TESTING', 'DATABASE_URL'):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_explicit_testing_is_not_production(self, monkeypatch):
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('FLASK_ENV', 'testing')
+        monkeypatch.setenv('DATABASE_URL', 'postgresql://x:y@z/db')
+        assert _is_production_environment() is False
+
+    def test_testing_env_var_is_not_production(self, monkeypatch):
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('TESTING', '1')
+        monkeypatch.setenv('DATABASE_URL', 'postgresql://x:y@z/db')
+        assert _is_production_environment() is False
+
+    def test_explicit_development_is_not_production(self, monkeypatch):
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('FLASK_ENV', 'development')
+        monkeypatch.setenv('DATABASE_URL', 'postgresql://x:y@z/db')
+        assert _is_production_environment() is False
+
+    def test_explicit_flask_env_production(self, monkeypatch):
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('FLASK_ENV', 'production')
+        assert _is_production_environment() is True
+
+    def test_explicit_production_env_var(self, monkeypatch):
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('PRODUCTION', '1')
+        assert _is_production_environment() is True
+
+    def test_railway_environment_var_implies_production(self, monkeypatch):
+        """Auto-detect Railway via RAILWAY_ENVIRONMENT — Railway sets this on every deploy."""
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('RAILWAY_ENVIRONMENT', 'production')
+        assert _is_production_environment() is True
+
+    def test_postgres_database_url_implies_production(self, monkeypatch):
+        """Auto-detect production via postgresql:// — validate_runtime requires it anyway."""
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('DATABASE_URL', 'postgresql://prod:secret@host/db')
+        assert _is_production_environment() is True
+
+    def test_postgres_legacy_url_scheme_implies_production(self, monkeypatch):
+        """The legacy postgres:// scheme normalizes to postgresql:// and is also detected."""
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('DATABASE_URL', 'postgres://prod:secret@host/db')
+        assert _is_production_environment() is True
+
+    def test_local_sqlite_is_not_production(self, monkeypatch):
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('DATABASE_URL', 'sqlite:////tmp/dev.db')
+        assert _is_production_environment() is False
+
+    def test_no_env_at_all_is_not_production(self, monkeypatch):
+        """Default fallback: nothing set → development (bare local invocation)."""
+        from config import _is_production_environment
+        self._clear_env(monkeypatch)
+        assert _is_production_environment() is False
+
+    def test_get_config_returns_production_when_railway_detected(self, monkeypatch):
+        from config import get_config
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('RAILWAY_ENVIRONMENT', 'production')
+        monkeypatch.setenv('DATABASE_URL', 'postgresql://prod:secret@host/db')
+        cfg = get_config()
+        assert cfg.ENV_NAME == 'production'
+
+    def test_get_config_returns_development_in_ci_with_postgres(self, monkeypatch):
+        """Mirrors the CI postgres-smoke job: postgres URI but FLASK_ENV=testing."""
+        from config import get_config
+        self._clear_env(monkeypatch)
+        monkeypatch.setenv('FLASK_ENV', 'testing')
+        monkeypatch.setenv('DATABASE_URL', 'postgresql://x:y@z/db')
+        cfg = get_config()
+        assert cfg.ENV_NAME == 'development'
