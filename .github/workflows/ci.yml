@@ -127,14 +127,17 @@ jobs:
       - name: Install requirements + pip-audit
         run: |
           python -m pip install --upgrade pip
-          # Install the project's full dep tree first so pip-audit can audit
-          # the resolved environment. We can't use `pip-audit -r requirements.txt`
-          # because requirements.txt pins strathmark via a git URL that pip-audit
-          # cannot look up against PyPI's vulnerability database.
           pip install -r requirements.txt
           pip install pip-audit
 
-      - name: Run pip-audit on the installed environment
-        # --strict makes the job fail on any vulnerability.
-        # --ignore-vuln entries can be added here for accepted-risk findings.
-        run: pip-audit --strict
+      - name: Run pip-audit on installed deps (excluding strathmark)
+        # We can't use `pip-audit -r requirements.txt` because requirements.txt
+        # pins strathmark via a git URL that pip-audit cannot look up against
+        # PyPI's vulnerability database (it errors out in --strict mode).
+        # Workaround: take `pip freeze` of the resolved environment, drop the
+        # strathmark line (which is published privately), and audit the rest.
+        # Strathmark itself is pinned to a specific commit SHA in
+        # requirements.txt — that's the supply-chain control for it.
+        run: |
+          pip freeze | grep -v -i '^strathmark' > /tmp/installed-without-strathmark.txt
+          pip-audit -r /tmp/installed-without-strathmark.txt --strict
