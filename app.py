@@ -21,6 +21,16 @@ from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import event as sa_event
 from sqlalchemy.engine import Engine
 
+import config
+import strings as text
+from database import db, init_db
+from services.background_jobs import configure as configure_jobs
+from services.logging_setup import (
+    configure_error_monitoring,
+    configure_logging,
+    request_id_middleware,
+)
+
 # SECURITY FIX (CSO #7): pre-compiled regexes for after_request CSP nonce injection.
 # Each inline <script> and <style> tag in the response body gets the per-request
 # nonce stamped onto it so a strict CSP without 'unsafe-inline' still allows them.
@@ -52,16 +62,6 @@ def _inject_csp_nonce(body: str, nonce: str) -> str:
     body = _SCRIPT_OPEN_RE.sub(_script, body)
     body = _STYLE_OPEN_RE.sub(_style, body)
     return body
-
-import config
-import strings as text
-from database import db, init_db
-from services.background_jobs import configure as configure_jobs
-from services.logging_setup import (
-    configure_error_monitoring,
-    configure_logging,
-    request_id_middleware,
-)
 
 HAS_FLASK_LOGIN = True
 try:
