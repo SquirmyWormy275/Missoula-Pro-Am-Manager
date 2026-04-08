@@ -80,12 +80,43 @@ class ProductionConfig(BaseConfig):
     ENV_NAME = 'production'
 
 
-def get_config():
+def _is_production_environment() -> bool:
+    """Detect whether we're running in a production environment.
+
+    Order of precedence:
+      1. Explicit FLASK_ENV=testing or TESTING=1 → NOT production (tests).
+      2. Explicit FLASK_ENV=development → NOT production (local dev).
+      3. Explicit FLASK_ENV=production or PRODUCTION=1 → production.
+      4. Auto-detect: Railway sets RAILWAY_ENVIRONMENT for every deployment.
+         If that variable is set, we are on Railway → production.
+      5. Auto-detect: a postgresql:// DATABASE_URL is the canonical signal
+         that we are NOT on a developer laptop. validate_runtime() already
+         requires postgres in production, so this is a safe equivalence.
+      6. Default → development.
+
+    The auto-detect tiers exist because the original implementation only
+    looked at FLASK_ENV / PRODUCTION, and Railway does not set either by
+    default. The result was a silent demotion of every production deploy
+    to DevelopmentConfig — losing HSTS, SESSION_COOKIE_SECURE, and the
+    entire validate_runtime() guard rail (which itself is gated on
+    ENV_NAME == 'production'). See CSO follow-up.
+    """
     env = os.environ.get('FLASK_ENV', '').strip().lower()
+    if env == 'testing' or os.environ.get('TESTING', '').strip():
+        return False
+    if env == 'development':
+        return False
     if env == 'production' or os.environ.get('PRODUCTION', '').strip() == '1':
-        cfg = ProductionConfig
-    else:
-        cfg = DevelopmentConfig
+        return True
+    if os.environ.get('RAILWAY_ENVIRONMENT', '').strip():
+        return True
+    if _normalized_database_url().startswith('postgresql://'):
+        return True
+    return False
+
+
+def get_config():
+    cfg = ProductionConfig if _is_production_environment() else DevelopmentConfig
     # Always re-resolve DATABASE_URL at app creation time.
     # BaseConfig.SQLALCHEMY_DATABASE_URI is cached at class-definition time,
     # which can become stale if DATABASE_URL env var changed (e.g. in tests).
