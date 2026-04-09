@@ -46,10 +46,11 @@
                     <small>Top Individual Men</small>
                 </div>
                 <div class="card-body p-0">
-                    {% if bull %}
+                    {% if bull_tiebreak %}
                     <table class="table table-hover mb-0">
                         <tbody>
-                            {% for c in bull %}
+                            {% for row in bull_tiebreak %}
+                            {% set c = row.competitor %}
                             <tr>
                                 <td class="text-center" style="width: 50px;">
                                     {% if loop.index == 1 %}
@@ -64,8 +65,21 @@
                                 </td>
                                 <td>
                                     <strong>{{ c.name }}</strong>
+                                    {% if row.tied_with_next %}
+                                        <span class="badge bg-warning text-dark ms-1"
+                                              title="Tied with the next competitor on points and placement counts — manual resolution required (coin flip per AWFC).">
+                                            TIE
+                                        </span>
+                                    {% endif %}
                                     <br>
-                                    <small class="text-muted">{{ c.team.team_code if c.team else 'N/A' }}</small>
+                                    <small class="text-muted">
+                                        {{ c.team.team_code if c.team else 'N/A' }}
+                                        {# Phase 5 V2.8.0 — placement breakdown for transparency on tiebreaks #}
+                                        {% set p = row.placements %}
+                                        {% if p[1] or p[2] or p[3] %}
+                                          · <span title="placement counts">{{ p[1] }}×1st {{ p[2] }}×2nd {{ p[3] }}×3rd</span>
+                                        {% endif %}
+                                    </small>
                                 </td>
                                 <td class="text-end">
                                     <span class="fs-5 fw-bold text-primary">{{ c.individual_points }}</span>
@@ -96,10 +110,11 @@
                     <small>Top Individual Women</small>
                 </div>
                 <div class="card-body p-0">
-                    {% if belle %}
+                    {% if belle_tiebreak %}
                     <table class="table table-hover mb-0">
                         <tbody>
-                            {% for c in belle %}
+                            {% for row in belle_tiebreak %}
+                            {% set c = row.competitor %}
                             <tr>
                                 <td class="text-center" style="width: 50px;">
                                     {% if loop.index == 1 %}
@@ -114,8 +129,20 @@
                                 </td>
                                 <td>
                                     <strong>{{ c.name }}</strong>
+                                    {% if row.tied_with_next %}
+                                        <span class="badge bg-warning text-dark ms-1"
+                                              title="Tied with the next competitor on points and placement counts — manual resolution required (coin flip per AWFC).">
+                                            TIE
+                                        </span>
+                                    {% endif %}
                                     <br>
-                                    <small class="text-muted">{{ c.team.team_code if c.team else 'N/A' }}</small>
+                                    <small class="text-muted">
+                                        {{ c.team.team_code if c.team else 'N/A' }}
+                                        {% set p = row.placements %}
+                                        {% if p[1] or p[2] or p[3] %}
+                                          · <span title="placement counts">{{ p[1] }}×1st {{ p[2] }}×2nd {{ p[3] }}×3rd</span>
+                                        {% endif %}
+                                    </small>
                                 </td>
                                 <td class="text-end">
                                     <span class="fs-5 fw-bold text-info">{{ c.individual_points }}</span>

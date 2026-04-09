@@ -53,7 +53,14 @@ def _cached_payload(key: str, builder):
 
 @reporting_bp.route('/<int:tournament_id>/college/standings')
 def college_standings(tournament_id):
-    """View college standings (Bull/Belle of Woods and Team Standings)."""
+    """View college standings (Bull/Belle of Woods and Team Standings).
+
+    Phase 5 (V2.8.0): Bull/Belle now use the multi-key tiebreak query and
+    surface placement counts + tied_with_next flags so the template can
+    render a "TIE — manual resolution required" indicator when the chain
+    fails to break the tie.  The plain ``bull`` / ``belle`` lists stay in
+    the payload for backwards compat with any caller that expects them.
+    """
     tournament = Tournament.query.get_or_404(tournament_id)
 
     payload = _cached_payload(
@@ -61,6 +68,8 @@ def college_standings(tournament_id):
         lambda: {
             'bull': tournament.get_bull_of_woods(10),
             'belle': tournament.get_belle_of_woods(10),
+            'bull_tiebreak': tournament.get_bull_belle_with_tiebreak_data('M', 10),
+            'belle_tiebreak': tournament.get_bull_belle_with_tiebreak_data('F', 10),
             'team_standings': tournament.get_team_standings(),
         }
     )
@@ -69,6 +78,8 @@ def college_standings(tournament_id):
                            tournament=tournament,
                            bull=payload['bull'],
                            belle=payload['belle'],
+                           bull_tiebreak=payload['bull_tiebreak'],
+                           belle_tiebreak=payload['belle_tiebreak'],
                            team_standings=payload['team_standings'])
 
 
