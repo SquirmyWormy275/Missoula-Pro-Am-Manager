@@ -114,6 +114,42 @@ def _existing_results(event: Event, competitor_ids: list[int]) -> dict:
 # Core heat result saver
 # ---------------------------------------------------------------------------
 
+def _parse_dual_timer(comp_id: int, run_suffix: str, invalid: list) -> tuple:
+    """Parse t1_{run_suffix}_{cid} and t2_{run_suffix}_{cid} form fields.
+
+    run_suffix is 'run1' or 'run2'.
+
+    Returns (t1, t2, average) — all None when both fields are absent or empty.
+    Returns (t1, None, None) or (None, t2, None) when only one field is present
+    (the caller treats this as a 'partial' entry that should not finalize).
+    Records (comp_id, raw) into invalid for any non-numeric input.
+
+    Phase 2 of the V2.8.0 scoring fix.  Every timed event in this codebase
+    (college and pro, single-run AND dual-run) takes two judge stopwatch
+    readings per physical run.  The average becomes the run's "scored time"
+    that flows into the existing run1_value / run2_value / result_value
+    fields, preserving all downstream scoring code paths.
+    """
+    raw_t1 = request.form.get(f't1_{run_suffix}_{comp_id}')
+    raw_t2 = request.form.get(f't2_{run_suffix}_{comp_id}')
+
+    def _try_parse(raw):
+        if raw is None or raw == '':
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            invalid.append((comp_id, raw))
+            return None
+
+    t1 = _try_parse(raw_t1)
+    t2 = _try_parse(raw_t2)
+
+    if t1 is not None and t2 is not None:
+        return (t1, t2, (t1 + t2) / 2.0)
+    return (t1, t2, None)
+
+
 def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) -> dict:
     """Parse posted form data, validate, and write EventResult rows."""
     competitor_ids = [int(cid) for cid in heat.get_competitors()]
@@ -133,43 +169,108 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
     comp_lookup = _competitor_lookup(event, competitor_ids)
     changes = 0
     invalid = []
+    # True for events that use the dual-judge timer entry path.  Hard-Hit
+    # primary score (hits) stays single-input per PLAN_REVIEW.md A1
+    # scope-reduction; triple-run axe throw is also single-input per throw.
+    is_dual_timer_event = (
+        event.scoring_type in ('time', 'distance')
+        and not event.requires_triple_runs
+    )
 
     try:
         for comp_id in competitor_ids:
             status = request.form.get(f'status_{comp_id}', 'completed')
 
             # -- parse primary result --
-            raw = request.form.get(f'result_{comp_id}')
-            if not raw:
-                continue
-            try:
-                parsed = float(raw)
-            except (TypeError, ValueError):
-                invalid.append((comp_id, raw))
-                continue
+            # Path A: dual-judge timer entry (Phase 2 of V2.8.0).
+            # Used for any timed/distance event whose primary metric comes
+            # from two judge stopwatches that get averaged.  Covers BOTH
+            # single-run events (Pro Underhand, College Single Buck, etc.)
+            # AND dual-run events (Speed Climb, Chokerman, Caber Toss).
+            #
+            # Path B (else branch below): legacy single-input path.
+            # Hard-Hit primary score, axe throw triple-run, and any future
+            # non-timed event still use one input field.
+            if is_dual_timer_event:
+                # Determine which run pair to read based on heat run_number.
+                run_suffix = 'run2' if (event.requires_dual_runs and heat.run_number == 2) else 'run1'
+                t1, t2, average = _parse_dual_timer(comp_id, run_suffix, invalid)
 
-            # -- get or create result row --
-            result = result_by_comp.get(comp_id)
-            if not result:
-                comp = comp_lookup.get(comp_id)
-                result = EventResult(
-                    event_id=event.id,
-                    competitor_id=comp_id,
-                    competitor_type=event.event_type,
-                    competitor_name=comp.name if comp else f'Unknown ({comp_id})',
-                )
-                db.session.add(result)
-                result_by_comp[comp_id] = result
+                # Skip rows with no input at all (judge hasn't entered this competitor yet).
+                if t1 is None and t2 is None:
+                    continue
 
-            # -- store run values --
-            if event.requires_dual_runs:
-                if heat.run_number == 1:
-                    result.run1_value = parsed
+                # -- get or create result row --
+                result = result_by_comp.get(comp_id)
+                if not result:
+                    comp = comp_lookup.get(comp_id)
+                    result = EventResult(
+                        event_id=event.id,
+                        competitor_id=comp_id,
+                        competitor_type=event.event_type,
+                        competitor_name=comp.name if comp else f'Unknown ({comp_id})',
+                    )
+                    db.session.add(result)
+                    result_by_comp[comp_id] = result
+
+                # Store raw timer readings on the new Phase 1 columns.
+                if run_suffix == 'run1':
+                    result.t1_run1 = t1
+                    result.t2_run1 = t2
                 else:
-                    result.run2_value = parsed
-                result.calculate_best_run(event.scoring_order)
+                    result.t1_run2 = t1
+                    result.t2_run2 = t2
+
+                # Compute the run's "scored value" (average) and write it
+                # into the existing run1_value / run2_value / result_value
+                # fields so all downstream scoring code paths see the same
+                # plumbing they always have.  When only one timer is present,
+                # we leave the run value untouched and force status='partial'
+                # so finalization is blocked until the second timer arrives.
+                if average is not None:
+                    if event.requires_dual_runs:
+                        if heat.run_number == 1:
+                            result.run1_value = average
+                        else:
+                            result.run2_value = average
+                        result.calculate_best_run(event.scoring_order)
+                    else:
+                        result.result_value = average
+                        # For single-run events, also populate run1_value so
+                        # tiebreak_metric() and any other reader that looks
+                        # at run1_value sees a consistent value.
+                        result.run1_value = average
+                else:
+                    # Partial entry — only one timer was filled in.  Mark the
+                    # row partial so calculate_positions() (which filters on
+                    # status == 'completed') excludes it from ranking.
+                    if status == 'completed':
+                        status = 'partial'
 
             elif event.requires_triple_runs:
+                # Triple-run events (axe throw) — single input per throw.
+                raw = request.form.get(f'result_{comp_id}')
+                if not raw:
+                    continue
+                try:
+                    parsed = float(raw)
+                except (TypeError, ValueError):
+                    invalid.append((comp_id, raw))
+                    continue
+
+                # -- get or create result row --
+                result = result_by_comp.get(comp_id)
+                if not result:
+                    comp = comp_lookup.get(comp_id)
+                    result = EventResult(
+                        event_id=event.id,
+                        competitor_id=comp_id,
+                        competitor_type=event.event_type,
+                        competitor_name=comp.name if comp else f'Unknown ({comp_id})',
+                    )
+                    db.session.add(result)
+                    result_by_comp[comp_id] = result
+
                 run_slot = request.form.get(f'run_slot_{comp_id}', '1')
                 if run_slot == '2':
                     result.run2_value = parsed
@@ -192,6 +293,30 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
                 result.calculate_cumulative_score()
 
             else:
+                # Path B: legacy single-input.  Hard-Hit primary score (hits)
+                # is the only event type left here after Phase 2.
+                raw = request.form.get(f'result_{comp_id}')
+                if not raw:
+                    continue
+                try:
+                    parsed = float(raw)
+                except (TypeError, ValueError):
+                    invalid.append((comp_id, raw))
+                    continue
+
+                # -- get or create result row --
+                result = result_by_comp.get(comp_id)
+                if not result:
+                    comp = comp_lookup.get(comp_id)
+                    result = EventResult(
+                        event_id=event.id,
+                        competitor_id=comp_id,
+                        competitor_type=event.event_type,
+                        competitor_name=comp.name if comp else f'Unknown ({comp_id})',
+                    )
+                    db.session.add(result)
+                    result_by_comp[comp_id] = result
+
                 result.result_value = parsed
 
             # -- tiebreak value (Hard-Hit events) --
@@ -495,6 +620,13 @@ def enter_heat_results(tournament_id, heat_id):
                 'existing_run2': result.run2_value if result else None,
                 'existing_run3': result.run3_value if result else None,
                 'existing_tiebreak': result.tiebreak_value if result else None,
+                # Phase 2 (V2.8.0): raw judge stopwatch readings.  Float-cast
+                # because the model column is Numeric and Jinja's "%.2f"|format
+                # filter rejects Decimal in some Python/Jinja versions.
+                'existing_t1_run1': float(result.t1_run1) if result and result.t1_run1 is not None else None,
+                'existing_t2_run1': float(result.t2_run1) if result and result.t2_run1 is not None else None,
+                'existing_t1_run2': float(result.t1_run2) if result and result.t1_run2 is not None else None,
+                'existing_t2_run2': float(result.t2_run2) if result and result.t2_run2 is not None else None,
                 'existing_status': result.status if result else 'completed',
                 'run1_context': run1_results.get(comp_id),  # for run-2 display
             })

@@ -256,10 +256,18 @@
                     <th class="text-muted small">Total</th>
                   {% elif event.requires_dual_runs %}
                     {% if heat.run_number == 2 %}<th class="text-muted small">Run 1</th>{% endif %}
-                    <th>Run {{ heat.run_number }}</th>
+                    {# Phase 2 (V2.8.0): two judge stopwatch readings + average for run {{ heat.run_number }} #}
+                    <th>Run {{ heat.run_number }} T1</th>
+                    <th>Run {{ heat.run_number }} T2</th>
+                    <th>Run {{ heat.run_number }} avg</th>
                   {% elif event.is_hard_hit %}
                     <th>Hits</th>
                     <th>Time (s) <small class="text-muted">tiebreak</small></th>
+                  {% elif event.scoring_type in ('time', 'distance') %}
+                    {# Phase 2 (V2.8.0): two judge stopwatch readings + average #}
+                    <th>T1</th>
+                    <th>T2</th>
+                    <th>Average</th>
                   {% else %}
                     <th>Result</th>
                   {% endif %}
@@ -339,19 +347,46 @@
                       {% endif %}
                     </td>
                     {% endif %}
-                    {# current run input #}
+                    {# Phase 2 (V2.8.0): two judge stopwatch readings, averaged.
+                       run_suffix tracks which run pair we render (run1 for the
+                       first run heat, run2 for the second run heat). #}
+                    {% set run_suffix = 'run2' if heat.run_number == 2 else 'run1' %}
+                    {% set existing_t1 = comp.existing_t1_run2 if heat.run_number == 2 else comp.existing_t1_run1 %}
+                    {% set existing_t2 = comp.existing_t2_run2 if heat.run_number == 2 else comp.existing_t2_run1 %}
+                    {# T1 input #}
                     <td>
-                      <div class="input-group">
-                        <input type="number" class="form-control result-input"
-                               name="result_{{ comp.id }}"
-                               step="0.01" min="0" inputmode="decimal"
-                               placeholder="{% if event.scoring_type == 'time' %}sec{% elif event.scoring_type == 'distance' %}ft{% else %}score{% endif %}"
-                               value="{{ '%.2f'|format(comp.existing_run2 if heat.run_number == 2 else comp.existing_run1) if (comp.existing_run2 if heat.run_number == 2 else comp.existing_run1) is not none else '' }}"
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text">T1</span>
+                        <input type="number" class="form-control result-input dual-timer-t1"
+                               name="t1_{{ run_suffix }}_{{ comp.id }}"
+                               step="0.01" min="0" max="999.99" inputmode="decimal"
+                               placeholder="{% if event.scoring_type == 'time' %}sec{% elif event.scoring_type == 'distance' %}ft{% endif %}"
+                               value="{{ '%.2f'|format(existing_t1) if existing_t1 is not none else '' }}"
                                data-comp="{{ comp.id }}">
-                        <span class="input-group-text">
-                          {% if event.scoring_type == 'time' %}s{% elif event.scoring_type == 'distance' %}ft{% else %}pts{% endif %}
-                        </span>
                       </div>
+                    </td>
+                    {# T2 input #}
+                    <td>
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text">T2</span>
+                        <input type="number" class="form-control result-input dual-timer-t2"
+                               name="t2_{{ run_suffix }}_{{ comp.id }}"
+                               step="0.01" min="0" max="999.99" inputmode="decimal"
+                               placeholder="{% if event.scoring_type == 'time' %}sec{% elif event.scoring_type == 'distance' %}ft{% endif %}"
+                               value="{{ '%.2f'|format(existing_t2) if existing_t2 is not none else '' }}"
+                               data-comp="{{ comp.id }}">
+                      </div>
+                    </td>
+                    {# Live average display #}
+                    <td>
+                      <span class="badge bg-primary dual-timer-avg" id="avg_{{ comp.id }}"
+                            data-unit="{% if event.scoring_type == 'time' %}s{% elif event.scoring_type == 'distance' %}ft{% else %}pts{% endif %}">
+                        {% if existing_t1 is not none and existing_t2 is not none %}
+                          {{ '%.2f'|format(((existing_t1) + (existing_t2)) / 2) }}{% if event.scoring_type == 'time' %}s{% elif event.scoring_type == 'distance' %}ft{% endif %}
+                        {% else %}
+                          —
+                        {% endif %}
+                      </span>
                     </td>
 
                   {% elif event.is_hard_hit %}
@@ -376,21 +411,61 @@
                       </div>
                     </td>
 
+                  {% elif event.scoring_type in ('time', 'distance') %}
+                    {# Phase 2 (V2.8.0): single-run timed/distance event with
+                       dual-judge timer entry.  Used for the vast majority of
+                       events: Pro Underhand, College Single Buck, every saw
+                       event, every chopping event, etc.  Two judge stopwatch
+                       readings → averaged into result_value at save time. #}
+                    <td>
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text">T1</span>
+                        <input type="number" class="form-control result-input dual-timer-t1"
+                               name="t1_run1_{{ comp.id }}"
+                               step="0.01" min="0" max="999.99" inputmode="decimal"
+                               placeholder="{% if event.scoring_type == 'time' %}sec{% else %}ft{% endif %}"
+                               value="{{ '%.2f'|format(comp.existing_t1_run1) if comp.existing_t1_run1 is not none else '' }}"
+                               data-comp="{{ comp.id }}">
+                      </div>
+                    </td>
+                    <td>
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text">T2</span>
+                        <input type="number" class="form-control result-input dual-timer-t2"
+                               name="t2_run1_{{ comp.id }}"
+                               step="0.01" min="0" max="999.99" inputmode="decimal"
+                               placeholder="{% if event.scoring_type == 'time' %}sec{% else %}ft{% endif %}"
+                               value="{{ '%.2f'|format(comp.existing_t2_run1) if comp.existing_t2_run1 is not none else '' }}"
+                               data-comp="{{ comp.id }}">
+                      </div>
+                    </td>
+                    <td>
+                      <span class="badge bg-primary dual-timer-avg" id="avg_{{ comp.id }}"
+                            data-unit="{% if event.scoring_type == 'time' %}s{% else %}ft{% endif %}">
+                        {% if comp.existing_t1_run1 is not none and comp.existing_t2_run1 is not none %}
+                          {{ '%.2f'|format((comp.existing_t1_run1 + comp.existing_t2_run1) / 2) }}{% if event.scoring_type == 'time' %}s{% else %}ft{% endif %}
+                        {% else %}
+                          —
+                        {% endif %}
+                      </span>
+                    </td>
+
                   {% else %}
-                    {# standard single result #}
+                    {# Legacy single-input path.  After Phase 2 the only
+                       events that land here are non-timed, non-distance,
+                       non-hits, non-bracket scoring types — currently none
+                       in PRO_EVENTS / COLLEGE_*_EVENTS, but the branch is
+                       kept for forward compatibility with future event
+                       types that don't fit dual-timer or hard-hit. #}
                     <td>
                       <div class="input-group">
                         <input type="number" class="form-control result-input"
                                name="result_{{ comp.id }}"
-                               step="{% if event.scoring_type == 'hits' %}1{% else %}0.01{% endif %}"
-                               min="0"
-                               inputmode="{% if event.scoring_type == 'hits' %}numeric{% else %}decimal{% endif %}"
-                               placeholder="{% if event.scoring_type == 'time' %}seconds{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}feet{% else %}score{% endif %}"
+                               step="0.01" min="0" inputmode="decimal"
+                               placeholder="score"
                                value="{{ comp.existing_result if comp.existing_result is not none else '' }}"
                                data-comp="{{ comp.id }}">
-                        <span class="input-group-text">
-                          {% if event.scoring_type == 'time' %}s{% elif event.scoring_type == 'hits' %}hits{% elif event.scoring_type == 'distance' %}ft{% else %}pts{% endif %}
-                        </span>
+                        <span class="input-group-text">pts</span>
                       </div>
                     </td>
                   {% endif %}
@@ -647,9 +722,40 @@ document.addEventListener('DOMContentLoaded', function () {
         form.querySelectorAll('select[name^="status_"]').forEach(s => s.value = 'completed');
     });
 
+    /* ── Live dual-timer average display (Phase 2 V2.8.0) ──────────────────
+       For every competitor row that has T1/T2 inputs, recompute the average
+       on every keystroke and write it into the "avg_<cid>" badge.  If only
+       one timer is filled in, show "—" so the judge knows the entry is
+       partial and will not finalize.
+       ──────────────────────────────────────────────────────────────────────*/
+    function dualTimerAverage(cid) {
+        const t1Input = document.querySelector(`input.dual-timer-t1[data-comp="${cid}"]`);
+        const t2Input = document.querySelector(`input.dual-timer-t2[data-comp="${cid}"]`);
+        if (!t1Input || !t2Input) return null;
+        const t1 = parseFloat(t1Input.value);
+        const t2 = parseFloat(t2Input.value);
+        if (isNaN(t1) || isNaN(t2)) return null;
+        return (t1 + t2) / 2;
+    }
+    function updateDualTimerAverages() {
+        document.querySelectorAll('.dual-timer-avg').forEach(badge => {
+            const cid = badge.id.replace('avg_', '');
+            const avg = dualTimerAverage(cid);
+            if (avg === null) {
+                badge.textContent = '—';
+            } else {
+                const unit = badge.dataset.unit || '';
+                badge.textContent = avg.toFixed(2) + unit;
+            }
+        });
+    }
+
     /* ── Inline tie indicator ────────────────────────────────────────────── */
     function updateTies() {
-        // Gather primary values per competitor
+        // Gather primary values per competitor.  For dual-timer events the
+        // primary value is the average of T1 and T2; for triple-run events
+        // it is the sum of all three throws; otherwise it is the single
+        // result_<cid> input value.
         const vals = {};
         document.querySelectorAll('.comp-row').forEach(row => {
             const cid = row.dataset.compId;
@@ -659,6 +765,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 const r2 = parseFloat(document.getElementById('r2_' + cid)?.value) || 0;
                 const r3 = parseFloat(document.getElementById('r3_' + cid)?.value) || 0;
                 v = r1 + r2 + r3;
+            } else if (row.querySelector('.dual-timer-t1')) {
+                v = dualTimerAverage(cid);
             } else {
                 const inp = row.querySelector(`input[name="result_${cid}"]`);
                 v = inp ? parseFloat(inp.value) : null;
@@ -692,8 +800,13 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     form.querySelectorAll('input[type="number"]').forEach(inp => {
-        inp.addEventListener('input', () => { updateTies(); updateTripleTotals(); });
+        inp.addEventListener('input', () => {
+            updateDualTimerAverages();
+            updateTies();
+            updateTripleTotals();
+        });
     });
+    updateDualTimerAverages();
     updateTies();
     updateTripleTotals();
 
