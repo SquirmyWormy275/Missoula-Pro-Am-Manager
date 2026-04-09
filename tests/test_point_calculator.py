@@ -509,8 +509,11 @@ class TestCalculatePositionsCollege:
         # Next is position 3 (position 2 skipped)
         assert r3.final_position == 3
 
-    def test_tied_competitors_both_get_same_points(self, db_session, tournament):
-        """Tied competitors at position N both receive the points for position N."""
+    def test_tied_competitors_both_get_same_split_points(self, db_session, tournament):
+        """Tied competitors at position N split the combined points for the
+        tied positions per the AWFC rule (Phase 3 V2.8.0 — was a bug pre-V2.8.0)."""
+        from decimal import Decimal
+
         from services.scoring_engine import calculate_positions
         team = _make_team(db_session, tournament, 'UM-A', 'University of Montana', 'UM')
         event = _make_college_event(db_session, tournament, 'Underhand Speed', 'M')
@@ -524,9 +527,9 @@ class TestCalculatePositionsCollege:
 
         r1 = event.results.filter_by(competitor_id=c1.id).first()
         r2 = event.results.filter_by(competitor_id=c2.id).first()
-        # Both get 1st place points
-        assert r1.points_awarded == 10
-        assert r2.points_awarded == 10
+        # Two tied for 1st: split (10 + 7) / 2 = 8.5 points each.
+        assert r1.points_awarded == Decimal('8.50')
+        assert r2.points_awarded == Decimal('8.50')
 
     def test_dnf_excluded_from_positions(self, db_session, tournament):
         """DNF results are not assigned a position."""
