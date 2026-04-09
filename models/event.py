@@ -3,8 +3,6 @@ Event and EventResult models for tournament events.
 """
 import json
 
-import sqlalchemy as sa
-
 from database import db
 
 
@@ -149,29 +147,6 @@ class EventResult(db.Model):
     # Triple-run events (Axe Throw, Partnered Axe Throw) — stored individually, result_value = sum
     run3_value = db.Column(db.Float, nullable=True)
 
-    # Dual-judge timer readings (Phase 1 of scoring fix — V2.8.0).
-    # Every timed event in this codebase (college and pro, single-run AND dual-run)
-    # has TWO judge stopwatches on each physical run.  The two readings are averaged
-    # into the run's "scored time" (run1_value / run2_value / result_value) — see
-    # _save_heat_results_submission() in routes/scoring.py.
-    #
-    # Single-run events (e.g., Pro Underhand, College Single Buck):
-    #   t1_run1, t2_run1 → averaged into result_value (and run1_value)
-    #   t1_run2, t2_run2 stay NULL
-    #
-    # Dual-run events (Speed Climb, Chokerman's Race, Caber Toss):
-    #   t1_run1, t2_run1 → averaged into run1_value
-    #   t1_run2, t2_run2 → averaged into run2_value
-    #   best_run = min(run1_value, run2_value) for lowest_wins, max for highest_wins
-    #
-    # All four columns are NULL until the heat is scored.  Numeric(8, 2) gives us
-    # 6 integer digits + 2 decimal places — supports times up to 999999.99 seconds
-    # with hundredth-of-a-second precision (the resolution of typical race timers).
-    t1_run1 = db.Column(db.Numeric(8, 2), nullable=True)
-    t2_run1 = db.Column(db.Numeric(8, 2), nullable=True)
-    t1_run2 = db.Column(db.Numeric(8, 2), nullable=True)
-    t2_run2 = db.Column(db.Numeric(8, 2), nullable=True)
-
     # Secondary tiebreak metric (Hard-Hit events only).
     # Stores elapsed time in seconds; lowest time wins the tiebreak when hit counts are equal.
     tiebreak_value = db.Column(db.Float, nullable=True)
@@ -197,18 +172,8 @@ class EventResult(db.Model):
     # Placement
     final_position = db.Column(db.Integer, nullable=True)  # 1st, 2nd, 3rd, etc.
 
-    # Points awarded (college only).
-    # Changed Integer → Numeric(6, 2) in V2.8.0 (Phase 1B of scoring fix) so that
-    # split-tie placements can produce fractional point values (e.g., two competitors
-    # tied for 5th each receive (2 + 1) / 2 = 1.5 points per the AWFC tie-split rule).
-    # Numeric(6, 2) supports values up to 9999.99 — far above the per-event maximum
-    # of 10.00 even after a many-way tie split.
-    points_awarded = db.Column(
-        db.Numeric(6, 2),
-        nullable=False,
-        default=0,
-        server_default=sa.text("'0.00'"),
-    )
+    # Points awarded (college only)
+    points_awarded = db.Column(db.Integer, nullable=False, default=0)
 
     # Payout (pro only)
     payout_amount = db.Column(db.Float, nullable=False, default=0.0)

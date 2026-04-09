@@ -4,7 +4,6 @@ Competitor models for both college and professional competitors.
 import json
 import logging
 
-import sqlalchemy as sa
 from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -28,18 +27,8 @@ class CollegeCompetitor(db.Model):
     name = db.Column(db.String(200), nullable=False)
     gender = db.Column(db.String(1), nullable=False)  # 'M' or 'F'
 
-    # Scoring.
-    # Changed Integer → Numeric(8, 2) in V2.8.0 (Phase 1B of scoring fix) so that
-    # the running total can hold fractional point values from split-tie placements
-    # (e.g., a competitor in a 3-way tie for 1st earns (10 + 7 + 5) / 3 = 7.33).
-    # Numeric(8, 2) supports values up to 999999.99 — far above any plausible
-    # season total even after many split ties.
-    individual_points = db.Column(
-        db.Numeric(8, 2),
-        nullable=False,
-        default=0,
-        server_default=sa.text("'0.00'"),
-    )
+    # Scoring
+    individual_points = db.Column(db.Integer, nullable=False, default=0)
 
     # Event tracking - stored as JSON
     events_entered = db.Column(db.Text, nullable=False, default='[]')  # List of event IDs
