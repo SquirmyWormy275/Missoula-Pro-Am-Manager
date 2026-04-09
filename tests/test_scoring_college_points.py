@@ -235,7 +235,14 @@ class TestCollegeEventScoring:
         assert results_by_name['Hidden Dragon'].points_awarded == 7
 
     def test_stock_saw_m_with_tie(self, db_session):
-        """Time / lowest_wins event with a tie for 1st (both get 10 pts)."""
+        """Time / lowest_wins event with a tie for 1st.
+
+        Phase 3 (V2.8.0) AWFC tie-split: two tied for 1st each receive
+        (10 + 7) / 2 = 8.5 points (NOT 10 each — that was the V2.7.0 bug
+        this rewrite fixes).
+        """
+        from decimal import Decimal
+
         from services.scoring_engine import calculate_positions
 
         tournament = make_tournament(db_session)
@@ -252,15 +259,16 @@ class TestCollegeEventScoring:
         results_by_name = {r.competitor_name: r for r in event.results.all()
                           if r.status == 'completed'}
 
-        # Two tied for 1st, both get position 1 and 10 pts
+        # Two tied for 1st split (10 + 7) / 2 = 8.5 each.
         assert results_by_name['Squinge Timbler'].final_position == 1
-        assert results_by_name['Squinge Timbler'].points_awarded == 10
+        assert results_by_name['Squinge Timbler'].points_awarded == Decimal('8.50')
         assert results_by_name['Zix Zeben'].final_position == 1
-        assert results_by_name['Zix Zeben'].points_awarded == 10
+        assert results_by_name['Zix Zeben'].points_awarded == Decimal('8.50')
 
-        # Next competitor gets position 3 (not 2)
+        # Next competitor gets position 3 (not 2 — positions 1 and 2 consumed
+        # by the tie) and the full 5 points for 3rd place.
         assert results_by_name['Bumbldy Pumpldy'].final_position == 3
-        assert results_by_name['Bumbldy Pumpldy'].points_awarded == 5
+        assert results_by_name['Bumbldy Pumpldy'].points_awarded == Decimal('5.00')
 
     def test_double_buck_m_partnered(self, db_session):
         """Partnered event: time / lowest_wins."""
@@ -573,15 +581,19 @@ class TestTiedCollegeScoring:
 
         results = {r.competitor_name: r for r in event.results.all()}
 
-        # Both tied for 1st get position 1 and 10 points each
+        # Phase 3 (V2.8.0) AWFC tie-split: two tied for 1st each receive
+        # (10 + 7) / 2 = 8.5 points (NOT 10 each — that was the V2.7.0 bug
+        # this rewrite fixes).
+        from decimal import Decimal
         assert results['Joe Squamjo'].final_position == 1
-        assert results['Joe Squamjo'].points_awarded == 10
+        assert results['Joe Squamjo'].points_awarded == Decimal('8.50')
         assert results['Squinge Timbler'].final_position == 1
-        assert results['Squinge Timbler'].points_awarded == 10
+        assert results['Squinge Timbler'].points_awarded == Decimal('8.50')
 
         # Next competitor is position 3 (positions 1 and 2 consumed by the tie)
+        # and receives the full 5 points for 3rd place (no tie there).
         assert results['James Taply'].final_position == 3
-        assert results['James Taply'].points_awarded == config.PLACEMENT_POINTS.get(3, 0)
+        assert results['James Taply'].points_awarded == Decimal('5.00')
 
     def test_tied_for_second(self, db_session):
         from services.scoring_engine import calculate_positions
@@ -616,18 +628,20 @@ class TestTiedCollegeScoring:
 
         results = {r.competitor_name: r for r in event.results.all()}
 
+        from decimal import Decimal
         assert results['Jilliam Jwilliam'].final_position == 1
-        assert results['Jilliam Jwilliam'].points_awarded == 10
+        assert results['Jilliam Jwilliam'].points_awarded == Decimal('10.00')
 
-        # Both tied for 2nd get position 2 and 7 points each
+        # Phase 3 (V2.8.0) AWFC tie-split: two tied for 2nd each receive
+        # (7 + 5) / 2 = 6.0 points (NOT 7 each — that was the V2.7.0 bug).
         assert results['Beverly Crease'].final_position == 2
-        assert results['Beverly Crease'].points_awarded == 7
+        assert results['Beverly Crease'].points_awarded == Decimal('6.00')
         assert results['Kum Pon Nent'].final_position == 2
-        assert results['Kum Pon Nent'].points_awarded == 7
+        assert results['Kum Pon Nent'].points_awarded == Decimal('6.00')
 
-        # Next is position 4 (not 3)
+        # Next is position 4 (not 3) — positions 2 and 3 consumed by the tie.
         assert results['Jackie Jackson'].final_position == 4
-        assert results['Jackie Jackson'].points_awarded == 3
+        assert results['Jackie Jackson'].points_awarded == Decimal('3.00')
 
     def test_stock_saw_m_real_tie(self, db_session):
         """Stock Saw M from synthetic data has a real tie for 1st place
@@ -648,11 +662,14 @@ class TestTiedCollegeScoring:
         results = {r.competitor_name: r for r in event.results.all()
                    if r.status == 'completed'}
 
+        # Phase 3 (V2.8.0) AWFC tie-split: two tied for 1st each receive
+        # (10 + 7) / 2 = 8.5 points (NOT 10 each).
+        from decimal import Decimal
         assert results['Squinge Timbler'].final_position == 1
-        assert results['Squinge Timbler'].points_awarded == 10
+        assert results['Squinge Timbler'].points_awarded == Decimal('8.50')
         assert results['Zix Zeben'].final_position == 1
-        assert results['Zix Zeben'].points_awarded == 10
+        assert results['Zix Zeben'].points_awarded == Decimal('8.50')
 
-        # 3rd place (position 3, 5 pts) since two share 1st
+        # 3rd place (position 3, 5 pts) since two share 1st.
         assert results['Bumbldy Pumpldy'].final_position == 3
-        assert results['Bumbldy Pumpldy'].points_awarded == 5
+        assert results['Bumbldy Pumpldy'].points_awarded == Decimal('5.00')
