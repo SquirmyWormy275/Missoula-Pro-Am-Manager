@@ -305,6 +305,10 @@ def _create_app_inner():
     app.register_blueprint(scoring_bp, url_prefix='/scoring')
     # Exempt the offline replay endpoint from CSRF — it uses a one-time replay token instead.
     csrf.exempt('scoring.replay_offline_score')
+    # Phase 4 (V2.8.0) admin scoring repair — JSON-returning POST, no HTML form,
+    # admin role gate inside the route.  CSRF exemption matches the existing
+    # pattern for replay_offline_score.
+    csrf.exempt('scoring.repair_points')
     app.register_blueprint(reporting_bp, url_prefix='/reporting')
     app.register_blueprint(proam_relay_bp)
     app.register_blueprint(partnered_axe_bp)

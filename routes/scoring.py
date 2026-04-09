@@ -356,10 +356,32 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
         # Release edit lock on successful save
         heat.release_lock(_current_user_id() or 0)
 
-        # Auto-finalize when all heats in event are complete (both runs for dual-run events)
+        # Auto-finalize when all heats in event are complete (both runs for
+        # dual-run events).
+        #
+        # Phase 4 (V2.8.0): wrap auto-finalize in a savepoint so that if
+        # calculate_positions() raises (e.g., a database constraint trips),
+        # we roll back to the pre-finalize state but KEEP the heat results
+        # the judge just entered.  Without the savepoint, a finalize crash
+        # would either lose the heat results (rollback everything) or leave
+        # the cache half-updated (commit anyway).  Neither is acceptable.
         all_heats_complete = all(h.status == 'completed' for h in event.heats.all())
+        finalize_failed = False
         if all_heats_complete:
-            engine.calculate_positions(event)
+            try:
+                with db.session.begin_nested():
+                    engine.calculate_positions(event)
+            except Exception as exc:
+                # Roll back the savepoint only — the outer transaction (heat
+                # results) is still alive and will commit below.
+                import logging as _logging
+                _logging.getLogger(__name__).error(
+                    'auto-finalize failed for event %s: %s', event.id, exc
+                )
+                # Make sure the event is in a coherent state: not finalized.
+                event.is_finalized = False
+                event.status = 'in_progress'
+                finalize_failed = True
 
         log_action('heat_results_saved', 'heat', heat.id,
                    {'event_id': event.id, 'result_updates': changes,
@@ -395,6 +417,21 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
         'event_id': event.id,
         'saved_at': datetime.now(timezone.utc).isoformat(),
     }
+
+    # Phase 4 (V2.8.0): if auto-finalize raised, the heat results were saved
+    # but the points were not awarded.  Surface this loudly so the judge knows
+    # to retry from the event results page.
+    if finalize_failed:
+        return {
+            'ok': True, 'category': 'warning',
+            'message': ('Heat saved, but auto-finalization failed. The event '
+                        'results page will let you retry — your timer values '
+                        'are safe.'),
+            'redirect_url': url_for('scoring.event_results',
+                                    tournament_id=tournament_id, event_id=event.id),
+            'status_code': 200,
+            'undo_heat_id': heat.id,
+        }
 
     if invalid:
         return {
@@ -698,18 +735,73 @@ def undo_heat_save(tournament_id, heat_id):
     event = heat.event
     competitor_ids = heat.get_competitors()
 
-    EventResult.query.filter(
-        EventResult.event_id == event.id,
-        EventResult.competitor_id.in_(competitor_ids),
-        EventResult.competitor_type == event.event_type,
-    ).delete(synchronize_session='fetch')
+    # Phase 4 (V2.8.0) — strip points before delete (PLAN_REVIEW.md A6/C2/C7).
+    #
+    # The pre-V2.8.0 path deleted EventResult rows directly without zeroing
+    # their points_awarded, which left "phantom" points cached on
+    # CollegeCompetitor.individual_points and Team.total_points if the heat
+    # had previously been auto-finalized.  After Phase 3 we have the
+    # _rebuild_individual_points() helper that recomputes the cache from
+    # SUM(points_awarded), so the correct undo sequence is:
+    #
+    #   1. Capture the set of competitor_ids whose results we're about to delete
+    #   2. Delete the EventResult rows (their points contribution disappears)
+    #   3. Rebuild individual_points for those competitors from the remaining
+    #      EventResult rows (which now don't include the deleted ones)
+    #   4. Rebuild team totals for any team that had a touched competitor
+    #
+    # All of this is wrapped in a savepoint so a partial failure rolls back
+    # cleanly to the pre-undo state.  If anything raises, the heat stays
+    # 'completed' and the cache is unchanged.
+    try:
+        with db.session.begin_nested():
+            # Step 2: delete the result rows.
+            EventResult.query.filter(
+                EventResult.event_id == event.id,
+                EventResult.competitor_id.in_(competitor_ids),
+                EventResult.competitor_type == event.event_type,
+            ).delete(synchronize_session='fetch')
 
-    heat.status = 'pending'
-    event.status = 'in_progress'
-    event.is_finalized = False
-    db.session.commit()
+            # Step 3 + 4: rebuild caches (college only — pro doesn't have an
+            # equivalent SUM cache for total_earnings, those rows just stay
+            # at whatever value they were at and the next finalize will
+            # rewrite them).
+            if event.event_type == 'college':
+                from models.competitor import CollegeCompetitor
+                from models.team import Team
+                from services.scoring_engine import _rebuild_individual_points
+                _rebuild_individual_points(competitor_ids)
+                touched_comps = (
+                    CollegeCompetitor.query
+                    .filter(CollegeCompetitor.id.in_(competitor_ids))
+                    .all()
+                )
+                touched_team_ids = {c.team_id for c in touched_comps if c.team_id}
+                for team_id in touched_team_ids:
+                    team = Team.query.get(team_id)
+                    if team:
+                        team.recalculate_points()
+
+            heat.status = 'pending'
+            event.status = 'in_progress'
+            event.is_finalized = False
+
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        import logging as _logging
+        _logging.getLogger(__name__).error('undo_heat_save failed for heat %s: %s', heat_id, exc)
+        msg = 'Could not undo heat — please reload and try again.'
+        if _is_async():
+            return jsonify({'ok': False, 'message': msg}), 500
+        flash(msg, 'error')
+        return redirect(url_for('scoring.event_results',
+                                tournament_id=tournament_id, event_id=event.id))
+
     invalidate_tournament_caches(tournament_id)
     session.pop(f'undo_heat_{heat_id}', None)
+    log_action('heat_undo', 'heat', heat_id,
+               {'event_id': event.id, 'judge_user_id': _current_user_id()})
 
     if _is_async():
         return jsonify({'ok': True, 'message': 'Heat results reverted to pending.'})
@@ -1163,3 +1255,70 @@ def replay_offline_score():
     return jsonify({
         k: outcome[k] for k in ('ok', 'message', 'category') if k in outcome
     }), outcome['status_code']
+
+
+# ---------------------------------------------------------------------------
+# Routes: admin scoring repair (Phase 4 V2.8.0)
+# ---------------------------------------------------------------------------
+
+@scoring_bp.route('/admin/repair-points/<int:tournament_id>', methods=['POST'])
+def repair_points(tournament_id):
+    """
+    Admin tool to rebuild every individual_points and team total_points cache
+    for a tournament from the EventResult table.
+
+    Use case: a previous deploy or hand-edit left the cache out of sync with
+    the source-of-truth EventResult.points_awarded column.  This route walks
+    every CollegeCompetitor and Team in the tournament and rebuilds their
+    cached totals from SUM(EventResult.points_awarded), with NO recalculation
+    of positions — it trusts what's already in the table.
+
+    Admin role required (not just judge).  Returns JSON.  Logged via audit.
+    """
+    # Tighter than the standard judge gate — repair is admin-only.
+    if not (current_user and current_user.is_authenticated
+            and getattr(current_user, 'role', None) == 'admin'):
+        return jsonify({'ok': False, 'message': 'Admin role required.'}), 403
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    from models.competitor import CollegeCompetitor
+    from models.team import Team
+    from services.scoring_engine import _rebuild_individual_points
+
+    competitors = CollegeCompetitor.query.filter_by(tournament_id=tournament_id).all()
+    competitor_ids = [c.id for c in competitors]
+
+    teams = Team.query.filter_by(tournament_id=tournament_id).all()
+
+    try:
+        with db.session.begin_nested():
+            # Rebuild every competitor's individual_points from SUM.
+            _rebuild_individual_points(competitor_ids)
+            # Then rebuild every team's total_points from its members.
+            for team in teams:
+                team.recalculate_points()
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        import logging as _logging
+        _logging.getLogger(__name__).error('repair_points failed for tournament %s: %s',
+                                           tournament_id, exc)
+        return jsonify({'ok': False, 'message': f'Repair failed: {exc}'}), 500
+
+    invalidate_tournament_caches(tournament_id)
+    log_action('points_cache_rebuilt', 'tournament', tournament_id, {
+        'competitors_rebuilt': len(competitor_ids),
+        'teams_rebuilt': len(teams),
+        'judge_user_id': _current_user_id(),
+    })
+
+    return jsonify({
+        'ok': True,
+        'tournament_id': tournament_id,
+        'tournament_name': tournament.name,
+        'competitors_rebuilt': len(competitor_ids),
+        'teams_rebuilt': len(teams),
+        'message': (f'Rebuilt {len(competitor_ids)} competitor(s) and '
+                    f'{len(teams)} team(s) for {tournament.name}.'),
+    })
