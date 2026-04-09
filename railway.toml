@@ -1,5 +1,12 @@
 [deploy]
-releaseCommand = "flask db upgrade"
+# preDeployCommand is the modern Railway/Railpack field for "run this between
+# build and traffic-flip; block deploy if it fails."  The old `releaseCommand`
+# field was a Heroku-buildpack-era name that Railpack silently ignores — it had
+# been a no-op in this project for over two weeks (see
+# memory/incident_2026-04-08_postgres_recovery.md and the v3 PLAN_REVIEW.md
+# Phase 1 deploy incident notes).  Renaming to preDeployCommand activates the
+# release-phase pipeline so `flask db upgrade` actually runs on every deploy.
+preDeployCommand = "flask db upgrade"
 
 # ---------------------------------------------------------------------------
 # STRATHMARK environment variables (set in the Railway dashboard, not here)
