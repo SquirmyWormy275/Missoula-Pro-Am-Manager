@@ -28,14 +28,25 @@ def _compare_type(context, inspected_column, metadata_column, inspected_type, me
     return False
 
 
-def _compare_server_default(context, inspected_column, metadata_column, inspected_default, metadata_default):
+def _compare_server_default(context, inspected_column, metadata_column,
+                            inspected_default, metadata_default,
+                            rendered_metadata_default):
     """Suppress server_default diffs on SQLite.
 
     SQLite reports defaults differently than PostgreSQL (e.g. '0' vs
     "'0'" vs "false").  Auto-detecting these diffs produces false positives
     that get committed as unintended alter_column calls.
 
+    The 6-parameter signature matches modern Alembic (>=1.5).  This was
+    previously a 5-parameter version which crashed `flask db migrate` with
+    "TypeError: _compare_server_default() takes 5 positional arguments but
+    6 were given" — meaning every developer in this codebase had to either
+    pin Alembic to an ancient version or hand-write migrations.  Both Phase
+    1A and Phase 1B of the V2.8.0 scoring fix were hand-written for exactly
+    this reason.  Fixed in V2.8.1 (tech debt #9).
+
     Return False = "defaults match, skip this diff".
+    Return None  = "use default comparison".
     """
     # On SQLite, always suppress — too many false positives.
     if context.connection.dialect.name == 'sqlite':
