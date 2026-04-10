@@ -91,6 +91,12 @@ def record_prelim(tournament_id):
     invalidate_tournament_caches(tournament_id)
     flash(f'Prelim result recorded for Pair {pair_id}', 'success')
 
+    # If the score was entered from the event_results page, redirect back there
+    if request.form.get('return_to') == 'event_results':
+        return redirect(url_for('scoring.event_results',
+                                tournament_id=tournament_id,
+                                event_id=pat.event.id))
+
     return redirect(url_for('partnered_axe.prelims', tournament_id=tournament_id))
 
 

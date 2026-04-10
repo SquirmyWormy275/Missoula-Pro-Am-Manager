@@ -64,7 +64,7 @@
                     <ol class="list-group list-group-numbered">
                         {% for c in bull %}
                         <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>{{ c.name }} <small class="text-muted">({{ c.team.team_code if c.team else 'N/A' }})</small></span>
+                            <span>{{ c.display_name }}</span>
                             <span class="badge {% if loop.index == 1 %}badge-gold{% elif loop.index == 2 %}badge-silver{% elif loop.index == 3 %}badge-bronze{% else %}bg-secondary{% endif %} rounded-pill">
                                 {{ c.individual_points }} pts
                             </span>
@@ -88,7 +88,7 @@
                     <ol class="list-group list-group-numbered">
                         {% for c in belle %}
                         <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>{{ c.name }} <small class="text-muted">({{ c.team.team_code if c.team else 'N/A' }})</small></span>
+                            <span>{{ c.display_name }}</span>
                             <span class="badge {% if loop.index == 1 %}badge-gold{% elif loop.index == 2 %}badge-silver{% elif loop.index == 3 %}badge-bronze{% else %}bg-secondary{% endif %} rounded-pill">
                                 {{ c.individual_points }} pts
                             </span>

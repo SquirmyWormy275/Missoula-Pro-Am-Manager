@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+
+{% block title %}Manual Team Builder - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .team-column { min-height: 200px; }
+    .pool-list, .team-list {
+        min-height: 80px;
+        border: 2px dashed var(--sx-border-bright);
+        border-radius: 8px;
+        padding: 0.5rem;
+    }
+    .pool-list { border-color: var(--sx-border); }
+    .team-list.drag-over { border-color: var(--sx-gold); background: rgba(232,144,18,0.05); }
+    .comp-card {
+        cursor: grab;
+        padding: 0.4rem 0.6rem;
+        margin-bottom: 0.3rem;
+        border-radius: 6px;
+        background: var(--sx-surface-3);
+        border: 1px solid var(--sx-border-bright);
+        font-size: 0.85rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        user-select: none;
+    }
+    .comp-card:active { cursor: grabbing; }
+    .comp-card .badge { font-size: 0.7rem; }
+    .sortable-ghost { opacity: 0.4; }
+    .sortable-chosen { border-color: var(--sx-gold); }
+    .gender-count { font-size: 0.75rem; font-weight: 600; }
+    .gender-ok { color: var(--sx-success); }
+    .gender-warn { color: var(--sx-danger); }
+    .pool-section { max-height: 350px; overflow-y: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item">
+                <a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}">Pro-Am Relay</a>
+            </li>
+            <li class="breadcrumb-item active">Manual Team Builder</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1><i class="bi bi-hand-index text-warning"></i> Manual Team Builder</h1>
+            <p class="text-muted mb-0">Drag and drop competitors into teams. Each team needs 2M + 2F from each division.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-secondary" id="addTeamBtn">
+                <i class="bi bi-plus-circle"></i> Add Team
+            </button>
+            <button type="button" class="btn btn-success" id="saveTeamsBtn">
+                <i class="bi bi-floppy"></i> Save Teams
+            </button>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Available Pool -->
+        <div class="col-md-3">
+            <div class="card mb-3">
+                <div class="card-header bg-warning text-dark">
+                    <h6 class="mb-0"><i class="bi bi-star-fill"></i> Pro Pool</h6>
+                </div>
+                <div class="card-body p-2 pool-section">
+                    <div class="pool-list" id="proPool" data-division="pro">
+                        {% for comp in eligible_pro %}
+                        {% set already_assigned = false %}
+                        {% for team in teams %}
+                            {% for m in team.pro_members %}
+                                {% if m.id == comp.id %}{% set already_assigned = true %}{% endif %}
+                            {% endfor %}
+                        {% endfor %}
+                        {% if not already_assigned %}
+                        <div class="comp-card" data-id="{{ comp.id }}" data-gender="{{ comp.gender }}" data-division="pro">
+                            <span>{{ comp.display_name }}</span>
+                            <span class="badge {% if comp.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">{{ comp.gender }}</span>
+                        </div>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0"><i class="bi bi-mortarboard-fill"></i> College Pool</h6>
+                </div>
+                <div class="card-body p-2 pool-section">
+                    <div class="pool-list" id="collegePool" data-division="college">
+                        {% for comp in eligible_college %}
+                        {% set already_assigned = false %}
+                        {% for team in teams %}
+                            {% for m in team.college_members %}
+                                {% if m.id == comp.id %}{% set already_assigned = true %}{% endif %}
+                            {% endfor %}
+                        {% endfor %}
+                        {% if not already_assigned %}
+                        <div class="comp-card" data-id="{{ comp.id }}" data-gender="{{ comp.gender }}" data-division="college">
+                            <span>{{ comp.display_name }}</span>
+                            <span class="badge {% if comp.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">{{ comp.gender }}</span>
+                        </div>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Teams -->
+        <div class="col-md-9" id="teamsContainer">
+            <div class="row" id="teamsRow">
+                {% set team_count = [teams|length, 2]|max %}
+                {% for t_idx in range(team_count) %}
+                <div class="col-lg-6 mb-4 team-column" data-team-index="{{ t_idx }}">
+                    <div class="card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center
+                            bg-{% if t_idx == 0 %}primary{% elif t_idx == 1 %}danger{% elif t_idx == 2 %}success{% else %}info{% endif %} text-white">
+                            <h5 class="mb-0">Team {{ t_idx + 1 }}</h5>
+                            <button type="button" class="btn btn-sm btn-outline-light remove-team-btn" title="Remove team">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <!-- Pro slots -->
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="fw-bold text-warning" style="font-size:0.85rem;">Pro Members</span>
+                                    <span class="gender-count pro-gender-count" data-team="{{ t_idx }}">0M / 0F</span>
+                                </div>
+                                <div class="team-list" id="team{{ t_idx }}_pro" data-team="{{ t_idx }}" data-division="pro">
+                                    {% if t_idx < teams|length %}
+                                        {% for m in teams[t_idx].pro_members %}
+                                        <div class="comp-card" data-id="{{ m.id }}" data-gender="{{ m.gender }}" data-division="pro">
+                                            <span>{{ m.name }}</span>
+                                            <span class="badge {% if m.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">{{ m.gender }}</span>
+                                        </div>
+                                        {% endfor %}
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <!-- College slots -->
+                            <div>
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="fw-bold text-primary" style="font-size:0.85rem;">College Members</span>
+                                    <span class="gender-count college-gender-count" data-team="{{ t_idx }}">0M / 0F</span>
+                                </div>
+                                <div class="team-list" id="team{{ t_idx }}_college" data-team="{{ t_idx }}" data-division="college">
+                                    {% if t_idx < teams|length %}
+                                        {% for m in teams[t_idx].college_members %}
+                                        <div class="comp-card" data-id="{{ m.id }}" data-gender="{{ m.gender }}" data-division="college">
+                                            <span>{{ m.name }}</span>
+                                            <span class="badge {% if m.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">{{ m.gender }}</span>
+                                        </div>
+                                        {% endfor %}
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden form for save -->
+    <form id="saveForm" method="POST"
+          action="{{ url_for('proam_relay.save_manual_teams', tournament_id=tournament.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="teams_json" id="teamsJsonInput" value="[]">
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script>
+(function() {
+    const sortableOptions = {
+        group: 'relay',
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        onEnd: updateAllCounts
+    };
+
+    // Initialize sortable on pools.
+    Sortable.create(document.getElementById('proPool'), sortableOptions);
+    Sortable.create(document.getElementById('collegePool'), sortableOptions);
+
+    // Initialize sortable on team lists.
+    document.querySelectorAll('.team-list').forEach(function(el) {
+        Sortable.create(el, sortableOptions);
+    });
+
+    function updateAllCounts() {
+        document.querySelectorAll('.team-column').forEach(function(col) {
+            var idx = col.dataset.teamIndex;
+            ['pro', 'college'].forEach(function(div) {
+                var list = document.getElementById('team' + idx + '_' + div);
+                if (!list) return;
+                var cards = list.querySelectorAll('.comp-card');
+                var mCount = 0, fCount = 0;
+                cards.forEach(function(c) {
+                    if (c.dataset.gender === 'M') mCount++;
+                    else fCount++;
+                });
+                var label = col.querySelector('.' + div + '-gender-count');
+                if (label) {
+                    label.textContent = mCount + 'M / ' + fCount + 'F';
+                    if (mCount === 2 && fCount === 2) {
+                        label.className = 'gender-count ' + div + '-gender-count gender-ok';
+                    } else {
+                        label.className = 'gender-count ' + div + '-gender-count gender-warn';
+                    }
+                }
+            });
+        });
+    }
+    updateAllCounts();
+
+    // Add team button.
+    document.getElementById('addTeamBtn').addEventListener('click', function() {
+        var row = document.getElementById('teamsRow');
+        var teamCount = row.querySelectorAll('.team-column').length;
+        var colors = ['primary', 'danger', 'success', 'info', 'secondary', 'warning'];
+        var color = colors[teamCount % colors.length];
+
+        var col = document.createElement('div');
+        col.className = 'col-lg-6 mb-4 team-column';
+        col.dataset.teamIndex = teamCount;
+        col.innerHTML =
+            '<div class="card h-100">' +
+            '  <div class="card-header d-flex justify-content-between align-items-center bg-' + color + ' text-white">' +
+            '    <h5 class="mb-0">Team ' + (teamCount + 1) + '</h5>' +
+            '    <button type="button" class="btn btn-sm btn-outline-light remove-team-btn" title="Remove team"><i class="bi bi-x-lg"></i></button>' +
+            '  </div>' +
+            '  <div class="card-body">' +
+            '    <div class="mb-3">' +
+            '      <div class="d-flex justify-content-between align-items-center mb-1">' +
+            '        <span class="fw-bold text-warning" style="font-size:0.85rem;">Pro Members</span>' +
+            '        <span class="gender-count pro-gender-count gender-warn" data-team="' + teamCount + '">0M / 0F</span>' +
+            '      </div>' +
+            '      <div class="team-list" id="team' + teamCount + '_pro" data-team="' + teamCount + '" data-division="pro"></div>' +
+            '    </div>' +
+            '    <div>' +
+            '      <div class="d-flex justify-content-between align-items-center mb-1">' +
+            '        <span class="fw-bold text-primary" style="font-size:0.85rem;">College Members</span>' +
+            '        <span class="gender-count college-gender-count gender-warn" data-team="' + teamCount + '">0M / 0F</span>' +
+            '      </div>' +
+            '      <div class="team-list" id="team' + teamCount + '_college" data-team="' + teamCount + '" data-division="college"></div>' +
+            '    </div>' +
+            '  </div>' +
+            '</div>';
+        row.appendChild(col);
+
+        // Initialize sortable on new team lists.
+        Sortable.create(col.querySelector('#team' + teamCount + '_pro'), sortableOptions);
+        Sortable.create(col.querySelector('#team' + teamCount + '_college'), sortableOptions);
+
+        // Bind remove button.
+        col.querySelector('.remove-team-btn').addEventListener('click', removeTeam);
+    });
+
+    // Remove team buttons.
+    document.querySelectorAll('.remove-team-btn').forEach(function(btn) {
+        btn.addEventListener('click', removeTeam);
+    });
+
+    function removeTeam(e) {
+        var col = e.target.closest('.team-column');
+        if (!col) return;
+        // Move members back to pools.
+        col.querySelectorAll('.comp-card').forEach(function(card) {
+            var div = card.dataset.division;
+            var pool = document.getElementById(div === 'pro' ? 'proPool' : 'collegePool');
+            pool.appendChild(card);
+        });
+        col.remove();
+        // Re-index remaining teams.
+        document.querySelectorAll('.team-column').forEach(function(c, i) {
+            c.dataset.teamIndex = i;
+            c.querySelector('h5').textContent = 'Team ' + (i + 1);
+        });
+        updateAllCounts();
+    }
+
+    // Save button.
+    document.getElementById('saveTeamsBtn').addEventListener('click', function() {
+        var teams = [];
+        document.querySelectorAll('.team-column').forEach(function(col) {
+            var idx = col.dataset.teamIndex;
+            var proList = document.getElementById('team' + idx + '_pro');
+            var collegeList = document.getElementById('team' + idx + '_college');
+            if (!proList || !collegeList) return;
+
+            var proIds = [];
+            proList.querySelectorAll('.comp-card').forEach(function(c) {
+                proIds.push(parseInt(c.dataset.id));
+            });
+            var collegeIds = [];
+            collegeList.querySelectorAll('.comp-card').forEach(function(c) {
+                collegeIds.push(parseInt(c.dataset.id));
+            });
+
+            if (proIds.length > 0 || collegeIds.length > 0) {
+                teams.push({
+                    pro_member_ids: proIds,
+                    college_member_ids: collegeIds
+                });
+            }
+        });
+
+        if (teams.length === 0) {
+            alert('No teams have members assigned. Drag competitors into team slots first.');
+            return;
+        }
+
+        document.getElementById('teamsJsonInput').value = JSON.stringify(teams);
+        document.getElementById('saveForm').submit();
+    });
+})();
+</script>
+{% endblock %}

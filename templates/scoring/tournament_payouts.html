@@ -185,6 +185,25 @@
             <tbody>
               {% for row in event_summaries %}
               {% set ev = row.event %}
+              {% if row.get('state_event') %}
+              {# Special events that store state in the payouts field — not configurable here #}
+              <tr class="pm-event-row-unfunded" style="opacity:0.6;">
+                <td></td>
+                <td>
+                  <div class="fw-semibold" style="font-size:0.875rem;">{{ ev.display_name }}</div>
+                  <span class="badge bg-secondary" style="font-size:.6rem;">Special Event</span>
+                </td>
+                <td class="text-center" colspan="4">
+                  <span class="small" style="color:var(--sx-text-3);">Uses dedicated scoring system</span>
+                </td>
+                <td class="text-end pe-3">
+                  <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=ev.id) }}"
+                     class="btn btn-outline-secondary btn-sm" title="View event">
+                    <i class="bi bi-arrow-right"></i>
+                  </a>
+                </td>
+              </tr>
+              {% else %}
               <tr class="{{ 'pm-event-row-funded' if row.purse > 0 else 'pm-event-row-unfunded' }}">
                 <td>
                   <input type="checkbox" class="form-check-input event-check"
@@ -263,6 +282,7 @@
                   </div>
                 </td>
               </tr>
+              {% endif %}
               {% else %}
               <tr>
                 <td colspan="7" class="text-center py-5">

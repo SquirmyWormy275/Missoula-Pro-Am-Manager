@@ -35,42 +35,42 @@
 {% if tournament.pro_date %} &mdash; {{ tournament.pro_date }}{% endif %}
 </p>
 
-{% set springboard_pairs = report.pro_pairs | selectattr('event_label', 'search', '(?i)springboard|1.?board') | list %}
-{% set crosscut_pairs = report.pro_pairs | selectattr('event_label', 'search', '(?i)buck|jack|jill|crosscut|handsaw|saw') | list %}
-{% set chainsaw_pairs = report.pro_pairs | selectattr('event_label', 'search', '(?i)hot.?saw|stock.?saw|chainsaw|power') | list %}
-{% set other_pairs = [] %}
-{% for pair in report.pro_pairs %}
-  {% if pair not in springboard_pairs and pair not in crosscut_pairs and pair not in chainsaw_pairs %}
-    {% set _ = other_pairs.append(pair) %}
+{% set springboard_groups = report.pro_groups | selectattr('event_label', 'search', '(?i)springboard|1.?board') | list %}
+{% set crosscut_groups = report.pro_groups | selectattr('event_label', 'search', '(?i)buck|jack|jill|crosscut|handsaw|saw') | list %}
+{% set chainsaw_groups = report.pro_groups | selectattr('event_label', 'search', '(?i)hot.?saw|stock.?saw|chainsaw|power') | list %}
+{% set other_groups = [] %}
+{% for group in report.pro_groups %}
+  {% if group not in springboard_groups and group not in crosscut_groups and group not in chainsaw_groups %}
+    {% set _ = other_groups.append(group) %}
   {% endif %}
 {% endfor %}
 
-{% macro pair_table(pairs) %}
+{% macro group_table(groups) %}
 <table>
     <thead>
         <tr>
-            <th>Competitor A</th>
-            <th>Competitor B</th>
-            <th>Event</th>
-            <th>Reciprocal</th>
+            <th>Members</th>
+            <th>Size</th>
+            <th>Equipment / Event</th>
+            <th>Status</th>
             <th>Heat Status</th>
         </tr>
     </thead>
     <tbody>
-        {% for pair in pairs %}
+        {% for group in groups %}
         <tr>
-            <td>{{ pair.comp_a.name }}</td>
-            <td>{{ pair.comp_b.name }}</td>
-            <td>{{ pair.event_label }}</td>
+            <td>{{ group.members | map(attribute='name') | join(', ') }}</td>
+            <td>{{ group.member_count }}</td>
+            <td>{{ group.event_label }}</td>
             <td>
-                {% if pair.paired_by == 'mutual' %}
-                <span class="badge badge-success">Mutual</span>
+                {% if group.has_unconfirmed %}
+                <span class="badge badge-warning">Unconfirmed</span>
                 {% else %}
-                <span class="badge badge-warning">Inferred</span>
+                <span class="badge badge-success">Confirmed</span>
                 {% endif %}
             </td>
             <td>
-                {% if pair.heat_conflict %}
+                {% if group.heat_conflict %}
                 <span class="badge badge-danger">Conflict</span>
                 {% else %}
                 <span class="badge badge-success">OK</span>
@@ -82,59 +82,35 @@
 </table>
 {% endmacro %}
 
-<!-- Springboard Pairs -->
-{% if springboard_pairs %}
-<h2>Springboard Pairs ({{ springboard_pairs|length }})</h2>
-<p class="section-note">Springboard partners share boards and cannot be in the same heat.</p>
-{{ pair_table(springboard_pairs) }}
+<!-- Springboard Groups -->
+{% if springboard_groups %}
+<h2>Springboard Groups ({{ springboard_groups|length }})</h2>
+<p class="section-note">Springboard sharing groups cannot be in the same heat.</p>
+{{ group_table(springboard_groups) }}
 {% endif %}
 
-<!-- Crosscut / Handsaw Pairs -->
-{% if crosscut_pairs %}
-<h2>Crosscut / Handsaw Pairs ({{ crosscut_pairs|length }})</h2>
-<p class="section-note">Includes Single Buck, Double Buck, Jack &amp; Jill. Partners share a saw.</p>
-{{ pair_table(crosscut_pairs) }}
+<!-- Crosscut / Handsaw Groups -->
+{% if crosscut_groups %}
+<h2>Crosscut / Handsaw Groups ({{ crosscut_groups|length }})</h2>
+<p class="section-note">Includes Single Buck, Double Buck, Jack &amp; Jill. Members share a saw.</p>
+{{ group_table(crosscut_groups) }}
 {% endif %}
 
-<!-- Chainsaw / Power Saw Pairs -->
-{% if chainsaw_pairs %}
-<h2>Chainsaw / Power Saw Pairs ({{ chainsaw_pairs|length }})</h2>
-<p class="section-note">Includes Hot Saw and Stock Saw. Partners share a saw.</p>
-{{ pair_table(chainsaw_pairs) }}
+<!-- Chainsaw / Power Saw Groups -->
+{% if chainsaw_groups %}
+<h2>Chainsaw / Power Saw Groups ({{ chainsaw_groups|length }})</h2>
+<p class="section-note">Includes Hot Saw and Stock Saw. Members share a saw.</p>
+{{ group_table(chainsaw_groups) }}
 {% endif %}
 
-<!-- Other Pairs -->
-{% if other_pairs %}
-<h2>Other Pairs ({{ other_pairs|length }})</h2>
-{{ pair_table(other_pairs) }}
+<!-- Other Groups -->
+{% if other_groups %}
+<h2>Other Groups ({{ other_groups|length }})</h2>
+{{ group_table(other_groups) }}
 {% endif %}
 
-{% if not report.pro_pairs %}
-<p><em>No verified gear-sharing pairs found.</em></p>
-{% endif %}
-
-<!-- Gear Groups -->
-{% if gear_groups %}
-<h2>Gear Groups ({{ gear_groups|length }})</h2>
-<p class="section-note">Multiple pairs sharing one piece of equipment. All group members will be placed in separate heats.</p>
-<table>
-    <thead>
-        <tr>
-            <th>Group Name</th>
-            <th>Event Key</th>
-            <th>Members</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for gname, members in gear_groups.items() %}
-        <tr>
-            <td><strong>{{ gname }}</strong></td>
-            <td>{{ members[0].event_key if members else '' }}</td>
-            <td>{{ members | map(attribute='competitor') | map(attribute='name') | join(', ') }}</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+{% if not report.pro_groups %}
+<p><em>No verified gear-sharing groups found.</em></p>
 {% endif %}
 
 <!-- Unresolved Entries -->
@@ -153,7 +129,7 @@
     <tbody>
         {% for entry in report.pro_unresolved %}
         <tr>
-            <td>{{ entry.competitor.name }}</td>
+            <td>{{ entry.competitor.display_name }}</td>
             <td>{{ entry.event_label }}</td>
             <td>{{ entry.partner_raw if entry.partner_raw else '(none)' }}</td>
             <td>{{ entry.issues | join('; ') }}</td>
@@ -179,7 +155,7 @@
     <tbody>
         {% for row in report.college_constraints %}
         <tr>
-            <td>{{ row.competitor.name }}</td>
+            <td>{{ row.competitor.display_name }}</td>
             <td>{{ row.team_code }}</td>
             <td>{{ row.event_label }}</td>
             <td>{{ row.partner if row.partner else '' }}</td>
@@ -192,11 +168,19 @@
 <!-- Summary -->
 <h2>Summary</h2>
 <table style="width:auto;">
-    <tr><td>Verified Pairs</td><td>{{ report.stats.pairs }}</td></tr>
+    <tr><td>Gear Groups</td><td>{{ report.stats.groups }}</td></tr>
     <tr><td>Unresolved Entries</td><td>{{ report.stats.unresolved }}</td></tr>
     <tr><td>Heat Conflicts</td><td>{{ report.stats.conflicts }}</td></tr>
     <tr><td>College Constraints</td><td>{{ report.stats.college }}</td></tr>
 </table>
 
+<script>
+document.querySelectorAll('[data-print]').forEach(function(btn) {
+    btn.addEventListener('click', function() { window.print(); });
+});
+document.querySelectorAll('[data-close-window]').forEach(function(btn) {
+    btn.addEventListener('click', function() { window.close(); });
+});
+</script>
 </body>
 </html>

@@ -534,7 +534,7 @@ class TestAssignHandicapMarksSkipPaths:
     def test_competitor_not_in_calculator_output_skipped(self, mock_calc_factory, mock_pull, db_session, tournament):
         """When the calculator returns no MarkResult for a competitor (e.g.
         the panel-mark fallback dropped them), that competitor is skipped
-        and their handicap_factor stays at the DB default of 1.0."""
+        and their handicap_factor stays at the DB default of 0.0 (scratch)."""
         event = _make_event(db_session, tournament,
                             stand_type='underhand', scoring_type='time', is_handicap=True)
         _make_wood_for_event(db_session, event)
@@ -555,7 +555,7 @@ class TestAssignHandicapMarksSkipPaths:
         assert result['assigned'] == 1
         assert result['skipped'] == 1
         assert r_with.handicap_factor == 5.0
-        assert r_without.handicap_factor == 1.0  # untouched DB default
+        assert r_without.handicap_factor == 0.0  # untouched DB default (scratch)
 
     @patch.dict('os.environ', {
         'STRATHMARK_SUPABASE_URL': 'https://fake.supabase.co',
@@ -578,7 +578,7 @@ class TestAssignHandicapMarksSkipPaths:
 
         assert result['assigned'] == 0
         assert result['skipped'] == 1
-        assert r.handicap_factor == 1.0
+        assert r.handicap_factor == 0.0  # untouched DB default (scratch)
 
     @patch.dict('os.environ', {
         'STRATHMARK_SUPABASE_URL': 'https://fake.supabase.co',

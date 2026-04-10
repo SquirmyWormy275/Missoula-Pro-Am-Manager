@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Competitor Access – {{ competitor.name }}{% endblock %}
+{% block title %}Competitor Access – {{ competitor.display_name }}{% endblock %}
 {% block content %}
 <div class="container py-5">
   <div class="row justify-content-center">
@@ -10,7 +10,7 @@
         </div>
         <div class="card-body">
           <p class="mb-3">
-            Enter the PIN for <strong>{{ competitor.name }}</strong> to view your personal schedule and results.
+            Enter the PIN for <strong>{{ competitor.display_name }}</strong> to view your personal schedule and results.
           </p>
           {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}

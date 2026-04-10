@@ -41,7 +41,7 @@ def flight_list(tournament_id):
                 'heat': heat,
                 'event': event,
                 'competitors': [
-                    {'name': comps[cid].name if cid in comps else f'ID:{cid}',
+                    {'name': comps[cid].display_name if cid in comps else f'ID:{cid}',
                      'stand': assignments.get(str(cid), '?')}
                     for cid in comp_ids
                 ],

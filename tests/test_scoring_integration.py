@@ -50,9 +50,9 @@ class TestHandicapScoringIntegration:
                            event_type='pro', scoring_type='time',
                            stand_type='underhand', is_handicap=True)
 
-        # Fast: raw 20s, no start mark (1.0 = scratch = 0.0 mark) → net 20s
+        # Fast: raw 20s, scratch (0.0) → net 20s
         r1 = make_event_result(db_session, event, p1, competitor_type='pro',
-                               result_value=20.0, handicap_factor=1.0,
+                               result_value=20.0, handicap_factor=0.0,
                                status='completed')
         # Slow: raw 28s, 10s start mark → net 18s
         r2 = make_event_result(db_session, event, p2, competitor_type='pro',

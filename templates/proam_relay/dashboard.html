@@ -86,25 +86,48 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">
                             <label class="form-label">Number of Teams</label>
+                            {% set default_teams = [2, capacity.max_teams]|min %}
                             <select name="num_teams" class="form-select">
                                 {% if capacity.max_teams > 0 %}
                                     {% for n in range(1, capacity.max_teams + 1) %}
-                                    <option value="{{ n }}" {% if n == 1 %}selected{% endif %}>{{ n }} Team{% if n != 1 %}s{% endif %}</option>
+                                    <option value="{{ n }}" {% if n == default_teams %}selected{% endif %}>{{ n }} Team{% if n != 1 %}s{% endif %}</option>
                                     {% endfor %}
                                 {% else %}
                                     <option value="1" selected>1 Team</option>
                                 {% endif %}
                             </select>
                             <div class="form-text">
-                                Available pools:
-                                Pro M {{ capacity.pro_male }}, Pro F {{ capacity.pro_female }},
-                                College M {{ capacity.college_male }}, College F {{ capacity.college_female }}
+                                <div>
+                                    Pro: {{ capacity.pro_male }}M / {{ capacity.pro_female }}F
+                                    (supports {{ [capacity.pro_male // 2, capacity.pro_female // 2]|min }} teams)
+                                </div>
+                                <div>
+                                    College: {{ capacity.college_male }}M / {{ capacity.college_female }}F
+                                    (supports {{ [capacity.college_male // 2, capacity.college_female // 2]|min }} teams)
+                                </div>
+                                {% set bottleneck_pools = [] %}
+                                {% set min_pool = [capacity.pro_male // 2, capacity.pro_female // 2, capacity.college_male // 2, capacity.college_female // 2]|min %}
+                                {% if capacity.pro_male // 2 == min_pool %}{% set _ = bottleneck_pools.append('Pro M') %}{% endif %}
+                                {% if capacity.pro_female // 2 == min_pool %}{% set _ = bottleneck_pools.append('Pro F') %}{% endif %}
+                                {% if capacity.college_male // 2 == min_pool %}{% set _ = bottleneck_pools.append('College M') %}{% endif %}
+                                {% if capacity.college_female // 2 == min_pool %}{% set _ = bottleneck_pools.append('College F') %}{% endif %}
+                                {% if capacity.max_teams > 0 and bottleneck_pools %}
+                                <div class="text-warning mt-1">
+                                    Limiting factor: {{ bottleneck_pools|join(', ') }}
+                                </div>
+                                {% endif %}
                             </div>
                         </div>
                         <button type="submit" class="btn btn-warning btn-lg w-100" {% if capacity.max_teams == 0 %}disabled{% endif %}>
                             <i class="bi bi-shuffle"></i> Draw Teams
                         </button>
                     </form>
+                    <div class="mt-2">
+                        <a href="{{ url_for('proam_relay.manual_teams', tournament_id=tournament.id) }}"
+                           class="btn btn-outline-secondary w-100">
+                            <i class="bi bi-hand-index"></i> Manual Team Builder
+                        </a>
+                    </div>
                     {% if capacity.max_teams == 0 %}
                     <div class="alert alert-danger mt-3 mb-0">
                         Need at least 2 opted-in competitors in each group: Pro M/F and College M/F.
@@ -124,6 +147,10 @@
                         </a>
                         <a href="{{ url_for('proam_relay.standings', tournament_id=tournament.id) }}" class="btn btn-info">
                             <i class="bi bi-trophy"></i> View Standings
+                        </a>
+                        <a href="{{ url_for('proam_relay.manual_teams', tournament_id=tournament.id) }}"
+                           class="btn btn-outline-secondary w-100">
+                            <i class="bi bi-hand-index"></i> Edit Teams Manually
                         </a>
                         <hr>
                         <form action="{{ url_for('proam_relay.redraw_lottery', tournament_id=tournament.id) }}" method="POST"

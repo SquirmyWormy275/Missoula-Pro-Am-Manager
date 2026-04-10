@@ -40,7 +40,7 @@ Missoula-Pro-Am-Manager/
 │   ├── audit_log.py       # AuditLog — immutable audit trail
 │   ├── school_captain.py  # SchoolCaptain — one PIN account per school per tournament
 │   ├── wood_config.py     # WoodConfig — Virtual Woodboss per-tournament species/size config
-│   ├── pro_event_rank.py  # ProEventRank — per-tournament ability rankings (7 categories)
+│   ├── pro_event_rank.py  # ProEventRank — per-tournament ability rankings (9 categories)
 │   └── payout_template.py # PayoutTemplate — reusable tournament-independent payout configs
 ├── routes/                # Flask blueprints
 │   ├── main.py            # Dashboard & navigation
@@ -57,7 +57,7 @@ Missoula-Pro-Am-Manager/
 │   │   ├── preflight.py   # Pre-scheduling validation
 │   │   └── assign_marks.py # Handicap mark assignment UI
 │   ├── scoring.py         # Result entry & calculation; outlier flagging
-│   ├── reporting.py       # Standings, reports, payout settlement, cloud backup
+│   ├── reporting.py       # Standings, reports, payout summary (with settlement), ALA report + email, cloud backup
 │   ├── proam_relay.py     # Pro-Am Relay lottery system
 │   ├── partnered_axe.py   # Partnered Axe Throw prelims/finals
 │   ├── validation.py      # Data validation endpoints
@@ -73,7 +73,7 @@ Missoula-Pro-Am-Manager/
 │   ├── flight_builder.py  # Flight scheduling with competitor spacing & stand conflict enforcement
 │   ├── birling_bracket.py # Double-elimination bracket generator (fully functional)
 │   ├── point_calculator.py# Point calculation utilities
-│   ├── proam_relay.py     # Pro-Am Relay team building
+│   ├── proam_relay.py     # Pro-Am Relay team building + manual team builder
 │   ├── partnered_axe.py   # Axe throw scoring logic
 │   ├── pro_entry_importer.py  # Google Forms xlsx import with duplicate detection
 │   ├── audit.py           # log_action() helper
@@ -83,7 +83,7 @@ Missoula-Pro-Am-Manager/
 │   ├── logging_setup.py   # JSON structured logging; optional Sentry SDK
 │   ├── sms_notify.py      # Twilio SMS; graceful no-op if not configured
 │   ├── backup.py          # S3 or local SQLite backup
-│   ├── woodboss.py        # Block/saw calculations, lottery view, history, HMAC share token
+│   ├── woodboss.py        # Block/saw calculations, lottery view, history, HMAC share token, wood presets
 │   ├── handicap_export.py # Chopping-event Excel export helpers
 │   ├── partner_matching.py# Auto-partner matching for pro partnered events
 │   ├── preflight.py       # Pre-scheduling validation checks
@@ -590,6 +590,97 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-04-09 (V2.8.0)
+
+**Race-Day Hardening & Feature Completion**
+
+**Competitor `display_name` property (pervasive refactor):**
+- Added `display_name` property to `CollegeCompetitor` (returns `"Name (TeamCode)"`) and `ProCompetitor` (returns plain `name`)
+- Replaced `.name` with `.display_name` across ~30 locations: routes, services, templates (heat sheets, flights, standings, gear sharing, birling, portals, API)
+- Eliminates redundant `{{ c.name }} ({{ c.team.team_code }})` patterns in templates
+
+**Handicap factor sentinel fix (1.0 → 0.0 = scratch):**
+- Changed `EventResult.handicap_factor` default from `1.0` to `0.0`; `0.0` now means scratch directly
+- Updated `_metric()` in scoring engine: `1.0` is now a real 1-second mark, not a sentinel
+- Updated all tests and `_SCRATCH_PLACEHOLDER` in assign_marks
+
+**Springboard category split (ability rankings):**
+- Added `pro_1board` and `3board_jigger` ranking categories to `config.py`
+- `event_rank_category()` now differentiates 1-board, 3-board/jigger, and generic springboard
+- Added Jack & Jill Sawing to `COLLEGE_SATURDAY_PRIORITY_DEFAULT`
+
+**Ability rankings UI overhaul:**
+- Replaced text-input rank fields with drag-and-drop SortableJS lists (ranked/unranked zones)
+- POST handler rewritten to parse position-based ordering from hidden inputs
+- Added gender-based competitor grouping
+- Added College Birling Seedings section: per-school drag-and-drop ordering, generates global seed numbers, stores as `pre_seedings` in `Event.payouts` JSON
+
+**Payout settlement merged into payout summary:**
+- Merged settlement UI (Paid/Pending badges, Mark Paid toggle) into the existing Pro Payout Summary page
+- Deleted `templates/reporting/payout_settlement.html`; old route now 301-redirects
+- Removed sidebar "Payout Settlement" link; renamed button to "Pro Payouts"
+
+**Virtual Woodboss enhancements:**
+- Wood presets: `COMMON_WOOD_SPECIES` + `WOOD_PRESETS` in config; `get_all_presets()`, `save_custom_preset()`, `delete_custom_preset()`, `apply_preset()` in service; 3 new routes; preset UI card with species autocomplete
+- Saw wood calculation overhaul: tracks by `(comp_type, gender)` instead of just gender; separate college/pro rows; fixed zero-division bugs
+- Springboard dummy calculation overhaul: accepts `tournament_id`; separates 1/2/3-board heights; Friday/Saturday day split; reuse logic for sequential boards
+- Report template: per-day/per-height breakdown, reuse annotations, college/pro division headers
+
+**Pro-Am Relay manual team builder (new feature):**
+- Added `set_teams_manually()` to `ProAmRelay` service with duplicate-assignment validation
+- New routes: `GET /manual-teams` (drag-and-drop builder) + `POST /manual-teams/save`
+- New template `templates/proam_relay/manual_teams.html` (~260 lines): SortableJS pools, gender count validation, add/remove teams
+- Dashboard: added "Manual Team Builder" button, improved capacity display with bottleneck indicator
+
+**Partnered Axe Throw scoring integration:**
+- Added `_sync_prelim_to_event_results()`: prelim scores now create/update `EventResult` records for visibility in regular scoring view
+- Inline prelim scoring form on `event_results.html` when event has prelims
+- `return_to=event_results` redirect support in `record_prelim` route
+
+**Payout state protection for special events:**
+- Added `Event.uses_payouts_for_state` property (Pro-Am Relay, Partnered Axe, Birling bracket)
+- `configure_payouts` route blocks state-events; bulk template skips them; "Special Event" badge in payout manager
+
+**Finalization validation warnings:**
+- Added `validate_finalization()` in scoring engine: checks missing payouts, unassigned handicap marks, pending throwoffs
+- Warnings surfaced in `finalize_preview` JSON and flashed in `finalize_event`
+
+**Post-finalize payout recalculation:**
+- Saving payouts on an already-finalized event re-runs `calculate_positions()` to propagate new amounts
+- Same auto-recalculation when applying a payout template to a finalized event
+
+**College Excel import improvements:**
+- School name extraction from filename via `_school_name_from_filename()`
+- Team column auto-detection via `_detect_team_column_by_values()`
+- Team code generation uses `school_abbr-letter` format (e.g., "UM-A")
+- 14 new school abbreviations; expanded event marker keywords
+- Roster validation: min 2M, min 2F, max 8 per team
+- First-name fallback + fuzzy matching (Levenshtein edit distance ≤ 2) for partner matching
+
+**Admin team validation override:**
+- New route `POST /<tid>/college/team/<team_id>/override-validation`: forces team to "active" status
+
+**Gear sharing group aggregation:**
+- Union-find connected-component grouping replaces pair-based display
+- Groups of 3+ show transitive sharing chains
+- Templates overhauled: group-based table columns (Members / Size / Equipment / Status / Heat Status)
+
+**Birling bracket on heat sheets:**
+- Birling bracket events rendered with winners/losers bracket, grand finals, and placement table on heat sheet print pages
+- `birling_generate` falls back to `pre_seedings` from ability rankings
+
+**ALA report email feature:**
+- New `ala_email_report` POST route: generates PDF + sends via SMTP to `americanlumberjacks@gmail.com`
+- ALA Report link added to sidebar navigation
+
+**Scoring engine throwoff fix:**
+- `record_throwoff_result()` now uses canonical `PLACEMENT_POINTS_DECIMAL` lookup instead of stale `config.PLACEMENT_POINTS`
+
+**Print button JavaScript fix:**
+- Added `[data-print]` event listener across 9 print templates that previously had non-functional print buttons
+
+Files changed: 71 files, ~2544 insertions, ~705 deletions. 1 new file (`templates/proam_relay/manual_teams.html`), 1 deleted (`templates/reporting/payout_settlement.html`).
 
 ### 2026-03-23 (V2.6.0)
 

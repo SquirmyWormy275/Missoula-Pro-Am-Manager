@@ -48,7 +48,7 @@
                            name="confirm_{{ row.competitor.id }}" id="confirm_{{ row.competitor.id }}"
                            {% if not row.warnings %}checked{% endif %}>
                     <label class="form-check-label fw-bold" for="confirm_{{ row.competitor.id }}">
-                        {{ row.competitor.name }}
+                        {{ row.competitor.display_name }}
                     </label>
                 </div>
                 <div>

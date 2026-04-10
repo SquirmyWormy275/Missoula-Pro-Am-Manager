@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}My Results – {{ competitor.name }}{% endblock %}
+{% block title %}My Results – {{ competitor.display_name }}{% endblock %}
 {% block content %}
 <div class="container py-4">
 
   {# ── Header ── #}
   <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
     <div>
-      <h4 class="mb-0"><i class="bi bi-person-badge me-2"></i>{{ competitor.name }}</h4>
+      <h4 class="mb-0"><i class="bi bi-person-badge me-2"></i>{{ competitor.display_name }}</h4>
       <small class="text-muted">{{ tournament.name }} {{ tournament.year }}
         &nbsp;·&nbsp;
         {% if competitor_type == 'pro' %}Pro Division{% else %}College Division{% endif %}

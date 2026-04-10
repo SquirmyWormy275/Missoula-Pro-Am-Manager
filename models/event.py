@@ -92,6 +92,14 @@ class Event(db.Model):
         import config
         return self.name in config.AXE_THROW_CUMULATIVE_EVENTS
 
+    @property
+    def uses_payouts_for_state(self):
+        """True when the payouts column stores state-machine data instead of
+        payout amounts (Pro-Am Relay, Partnered Axe Throw, Birling bracket)."""
+        return (self.has_prelims
+                or self.scoring_type == 'bracket'
+                or self.name == 'Pro-Am Relay')
+
     def get_payouts(self):
         """Return dict of position -> payout amount."""
         try:
@@ -182,9 +190,9 @@ class EventResult(db.Model):
 
     # STRATHMARK handicap start mark in seconds.
     # _metric() in scoring_engine subtracts this from raw time when event.is_handicap is True
-    # and scoring_type == 'time'.  Default 1.0 is the DB placeholder; treated as 0.0 scratch
-    # by _metric().  Populated by services/mark_assignment.py → assign_handicap_marks().
-    handicap_factor = db.Column(db.Float, nullable=False, default=1.0)
+    # and scoring_type == 'time'.  Default 0.0 means scratch (no start mark).
+    # Populated by services/mark_assignment.py → assign_handicap_marks().
+    handicap_factor = db.Column(db.Float, nullable=False, default=0.0)
 
     # STRATHMARK predicted completion time in seconds — the raw time HandicapCalculator
     # expected this competitor to post.  Stored here so that after the event runs,

@@ -45,10 +45,10 @@ def event_heats(tournament_id, event_id):
         all_cids = list(comp_appearances.keys())
         if all_cids:
             if event.event_type == 'college':
-                name_map = {c.id: c.name for c in CollegeCompetitor.query.filter(
+                name_map = {c.id: c.display_name for c in CollegeCompetitor.query.filter(
                     CollegeCompetitor.id.in_(all_cids)).all()}
             else:
-                name_map = {c.id: c.name for c in ProCompetitor.query.filter(
+                name_map = {c.id: c.display_name for c in ProCompetitor.query.filter(
                     ProCompetitor.id.in_(all_cids)).all()}
             spacing_data = {
                 'total_heats': len(run1_heats),

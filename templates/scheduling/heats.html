@@ -248,7 +248,7 @@
                             {% set sn = r1_assignments.get(cid|string)|int if r1_assignments.get(cid|string) else 0 %}
                             <li class="list-group-item d-flex align-items-center" style="padding:5px 10px;">
                                 <span class="stand-badge stand-{{ sn }}">{{ r1_assignments.get(cid|string, '?') }}</span>
-                                <span class="comp-name">{{ comp.name if comp else 'Unknown' }}</span>
+                                <span class="comp-name">{{ comp.display_name if comp else 'Unknown' }}</span>
                             </li>
                             {% else %}
                             <li class="list-group-item text-muted fst-italic" style="font-size:0.82rem;">No competitors</li>
@@ -271,7 +271,7 @@
                             {% set sn = r2_assignments.get(cid|string)|int if r2_assignments.get(cid|string) else 0 %}
                             <li class="list-group-item d-flex align-items-center" style="padding:5px 10px;">
                                 <span class="stand-badge stand-{{ sn }}">{{ r2_assignments.get(cid|string, '?') }}</span>
-                                <span class="comp-name">{{ comp.name if comp else 'Unknown' }}</span>
+                                <span class="comp-name">{{ comp.display_name if comp else 'Unknown' }}</span>
                             </li>
                             {% else %}
                             <li class="list-group-item text-muted fst-italic" style="font-size:0.82rem;">No competitors</li>
@@ -309,7 +309,7 @@
                                     {% else %}
                                         {% set c = tournament.pro_competitors.filter_by(id=cid).first() %}
                                     {% endif %}
-                                    {% if c %}<option value="{{ c.id }}">{{ c.name }}</option>{% endif %}
+                                    {% if c %}<option value="{{ c.id }}">{{ c.display_name }}</option>{% endif %}
                                     {% endfor %}
                                 </select>
                             </div>
@@ -369,7 +369,7 @@
                         {% set sn = assignments.get(comp_id|string)|int if assignments.get(comp_id|string) else 0 %}
                         <li class="list-group-item d-flex align-items-center">
                             <span class="stand-badge stand-{{ sn }}">{{ assignments.get(comp_id|string, '?') }}</span>
-                            <span class="comp-name">{{ comp.name if comp else 'Unknown' }}</span>
+                            <span class="comp-name">{{ comp.display_name if comp else 'Unknown' }}</span>
                         </li>
                     {% else %}
                         <li class="list-group-item text-muted fst-italic" style="font-size:0.82rem;">No competitors</li>
@@ -404,7 +404,7 @@
                                             {% set c = tournament.pro_competitors.filter_by(id=cid).first() %}
                                         {% endif %}
                                         {% if c %}
-                                        <option value="{{ c.id }}">{{ c.name }}</option>
+                                        <option value="{{ c.id }}">{{ c.display_name }}</option>
                                         {% endif %}
                                     {% endfor %}
                                 </select>

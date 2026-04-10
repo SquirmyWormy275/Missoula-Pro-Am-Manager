@@ -141,7 +141,7 @@
                         {% for c in bull %}
                         <tr>
                             <td class="rank">{{ loop.index }}</td>
-                            <td><strong>{{ c.name }}</strong></td>
+                            <td><strong>{{ c.display_name }}</strong></td>
                             <td>{{ c.team.team_code if c.team else 'N/A' }}</td>
                             <td class="points">{{ c.individual_points }}</td>
                         </tr>
@@ -167,7 +167,7 @@
                         {% for c in belle %}
                         <tr>
                             <td class="rank">{{ loop.index }}</td>
-                            <td><strong>{{ c.name }}</strong></td>
+                            <td><strong>{{ c.display_name }}</strong></td>
                             <td>{{ c.team.team_code if c.team else 'N/A' }}</td>
                             <td class="points">{{ c.individual_points }}</td>
                         </tr>
@@ -212,5 +212,10 @@
     <button class="no-print" data-print style="position: fixed; top: 10px; right: 10px; padding: 10px 20px; cursor: pointer;">
         Print
     </button>
+    <script>
+    document.querySelectorAll('[data-print]').forEach(function(btn) {
+        btn.addEventListener('click', function() { window.print(); });
+    });
+    </script>
 </body>
 </html>

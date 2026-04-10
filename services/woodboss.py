@@ -434,15 +434,13 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
     results = []
 
     for (fragment, category, is_partnered, base_label) in SAW_EVENTS:
-        # Find all (event, comp_type, gender) combos that match this saw event
-        matched = {}  # gender -> total_competitor_count
-        for (event_lower, _comp_type, gender), n in counts.items():
+        # Find all (event, comp_type, gender) combos that match this saw event.
+        # Track by (comp_type, gender) so college and pro appear as separate rows.
+        matched = {}  # (comp_type, gender) -> total_competitor_count
+        for (event_lower, comp_type, gender), n in counts.items():
             if fragment not in event_lower:
                 continue
-            matched[gender] = matched.get(gender, 0) + n
-
-        if not matched:
-            continue
+            matched[(comp_type, gender)] = matched.get((comp_type, gender), 0) + n
 
         if category == 'stocksaw':
             cfg = stock_cfg
@@ -457,20 +455,32 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
             cfg = general_cfg
             cfg_key = LOG_GENERAL_KEY
 
-        # Gendered events emit separate M/F rows; open events collapse all genders
+        # Gendered events emit separate M/F rows; open events collapse all genders.
+        # Emit rows for both college and pro divisions separately.
         is_gendered = fragment in ('single buck', 'double buck', 'stock saw', 'obstacle pole')
 
-        if is_gendered:
-            genders_to_emit = sorted(matched.keys())
-        else:
-            total = sum(matched.values())
-            matched = {'open': total}
-            genders_to_emit = ['open']
+        # Determine which (comp_type, gender) combos to emit.
+        # Always include college and pro rows (even if zero) for visibility.
+        rows_to_emit = []
+        for comp_type in ('college', 'pro'):
+            if is_gendered:
+                for g in ('M', 'F'):
+                    rows_to_emit.append((comp_type, g))
+            else:
+                rows_to_emit.append((comp_type, 'open'))
 
-        for gender in genders_to_emit:
-            competitor_count = matched[gender]
-            gender_label = '' if gender == 'open' else (' (Men)' if gender == 'M' else ' (Women)')
-            event_label = f'{base_label}{gender_label}'
+        for (comp_type, gender) in rows_to_emit:
+            # For open (non-gendered) events, sum all genders for this comp_type.
+            if gender == 'open':
+                competitor_count = sum(
+                    n for (ct, _g), n in matched.items() if ct == comp_type
+                )
+            else:
+                competitor_count = matched.get((comp_type, gender), 0)
+
+            division_label = 'College' if comp_type == 'college' else 'Pro'
+            gender_label = '' if gender == 'open' else (' Men' if gender == 'M' else ' Women')
+            event_label = f'{base_label}{gender_label} — {division_label}'
 
             cut_count = competitor_count // 2 if is_partnered else competitor_count
 
@@ -487,12 +497,12 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
                 formula_desc = f'{cut_count} cut{"s" if cut_count != 1 else ""} × 6.5" = {total_inches:.1f}"'
                 log_count = None
             elif category == 'op':
-                lag_blocks = math.ceil(cut_count / 7) * 5
+                lag_blocks = math.ceil(cut_count / 7) * 5 if cut_count > 0 else 0
                 total_inches = cut_count * 2.0 + lag_blocks
                 formula_desc = f'{cut_count} × 2" + ⌈{cut_count}/7⌉×5" lag = {total_inches:.0f}"'
                 log_count = None
             elif category == 'cookie':
-                log_count = math.ceil(cut_count / 3)
+                log_count = math.ceil(cut_count / 3) if cut_count > 0 else 0
                 total_inches = None
                 formula_desc = f'⌈{cut_count}/3⌉ = {log_count} log{"s" if log_count != 1 else ""}'
             else:
@@ -502,6 +512,7 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
 
             results.append({
                 'event_label': event_label,
+                'comp_type': comp_type,
                 'gender': gender,
                 'competitor_count': competitor_count,
                 'cut_count': cut_count,
@@ -546,6 +557,7 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
 
         results.append({
             'event_label': 'Pro-Am Relay — Double Buck',
+            'comp_type': 'relay',
             'gender': 'open',
             'competitor_count': relay_team_count,
             'cut_count': relay_team_count,
@@ -562,6 +574,10 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
             'size_display': _fmt_size(_fake),
             'config_key': LOG_RELAY_DOUBLEBUCK_KEY,
         })
+
+    # Sort: college first, then pro, then relay — within each, preserve SAW_EVENTS order.
+    type_order = {'college': 0, 'pro': 1, 'relay': 2}
+    results.sort(key=lambda r: type_order.get(r.get('comp_type', 'pro'), 1))
 
     return results
 
@@ -794,47 +810,163 @@ def get_lottery_view(tournament_id):
     return result
 
 
-def calculate_springboard_dummies(blocks):
+def calculate_springboard_dummies(blocks, tournament_id=None):
     """
     Calculate springboard dummy/tree requirements from block counts.
 
+    Separates 1-board, 2-board, and 3-board into distinct groups because
+    each requires a different height dummy tree.
+
     Rules:
-      - 1-board + 2-board style springboard runs: 3 runs per dummy
+      - 1-board / 2-board runs: 3 runs per dummy
       - 3-board jigger runs: 2 runs per dummy
+
+    Friday Feature logic:
+      - College 1-Board always runs Friday → needs its own Friday dummies.
+      - Pro 1-Board or 3-Board Jigger in the Friday Feature → separate
+        Friday dummies (cannot reuse Saturday trees).
+      - If 1-board runs AFTER 2-board on Saturday, 2-board dummies can be
+        cut down to 6 feet and reused for 1-board → only need max, not sum.
     """
-    one_two_keys = {
-        'block_springboard_college_M',
-        'block_springboard_college_F',
-        'block_springboard_pro',
-    }
+    # --- Separate competitor counts by board height ---
+    # College 1-Board is always "1-board" height.
+    # Pro "Springboard" is 2-board. Pro "Pro 1-Board" is 1-board.
+    # The existing config keys lump them — we need to count via event data.
+    college_keys = {'block_springboard_college_M', 'block_springboard_college_F'}
+    pro_sb_key = 'block_springboard_pro'
     three_board_keys = {'block_3board_pro'}
 
-    one_two_runs = sum(
-        b['competitor_count']
-        for b in blocks
-        if b['config_key'] in one_two_keys
-    )
-    three_board_runs = sum(
-        b['competitor_count']
-        for b in blocks
-        if b['config_key'] in three_board_keys
+    # College 1-Board runs (always Friday)
+    college_one_board_runs = sum(
+        b['competitor_count'] for b in blocks if b['config_key'] in college_keys
     )
 
-    one_two_per_dummy = 3
+    # Pro springboard (2-board) runs
+    pro_two_board_runs = 0
+    # Pro 1-Board runs
+    pro_one_board_runs = 0
+
+    # To distinguish pro 1-board from 2-board, we need actual event data.
+    # The block list lumps all pro springboard into 'block_springboard_pro'.
+    # Split using tournament event data if available.
+    if tournament_id is not None:
+        counts = _count_competitors(tournament_id)
+        for (event_lower, comp_type, _gender), n in counts.items():
+            if comp_type != 'pro':
+                continue
+            if '1-board' in event_lower or '1 board' in event_lower or 'one board' in event_lower:
+                pro_one_board_runs += n
+            elif 'springboard' in event_lower and '3-board' not in event_lower and '3 board' not in event_lower:
+                pro_two_board_runs += n
+    else:
+        # Fallback: lump all pro springboard as 2-board
+        pro_two_board_runs = sum(
+            b['competitor_count'] for b in blocks if b['config_key'] == pro_sb_key
+        )
+
+    three_board_runs = sum(
+        b['competitor_count'] for b in blocks if b['config_key'] in three_board_keys
+    )
+
+    one_board_per_dummy = 3
+    two_board_per_dummy = 3
     three_board_per_dummy = 2
 
-    one_two_dummies = math.ceil(one_two_runs / one_two_per_dummy) if one_two_runs > 0 else 0
-    three_board_dummies = math.ceil(three_board_runs / three_board_per_dummy) if three_board_runs > 0 else 0
+    # --- Friday Feature detection ---
+    fnf_event_ids = set()
+    pro_one_board_is_friday = False
+    three_board_is_friday = False
+    if tournament_id is not None:
+        try:
+            import os
+            import json
+            instance_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance'
+            )
+            fnf_path = os.path.join(instance_dir, f'friday_feature_{tournament_id}.json')
+            if os.path.exists(fnf_path):
+                with open(fnf_path, 'r') as f:
+                    fnf_data = json.load(f)
+                fnf_event_ids = set(fnf_data.get('event_ids', []))
+        except Exception:
+            pass
+
+        if fnf_event_ids:
+            from models.event import Event
+            fnf_events = Event.query.filter(Event.id.in_(fnf_event_ids)).all()
+            for ev in fnf_events:
+                name_lower = ev.name.lower()
+                if '1-board' in name_lower or '1 board' in name_lower:
+                    pro_one_board_is_friday = True
+                elif '3-board' in name_lower or '3 board' in name_lower or 'jigger' in name_lower:
+                    three_board_is_friday = True
+
+    # --- Calculate dummies by day ---
+    # Friday: college 1-board + any pro FNF springboard events
+    friday_one_board_runs = college_one_board_runs
+    if pro_one_board_is_friday:
+        friday_one_board_runs += pro_one_board_runs
+    friday_three_board_runs = three_board_runs if three_board_is_friday else 0
+
+    friday_one_board_dummies = math.ceil(friday_one_board_runs / one_board_per_dummy) if friday_one_board_runs > 0 else 0
+    friday_three_board_dummies = math.ceil(friday_three_board_runs / three_board_per_dummy) if friday_three_board_runs > 0 else 0
+
+    # Saturday: 2-board always, pro 1-board if NOT FNF, 3-board if NOT FNF
+    sat_two_board_runs = pro_two_board_runs
+    sat_one_board_runs = 0 if pro_one_board_is_friday else pro_one_board_runs
+    sat_three_board_runs = 0 if three_board_is_friday else three_board_runs
+
+    sat_two_board_dummies = math.ceil(sat_two_board_runs / two_board_per_dummy) if sat_two_board_runs > 0 else 0
+    sat_one_board_dummies = math.ceil(sat_one_board_runs / one_board_per_dummy) if sat_one_board_runs > 0 else 0
+    sat_three_board_dummies = math.ceil(sat_three_board_runs / three_board_per_dummy) if sat_three_board_runs > 0 else 0
+
+    # Reuse logic: if 1-board follows 2-board on Saturday, 2-board trees
+    # can be cut down to 6ft → need max(2-board, 1-board) instead of sum.
+    # We assume 1-board always follows 2-board on Saturday (standard order).
+    sat_one_two_reusable = sat_one_board_runs > 0 and sat_two_board_runs > 0
+    if sat_one_two_reusable:
+        sat_combined_dummies = max(sat_two_board_dummies, sat_one_board_dummies)
+    else:
+        sat_combined_dummies = sat_two_board_dummies + sat_one_board_dummies
+
+    total_dummies = (
+        friday_one_board_dummies + friday_three_board_dummies
+        + sat_combined_dummies + sat_three_board_dummies
+    )
 
     return {
-        'one_two_runs': one_two_runs,
+        # Per-height breakdown
+        'college_one_board_runs': college_one_board_runs,
+        'pro_one_board_runs': pro_one_board_runs,
+        'pro_two_board_runs': pro_two_board_runs,
         'three_board_runs': three_board_runs,
-        'one_two_per_dummy': one_two_per_dummy,
+
+        'one_board_per_dummy': one_board_per_dummy,
+        'two_board_per_dummy': two_board_per_dummy,
         'three_board_per_dummy': three_board_per_dummy,
-        'one_two_dummies': one_two_dummies,
-        'three_board_dummies': three_board_dummies,
-        'total_runs': one_two_runs + three_board_runs,
-        'total_dummies': one_two_dummies + three_board_dummies,
+
+        # Friday Feature status
+        'pro_one_board_is_friday': pro_one_board_is_friday,
+        'three_board_is_friday': three_board_is_friday,
+
+        # Friday counts
+        'friday_one_board_runs': friday_one_board_runs,
+        'friday_one_board_dummies': friday_one_board_dummies,
+        'friday_three_board_runs': friday_three_board_runs,
+        'friday_three_board_dummies': friday_three_board_dummies,
+
+        # Saturday counts
+        'sat_two_board_runs': sat_two_board_runs,
+        'sat_two_board_dummies': sat_two_board_dummies,
+        'sat_one_board_runs': sat_one_board_runs,
+        'sat_one_board_dummies': sat_one_board_dummies,
+        'sat_three_board_runs': sat_three_board_runs,
+        'sat_three_board_dummies': sat_three_board_dummies,
+        'sat_one_two_reusable': sat_one_two_reusable,
+        'sat_combined_dummies': sat_combined_dummies,
+
+        # Totals
+        'total_dummies': total_dummies,
     }
 
 
@@ -862,7 +994,7 @@ def get_wood_report(tournament_id):
     saw_wood = calculate_saw_wood(tournament_id, counts=counts, configs=configs)
     by_species = _group_by_species(blocks, saw_wood)
     ordering = get_ordering_summary(blocks, saw_wood)
-    springboard = calculate_springboard_dummies(blocks)
+    springboard = calculate_springboard_dummies(blocks, tournament_id=tournament_id)
 
     total_blocks = sum(b['competitor_count'] for b in blocks)
     # OP and Cookie Stack are independent categories — never fold into general saw total
@@ -889,6 +1021,173 @@ def get_wood_report(tournament_id):
         'total_cookie_logs': total_cookie_logs,
         'springboard': springboard,
     }
+
+
+# ---------------------------------------------------------------------------
+# Wood preset helpers
+# ---------------------------------------------------------------------------
+
+_PRESET_FILE = None  # resolved lazily to instance/wood_presets.json
+
+
+def _preset_path():
+    """Return the path to instance/wood_presets.json, creating instance/ if needed."""
+    global _PRESET_FILE
+    if _PRESET_FILE is None:
+        import os
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance')
+        os.makedirs(base, exist_ok=True)
+        _PRESET_FILE = os.path.join(base, 'wood_presets.json')
+    return _PRESET_FILE
+
+
+def get_all_presets():
+    """Return merged dict of built-in + custom presets (custom overrides built-in)."""
+    import json
+    import config as cfg
+    presets = dict(cfg.WOOD_PRESETS)
+    try:
+        with open(_preset_path(), 'r') as f:
+            custom = json.load(f)
+        if isinstance(custom, dict):
+            presets.update(custom)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return presets
+
+
+def save_custom_preset(name, preset_data):
+    """Save a named preset to instance/wood_presets.json."""
+    import json
+    presets = {}
+    try:
+        with open(_preset_path(), 'r') as f:
+            presets = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    presets[name] = preset_data
+    with open(_preset_path(), 'w') as f:
+        json.dump(presets, f, indent=2)
+
+
+def delete_custom_preset(name):
+    """Delete a named preset from instance/wood_presets.json."""
+    import json
+    try:
+        with open(_preset_path(), 'r') as f:
+            presets = json.load(f)
+        presets.pop(name, None)
+        with open(_preset_path(), 'w') as f:
+            json.dump(presets, f, indent=2)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+
+def apply_preset(tournament_id, preset_name):
+    """Apply a named preset to a tournament's wood config.
+
+    Only overwrites species, size_value, size_unit — leaves count_override
+    and notes untouched.
+
+    Returns the number of config keys updated.
+    """
+    from models.wood_config import WoodConfig
+    from database import db
+
+    presets = get_all_presets()
+    preset = presets.get(preset_name)
+    if not preset:
+        return 0
+
+    updated = 0
+    block_spec = preset.get('blocks', {})
+    log_specs = {
+        LOG_GENERAL_KEY: preset.get('log_general', {}),
+        LOG_STOCK_KEY: preset.get('log_stock', {}),
+        LOG_OP_KEY: preset.get('log_op', {}),
+        LOG_COOKIE_KEY: preset.get('log_cookie', {}),
+    }
+
+    # Apply block preset to all block config_keys.
+    if block_spec:
+        for cfg_key in BLOCK_CONFIG_LABELS:
+            if cfg_key in RELAY_BLOCK_KEYS:
+                continue  # relay blocks keep their manual config
+            existing = WoodConfig.query.filter_by(
+                tournament_id=tournament_id, config_key=cfg_key
+            ).first()
+            if existing:
+                existing.species = block_spec.get('species', existing.species)
+                if 'size_value' in block_spec:
+                    existing.size_value = block_spec['size_value']
+                if 'size_unit' in block_spec:
+                    existing.size_unit = block_spec['size_unit']
+            else:
+                row = WoodConfig(
+                    tournament_id=tournament_id,
+                    config_key=cfg_key,
+                    species=block_spec.get('species'),
+                    size_value=block_spec.get('size_value'),
+                    size_unit=block_spec.get('size_unit', 'in'),
+                )
+                db.session.add(row)
+            updated += 1
+
+    # Apply log presets.
+    for log_key, spec in log_specs.items():
+        if not spec:
+            continue
+        existing = WoodConfig.query.filter_by(
+            tournament_id=tournament_id, config_key=log_key
+        ).first()
+        if existing:
+            existing.species = spec.get('species', existing.species)
+            if 'size_value' in spec:
+                existing.size_value = spec['size_value']
+            if 'size_unit' in spec:
+                existing.size_unit = spec['size_unit']
+        else:
+            row = WoodConfig(
+                tournament_id=tournament_id,
+                config_key=log_key,
+                species=spec.get('species'),
+                size_value=spec.get('size_value'),
+                size_unit=spec.get('size_unit', 'in'),
+            )
+            db.session.add(row)
+        updated += 1
+
+    db.session.commit()
+    return updated
+
+
+def build_preset_from_config(tournament_id):
+    """Build a preset dict from the current tournament's wood config."""
+    configs = _get_configs(tournament_id)
+    # Use the first non-relay block config as the representative block spec.
+    block_spec = {}
+    for cfg_key in BLOCK_CONFIG_LABELS:
+        if cfg_key in RELAY_BLOCK_KEYS:
+            continue
+        cfg = configs.get(cfg_key)
+        if cfg and cfg.species:
+            block_spec = {
+                'species': cfg.species,
+                'size_value': cfg.size_value,
+                'size_unit': cfg.size_unit or 'in',
+            }
+            break
+
+    preset = {'blocks': block_spec}
+    for log_key in (LOG_GENERAL_KEY, LOG_STOCK_KEY, LOG_OP_KEY, LOG_COOKIE_KEY):
+        cfg = configs.get(log_key)
+        if cfg and cfg.species:
+            preset[log_key] = {
+                'species': cfg.species,
+                'size_value': cfg.size_value,
+                'size_unit': cfg.size_unit or 'in',
+            }
+    return preset
 
 
 def get_history_report():

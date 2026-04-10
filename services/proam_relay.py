@@ -297,6 +297,90 @@ class ProAmRelay:
         completed = [t for t in teams if t.get('total_time') is not None]
         return sorted(completed, key=lambda t: t['total_time'])
 
+    def set_teams_manually(self, team_assignments: list[dict]) -> dict:
+        """
+        Set relay teams manually instead of using the lottery.
+
+        Args:
+            team_assignments: list of dicts, each with:
+                {
+                    'pro_member_ids': [int, ...],
+                    'college_member_ids': [int, ...],
+                }
+
+        Returns:
+            Dict with result message.
+        """
+        if not team_assignments:
+            raise ValueError("At least one team is required.")
+
+        teams = []
+        all_pro_ids = set()
+        all_college_ids = set()
+
+        for idx, assignment in enumerate(team_assignments, start=1):
+            pro_ids = assignment.get('pro_member_ids', [])
+            college_ids = assignment.get('college_member_ids', [])
+
+            # Validate no duplicate assignments across teams.
+            for pid in pro_ids:
+                if pid in all_pro_ids:
+                    raise ValueError(f"Pro competitor {pid} is assigned to multiple teams.")
+                all_pro_ids.add(pid)
+            for cid in college_ids:
+                if cid in all_college_ids:
+                    raise ValueError(f"College competitor {cid} is assigned to multiple teams.")
+                all_college_ids.add(cid)
+
+            # Resolve competitor objects.
+            pro_members = []
+            for pid in pro_ids:
+                comp = ProCompetitor.query.get(pid)
+                if not comp:
+                    raise ValueError(f"Pro competitor ID {pid} not found.")
+                pro_members.append({'id': comp.id, 'name': comp.name, 'gender': comp.gender})
+
+            college_members = []
+            for cid in college_ids:
+                comp = CollegeCompetitor.query.get(cid)
+                if not comp:
+                    raise ValueError(f"College competitor ID {cid} not found.")
+                college_members.append({
+                    'id': comp.id, 'name': comp.name, 'gender': comp.gender,
+                    'team': comp.team.team_code if comp.team else 'N/A',
+                })
+
+            team = {
+                'team_number': idx,
+                'name': f'Team {idx}',
+                'pro_members': pro_members,
+                'college_members': college_members,
+                'events': {
+                    'partnered_sawing':       {'status': 'pending', 'result': None},
+                    'standing_butcher_block':  {'status': 'pending', 'result': None},
+                    'underhand_butcher_block': {'status': 'pending', 'result': None},
+                    'team_axe_throw':          {'status': 'pending', 'result': None},
+                },
+                'total_time': None,
+            }
+            teams.append(team)
+
+        # Store results.
+        self.relay_data['status'] = 'drawn'
+        self.relay_data['teams'] = teams
+        self.relay_data['eligible_pro'] = self.get_eligible_pro_competitors()
+        self.relay_data['eligible_college'] = self.get_eligible_college_competitors()
+        self.relay_data['drawn_pro'] = [m for t in teams for m in t['pro_members']]
+        self.relay_data['drawn_college'] = [m for t in teams for m in t['college_members']]
+
+        self._save_relay_data()
+
+        return {
+            'success': True,
+            'teams': teams,
+            'message': f'Manually set {len(teams)} team(s).',
+        }
+
     def replace_competitor(self, team_number: int, old_competitor_id: int,
                           new_competitor_id: int, competitor_type: str):
         """

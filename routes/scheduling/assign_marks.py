@@ -53,9 +53,9 @@ from services.strathmark_sync import is_configured as strathmark_is_configured
 
 from . import scheduling_bp
 
-# Sentinel: handicap_factor == 1.0 is the DB placeholder treated as scratch
-# (0.0 start mark) by scoring_engine._metric().  Anything else is a real mark.
-_SCRATCH_PLACEHOLDER = 1.0
+# handicap_factor == 0.0 means scratch (no start mark).
+# Anything > 0 is a real mark in seconds.
+_SCRATCH_PLACEHOLDER = 0.0
 
 
 def _parse_mark(raw: str) -> float | None:

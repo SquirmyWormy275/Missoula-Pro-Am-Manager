@@ -293,7 +293,7 @@ def make_heat(session, event, heat_number=1, run_number=1,
 def make_event_result(session, event, competitor, competitor_type='pro',
                       result_value=None, run1_value=None, run2_value=None,
                       run3_value=None, best_run=None, tiebreak_value=None,
-                      handicap_factor=1.0, predicted_time=None,
+                      handicap_factor=0.0, predicted_time=None,
                       final_position=None, points_awarded=0,
                       payout_amount=0.0, status='pending',
                       partner_name=None):

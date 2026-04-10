@@ -202,5 +202,10 @@
     </div>
 
     <button class="no-print" data-print style="position: fixed; top: 10px; right: 10px; padding: 10px 16px;">Print</button>
+    <script>
+    document.querySelectorAll('[data-print]').forEach(function(btn) {
+        btn.addEventListener('click', function() { window.print(); });
+    });
+    </script>
 </body>
 </html>

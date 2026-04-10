@@ -5,7 +5,9 @@ Stores a judge-assigned ability rank for a competitor within a specific event
 category, scoped to a tournament. Rank 1 = best; higher numbers = weaker.
 
 Event categories:
-  'springboard'     — covers Springboard, Pro 1-Board, 3-Board Jigger
+  'springboard'     — Springboard (main 2-board)
+  'pro_1board'      — Pro 1-Board Springboard
+  '3board_jigger'   — 3-Board Jigger Springboard
   'underhand'       — Underhand Butcher Block
   'standing_block'  — Standing Block (Speed and Hard Hit)
   'obstacle_pole'   — Obstacle Pole

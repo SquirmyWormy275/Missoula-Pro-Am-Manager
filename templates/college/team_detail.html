@@ -356,7 +356,7 @@
                                     {% set comp = member_by_id.get(err.competitor_id) %}
                                     {% if comp %}
                                     <p class="small text-muted mb-2">
-                                        Remove events until {{ comp.name }} has at most {{ err.max }}.
+                                        Remove events until {{ comp.display_name }} has at most {{ err.max }}.
                                     </p>
                                     <div class="d-flex flex-wrap gap-2">
                                         {% for ev in err.events %}
@@ -377,7 +377,7 @@
                                     {% set comp = member_by_id.get(err.competitor_id) %}
                                     {% if comp %}
                                     <p class="small text-muted mb-2">
-                                        {{ comp.name }} may enter at most {{ err.max }} chopping event(s). Remove one:
+                                        {{ comp.display_name }} may enter at most {{ err.max }} chopping event(s). Remove one:
                                     </p>
                                     <div class="d-flex flex-wrap gap-2">
                                         {% for ev in err.events %}
@@ -406,7 +406,7 @@
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <input type="hidden" name="event_name" value="{{ err.event_name }}">
                                             <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                <i class="bi bi-x-circle"></i> Remove {{ c.name }}
+                                                <i class="bi bi-x-circle"></i> Remove {{ c.display_name }}
                                             </button>
                                         </form>
                                         {% endfor %}
@@ -425,7 +425,7 @@
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <input type="hidden" name="event_name" value="{{ err.event_name }}">
                                             <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                <i class="bi bi-x-circle"></i> Remove {{ c.name }}
+                                                <i class="bi bi-x-circle"></i> Remove {{ c.display_name }}
                                             </button>
                                         </form>
                                         {% endfor %}
@@ -644,6 +644,12 @@
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-warning w-100">
                                 <i class="bi bi-arrow-repeat"></i> Re-validate Team After Fixes
+                            </button>
+                        </form>
+                        <form action="{{ url_for('registration.override_team_validation', tournament_id=tournament.id, team_id=team.id) }}" method="POST" class="mt-2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-danger w-100" onclick="return confirm('Override validation and mark this team as valid despite errors?')">
+                                <i class="bi bi-shield-exclamation"></i> Admin Override — Force Valid
                             </button>
                         </form>
                     </div>

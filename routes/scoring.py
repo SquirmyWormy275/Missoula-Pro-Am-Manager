@@ -208,7 +208,7 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
                         event_id=event.id,
                         competitor_id=comp_id,
                         competitor_type=event.event_type,
-                        competitor_name=comp.name if comp else f'Unknown ({comp_id})',
+                        competitor_name=comp.display_name if comp else f'Unknown ({comp_id})',
                     )
                     db.session.add(result)
                     result_by_comp[comp_id] = result
@@ -266,7 +266,7 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
                         event_id=event.id,
                         competitor_id=comp_id,
                         competitor_type=event.event_type,
-                        competitor_name=comp.name if comp else f'Unknown ({comp_id})',
+                        competitor_name=comp.display_name if comp else f'Unknown ({comp_id})',
                     )
                     db.session.add(result)
                     result_by_comp[comp_id] = result
@@ -312,7 +312,7 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
                         event_id=event.id,
                         competitor_id=comp_id,
                         competitor_type=event.event_type,
-                        competitor_name=comp.name if comp else f'Unknown ({comp_id})',
+                        competitor_name=comp.display_name if comp else f'Unknown ({comp_id})',
                     )
                     db.session.add(result)
                     result_by_comp[comp_id] = result
@@ -500,11 +500,22 @@ def event_results(tournament_id, event_id):
     payout_templates = PayoutTemplate.query.order_by(PayoutTemplate.name).all()
     throwoff_pending = engine.pending_throwoffs(event) if event.is_axe_throw_cumulative else []
 
+    # Partnered Axe Throw: pass PAT state for inline prelim scoring
+    pat = None
+    pat_stage = None
+    pat_pairs = None
+    if event.has_prelims:
+        from services.partnered_axe import PartneredAxeThrow
+        pat = PartneredAxeThrow(event)
+        pat_stage = pat.get_stage()
+        pat_pairs = pat.get_pairs()
+
     return render_template('scoring/event_results.html',
                            tournament=tournament, event=event,
                            heats=heats, results=results,
                            payout_templates=payout_templates,
-                           throwoff_pending=throwoff_pending)
+                           throwoff_pending=throwoff_pending,
+                           pat=pat, pat_stage=pat_stage, pat_pairs=pat_pairs)
 
 
 # ---------------------------------------------------------------------------
@@ -524,19 +535,28 @@ def live_standings(tournament_id, event_id):
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/finalize-preview')
 def finalize_preview(tournament_id, event_id):
-    """JSON: provisional standings + outlier warnings for the confirmation modal."""
+    """JSON: provisional standings + outlier warnings + finalization checks for the confirmation modal."""
     event = _event_for_tournament_or_404(tournament_id, event_id)
     preview = engine.preview_positions(event)
     outliers = engine.outlier_check(event)
     throwoffs = [{'id': r.id, 'name': r.competitor_name, 'score': r.result_value}
                  for r in engine.pending_throwoffs(event)]
-    return jsonify({'preview': preview, 'outliers': outliers, 'throwoffs': throwoffs})
+    finalize_warnings = engine.validate_finalization(event)
+    return jsonify({'preview': preview, 'outliers': outliers, 'throwoffs': throwoffs,
+                    'finalize_warnings': finalize_warnings})
 
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/finalize', methods=['POST'])
 @write_limit('10 per minute')
 def finalize_event(tournament_id, event_id):
     event = _event_for_tournament_or_404(tournament_id, event_id)
+
+    # Pre-finalization validation — surface warnings so the judge knows what's off.
+    # These are warnings, not blockers, because there are legitimate reasons to
+    # finalize without payouts (test runs) or without marks (scratch events).
+    finalize_issues = engine.validate_finalization(event)
+    for issue in finalize_issues:
+        flash(issue['message'], 'warning')
 
     try:
         with db.session.begin_nested():   # savepoint — rolls back to pre-finalize if error
@@ -649,7 +669,7 @@ def enter_heat_results(tournament_id, heat_id):
         if comp:
             competitors.append({
                 'id': comp_id,
-                'name': comp.name,
+                'name': comp.display_name,
                 'stand': heat.get_stand_for_competitor(comp_id),
                 'headshot': getattr(comp, 'headshot_filename', None),
                 'existing_result': result.result_value if result else None,
@@ -904,6 +924,11 @@ def configure_payouts(tournament_id, event_id):
         flash(text.FLASH['pro_only_payouts'], 'error')
         return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
+    if event.uses_payouts_for_state:
+        flash('This event uses a specialized scoring system. Payouts cannot be configured here.', 'warning')
+        return redirect(url_for('scoring.event_results',
+                                tournament_id=tournament_id, event_id=event_id))
+
     if request.method == 'POST':
         action = request.form.get('action', 'save')
 
@@ -947,6 +972,16 @@ def configure_payouts(tournament_id, event_id):
             event.set_payouts(payouts)
             log_action('payouts_configured', 'event', event.id,
                        {'positions': sorted(payouts.keys())})
+            # If the event was already finalized, re-run position calculation
+            # so that payout_amount on each EventResult gets updated with the
+            # new payout structure. Without this, judges have to manually
+            # re-finalize after configuring payouts.
+            if event.is_finalized:
+                with db.session.begin_nested():
+                    engine.calculate_positions(event)
+                flash('Payouts saved and standings recalculated.', 'success')
+            else:
+                flash(text.FLASH['payouts_saved'], 'success')
             db.session.commit()
         except (StaleDataError, IntegrityError):
             db.session.rollback()
@@ -955,7 +990,6 @@ def configure_payouts(tournament_id, event_id):
                                     tournament_id=tournament_id, event_id=event_id))
 
         invalidate_tournament_caches(tournament_id)
-        flash(text.FLASH['payouts_saved'], 'success')
         return redirect(url_for('scoring.event_results',
                                 tournament_id=tournament_id, event_id=event_id))
 
@@ -1016,9 +1050,13 @@ def tournament_payout_manager(tournament_id):
                 flash('Template not found.', 'error')
                 return _payout_redirect()
             applied = 0
+            skipped = 0
             for eid in event_ids:
                 ev = Event.query.filter_by(id=eid, tournament_id=tournament_id, event_type='pro').first()
                 if ev:
+                    if ev.uses_payouts_for_state:
+                        skipped += 1
+                        continue
                     ev.set_payouts(template.get_payouts())
                     applied += 1
             if applied:
@@ -1027,7 +1065,10 @@ def tournament_payout_manager(tournament_id):
                     log_action('bulk_payout_template_applied', 'tournament', tournament_id,
                                {'template_id': tpl_id, 'template_name': template.name, 'event_count': applied})
                     invalidate_tournament_caches(tournament_id)
-                    flash(f'"{template.name}" applied to {applied} event(s).', 'success')
+                    msg = f'"{template.name}" applied to {applied} event(s).'
+                    if skipped:
+                        msg += f' {skipped} special event(s) skipped.'
+                    flash(msg, 'success')
                 except (StaleDataError, IntegrityError):
                     db.session.rollback()
                     flash('Save failed — please retry.', 'error')
@@ -1039,10 +1080,13 @@ def tournament_payout_manager(tournament_id):
             eid = request.form.get('event_id', type=int)
             ev = Event.query.filter_by(id=eid, tournament_id=tournament_id, event_type='pro').first()
             if ev:
-                ev.set_payouts({})
-                db.session.commit()
-                invalidate_tournament_caches(tournament_id)
-                flash(f'Payouts cleared for {ev.display_name}.', 'success')
+                if ev.uses_payouts_for_state:
+                    flash(f'{ev.display_name} uses a specialized scoring system and cannot be cleared here.', 'warning')
+                else:
+                    ev.set_payouts({})
+                    db.session.commit()
+                    invalidate_tournament_caches(tournament_id)
+                    flash(f'Payouts cleared for {ev.display_name}.', 'success')
             return _payout_redirect()
 
         if action == 'delete_template':
@@ -1076,6 +1120,20 @@ def tournament_payout_manager(tournament_id):
     total_purse = 0.0
     configured_count = 0
     for ev in pro_events:
+        # Events that store state-machine data in the payouts column
+        # (Pro-Am Relay, Partnered Axe Throw, Birling bracket) cannot
+        # be configured via the normal payout form.
+        if ev.uses_payouts_for_state:
+            event_summaries.append({
+                'event': ev,
+                'payouts': {},
+                'purse': 0.0,
+                'places_paid': 0,
+                'first_place': 0.0,
+                'state_event': True,
+            })
+            continue
+
         payouts = ev.get_payouts()
         purse = sum(float(v) for v in payouts.values()) if payouts else 0.0
         places_paid = len([v for v in payouts.values() if float(v) > 0]) if payouts else 0
@@ -1129,7 +1187,7 @@ def heat_sheet_pdf(tournament_id, heat_id):
         result = result_lookup.get(cid)
         competitors.append({
             'id': cid,
-            'name': comp.name if comp else f'Unknown ({cid})',
+            'name': comp.display_name if comp else f'Unknown ({cid})',
             'stand': assignments.get(str(cid)),
             'result_value': result.result_value if result else None,
             'run1_value': result.run1_value if result else None,

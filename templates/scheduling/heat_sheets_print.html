@@ -439,7 +439,162 @@
     {% endfor %}
     {% endif %}
 
-    {% if not flight_data and not no_flight_heats %}
+    {# ══════════════════════════════════════════════════════════════════
+       BIRLING BRACKETS
+    ══════════════════════════════════════════════════════════════════ #}
+    {% if birling_brackets %}
+    {% for bb in birling_brackets %}
+    <div class="section-banner college">
+        <i class="bi bi-diagram-3"></i>
+        {{ bb.event.display_name }} — Double Elimination Bracket
+    </div>
+
+    <style>
+    .hs-bracket-container { overflow-x: auto; padding: 8px 0; }
+    .hs-bracket-section { margin-bottom: 16px; }
+    .hs-bracket-section-title {
+        display: inline-block; padding: 4px 12px; border-radius: 4px;
+        font-size: 0.8rem; font-weight: 700; color: #fff; margin-bottom: 8px;
+    }
+    .hs-bracket-section-title.winners { background: #1a6fa8; }
+    .hs-bracket-section-title.losers  { background: #8d3a6e; }
+    .hs-bracket-section-title.finals  { background: #388e3c; }
+    .hs-bracket-row { display: flex; gap: 6px; align-items: stretch; }
+    .hs-bracket-round { display: flex; flex-direction: column; justify-content: space-around; min-width: 170px; flex-shrink: 0; }
+    .hs-bracket-round-label { text-align: center; font-size: 0.7rem; font-weight: 700; color: #888; text-transform: uppercase; margin-bottom: 4px; }
+    .hs-match {
+        border: 1px solid #dee2e6; border-radius: 4px; margin: 4px 0;
+        overflow: hidden; font-size: 0.82rem; background: #fff;
+    }
+    .hs-match.is-bye { opacity: 0.5; }
+    .hs-match-header { background: #f0f0f0; padding: 1px 8px; font-size: 0.68rem; color: #888; display: flex; justify-content: space-between; }
+    .hs-match-slot { padding: 4px 8px; display: flex; justify-content: space-between; align-items: center; min-height: 28px; }
+    .hs-match-slot + .hs-match-slot { border-top: 1px solid #dee2e6; }
+    .hs-match-slot.winner { background: rgba(25,135,84,0.1); font-weight: 700; }
+    .hs-match-slot.loser { opacity: 0.45; text-decoration: line-through; }
+    .hs-match-slot .tbd { color: #aaa; font-style: italic; }
+    .hs-match-slot .bye { color: #bbb; font-style: italic; }
+    .hs-placements { margin-top: 12px; }
+    .hs-placements table { width: auto; min-width: 250px; }
+    .hs-place-badge { display: inline-block; width: 24px; height: 24px; line-height: 24px;
+        text-align: center; border-radius: 50%; font-weight: 700; font-size: 0.8rem; }
+    .hs-place-1 { background: #ffd700; color: #000; }
+    .hs-place-2 { background: #c0c0c0; color: #000; }
+    .hs-place-3 { background: #cd7f32; color: #fff; }
+    </style>
+
+    {# ── Bracket macro ── #}
+    {% macro bracket_slot(comp_id, winner_id, loser_id, lookup) %}
+        {% set name = lookup.get(comp_id|string, '???') if comp_id else '' %}
+        {% if comp_id and comp_id == winner_id %}
+            <div class="hs-match-slot winner"><span>{{ name }}</span> <i class="bi bi-check-circle-fill text-success" style="font-size:0.75rem"></i></div>
+        {% elif comp_id and comp_id == loser_id %}
+            <div class="hs-match-slot loser"><span>{{ name }}</span></div>
+        {% elif comp_id %}
+            <div class="hs-match-slot"><span>{{ name }}</span></div>
+        {% else %}
+            <div class="hs-match-slot"><span class="tbd">TBD</span></div>
+        {% endif %}
+    {% endmacro %}
+
+    {% macro bracket_match(match, lookup) %}
+        <div class="hs-match {{ 'is-bye' if match.get('is_bye') else '' }}">
+            <div class="hs-match-header">
+                <span>{{ match.match_id }}</span>
+                {% if match.winner %}<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>{% endif %}
+            </div>
+            {{ bracket_slot(match.competitor1, match.winner, match.loser, lookup) }}
+            {{ bracket_slot(match.competitor2, match.winner, match.loser, lookup) }}
+        </div>
+    {% endmacro %}
+
+    {# Winners bracket #}
+    {% if bb.bracket.winners %}
+    <div class="hs-bracket-section">
+        <span class="hs-bracket-section-title winners">Winners Bracket</span>
+        <div class="hs-bracket-container">
+            <div class="hs-bracket-row">
+                {% for round_matches in bb.bracket.winners %}
+                <div class="hs-bracket-round">
+                    <div class="hs-bracket-round-label">{% if loop.last %}Final{% else %}Round {{ loop.index }}{% endif %}</div>
+                    {% for match in round_matches %}
+                        {{ bracket_match(match, bb.comp_lookup) }}
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Losers bracket #}
+    {% if bb.bracket.losers %}
+    <div class="hs-bracket-section">
+        <span class="hs-bracket-section-title losers">Losers Bracket</span>
+        <div class="hs-bracket-container">
+            <div class="hs-bracket-row">
+                {% for round_matches in bb.bracket.losers %}
+                <div class="hs-bracket-round">
+                    <div class="hs-bracket-round-label">L Round {{ loop.index }}</div>
+                    {% for match in round_matches %}
+                        {{ bracket_match(match, bb.comp_lookup) }}
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Grand finals #}
+    {% if bb.bracket.finals %}
+    <div class="hs-bracket-section">
+        <span class="hs-bracket-section-title finals">Grand Finals</span>
+        <div class="hs-bracket-container">
+            <div class="hs-bracket-row">
+                <div class="hs-bracket-round">
+                    <div class="hs-bracket-round-label">Finals</div>
+                    {{ bracket_match(bb.bracket.finals, bb.comp_lookup) }}
+                </div>
+                {% if bb.bracket.true_finals and bb.bracket.true_finals.needed %}
+                <div class="hs-bracket-round">
+                    <div class="hs-bracket-round-label">True Finals</div>
+                    {{ bracket_match(bb.bracket.true_finals, bb.comp_lookup) }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Placements #}
+    {% if bb.placements %}
+    <div class="hs-placements">
+        <table class="table table-sm">
+            <thead class="table-light"><tr><th style="width:60px">Place</th><th>Competitor</th></tr></thead>
+            <tbody>
+            {% for comp_id, pos in bb.placements.items()|sort(attribute='1') %}
+            <tr>
+                <td>{% if pos <= 3 %}<span class="hs-place-badge hs-place-{{ pos }}">{{ pos }}</span>{% else %}{{ pos }}{% endif %}</td>
+                <td>{{ bb.comp_lookup.get(comp_id, comp_id) }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <div class="no-print mb-3 mt-2">
+        <a href="{{ url_for('scheduling.birling_manage', tournament_id=tournament.id, event_id=bb.event.id) }}"
+           class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-diagram-3 me-1"></i> Manage Bracket
+        </a>
+    </div>
+
+    {% endfor %}
+    {% endif %}
+
+    {% if not flight_data and not no_flight_heats and not birling_brackets %}
     <div class="alert alert-info mt-3">No heats have been generated yet for this tournament.</div>
     {% endif %}
 
@@ -506,6 +661,8 @@ document.querySelectorAll('.flight-screen-grid').forEach(function(grid) {
 document.addEventListener('click', function (e) {
     var ff = e.target.closest('[data-filter-flights]');
     if (ff) { filterFlights(ff.dataset.filterFlights, ff); }
+    var pb = e.target.closest('[data-print]');
+    if (pb) { window.print(); }
 });
 document.addEventListener('change', function (e) {
     var t = e.target.closest('[data-toggle-body-class]');

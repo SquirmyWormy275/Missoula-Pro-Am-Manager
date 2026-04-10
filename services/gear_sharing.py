@@ -311,7 +311,15 @@ def parse_gear_sharing_details(
     # Fallback: read first segment before separator as partner candidate.
     if not partner_name:
         first_segment = re.split(r'[-—:;,]', text, maxsplit=1)[0].strip()
-        first_segment = re.sub(r'\b(sharing|with|gear|events?)\b', '', first_segment, flags=re.IGNORECASE).strip()
+        # Strip generic and equipment-related words that bleed into partner names.
+        first_segment = re.sub(
+            r'\b(sharing|with|gear|events?|springboard|crosscut|underhand|standing\s*block|'
+            r'single\s*buck|double\s*buck|jack\s*(?:&|and)\s*jill|hot\s*saw|stock\s*saw|'
+            r'chainsaw|power\s*saw|hand\s*saw|board|axe|saw|speed|hard\s*hit)\b',
+            '', first_segment, flags=re.IGNORECASE
+        ).strip()
+        # Collapse extra whitespace after stripping.
+        first_segment = re.sub(r'\s{2,}', ' ', first_segment).strip()
         if len(first_segment.split()) >= 2:
             partner_name = resolve_partner_name(first_segment, name_index)
 
@@ -857,6 +865,115 @@ def build_gear_conflict_pairs(tournament) -> dict[int, set[int]]:
     return conflicts
 
 
+def _aggregate_gear_groups(pro_pairs, pro_comps, all_events):
+    """Aggregate gear pairs into connected-component groups.
+
+    Instead of only showing 2-person pairs, this finds all competitors
+    who transitively share gear for the same equipment family and groups
+    them together.  A "group" of 2 is a normal pair; groups of 3+ mean
+    three or more competitors share one piece of equipment.
+
+    Returns a list of group dicts:
+        {members: [comp, ...], event_label, event_keys: set, heat_conflict: bool,
+         has_unconfirmed: bool}
+    """
+    from collections import defaultdict
+
+    # Map each event key to a "family key" so that different keys referencing
+    # the same equipment family get merged (e.g., category:springboard and
+    # a specific springboard event ID belong to the same family).
+    def _family_key(event_key):
+        ek = str(event_key or '').strip().lower()
+        if ek.startswith('category:'):
+            return ek
+        # Numeric event IDs: look up the event's stand_type to find its family.
+        for ev in all_events:
+            if str(ev.id) == ek:
+                st = str(getattr(ev, 'stand_type', '') or '').strip().lower()
+                if st in ('saw_hand',):
+                    return 'category:crosscut'
+                if st in ('hot_saw',):
+                    return 'category:chainsaw'
+                if st in ('springboard',):
+                    return 'category:springboard'
+                return f'event:{ek}'
+        return f'event:{ek}'
+
+    # Build adjacency graph per family key.
+    # Each node is a competitor id; edges connect gear-sharing partners.
+    comp_by_id = {c.id: c for c in pro_comps}
+    family_edges = defaultdict(list)   # family_key -> [(id_a, id_b, pair_dict)]
+    for pair in pro_pairs:
+        fk = _family_key(pair['event_key'])
+        family_edges[fk].append((pair['comp_a'].id, pair['comp_b'].id, pair))
+
+    # Union-Find to build connected components.
+    parent = {}
+    def find(x):
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    groups = []
+    for fk, edges in family_edges.items():
+        parent.clear()
+        for id_a, id_b, _ in edges:
+            parent.setdefault(id_a, id_a)
+            parent.setdefault(id_b, id_b)
+            union(id_a, id_b)
+
+        # Collect components.
+        components = defaultdict(set)
+        for cid in parent:
+            components[find(cid)].add(cid)
+
+        # Gather metadata from the pairs that formed each component.
+        for root, member_ids in components.items():
+            component_pairs = [p for (a, b, p) in edges if a in member_ids or b in member_ids]
+            members = [comp_by_id[mid] for mid in sorted(member_ids) if mid in comp_by_id]
+            if not members:
+                continue
+
+            event_keys = set()
+            has_conflict = False
+            has_unconfirmed = False
+            for p in component_pairs:
+                event_keys.add(p['event_key'])
+                if p.get('heat_conflict'):
+                    has_conflict = True
+                if p.get('paired_by') == 'inferred':
+                    has_unconfirmed = True
+
+            # Use the first pair's label; if there are multiple event keys
+            # in the same family, join their labels.
+            labels = []
+            seen_labels = set()
+            for p in component_pairs:
+                lbl = p.get('event_label', '')
+                if lbl and lbl not in seen_labels:
+                    labels.append(lbl)
+                    seen_labels.add(lbl)
+            event_label = ', '.join(labels) if labels else fk
+
+            groups.append({
+                'members': members,
+                'event_label': event_label,
+                'event_keys': event_keys,
+                'heat_conflict': has_conflict,
+                'has_unconfirmed': has_unconfirmed,
+                'member_count': len(members),
+            })
+
+    # Sort: largest groups first, then alphabetically by first member name.
+    groups.sort(key=lambda g: (-g['member_count'], g['members'][0].name if g['members'] else ''))
+    return groups
+
+
 def build_gear_report(tournament) -> dict:
     """
     Build a comprehensive gear-sharing audit for a tournament.
@@ -889,6 +1006,13 @@ def build_gear_report(tournament) -> dict:
     pro_by_norm = {normalize_person_name(c.name): c for c in pro_comps}
     comp_gear_by_id = {c.id: c.get_gear_sharing() for c in pro_comps}
 
+    # Friendly fallback labels for category keys when no events match.
+    _CATEGORY_LABELS = {
+        'category:crosscut': 'Crosscut / Hand Saws',
+        'category:chainsaw': 'Chainsaws / Power Saws',
+        'category:springboard': 'Springboard',
+    }
+
     def _resolve_pro_event_label(key):
         label = event_display_pro.get(str(key))
         if label:
@@ -896,7 +1020,9 @@ def build_gear_report(tournament) -> dict:
         # For category keys, join all matching event display names.
         if str(key).startswith('category:'):
             matching = [e.display_name for e in pro_events if event_matches_gear_key(e, key)]
-            return ', '.join(matching) if matching else str(key)
+            if matching:
+                return ', '.join(matching)
+            return _CATEGORY_LABELS.get(str(key), str(key))
         ev = next((e for e in pro_events if event_matches_gear_key(e, key)), None)
         return ev.display_name if ev else str(key)
 
@@ -1058,8 +1184,12 @@ def build_gear_report(tournament) -> dict:
 
     unconfirmed_count = sum(1 for p in pro_pairs if p['paired_by'] == 'inferred')
 
+    # Aggregate pairs into connected-component gear groups (supports 3+ sharing).
+    pro_groups = _aggregate_gear_groups(pro_pairs, pro_comps, pro_events)
+
     return {
         'pro_pairs': pro_pairs,
+        'pro_groups': pro_groups,
         'pro_unresolved': pro_unresolved,
         'pro_conflicts': pro_conflicts,
         'group_warnings': group_warnings,
@@ -1067,6 +1197,7 @@ def build_gear_report(tournament) -> dict:
         'college_constraints': college_constraints,
         'stats': {
             'pairs': len(pro_pairs),
+            'groups': len(pro_groups),
             'unconfirmed': unconfirmed_count,
             'unresolved': len(pro_unresolved),
             'conflicts': len(pro_conflicts),

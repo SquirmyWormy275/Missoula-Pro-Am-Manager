@@ -182,7 +182,7 @@ def _build_assignment_details(tournament: Tournament, events: list) -> dict:
             for comp_id in heat.get_competitors():
                 comp = comp_lookup.get(comp_id)
                 competitors.append({
-                    'name': comp.name if comp else f'Unknown ({comp_id})',
+                    'name': comp.display_name if comp else f'Unknown ({comp_id})',
                     'stand': assignments.get(str(comp_id)),
                 })
             heat_rows.append({

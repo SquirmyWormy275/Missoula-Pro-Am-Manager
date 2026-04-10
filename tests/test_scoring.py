@@ -479,7 +479,7 @@ class TestHandicapScoring:
         ev.is_handicap = False
         return ev
 
-    def _res(self, result_value=None, best_run=None, handicap_factor=1.0):
+    def _res(self, result_value=None, best_run=None, handicap_factor=0.0):
         r = _result(result_value=result_value, best_run=best_run)
         r.handicap_factor = handicap_factor
         return r
@@ -510,12 +510,18 @@ class TestHandicapScoring:
         r = self._res(result_value=None)
         assert engine._metric(r, ev) is None
 
-    # --- DB default placeholder (1.0) treated as scratch (0.0) ---
+    # --- 1.0 is a real 1-second mark, 0.0 is scratch ---
 
-    def test_handicap_default_factor_is_scratch(self):
+    def test_handicap_one_second_mark_is_real(self):
         ev = self._handi_event()
         r = self._res(result_value=60.0, handicap_factor=1.0)
-        # No adjustment — default placeholder means scratch
+        # 1.0 is a real 1-second start mark, not a sentinel
+        assert engine._metric(r, ev) == 59.0
+
+    def test_handicap_zero_factor_is_scratch(self):
+        ev = self._handi_event()
+        r = self._res(result_value=60.0, handicap_factor=0.0)
+        # 0.0 = scratch, no adjustment
         assert engine._metric(r, ev) == 60.0
 
     def test_handicap_none_factor_is_scratch(self):

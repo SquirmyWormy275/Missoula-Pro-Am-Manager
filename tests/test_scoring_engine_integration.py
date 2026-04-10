@@ -345,7 +345,7 @@ class TestHandicapScoringIntegration:
         c1 = make_pro_competitor(db_session, tournament, 'Vera', 'F', events=[event.id])
         c2 = make_pro_competitor(db_session, tournament, 'Wendy', 'F', events=[event.id])
         # Vera: raw 20.0, mark 5.0 → net 15.0
-        # Wendy: raw 18.0, mark 1.0 → net 17.0 (1.0 = default = scratch = 0)
+        # Wendy: raw 18.0, mark 1.0 → net 17.0 (real 1-second mark)
         make_event_result(db_session, event, c1,
                           result_value=20.0, handicap_factor=5.0, status='completed')
         make_event_result(db_session, event, c2,
@@ -361,15 +361,15 @@ class TestHandicapScoringIntegration:
         # Vera net=15.0 beats Wendy net=18.0
         assert first.competitor_name == 'Vera'
 
-    def test_handicap_factor_default_treated_as_scratch(self, db_session, tournament):
+    def test_handicap_factor_zero_treated_as_scratch(self, db_session, tournament):
         from services.scoring_engine import calculate_positions
         event = make_event(db_session, tournament, 'Scratch Test',
                            scoring_type='time', scoring_order='lowest_wins',
                            stand_type='underhand', is_handicap=True)
         c1 = make_pro_competitor(db_session, tournament, 'Xena', 'F', events=[event.id])
-        # handicap_factor=1.0 (default) should be treated as 0.0 scratch
+        # handicap_factor=0.0 (default) = scratch
         make_event_result(db_session, event, c1,
-                          result_value=15.0, handicap_factor=1.0, status='completed')
+                          result_value=15.0, handicap_factor=0.0, status='completed')
         db_session.flush()
 
         calculate_positions(event)

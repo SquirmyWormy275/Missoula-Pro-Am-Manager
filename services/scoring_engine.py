@@ -30,7 +30,6 @@ from typing import Optional
 
 from sqlalchemy import func
 
-import config
 from database import db
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.event import Event, EventResult
@@ -147,8 +146,7 @@ def _metric(result: EventResult, event: Event) -> Optional[float]:
     For handicap-format events (event.is_handicap is True), the competitor's
     start mark (stored in result.handicap_factor as seconds) is subtracted from
     the raw time to produce the adjusted net time used for ranking.
-    A handicap_factor of None or 1.0 (the DB default placeholder) is treated as
-    0.0 (scratch — no start mark assigned yet).
+    A handicap_factor of None or 0.0 means scratch (no start mark).
     """
     if event.requires_dual_runs:
         raw = result.best_run
@@ -159,11 +157,10 @@ def _metric(result: EventResult, event: Event) -> Optional[float]:
         return None
 
     # Apply handicap start mark: net_time = raw_time - start_mark_seconds.
-    # handicap_factor stores the start mark; 1.0 is the DB default placeholder
-    # meaning "not yet assigned" — treat as 0.0 (scratch).
+    # handicap_factor stores the start mark in seconds; 0.0 or None = scratch.
     if getattr(event, 'is_handicap', False) and event.scoring_type == 'time':
         start_mark = result.handicap_factor
-        if start_mark is None or start_mark == 1.0:
+        if start_mark is None:
             start_mark = 0.0
         raw = max(0.0, raw - start_mark)
 
@@ -519,6 +516,55 @@ def pending_throwoffs(event: Event) -> list[EventResult]:
     return [r for r in event.results.all() if r.throwoff_pending]
 
 
+def validate_finalization(event: Event) -> list[dict]:
+    """Pre-finalization checks. Returns a list of warnings/blockers.
+
+    Each item: {'level': 'warning'|'blocker', 'message': str}
+    - 'blocker' = finalization should be prevented
+    - 'warning' = finalization can proceed but judge should be aware
+    """
+    issues = []
+
+    # Check 1: Pro events with no payouts configured
+    if event.event_type == 'pro' and not event.uses_payouts_for_state:
+        payouts = event.get_payouts()
+        if not payouts:
+            issues.append({
+                'level': 'warning',
+                'message': 'No payouts configured for this pro event. '
+                           'All payout amounts will be $0. Configure payouts first '
+                           'if you want to award prize money.',
+            })
+
+    # Check 2: Handicap events with unassigned marks
+    if getattr(event, 'is_handicap', False) and event.scoring_type == 'time':
+        completed = [r for r in event.results.all() if r.status == 'completed']
+        unassigned = [r for r in completed
+                      if r.handicap_factor is None or r.handicap_factor == 0.0]
+        if unassigned:
+            names = ', '.join(r.competitor_name for r in unassigned[:5])
+            more = f' (+{len(unassigned) - 5} more)' if len(unassigned) > 5 else ''
+            issues.append({
+                'level': 'warning',
+                'message': f'Handicap event with {len(unassigned)} competitor(s) at scratch '
+                           f'(no start mark assigned): {names}{more}. '
+                           f'Assign marks before finalizing for accurate handicap results.',
+            })
+
+    # Check 3: Pending throwoffs on axe events
+    throwoffs = [r for r in event.results.all() if r.throwoff_pending]
+    if throwoffs:
+        names = ', '.join(r.competitor_name for r in throwoffs[:5])
+        more = f' (+{len(throwoffs) - 5} more)' if len(throwoffs) > 5 else ''
+        issues.append({
+            'level': 'warning',
+            'message': f'Throwoff pending for {len(throwoffs)} competitor(s): {names}{more}. '
+                       f'Positions will be provisional until throwoffs are resolved.',
+        })
+
+    return issues
+
+
 def record_throwoff_result(event: Event, position_map: dict[int, int]) -> None:
     """
     Resolve throw-off positions for axe throw ties.
@@ -542,11 +588,10 @@ def record_throwoff_result(event: Event, position_map: dict[int, int]) -> None:
         if event.event_type == 'college':
             # Throw-off positions are explicit per-competitor positions assigned
             # by the judge — no tie-splitting at this stage (the throw-off IS
-            # the tiebreak).  Use the simple table lookup; if multiple
-            # competitors somehow share the same throw-off position, the
-            # rebuild SUM at the end will still match what we wrote here
-            # because we write the same value to each row.
-            new_pts = Decimal(str(config.PLACEMENT_POINTS.get(position, 0)))
+            # the tiebreak).  Use the canonical PLACEMENT_POINTS_DECIMAL table
+            # (same source of truth as calculate_positions / split_tie_points).
+            idx = position - 1
+            new_pts = PLACEMENT_POINTS_DECIMAL[idx] if 0 <= idx < len(PLACEMENT_POINTS_DECIMAL) else Decimal('0')
             result.points_awarded = new_pts
         else:
             old_pay = float(result.payout_amount or 0)
@@ -797,7 +842,7 @@ def import_results_from_csv(event: Event, csv_text: str) -> dict:
                 event_id=event.id,
                 competitor_id=comp.id,
                 competitor_type=event.event_type,
-                competitor_name=comp.name,
+                competitor_name=comp.display_name,
             )
             db.session.add(r)
             existing[comp.id] = r
@@ -897,11 +942,19 @@ def save_payout_template(name: str, payout_dict: dict) -> PayoutTemplate:
 
 
 def apply_payout_template(event: Event, template_id: int) -> bool:
-    """Apply a saved template's payout structure to an event. Returns True on success."""
+    """Apply a saved template's payout structure to an event.
+
+    If the event is already finalized, re-runs calculate_positions() so that
+    the new payout amounts propagate to EventResult.payout_amount and
+    ProCompetitor.total_earnings immediately.  Returns True on success.
+    """
     template = PayoutTemplate.query.get(template_id)
     if template is None:
         return False
     event.set_payouts(template.get_payouts())
+    if event.is_finalized:
+        with db.session.begin_nested():
+            calculate_positions(event)
     db.session.commit()
     return True
 

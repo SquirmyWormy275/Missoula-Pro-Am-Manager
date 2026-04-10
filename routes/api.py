@@ -112,8 +112,8 @@ def public_standings(tournament_id):
             {'id': team.id, 'team_code': team.team_code, 'points': team.total_points}
             for team in tournament.get_team_standings()
         ],
-        'bull': [{'id': c.id, 'name': c.name, 'points': c.individual_points} for c in tournament.get_bull_of_woods(10)],
-        'belle': [{'id': c.id, 'name': c.name, 'points': c.individual_points} for c in tournament.get_belle_of_woods(10)],
+        'bull': [{'id': c.id, 'name': c.display_name, 'points': c.individual_points} for c in tournament.get_bull_of_woods(10)],
+        'belle': [{'id': c.id, 'name': c.display_name, 'points': c.individual_points} for c in tournament.get_belle_of_woods(10)],
         'pro_earnings': [
             {'id': c.id, 'name': c.name, 'earnings': c.total_earnings}
             for c in pro_earnings_rows
@@ -239,11 +239,11 @@ def standings_poll(tournament_id):
 
     # Bull/Belle of the Woods top 10
     bull = [
-        {'id': c.id, 'name': c.name, 'points': c.individual_points}
+        {'id': c.id, 'name': c.display_name, 'points': c.individual_points}
         for c in tournament.get_bull_of_woods(10)
     ]
     belle = [
-        {'id': c.id, 'name': c.name, 'points': c.individual_points}
+        {'id': c.id, 'name': c.display_name, 'points': c.individual_points}
         for c in tournament.get_belle_of_woods(10)
     ]
 

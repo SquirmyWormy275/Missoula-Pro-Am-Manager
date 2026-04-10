@@ -133,7 +133,7 @@ def upload_college_entry(tournament_id):
                 enabled=bool(current_app.config.get('ENABLE_UPLOAD_MALWARE_SCAN', False)),
                 command_template=current_app.config.get('MALWARE_SCAN_COMMAND', '')
             )
-            result = process_college_entry_form(filepath, tournament)
+            result = process_college_entry_form(filepath, tournament, original_filename=file.filename)
             valid_teams = result.get('teams', 0)
             invalid_teams = result.get('invalid_teams', 0)
             log_action('college_upload_imported', 'tournament', tournament.id, {
@@ -341,6 +341,23 @@ def revalidate_team(tournament_id, team_id):
         flash(f'Team {team.team_code} passed validation and is now active.', 'success')
     else:
         flash(f'Team {team.team_code} still has {len(team_errors)} error(s). Fix them and re-validate.', 'warning')
+    return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
+
+
+@registration_bp.route('/<int:tournament_id>/college/team/<int:team_id>/override-validation', methods=['POST'])
+def override_team_validation(tournament_id, team_id):
+    """Admin override: force a team to valid status despite validation errors."""
+    team = Team.query.get_or_404(team_id)
+    if team.tournament_id != tournament_id:
+        flash('Team not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    team.status = 'active'
+    team.validation_errors = '[]'
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    log_action('team_validation_override', 'team', team.id, {'team_code': team.team_code})
+    flash(f'Team {team.team_code} forced to valid via admin override.', 'warning')
     return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
 
 

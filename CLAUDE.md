@@ -75,8 +75,8 @@ routes/
         preflight.py      # preflight_check, preflight_json, generate_async, job_status
         assign_marks.py   # assign_marks (STRATHMARK handicap mark assignment)
     scoring.py          # Heat result entry, position calculation, payouts
-    reporting.py        # Standings, event results, payout summary + async export; fee_tracker route
-    proam_relay.py      # Pro-Am Relay lottery and results
+    reporting.py        # Standings, event results, payout summary (with settlement), ALA report + email, fee_tracker
+    proam_relay.py      # Pro-Am Relay lottery, results, and manual team builder
     partnered_axe.py    # Partnered Axe Throw prelims/finals flow
     validation.py       # Data integrity checks (teams, competitors, heats)
     import_routes.py    # Pro entry form Excel import (parse → review → confirm)
@@ -94,7 +94,7 @@ services/
     flight_builder.py   # Optimized flight scheduling with competitor spacing
     point_calculator.py # College placement points and team aggregation
     birling_bracket.py  # Double-elimination bracket generation
-    proam_relay.py      # ProAmRelay class — lottery logic and team management
+    proam_relay.py      # ProAmRelay class — lottery logic, team management, manual team builder
     partnered_axe.py    # PartneredAxeThrow class — prelims/finals state machine
     validation.py       # ValidationResult, TeamValidator, CompetitorValidator, HeatValidator
     pro_entry_importer.py  # parse_pro_entries() + compute_review_flags() for xlsx import
@@ -106,7 +106,7 @@ services/
     logging_setup.py    # JSON structured log formatter; optional Sentry SDK init
     sms_notify.py       # Twilio SMS for flight start/complete; graceful no-op if not configured
     backup.py           # S3 or local SQLite backup; triggered from reporting route
-    woodboss.py         # Virtual Woodboss: block/saw calculations, lottery view, history, share token
+    woodboss.py         # Virtual Woodboss: block/saw calculations, lottery view, history, share token, wood presets
     handicap_export.py  # Chopping-event Excel export helpers (underhand, springboard, standing)
     partner_matching.py # Auto-partner matching for pro partnered events (bidirectional validation)
     preflight.py        # Pre-scheduling validation: heat/table sync, odd partner pools, Saturday overflow
@@ -145,10 +145,9 @@ templates/
     scoring/            event_results, enter_heat, configure_payouts, offline_ops,
                         heat_sheet_print, tournament_payouts
     reports/            all_results, college_standings, event_results,
-                        payout_summary (+ _print variants), export_status,
-                        payout_settlement
-    reporting/          fee_tracker, payout_settlement
-    proam_relay/        dashboard, teams, results, standings
+                        payout_summary (+ _print variants), export_status
+    reporting/          fee_tracker, ala_membership_report
+    proam_relay/        dashboard, teams, results, standings, manual_teams
     partnered_axe/      dashboard, prelims, finals, results
     validation/         dashboard, college, pro
     woodboss/           dashboard, config, report, report_print (standalone), lottery, history
@@ -293,7 +292,7 @@ The `payouts` JSON field is repurposed by `ProAmRelay` and `PartneredAxeThrow` t
 
 ### EventResult
 
-Fields: `id`, `event_id`, `competitor_id` (integer, not FK), `competitor_type` (college/pro), `competitor_name`, `partner_name`, `result_value`, `result_unit`, `run1_value`, `run2_value`, `best_run`, `run3_value` (Float, nullable — third run for triple-run events), `tiebreak_value` (Float, nullable — result from a throwoff run to break a tie), `throwoff_pending` (Boolean — two or more tied competitors need a throwoff before positions can be finalized), `handicap_factor` (Float, default 1.0 — STRATHMARK start mark in seconds; `_metric()` subtracts this from raw time when `event.is_handicap is True` and `scoring_type == "time"`; 1.0 = default placeholder treated as 0.0 scratch), `predicted_time` (Float, nullable — HandicapCalculator predicted completion time in seconds; stored by `mark_assignment.assign_handicap_marks()` for use by `_record_prediction_residuals_for_pro_event()` after finalization; NULL = mark assignment not run), `final_position`, `points_awarded`, `payout_amount`, `is_flagged` (Boolean — score flagged as statistical outlier by `_flag_score_outliers()`), `status` (pending/completed/scratched/dnf), `version_id` (Integer — optimistic locking). Methods: `calculate_best_run()` sets `best_run` and `result_value` to the lower of run1/run2; `calculate_cumulative_score()` sums all run values for triple-run events.
+Fields: `id`, `event_id`, `competitor_id` (integer, not FK), `competitor_type` (college/pro), `competitor_name`, `partner_name`, `result_value`, `result_unit`, `run1_value`, `run2_value`, `best_run`, `run3_value` (Float, nullable — third run for triple-run events), `tiebreak_value` (Float, nullable — result from a throwoff run to break a tie), `throwoff_pending` (Boolean — two or more tied competitors need a throwoff before positions can be finalized), `handicap_factor` (Float, default 0.0 — STRATHMARK start mark in seconds; `_metric()` subtracts this from raw time when `event.is_handicap is True` and `scoring_type == "time"`; 0.0 = scratch/no mark; 1.0 = real 1-second start mark), `predicted_time` (Float, nullable — HandicapCalculator predicted completion time in seconds; stored by `mark_assignment.assign_handicap_marks()` for use by `_record_prediction_residuals_for_pro_event()` after finalization; NULL = mark assignment not run), `final_position`, `points_awarded`, `payout_amount`, `is_flagged` (Boolean — score flagged as statistical outlier by `_flag_score_outliers()`), `status` (pending/completed/scratched/dnf), `version_id` (Integer — optimistic locking). Methods: `calculate_best_run()` sets `best_run` and `result_value` to the lower of run1/run2; `calculate_cumulative_score()` sums all run values for triple-run events.
 
 ### Heat
 
@@ -325,7 +324,7 @@ Config key conventions:
 
 ### ProEventRank
 
-Per-tournament ability ranking for pro competitors. Used by heat generation to group competitors by predicted performance. Fields: `id`, `tournament_id`, `competitor_id` (FK to pro_competitors), `event_category` (TEXT), `rank` (Integer, 1 = best). Unique constraint on `(tournament_id, competitor_id, event_category)`. Seven ranked categories: `springboard`, `underhand`, `standing_block`, `obstacle_pole`, `singlebuck`, `doublebuck`, `jack_jill`. Unranked competitors are placed after ranked ones during heat generation. Managed via `/scheduling/<tid>/ability-rankings`.
+Per-tournament ability ranking for pro competitors. Used by heat generation to group competitors by predicted performance. Fields: `id`, `tournament_id`, `competitor_id` (FK to pro_competitors), `event_category` (TEXT), `rank` (Integer, 1 = best). Unique constraint on `(tournament_id, competitor_id, event_category)`. Nine ranked categories: `springboard`, `pro_1board`, `3board_jigger`, `underhand`, `standing_block`, `obstacle_pole`, `singlebuck`, `doublebuck`, `jack_jill`. Unranked competitors are placed after ranked ones during heat generation. Managed via `/scheduling/<tid>/ability-rankings` (drag-and-drop SortableJS UI). Also supports College Birling Seedings — per-school ordering stored as `pre_seedings` in `Event.payouts` JSON.
 
 ### PayoutTemplate
 
@@ -379,7 +378,7 @@ PayoutTemplate  (tournament-independent, standalone)
 - Score entry: standard events (single-value and dual-run); score outlier flagging (`_flag_score_outliers()` in scoring.py, ⚠ badge in results)
 - Position calculation and point/payout award on finalization
 - College standings: Bull/Belle of the Woods, team standings; live 30s polling in spectator portal
-- Pro payout summary; payout settlement checklist (`/reporting/<tid>/pro/payout-settlement`)
+- Pro payout summary with integrated settlement (Paid/Pending toggle, settlement stats)
 - All-results report (screen and printable); event-level result reports (screen and printable)
 - Pro-Am Relay lottery (opt-in, gender-balanced draw, result entry, standings)
 - Partnered Axe Throw state machine (prelim registration, prelim scoring, top-4 advance, finals, full standings)
@@ -451,6 +450,23 @@ PayoutTemplate  (tournament-independent, standalone)
 - Enhanced dashboard (V2.5.0): command centre hero, live aggregate stats, quick launch sidebar, onboarding checklist
 - Enhanced login page (V2.5.0): dual-logo lockup, redesigned card styling
 - Developer tooling (V2.5.0): `pyrightconfig.json` (Pyright/Pylance), `.vscode/launch.json` (debugger), `favicon.svg`
+- Competitor `display_name` property (V2.8.0): `CollegeCompetitor.display_name` returns `"Name (TeamCode)"`; `ProCompetitor.display_name` returns plain name; used across all UI surfaces instead of raw `.name`
+- Handicap factor sentinel fix (V2.8.0): `EventResult.handicap_factor` default changed from `1.0` to `0.0`; `0.0` = scratch, `1.0` = real 1-second mark
+- Springboard category split (V2.8.0): 9 ability ranking categories (added `pro_1board`, `3board_jigger`); `event_rank_category()` differentiates by event name
+- Ability rankings drag-and-drop UI (V2.8.0): SortableJS ranked/unranked zones replace text inputs; College Birling Seedings with per-school ordering stored as `pre_seedings`
+- Payout settlement merged into payout summary (V2.8.0): settlement status + Mark Paid toggle on Pro Payout Summary; old route 301-redirects; `payout_settlement.html` deleted
+- Virtual Woodboss wood presets (V2.8.0): species presets (built-in + custom); preset CRUD routes; saw wood tracks `(comp_type, gender)`; springboard dummies split by board height + day
+- Pro-Am Relay manual team builder (V2.8.0): `set_teams_manually()` service method; drag-and-drop team builder page; gender count validation
+- Partnered Axe Throw scoring integration (V2.8.0): prelim scores sync to `EventResult` records; inline prelim scoring on event results page
+- Payout state protection (V2.8.0): `Event.uses_payouts_for_state` property blocks payout config for state-events (relay, axe throw, birling)
+- Finalization validation warnings (V2.8.0): `validate_finalization()` checks missing payouts, unassigned marks, pending throwoffs
+- Post-finalize payout recalculation (V2.8.0): saving payouts on finalized event re-runs `calculate_positions()`
+- College Excel import improvements (V2.8.0): school name from filename, team column auto-detection, `school_abbr-letter` team codes, fuzzy partner matching (Levenshtein ≤ 2), roster validation (min 2M/2F, max 8)
+- Gear sharing group aggregation (V2.8.0): union-find connected-component grouping; group-based display replaces pair-based
+- Birling bracket on heat sheets (V2.8.0): winners/losers bracket, grand finals, placement table rendered on heat sheet print pages
+- ALA report email (V2.8.0): PDF generation + SMTP delivery to ALA; sidebar link
+- Print button fix (V2.8.0): `[data-print]` JS handler added to 9 print templates
+- Scoring engine throwoff fix (V2.8.0): `record_throwoff_result()` uses canonical `PLACEMENT_POINTS_DECIMAL` lookup
 
 ### Known Gaps and Incomplete Features
 
@@ -664,7 +680,7 @@ This app handles tournament logistics only: registration, heats, flights, result
 
 9. **`services/heat_generator.py` — `_generate_event_heats()`:** Current snake-draft distribution has no ability-weighting. STRATHMARK predictions should feed a pre-sorted competitor list here.
 
-10. **`EventResult.handicap_factor` (Float, default 1.0):** Placeholder column exists. Scoring engine must apply this factor when `event.is_handicap` is True — subtract each competitor's start mark from their raw time before position calculation.
+10. **`EventResult.handicap_factor` (Float, default 0.0):** Column active. Scoring engine applies this in `_metric()` when `event.is_handicap` is True — subtracts start mark from raw time before position calculation. Default `0.0` = scratch (no mark).
 
 11. **Mark assignment pipeline:** When `event.is_handicap` is True, STRATHMARK's `HandicapCalculator` must be called at heat sheet print time (or pre-event) to compute each competitor's start mark from historical data and store it on `EventResult.handicap_factor` (or a new `start_mark_seconds` field on EventResult or HeatAssignment).
 

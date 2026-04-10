@@ -187,12 +187,13 @@
               <i class="bi bi-inbox display-6"></i>
               <p class="mt-2 mb-0">
                 {% if list_only %}This event uses signups only (no heats)
+                {% elif event.has_prelims %}Partnered event — use prelim scoring below
                 {% else %}No heats generated yet{% endif %}
               </p>
             </div>
           {% endif %}
         </div>
-        {% if not heats and not list_only %}
+        {% if not heats and not list_only and not event.has_prelims %}
         <div class="card-footer">
           <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -200,6 +201,49 @@
               <i class="bi bi-shuffle"></i> Generate Heats
             </button>
           </form>
+        </div>
+        {% endif %}
+
+        {# ── Partnered Axe Throw prelim scoring ────────────────────────────── #}
+        {% if event.has_prelims and pat %}
+        <div class="card-body border-top">
+          <h6 class="mb-3"><i class="bi bi-bullseye text-danger"></i> Record Prelim Score</h6>
+          {% if pat_stage == 'prelims' and pat_pairs %}
+          <form action="{{ url_for('partnered_axe.record_prelim', tournament_id=tournament.id) }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="return_to" value="event_results">
+            <div class="mb-2">
+              <select name="pair_id" class="form-select" required>
+                {% for pair in pat_pairs %}
+                <option value="{{ pair.pair_id }}"
+                    {% if pair.prelim_score is not none %}disabled{% endif %}>
+                    Pair {{ pair.pair_id }}: {{ pair.competitor1.name }} & {{ pair.competitor2.name }}
+                    {% if pair.prelim_score is not none %}(Scored: {{ pair.prelim_score }}){% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="mb-2">
+              <input type="number" name="hits" class="form-control"
+                     min="0" max="20" required placeholder="Total Hits">
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm w-100">
+              <i class="bi bi-check-circle"></i> Record Score
+            </button>
+          </form>
+          {% elif pat_stage != 'prelims' %}
+          <div class="alert alert-success mb-0 py-2">
+            <i class="bi bi-check-circle"></i> Prelims complete.
+          </div>
+          {% else %}
+          <div class="alert alert-warning mb-0 py-2">
+            <i class="bi bi-exclamation-triangle"></i> No pairs registered yet.
+          </div>
+          {% endif %}
+          <a href="{{ url_for('partnered_axe.prelims', tournament_id=tournament.id) }}"
+             class="btn btn-outline-danger btn-sm w-100 mt-2">
+            <i class="bi bi-arrow-right-circle me-1"></i>Full Prelim Management
+          </a>
         </div>
         {% endif %}
       </div>

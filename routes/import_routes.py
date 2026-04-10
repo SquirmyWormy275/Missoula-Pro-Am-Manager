@@ -314,7 +314,7 @@ def confirm_pro_entries(tournament_id):
                         event_id=ev.id,
                         competitor_id=competitor.id,
                         competitor_type='pro',
-                        competitor_name=competitor.name,
+                        competitor_name=competitor.display_name,
                         partner_name=partner_name,
                         status='pending',
                     ))

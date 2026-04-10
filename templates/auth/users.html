@@ -59,10 +59,10 @@
                             <select class="form-select" name="competitor_id">
                                 <option value="">None</option>
                                 {% for c in college_competitors %}
-                                <option value="{{ c.id }}">College: {{ c.name }} ({{ c.team.team_code }})</option>
+                                <option value="{{ c.id }}">College: {{ c.display_name }}</option>
                                 {% endfor %}
                                 {% for c in pro_competitors %}
-                                <option value="{{ c.id }}">Pro: {{ c.name }}</option>
+                                <option value="{{ c.id }}">Pro: {{ c.display_name }}</option>
                                 {% endfor %}
                             </select>
                         </div>

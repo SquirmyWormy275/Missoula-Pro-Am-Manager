@@ -47,7 +47,7 @@ def _serialize_heat_detail(tournament: Tournament, event: Event, heat: Heat) -> 
     for comp_id in heat.get_competitors():
         comp = comp_lookup.get(comp_id)
         competitors.append({
-            'name': comp.name if comp else f'Unknown ({comp_id})',
+            'name': comp.display_name if comp else f'Unknown ({comp_id})',
             'stand': assignments.get(str(comp_id)),
         })
     return {
@@ -94,7 +94,7 @@ def heat_sheets(tournament_id):
                 'heat': heat,
                 'event': event,
                 'competitors': [
-                    {'name': comps[cid].name if cid in comps else f'ID:{cid}',
+                    {'name': comps[cid].display_name if cid in comps else f'ID:{cid}',
                      'stand': assignments.get(str(cid), '?')}
                     for cid in comp_ids
                 ],
@@ -119,7 +119,25 @@ def heat_sheets(tournament_id):
 
     # Also gather heats with no flight (college events, standalone)
     no_flight_heats = []
+    birling_brackets = []
     for event in tournament.events.order_by(Event.event_type, Event.name).all():
+        # Birling bracket events get special treatment — show bracket, not heat cards.
+        if event.scoring_type == 'bracket':
+            from services.birling_bracket import BirlingBracket
+            bb = BirlingBracket(event)
+            bdata = bb.bracket_data
+            has_bracket = bool(bdata.get('bracket', {}).get('winners'))
+            if has_bracket:
+                comp_lookup = {str(c['id']): c['name'] for c in bdata.get('competitors', [])}
+                birling_brackets.append({
+                    'event': event,
+                    'bracket': bdata.get('bracket', {}),
+                    'comp_lookup': comp_lookup,
+                    'placements': bdata.get('placements', {}),
+                    'current_matches': bb.get_current_matches(),
+                })
+            continue
+
         event_heats = event.heats.filter_by(flight_id=None).order_by(
             Heat.heat_number, Heat.run_number).all()
         if not event_heats:
@@ -138,7 +156,7 @@ def heat_sheets(tournament_id):
                 'heat': heat,
                 'event': event,
                 'competitors': [
-                    {'name': comps[cid].name if cid in comps else f'ID:{cid}',
+                    {'name': comps[cid].display_name if cid in comps else f'ID:{cid}',
                      'stand': assignments.get(str(cid), '?')}
                     for cid in comp_ids
                 ],
@@ -150,6 +168,7 @@ def heat_sheets(tournament_id):
         tournament=tournament,
         flight_data=flight_data,
         no_flight_heats=no_flight_heats,
+        birling_brackets=birling_brackets,
         now=datetime.utcnow(),
         stand_conflict_gap=_STAND_CONFLICT_GAP,
     )

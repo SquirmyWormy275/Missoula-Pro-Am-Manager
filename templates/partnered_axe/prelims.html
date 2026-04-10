@@ -19,6 +19,10 @@
                         Preliminary Round
                     </h1>
                     <p class="text-muted">{{ tournament.name }} {{ tournament.year }} - Top 4 advance to finals</p>
+                    <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=pat.event.id) }}"
+                       class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-clipboard-data me-1"></i>View in Event Results
+                    </a>
                 </div>
                 <div>
                     {% if can_advance and stage == 'prelims' %}

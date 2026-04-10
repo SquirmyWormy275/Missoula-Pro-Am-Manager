@@ -94,9 +94,11 @@ class PartneredAxeThrow:
             pair_id: The pair ID
             hits: Total hits scored by the pair
         """
+        recorded_pair = None
         for pair in self.state['pairs']:
             if pair['pair_id'] == pair_id:
                 pair['prelim_score'] = hits
+                recorded_pair = pair
                 break
 
         # Update prelim_results sorted by score (descending)
@@ -107,6 +109,11 @@ class PartneredAxeThrow:
         )
 
         self._save_state()
+
+        # Cross-populate to EventResult records so scores appear in the
+        # regular scoring view as well.
+        if recorded_pair:
+            self._sync_prelim_to_event_results(recorded_pair)
 
     def get_prelim_standings(self) -> list:
         """Get prelim standings sorted by score (highest first)."""
@@ -179,22 +186,71 @@ class PartneredAxeThrow:
 
         self._save_state()
 
-    def _save_event_results(self):
-        """Save final results to EventResult table."""
-        for pair in self.state['finalists']:
-            # Create result for each competitor in the pair
-            for competitor_key in ['competitor1', 'competitor2']:
-                competitor = pair[competitor_key]
+    def _sync_prelim_to_event_results(self, pair: dict):
+        """Sync a single pair's prelim score to EventResult records.
 
+        Creates or updates one EventResult per competitor in the pair so that
+        prelim scores are visible from the regular scoring/event-results page.
+        """
+        for comp_key in ('competitor1', 'competitor2'):
+            comp = pair[comp_key]
+            partner_key = 'competitor2' if comp_key == 'competitor1' else 'competitor1'
+            partner = pair[partner_key]
+
+            existing = EventResult.query.filter_by(
+                event_id=self.event.id,
+                competitor_id=comp['id'],
+                competitor_type='pro',
+            ).first()
+
+            if existing:
+                existing.result_value = pair['prelim_score']
+                existing.partner_name = partner['name']
+                existing.status = 'completed'
+            else:
                 result = EventResult(
                     event_id=self.event.id,
                     competitor_type='pro',
-                    competitor_id=competitor['id'],
-                    competitor_name=competitor['name'],
-                    result_value=pair['final_score'],
-                    final_position=pair['final_position']
+                    competitor_id=comp['id'],
+                    competitor_name=comp['name'],
+                    partner_name=partner['name'],
+                    result_value=pair['prelim_score'],
+                    status='completed',
                 )
                 db.session.add(result)
+
+        db.session.commit()
+
+    def _save_event_results(self):
+        """Save final results to EventResult table.
+
+        Updates existing records (created during prelim cross-populate) when
+        present, otherwise creates new ones.
+        """
+        for pair in self.state['finalists']:
+            for competitor_key in ['competitor1', 'competitor2']:
+                competitor = pair[competitor_key]
+
+                existing = EventResult.query.filter_by(
+                    event_id=self.event.id,
+                    competitor_id=competitor['id'],
+                    competitor_type='pro',
+                ).first()
+
+                if existing:
+                    existing.result_value = pair['final_score']
+                    existing.final_position = pair['final_position']
+                    existing.competitor_name = competitor['name']
+                else:
+                    result = EventResult(
+                        event_id=self.event.id,
+                        competitor_type='pro',
+                        competitor_id=competitor['id'],
+                        competitor_name=competitor['name'],
+                        result_value=pair['final_score'],
+                        final_position=pair['final_position'],
+                    )
+                    db.session.add(result)
 
         db.session.commit()
 

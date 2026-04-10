@@ -126,7 +126,6 @@
                         {% set block_total = namespace(n=0) %}
                         {% set section_ns = namespace(current='') %}
                         {% for b in report.blocks %}
-                        {% if b.competitor_count > 0 %}
                         {% set block_total.n = block_total.n + b.competitor_count %}
                         {% set ck = b.config_key %}
                         {% if ck in ('block_relay_underhand', 'block_relay_standing') %}
@@ -147,7 +146,7 @@
                             </td>
                           </tr>
                         {% endif %}
-                        <tr>
+                        <tr class="{{ 'text-muted' if b.competitor_count == 0 }}" style="{{ 'opacity:0.5;' if b.competitor_count == 0 }}">
                             <td>
                                 {{ b.label }}
                                 {% if b.is_manual %}
@@ -162,11 +161,7 @@
                             <td class="text-end">{{ b.competitor_count }}</td>
                             <td class="text-end fw-bold">{{ b.competitor_count }}</td>
                         </tr>
-                        {% endif %}
                         {% endfor %}
-                        {% if block_total.n == 0 %}
-                        <tr><td colspan="5" class="text-center text-muted fst-italic py-3">No competitors enrolled in chopping events.</td></tr>
-                        {% endif %}
                     </tbody>
                     {% if block_total.n > 0 %}
                     <tfoot>
@@ -192,29 +187,108 @@
                     <thead>
                         <tr>
                             <th>Group</th>
+                            <th>Day</th>
                             <th class="text-end">Runs</th>
                             <th>Rule</th>
                             <th class="text-end">Dummies Needed</th>
                         </tr>
                     </thead>
                     <tbody>
+                        <!-- Friday: College 1-Board (always Friday) -->
+                        {% set sp = report.springboard %}
                         <tr>
-                            <td>1-Board / 2-Board Springboard</td>
-                            <td class="text-end">{{ report.springboard.one_two_runs }}</td>
-                            <td class="formula-code">{{ report.springboard.one_two_per_dummy }} runs per dummy</td>
-                            <td class="text-end fw-bold">{{ report.springboard.one_two_dummies }}</td>
+                            <td colspan="5"
+                                style="background:var(--sx-surface-2);padding:0.3rem 0.75rem;font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--sx-text-2);border-top:2px solid var(--sx-border-bright);">
+                                Friday
+                            </td>
                         </tr>
+                        <tr class="{{ 'text-muted' if sp.college_one_board_runs == 0 }}" style="{{ 'opacity:0.5;' if sp.college_one_board_runs == 0 }}">
+                            <td>College 1-Board Springboard</td>
+                            <td><span class="badge bg-success">Friday</span></td>
+                            <td class="text-end">{{ sp.college_one_board_runs }}</td>
+                            <td class="formula-code">{{ sp.one_board_per_dummy }} runs per dummy</td>
+                            <td class="text-end fw-bold">{{ (sp.college_one_board_runs / sp.one_board_per_dummy) | round(0, 'ceil') | int if sp.college_one_board_runs > 0 else 0 }}</td>
+                        </tr>
+                        {% if sp.pro_one_board_is_friday %}
                         <tr>
-                            <td>3-Board Jigger</td>
-                            <td class="text-end">{{ report.springboard.three_board_runs }}</td>
-                            <td class="formula-code">{{ report.springboard.three_board_per_dummy }} runs per dummy</td>
-                            <td class="text-end fw-bold">{{ report.springboard.three_board_dummies }}</td>
+                            <td>Pro 1-Board <span class="badge bg-info ms-1">Fri Feature</span></td>
+                            <td><span class="badge bg-info">Fri Feature</span></td>
+                            <td class="text-end">{{ sp.pro_one_board_runs }}</td>
+                            <td class="formula-code">{{ sp.one_board_per_dummy }} runs per dummy</td>
+                            <td class="text-end fw-bold">{{ (sp.pro_one_board_runs / sp.one_board_per_dummy) | round(0, 'ceil') | int if sp.pro_one_board_runs > 0 else 0 }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if sp.three_board_is_friday %}
+                        <tr>
+                            <td>3-Board Jigger <span class="badge bg-info ms-1">Fri Feature</span></td>
+                            <td><span class="badge bg-info">Fri Feature</span></td>
+                            <td class="text-end">{{ sp.friday_three_board_runs }}</td>
+                            <td class="formula-code">{{ sp.three_board_per_dummy }} runs per dummy</td>
+                            <td class="text-end fw-bold">{{ sp.friday_three_board_dummies }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if sp.friday_one_board_dummies > 0 or sp.friday_three_board_dummies > 0 %}
+                        <tr style="background:var(--sx-surface-2);">
+                            <td colspan="4" class="text-end fw-bold" style="font-size:0.85rem;">Friday Dummies Subtotal:</td>
+                            <td class="text-end fw-bold" style="color:var(--sx-gold);">{{ sp.friday_one_board_dummies + sp.friday_three_board_dummies }}</td>
+                        </tr>
+                        {% endif %}
+
+                        <!-- Saturday -->
+                        <tr>
+                            <td colspan="5"
+                                style="background:var(--sx-surface-2);padding:0.3rem 0.75rem;font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--sx-text-2);border-top:2px solid var(--sx-border-bright);">
+                                Saturday (Pro Show)
+                            </td>
+                        </tr>
+                        <tr class="{{ 'text-muted' if sp.sat_two_board_runs == 0 }}" style="{{ 'opacity:0.5;' if sp.sat_two_board_runs == 0 }}">
+                            <td>2-Board Springboard (Pro)</td>
+                            <td><span class="badge bg-primary">Saturday</span></td>
+                            <td class="text-end">{{ sp.sat_two_board_runs }}</td>
+                            <td class="formula-code">{{ sp.two_board_per_dummy }} runs per dummy</td>
+                            <td class="text-end fw-bold">{{ sp.sat_two_board_dummies }}</td>
+                        </tr>
+                        {% if not sp.pro_one_board_is_friday %}
+                        <tr class="{{ 'text-muted' if sp.sat_one_board_runs == 0 }}" style="{{ 'opacity:0.5;' if sp.sat_one_board_runs == 0 }}">
+                            <td>
+                                Pro 1-Board
+                                {% if sp.sat_one_two_reusable %}
+                                <span class="badge bg-warning text-dark ms-1" title="2-Board dummies can be cut down to 6ft for 1-Board reuse if 1-Board runs after 2-Board">reusable from 2-Board</span>
+                                {% endif %}
+                            </td>
+                            <td><span class="badge bg-primary">Saturday</span></td>
+                            <td class="text-end">{{ sp.sat_one_board_runs }}</td>
+                            <td class="formula-code">{{ sp.one_board_per_dummy }} runs per dummy</td>
+                            <td class="text-end fw-bold">{{ sp.sat_one_board_dummies }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if not sp.three_board_is_friday %}
+                        <tr class="{{ 'text-muted' if sp.sat_three_board_runs == 0 }}" style="{{ 'opacity:0.5;' if sp.sat_three_board_runs == 0 }}">
+                            <td>3-Board Jigger (Pro)</td>
+                            <td><span class="badge bg-primary">Saturday</span></td>
+                            <td class="text-end">{{ sp.sat_three_board_runs }}</td>
+                            <td class="formula-code">{{ sp.three_board_per_dummy }} runs per dummy</td>
+                            <td class="text-end fw-bold">{{ sp.sat_three_board_dummies }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if sp.sat_one_two_reusable %}
+                        <tr>
+                            <td colspan="5" class="small text-warning" style="padding:0.4rem 0.75rem;">
+                                <i class="bi bi-info-circle"></i>
+                                1-Board scheduled after 2-Board on Saturday: 2-Board dummies can be cut down to 6ft for reuse.
+                                Need {{ sp.sat_combined_dummies }} dummies (max of {{ sp.sat_two_board_dummies }} and {{ sp.sat_one_board_dummies }}) instead of {{ sp.sat_two_board_dummies + sp.sat_one_board_dummies }}.
+                            </td>
+                        </tr>
+                        {% endif %}
+                        <tr style="background:var(--sx-surface-2);">
+                            <td colspan="4" class="text-end fw-bold" style="font-size:0.85rem;">Saturday Dummies Subtotal:</td>
+                            <td class="text-end fw-bold" style="color:var(--sx-gold);">{{ sp.sat_combined_dummies + sp.sat_three_board_dummies }}</td>
                         </tr>
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td colspan="3" class="text-end">Total Springboard Dummies:</td>
-                            <td class="text-end total-highlight">{{ report.springboard.total_dummies }}</td>
+                            <td colspan="4" class="text-end">Total Springboard Dummies:</td>
+                            <td class="text-end total-highlight">{{ sp.total_dummies }}</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -254,14 +328,25 @@
                         {% set gen_in = namespace(n=0.0) %}
                         {% set op_in = namespace(n=0.0) %}
                         {% set saw_logs = namespace(n=0) %}
+                        {% set saw_section = namespace(current='') %}
                         {% for s in report.saw_wood %}
-                        {% if s.competitor_count > 0 %}
                         {% if s.total_inches is not none %}
                           {% if s.category == 'op' %}{% set op_in.n = op_in.n + s.total_inches %}
                           {% else %}{% set gen_in.n = gen_in.n + s.total_inches %}{% endif %}
                         {% endif %}
                         {% if s.log_count is not none %}{% set saw_logs.n = saw_logs.n + s.log_count %}{% endif %}
-                        <tr>
+                        {% set div = s.comp_type|default('pro') %}
+                        {% if div != saw_section.current %}
+                          {% set saw_section.current = div %}
+                          <tr>
+                            <td colspan="6"
+                                style="background:var(--sx-surface-2);padding:0.3rem 0.75rem;font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--sx-text-2);border-top:2px solid var(--sx-border-bright);">
+                              {% if div == 'college' %}College Saw Events
+                              {% else %}Pro Saw Events{% endif %}
+                            </td>
+                          </tr>
+                        {% endif %}
+                        <tr class="{{ 'text-muted' if s.competitor_count == 0 }}" style="{{ 'opacity:0.5;' if s.competitor_count == 0 }}">
                             <td>{{ s.event_label }}</td>
                             <td>{{ s.competitor_count }}</td>
                             <td class="formula-code">{{ s.formula_desc }}</td>
@@ -274,11 +359,7 @@
                                 {% endif %}
                             </td>
                         </tr>
-                        {% endif %}
                         {% endfor %}
-                        {% if gen_in.n == 0 and op_in.n == 0 and saw_logs.n == 0 %}
-                        <tr><td colspan="6" class="text-center text-muted fst-italic py-3">No competitors enrolled in saw events.</td></tr>
-                        {% endif %}
                     </tbody>
                     {% if gen_in.n > 0 or op_in.n > 0 or saw_logs.n > 0 %}
                     <tfoot>

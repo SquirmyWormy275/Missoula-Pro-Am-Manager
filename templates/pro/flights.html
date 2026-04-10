@@ -320,10 +320,16 @@
                 Build flights to organize heats from different events into a show schedule.
                 <br>Flights mix events for crowd variety and engagement.
             </p>
-            <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
-               class="btn btn-warning btn-lg">
-                <i class="bi bi-plus-circle"></i> Build Flights Now
-            </a>
+            <div class="d-flex justify-content-center gap-3">
+                <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
+                   class="btn btn-warning btn-lg">
+                    <i class="bi bi-plus-circle"></i> Build Flights Now
+                </a>
+                <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary btn-lg">
+                    <i class="bi bi-arrow-left"></i> Back to Schedule
+                </a>
+            </div>
         </div>
     </div>
     {% endif %}

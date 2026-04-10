@@ -108,6 +108,13 @@
                 <i class="bi bi-receipt sb-icon"></i>
                 <span class="sb-text ms-2">Fee Tracker</span>
             </a>
+            <a href="{{ url_for('reporting.ala_membership_report', tournament_id=tournament.id) }}"
+               class="nav-link sidebar-child {{ 'active' if request.endpoint in ('reporting.ala_membership_report', 'reporting.ala_membership_report_pdf') else '' }}"
+               {% if request.endpoint == 'reporting.ala_membership_report' %}aria-current="page"{% endif %}
+               title="ALA Report">
+                <i class="bi bi-card-checklist sb-icon"></i>
+                <span class="sb-text ms-2">ALA Report</span>
+            </a>
         </div>
 
         <!-- ── 2. SHOW CONFIGURATION ─────────────────── -->
@@ -230,15 +237,6 @@
                 <i class="bi bi-cash-stack sb-icon"></i>
                 <span class="sb-text ms-2">Pro Payouts</span>
             </a>
-            {% if current_user.is_authenticated and current_user.is_admin %}
-            <a href="{{ url_for('reporting.payout_settlement', tournament_id=tournament.id) }}"
-               class="nav-link {{ 'active' if request.endpoint == 'reporting.payout_settlement' else '' }}"
-               {% if request.endpoint == 'reporting.payout_settlement' %}aria-current="page"{% endif %}
-               title="Payout Settlement">
-                <i class="bi bi-check2-square sb-icon"></i>
-                <span class="sb-text ms-2">Payout Settlement</span>
-            </a>
-            {% endif %}
         </div>
 
         <!-- ── ADMIN (admin-only) ─────────────────────── -->

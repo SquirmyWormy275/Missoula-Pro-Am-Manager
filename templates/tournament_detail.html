@@ -374,13 +374,13 @@
         <i class="bi bi-play-circle-fill text-warning" style="font-size:1.5rem; flex-shrink:0;"></i>
         <div class="flex-grow-1">
             <div class="fw-bold" style="color:var(--sx-amber);">Pro Competition &mdash; Live</div>
-            <div class="small text-muted">Score pro events and manage payouts. Run the Payout Settlement checklist when events wrap up.</div>
+            <div class="small text-muted">Score pro events and manage payouts. Track settlement status when events wrap up.</div>
         </div>
         <div class="d-flex gap-2 flex-shrink-0 flex-wrap">
             <a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}"
                class="btn btn-outline-warning btn-sm">Pro Flights</a>
-            <a href="{{ url_for('reporting.payout_settlement', tournament_id=tournament.id) }}"
-               class="btn btn-warning btn-sm">Payout Settlement <i class="bi bi-arrow-right ms-1"></i></a>
+            <a href="{{ url_for('reporting.pro_payout_summary', tournament_id=tournament.id) }}"
+               class="btn btn-warning btn-sm">Pro Payouts <i class="bi bi-arrow-right ms-1"></i></a>
         </div>
     </div>
     {% elif tournament.status == 'completed' %}
@@ -587,15 +587,8 @@
                     <a class="phase-link" href="{{ url_for('reporting.pro_payout_summary', tournament_id=tournament.id) }}">
                         <i class="bi bi-cash-stack pl-icon" style="color:#5cd48a;"></i>
                         <span>
-                            <span class="pl-title">Payout Summary</span>
-                            <span class="pl-desc">Pro event payouts and totals</span>
-                        </span>
-                    </a>
-                    <a class="phase-link" href="{{ url_for('reporting.payout_settlement', tournament_id=tournament.id) }}">
-                        <i class="bi bi-check2-square pl-icon" style="color:#5cd48a;"></i>
-                        <span>
-                            <span class="pl-title">Payout Settlement</span>
-                            <span class="pl-desc">Mark competitors paid and settled</span>
+                            <span class="pl-title">Pro Payouts</span>
+                            <span class="pl-desc">Earnings summary and settlement tracking</span>
                         </span>
                     </a>
                     <a class="phase-link" href="{{ url_for('reporting.export_results', tournament_id=tournament.id) }}">

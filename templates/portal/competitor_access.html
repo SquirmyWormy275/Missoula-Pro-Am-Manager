@@ -71,7 +71,7 @@
                 {% for match in matches %}
                 <a class="list-group-item list-group-item-action"
                    href="{{ url_for('portal.competitor_claim', tournament_id=selected_tournament_id, competitor_type=match.competitor_type, competitor_id=match.competitor.id, view=view_mode) }}">
-                    {{ match.competitor.name }} ({{ match.competitor_type|capitalize }})
+                    {{ match.competitor.display_name }} ({{ match.competitor_type|capitalize }})
                 </a>
                 {% endfor %}
             </div>

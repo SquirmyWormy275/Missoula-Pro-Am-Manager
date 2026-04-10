@@ -62,6 +62,9 @@ def config_form(tid):
     )
     other_tournaments = [t for t in all_tournaments if t.id != tid]
 
+    import config as app_config
+    presets = woodboss_svc.get_all_presets()
+
     return render_template(
         'woodboss/config.html',
         tournament=tournament,
@@ -72,6 +75,8 @@ def config_form(tid):
         cookie_cfg=cookie_cfg,
         configs=configs,
         other_tournaments=other_tournaments,
+        presets=presets,
+        common_species=app_config.COMMON_WOOD_SPECIES,
     )
 
 
@@ -188,6 +193,64 @@ def copy_from(tid):
     flash(f'Copied {copied} wood spec entries from {source.name} {source.year}.', 'success')
     if request.form.get('return_to') == 'setup':
         return redirect(url_for('main.tournament_setup', tournament_id=tid, tab='wood'))
+    return redirect(url_for('woodboss.config_form', tid=tid))
+
+
+# ---------------------------------------------------------------------------
+# Presets
+# ---------------------------------------------------------------------------
+
+@woodboss_bp.route('/<int:tid>/config/apply-preset', methods=['POST'])
+def apply_preset(tid):
+    """Apply a named wood preset to this tournament's config."""
+    Tournament.query.get_or_404(tid)
+    preset_name = request.form.get('preset_name', '').strip()
+    if not preset_name:
+        flash('No preset selected.', 'warning')
+        return redirect(url_for('woodboss.config_form', tid=tid))
+
+    updated = woodboss_svc.apply_preset(tid, preset_name)
+    if updated:
+        log_action('wood_preset_applied', 'tournament', tid, {'preset': preset_name, 'updated': updated})
+        flash(f'Applied preset "{preset_name}" ({updated} entries updated).', 'success')
+    else:
+        flash(f'Preset "{preset_name}" not found.', 'danger')
+    return redirect(url_for('woodboss.config_form', tid=tid))
+
+
+@woodboss_bp.route('/<int:tid>/config/save-preset', methods=['POST'])
+def save_preset(tid):
+    """Save current tournament config as a named preset."""
+    Tournament.query.get_or_404(tid)
+    preset_name = request.form.get('preset_name', '').strip()
+    if not preset_name:
+        flash('Preset name is required.', 'warning')
+        return redirect(url_for('woodboss.config_form', tid=tid))
+
+    preset_data = woodboss_svc.build_preset_from_config(tid)
+    woodboss_svc.save_custom_preset(preset_name, preset_data)
+    log_action('wood_preset_saved', 'tournament', tid, {'preset': preset_name})
+    flash(f'Saved current config as preset "{preset_name}".', 'success')
+    return redirect(url_for('woodboss.config_form', tid=tid))
+
+
+@woodboss_bp.route('/<int:tid>/config/delete-preset', methods=['POST'])
+def delete_preset(tid):
+    """Delete a custom preset."""
+    Tournament.query.get_or_404(tid)
+    preset_name = request.form.get('preset_name', '').strip()
+    if not preset_name:
+        flash('No preset specified.', 'warning')
+        return redirect(url_for('woodboss.config_form', tid=tid))
+
+    import config as app_config
+    if preset_name in app_config.WOOD_PRESETS:
+        flash(f'Cannot delete built-in preset "{preset_name}".', 'warning')
+        return redirect(url_for('woodboss.config_form', tid=tid))
+
+    woodboss_svc.delete_custom_preset(preset_name)
+    log_action('wood_preset_deleted', 'tournament', tid, {'preset': preset_name})
+    flash(f'Deleted preset "{preset_name}".', 'success')
     return redirect(url_for('woodboss.config_form', tid=tid))
 
 

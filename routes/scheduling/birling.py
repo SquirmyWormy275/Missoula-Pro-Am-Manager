@@ -43,7 +43,7 @@ def birling_manage(tournament_id, event_id):
     for comp in competitors:
         comp_list.append({
             'id': comp.id,
-            'name': comp.name,
+            'name': comp.display_name,
             'gender': getattr(comp, 'gender', None),
             'team': getattr(comp, 'team', None),
             'seed': seed_map.get(comp.id),
@@ -92,23 +92,46 @@ def birling_generate(tournament_id, event_id):
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
 
-    # Parse seed order from form: seed_{comp_id} = rank number
+    # Parse seed order from form: seed_{comp_id} = rank number.
+    # If no manual seeds given, fall back to pre_seedings from ability rankings page.
+    import json
     seed_entries = []
-    for comp in competitors:
-        raw = request.form.get(f'seed_{comp.id}', '').strip()
-        if raw:
-            try:
-                seed_val = int(raw)
-                if seed_val < 1:
-                    raise ValueError
-                seed_entries.append((comp, seed_val))
-            except (TypeError, ValueError):
-                flash(f'Invalid seed value "{raw}" for {comp.name}.', 'error')
-                return redirect(url_for('scheduling.birling_manage',
-                                        tournament_id=tournament_id, event_id=event_id))
-        else:
-            # Unseeded — will be placed after seeded competitors
-            seed_entries.append((comp, None))
+    has_manual_seeds = any(
+        request.form.get(f'seed_{comp.id}', '').strip()
+        for comp in competitors
+    )
+
+    if has_manual_seeds:
+        for comp in competitors:
+            raw = request.form.get(f'seed_{comp.id}', '').strip()
+            if raw:
+                try:
+                    seed_val = int(raw)
+                    if seed_val < 1:
+                        raise ValueError
+                    seed_entries.append((comp, seed_val))
+                except (TypeError, ValueError):
+                    flash(f'Invalid seed value "{raw}" for {comp.name}.', 'error')
+                    return redirect(url_for('scheduling.birling_manage',
+                                            tournament_id=tournament_id, event_id=event_id))
+            else:
+                seed_entries.append((comp, None))
+    else:
+        # Use pre_seedings from ability rankings if available.
+        try:
+            bev_data = json.loads(event.payouts or '{}')
+        except (json.JSONDecodeError, TypeError):
+            bev_data = {}
+        pre_seedings = bev_data.get('pre_seedings', {})
+        for comp in competitors:
+            seed_val = pre_seedings.get(str(comp.id))
+            if seed_val is not None:
+                try:
+                    seed_entries.append((comp, int(seed_val)))
+                except (TypeError, ValueError):
+                    seed_entries.append((comp, None))
+            else:
+                seed_entries.append((comp, None))
 
     # Sort: seeded first by rank, then unseeded alphabetically
     seeded = [(c, s) for c, s in seed_entries if s is not None]
@@ -118,7 +141,7 @@ def birling_generate(tournament_id, event_id):
 
     ordered_comps = seeded + unseeded
 
-    comp_dicts = [{'id': c.id, 'name': c.name} for c, _ in ordered_comps]
+    comp_dicts = [{'id': c.id, 'name': c.display_name} for c, _ in ordered_comps]
     seeding = [c.id for c, _ in ordered_comps]
 
     from services.birling_bracket import BirlingBracket

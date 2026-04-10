@@ -135,6 +135,45 @@ def standings(tournament_id):
                          status=relay.get_status())
 
 
+@bp.route('/manual-teams', methods=['GET'])
+def manual_teams(tournament_id):
+    """Manual team builder with drag-and-drop."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    relay = get_proam_relay(tournament)
+
+    return render_template('proam_relay/manual_teams.html',
+                         tournament=tournament,
+                         relay=relay,
+                         status=relay.get_status(),
+                         teams=relay.get_teams(),
+                         eligible_pro=relay.get_eligible_pro_competitors(),
+                         eligible_college=relay.get_eligible_college_competitors())
+
+
+@bp.route('/manual-teams/save', methods=['POST'])
+def save_manual_teams(tournament_id):
+    """Save manually assigned teams."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    relay = get_proam_relay(tournament)
+
+    try:
+        import json
+        teams_json = request.form.get('teams_json', '[]')
+        team_assignments = json.loads(teams_json)
+
+        if not isinstance(team_assignments, list) or not team_assignments:
+            flash('No team assignments provided.', 'warning')
+            return redirect(url_for('proam_relay.manual_teams', tournament_id=tournament_id))
+
+        result = relay.set_teams_manually(team_assignments)
+        invalidate_tournament_caches(tournament_id)
+        flash(result['message'], 'success')
+    except (ValueError, json.JSONDecodeError) as e:
+        flash(str(e), 'danger')
+
+    return redirect(url_for('proam_relay.relay_dashboard', tournament_id=tournament_id))
+
+
 @bp.route('/replace-competitor', methods=['POST'])
 def replace_competitor(tournament_id):
     """Replace a competitor on a team (e.g., due to injury)."""

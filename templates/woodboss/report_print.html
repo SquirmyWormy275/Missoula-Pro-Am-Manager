@@ -394,5 +394,13 @@
         Blocks = 1 per enrolled competitor
     </p>
 
+<script>
+document.querySelectorAll('[data-print]').forEach(function(btn) {
+    btn.addEventListener('click', function() { window.print(); });
+});
+document.querySelectorAll('[data-close-window]').forEach(function(btn) {
+    btn.addEventListener('click', function() { window.close(); });
+});
+</script>
 </body>
 </html>

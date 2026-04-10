@@ -263,13 +263,13 @@ def _get_event_competitors(event: Event) -> list:
                 event_id=event.id,
                 competitor_id=comp.id,
                 competitor_type=event.event_type,
-                competitor_name=comp.name
+                competitor_name=comp.display_name
             )
             db.session.add(result)
 
         comp_data = {
             'id': comp.id,
-            'name': comp.name,
+            'name': comp.display_name,
             'gender': comp.gender,
             'is_left_handed': getattr(comp, 'is_left_handed_springboard', False),
             'gear_sharing': comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {},

@@ -131,20 +131,45 @@ def event_results_print(tournament_id, event_id):
                            results=results)
 
 
-@reporting_bp.route('/<int:tournament_id>/pro/payouts')
+@reporting_bp.route('/<int:tournament_id>/pro/payouts', methods=['GET', 'POST'])
 def pro_payout_summary(tournament_id):
-    """View pro competitor payout summary."""
+    """View pro competitor payout summary with settlement tracking."""
     tournament = Tournament.query.get_or_404(tournament_id)
+    from models.competitor import ProCompetitor
 
-    payload = _cached_payload(
-        f'reports:{tournament_id}:pro_payouts',
-        lambda: _build_payout_payload(tournament)
-    )
+    if request.method == 'POST':
+        try:
+            comp_id = int(request.form.get('competitor_id', ''))
+        except (TypeError, ValueError):
+            flash('Invalid request.', 'error')
+            return redirect(url_for('reporting.pro_payout_summary', tournament_id=tournament_id))
+
+        competitor = ProCompetitor.query.filter_by(id=comp_id, tournament_id=tournament_id).first_or_404()
+        competitor.payout_settled = not competitor.payout_settled
+        db.session.commit()
+        log_action('payout_settlement_toggled', 'pro_competitor', comp_id, {
+            'settled': competitor.payout_settled,
+            'name': competitor.name,
+        })
+        return redirect(url_for('reporting.pro_payout_summary', tournament_id=tournament_id))
+
+    competitors = tournament.pro_competitors.filter_by(status='active').all()
+    competitors = sorted(competitors, key=lambda c: c.total_earnings, reverse=True)
+    total_competitors = len(competitors)
+
+    earners = [c for c in competitors if c.total_earnings and c.total_earnings > 0]
+    total_owed = sum(c.total_earnings for c in earners)
+    total_settled = sum(c.total_earnings for c in earners if c.payout_settled)
+    total_outstanding = total_owed - total_settled
 
     return render_template('reports/payout_summary.html',
                            tournament=tournament,
-                           competitors=payload['competitors'],
-                           total_paid=payload['total_paid'])
+                           competitors=competitors,
+                           total_owed=total_owed,
+                           total_settled=total_settled,
+                           total_outstanding=total_outstanding,
+                           earners_count=len(earners),
+                           total_competitors=total_competitors)
 
 
 @reporting_bp.route('/<int:tournament_id>/pro/payouts/print')
@@ -152,11 +177,9 @@ def pro_payout_summary_print(tournament_id):
     """Printable version of payout summary."""
     tournament = Tournament.query.get_or_404(tournament_id)
 
-    payload = _cached_payload(
-        f'reports:{tournament_id}:pro_payouts',
-        lambda: _build_payout_payload(tournament)
-    )
-    competitors = [c for c in payload['competitors'] if c.total_earnings > 0]
+    competitors = tournament.pro_competitors.filter_by(status='active').all()
+    competitors = sorted(competitors, key=lambda c: c.total_earnings, reverse=True)
+    competitors = [c for c in competitors if c.total_earnings and c.total_earnings > 0]
     total_paid = sum(c.total_earnings for c in competitors)
 
     return render_template('reports/payout_summary_print.html',
@@ -372,56 +395,14 @@ def restore_database(tournament_id):
     return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
 
 
-def _build_payout_payload(tournament: Tournament) -> dict:
-    competitors = tournament.pro_competitors.filter_by(status='active').all()
-    competitors = sorted(competitors, key=lambda c: c.total_earnings, reverse=True)
-    total_paid = sum(c.total_earnings for c in competitors)
-    return {'competitors': competitors, 'total_paid': total_paid}
-
-
 # ---------------------------------------------------------------------------
-# #21 — Pro payout settlement checklist
+# #21 — Pro payout settlement (merged into pro_payout_summary)
 # ---------------------------------------------------------------------------
 
 @reporting_bp.route('/<int:tournament_id>/pro/payout-settlement', methods=['GET', 'POST'])
 def payout_settlement(tournament_id):
-    """Checklist for tracking which pro competitors have been paid out."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    from models.competitor import ProCompetitor
-
-    if request.method == 'POST':
-        # Toggle payout_settled for a competitor
-        try:
-            comp_id = int(request.form.get('competitor_id', ''))
-        except (TypeError, ValueError):
-            flash('Invalid request.', 'error')
-            return redirect(url_for('reporting.payout_settlement', tournament_id=tournament_id))
-
-        competitor = ProCompetitor.query.filter_by(id=comp_id, tournament_id=tournament_id).first_or_404()
-        competitor.payout_settled = not competitor.payout_settled
-        db.session.commit()
-        log_action('payout_settlement_toggled', 'pro_competitor', comp_id, {
-            'settled': competitor.payout_settled,
-            'name': competitor.name,
-        })
-        return redirect(url_for('reporting.payout_settlement', tournament_id=tournament_id))
-
-    competitors = tournament.pro_competitors.filter_by(status='active').all()
-    competitors = [c for c in competitors if c.total_earnings and c.total_earnings > 0]
-    competitors.sort(key=lambda c: c.total_earnings, reverse=True)
-
-    total_owed = sum(c.total_earnings for c in competitors)
-    total_settled = sum(c.total_earnings for c in competitors if c.payout_settled)
-    total_outstanding = total_owed - total_settled
-
-    return render_template(
-        'reporting/payout_settlement.html',
-        tournament=tournament,
-        competitors=competitors,
-        total_owed=total_owed,
-        total_settled=total_settled,
-        total_outstanding=total_outstanding,
-    )
+    """Redirect to merged pro payouts page."""
+    return redirect(url_for('reporting.pro_payout_summary', tournament_id=tournament_id), code=301)
 
 
 # ---------------------------------------------------------------------------
@@ -679,3 +660,87 @@ def ala_membership_report_pdf(tournament_id):
     from datetime import datetime
     download_name = f'ala_report_{datetime.now().strftime("%Y%m%d")}.pdf'
     return send_file(path, as_attachment=True, download_name=download_name)
+
+
+ALA_EMAIL = 'americanlumberjacks@gmail.com'
+
+
+@reporting_bp.route('/ala-membership-report/<int:tournament_id>/email', methods=['POST'])
+def ala_email_report(tournament_id):
+    """Generate ALA PDF and email it to the ALA."""
+    if not current_user.is_authenticated or not current_user.is_admin:
+        abort(403)
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.ala_report import build_ala_report, generate_ala_pdf
+
+    report = build_ala_report(tournament)
+
+    try:
+        path = generate_ala_pdf(report)
+    except Exception as exc:
+        flash(f'PDF generation failed: {exc}', 'error')
+        return redirect(url_for('reporting.ala_membership_report', tournament_id=tournament_id))
+
+    try:
+        _send_ala_email(path, tournament, report)
+        flash(f'ALA report emailed to {ALA_EMAIL}.', 'success')
+    except Exception as exc:
+        flash(f'Email failed: {exc}', 'error')
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    return redirect(url_for('reporting.ala_membership_report', tournament_id=tournament_id))
+
+
+def _send_ala_email(pdf_path, tournament, report):
+    """Send ALA report PDF via SMTP (uses same config as sms_notify)."""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.base import MIMEBase
+    from email.mime.text import MIMEText
+    from email import encoders
+    from datetime import datetime
+
+    smtp_host = os.environ.get('SMTP_HOST', '')
+    smtp_port = int(os.environ.get('SMTP_PORT', 587))
+    smtp_user = os.environ.get('SMTP_USER', '')
+    smtp_password = os.environ.get('SMTP_PASSWORD', '')
+    from_addr = os.environ.get('SMTP_FROM', smtp_user)
+
+    if not smtp_host or not smtp_user:
+        raise RuntimeError('SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD env vars.')
+
+    total = len(report['all_attendees'])
+    members = total - len(report['non_members'])
+    non_members = len(report['non_members'])
+    year = report.get('year', datetime.now().year)
+
+    msg = MIMEMultipart()
+    msg['From'] = from_addr
+    msg['To'] = ALA_EMAIL
+    msg['Subject'] = f'Missoula Pro-Am {year} — ALA Membership Report'
+
+    body = (
+        f'Attached is the ALA membership report for the Missoula Pro-Am {year}.\n\n'
+        f'Total pro competitors: {total}\n'
+        f'ALA members: {members}\n'
+        f'Non-members: {non_members}\n\n'
+        f'Generated: {report["generated_at"]}\n'
+    )
+    msg.attach(MIMEText(body, 'plain'))
+
+    with open(pdf_path, 'rb') as f:
+        part = MIMEBase('application', 'pdf')
+        part.set_payload(f.read())
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename="ala_report_{year}.pdf"')
+        msg.attach(part)
+
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg)

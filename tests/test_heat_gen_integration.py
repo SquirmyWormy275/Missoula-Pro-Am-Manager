@@ -599,8 +599,8 @@ class TestGetEventCompetitors:
         comps = _get_event_competitors(ev_m)
 
         names = [c['name'] for c in comps]
-        assert 'Male Comp' in names
-        assert 'Female Comp' not in names
+        assert 'Male Comp (UM-A)' in names
+        assert 'Female Comp' not in [n.split(' (')[0] for n in names]
 
     def test_creates_event_results_for_new_competitors(self, db_session):
         """When no EventResult rows exist, _get_event_competitors creates them."""

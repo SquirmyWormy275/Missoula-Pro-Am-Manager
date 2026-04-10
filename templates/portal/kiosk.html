@@ -106,7 +106,7 @@ body {
     {% for comp in pro_top %}
     <div class="standing-row">
         <span class="rank">{{ loop.index }}.</span>
-        <span class="name">{{ comp.name }}</span>
+        <span class="name">{{ comp.display_name }}</span>
         <span class="score">${{ "%.0f"|format(comp.total_earnings) }}</span>
     </div>
     {% endfor %}

@@ -95,8 +95,8 @@
         <div class="col-6 col-md-3">
             <div class="card text-center border-success">
                 <div class="card-body py-3">
-                    <div class="fs-2 fw-bold text-success">{{ report.stats.pairs }}</div>
-                    <div class="small text-muted">Verified Pairs</div>
+                    <div class="fs-2 fw-bold text-success">{{ report.stats.groups }}</div>
+                    <div class="small text-muted">Gear Groups</div>
                     {% if report.stats.unconfirmed > 0 %}
                     <div class="small text-warning">({{ report.stats.unconfirmed }} unconfirmed)</div>
                     {% endif %}
@@ -214,8 +214,8 @@
                     {% for entry in report.pro_unresolved %}
                     <tr data-comp-id="{{ entry.competitor.id }}"
                         data-event-key="{{ entry.event_key }}"
-                        data-comp-name="{{ entry.competitor.name|e }}">
-                        <td><strong>{{ entry.competitor.name }}</strong></td>
+                        data-comp-name="{{ entry.competitor.display_name|e }}">
+                        <td><strong>{{ entry.competitor.display_name }}</strong></td>
                         <td>{{ entry.event_label }}</td>
                         <td class="partner-cell">
                             <span class="partner-display">
@@ -245,7 +245,7 @@
                                 <button type="button" class="btn btn-outline-secondary"
                                         data-bs-toggle="modal" data-bs-target="#editGearModal"
                                         data-competitor-id="{{ entry.competitor.id }}"
-                                        data-competitor-name="{{ entry.competitor.name }}"
+                                        data-competitor-name="{{ entry.competitor.display_name }}"
                                         data-event-key="{{ entry.event_key }}"
                                         data-event-label="{{ entry.event_label }}"
                                         data-partner="{{ entry.partner_raw }}">
@@ -254,7 +254,7 @@
                                 <form method="POST"
                                       action="{{ url_for('registration.pro_gear_remove', tournament_id=tournament.id) }}"
                                       class="d-inline"
-                                      data-confirm="Remove this gear sharing entry for {{ entry.competitor.name }}?">
+                                      data-confirm="Remove this gear sharing entry for {{ entry.competitor.display_name }}?">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="competitor_id" value="{{ entry.competitor.id }}">
                                     <input type="hidden" name="event_key" value="{{ entry.event_key }}">
@@ -274,45 +274,53 @@
     </div>
     {% endif %}
 
-    <!-- Verified pairs (mutual + inferred) -->
-    {% if report.pro_pairs %}
+    <!-- Gear Sharing Groups (aggregated from pairs — supports groups of 2, 3, 4+) -->
+    {% if report.pro_groups %}
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <h6 class="mb-0">Verified Gear Pairs ({{ report.pro_pairs|length }})</h6>
+            <h6 class="mb-0">Gear Sharing Groups ({{ report.pro_groups|length }})</h6>
             <button class="btn btn-sm btn-outline-secondary" type="button"
-                    data-bs-toggle="collapse" data-bs-target="#pairsTable">
+                    data-bs-toggle="collapse" data-bs-target="#groupsTable">
                 Toggle
             </button>
         </div>
-        <div class="collapse show" id="pairsTable">
+        <div class="collapse show" id="groupsTable">
             <div class="table-responsive">
                 <table class="table table-sm table-hover align-middle mb-0">
                     <thead class="table-light">
                         <tr>
-                            <th>Competitor A</th>
-                            <th>Competitor B</th>
-                            <th>Event</th>
-                            <th>Reciprocal</th>
+                            <th>Members</th>
+                            <th>Size</th>
+                            <th>Equipment / Event</th>
+                            <th>Status</th>
                             <th>Heat Status</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for pair in report.pro_pairs %}
-                        <tr class="{{ 'table-danger' if pair.heat_conflict else ('table-warning' if pair.paired_by == 'inferred' else '') }}">
-                            <td>{{ pair.comp_a.name }}</td>
-                            <td>{{ pair.comp_b.name }}</td>
-                            <td>{{ pair.event_label }}</td>
+                        {% for group in report.pro_groups %}
+                        <tr class="{{ 'table-danger' if group.heat_conflict else ('table-warning' if group.has_unconfirmed else '') }}">
                             <td>
-                                {% if pair.paired_by == 'mutual' %}
-                                <span class="badge bg-success">Mutual</span>
+                                {% for member in group.members %}
+                                <span class="d-block">{{ member.name }}</span>
+                                {% endfor %}
+                            </td>
+                            <td>
+                                <span class="badge {{ 'bg-info' if group.member_count > 2 else 'bg-secondary' }}">
+                                    {{ group.member_count }}
+                                </span>
+                            </td>
+                            <td>{{ group.event_label }}</td>
+                            <td>
+                                {% if group.has_unconfirmed %}
+                                <span class="badge bg-warning text-dark" title="Some members in this group have unconfirmed (one-sided) entries. Use Complete All Pairs to write both sides.">Unconfirmed</span>
                                 {% else %}
-                                <span class="badge bg-warning text-dark" title="Only one side has recorded this pair. Use Complete All Pairs to write both sides, or verify the partner intended to share.">Unconfirmed</span>
+                                <span class="badge bg-success">Confirmed</span>
                                 {% endif %}
                             </td>
                             <td>
-                                {% if pair.heat_conflict %}
-                                <span class="badge bg-danger">Same heat</span>
+                                {% if group.heat_conflict %}
+                                <span class="badge bg-danger">Conflict</span>
                                 {% else %}
                                 <span class="badge bg-success">OK</span>
                                 {% endif %}
@@ -321,22 +329,13 @@
                                 <div class="btn-group btn-group-sm">
                                     <button type="button" class="btn btn-outline-secondary btn-sm"
                                             data-bs-toggle="modal" data-bs-target="#editGearModal"
-                                            data-competitor-id="{{ pair.comp_a.id }}"
-                                            data-competitor-name="{{ pair.comp_a.name }}"
-                                            data-event-key="{{ pair.event_key }}"
-                                            data-event-label="{{ pair.event_label }}"
-                                            data-partner="{{ pair.comp_b.name }}">
+                                            data-competitor-id="{{ group.members[0].id }}"
+                                            data-competitor-name="{{ group.members[0].name }}"
+                                            data-event-key="{{ group.event_keys|list|first }}"
+                                            data-event-label="{{ group.event_label }}"
+                                            data-partner="{{ group.members[1].name if group.members|length > 1 else '' }}">
                                         Edit
                                     </button>
-                                    <form method="POST"
-                                          action="{{ url_for('registration.pro_gear_remove', tournament_id=tournament.id) }}"
-                                          class="d-inline"
-                                          data-confirm="Remove gear sharing between {{ pair.comp_a.name }} and {{ pair.comp_b.name }}?">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <input type="hidden" name="competitor_id" value="{{ pair.comp_a.id }}">
-                                        <input type="hidden" name="event_key" value="{{ pair.event_key }}">
-                                        <button type="submit" class="btn btn-outline-danger btn-sm">Remove</button>
-                                    </form>
                                 </div>
                             </td>
                         </tr>
@@ -348,7 +347,7 @@
     </div>
     {% endif %}
 
-    {% if not report.pro_pairs and not report.pro_unresolved %}
+    {% if not report.pro_groups and not report.pro_unresolved %}
     <div class="alert alert-info mb-4">
         No pro gear-sharing entries found for this tournament.
         {% if report.unparsed_count > 0 %}
@@ -358,11 +357,11 @@
     </div>
     {% endif %}
 
-    <!-- Gear Groups (multiple pairs sharing one piece of equipment) -->
+    <!-- Named Gear Groups (explicit group: entries — multiple pairs sharing one piece of equipment) -->
     {% if gear_groups %}
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <h6 class="mb-0">Gear Groups ({{ gear_groups|length }})</h6>
+            <h6 class="mb-0">Named Gear Groups ({{ gear_groups|length }})</h6>
             <button class="btn btn-sm btn-outline-secondary" type="button"
                     data-bs-toggle="collapse" data-bs-target="#gearGroupsBody">
                 Toggle
@@ -531,12 +530,12 @@
                         {% for row in report.college_constraints %}
                         <tr data-comp-id="{{ row.competitor.id }}"
                             data-event-key="{{ row.event_key }}"
-                            data-comp-name="{{ row.competitor.name|e }}">
+                            data-comp-name="{{ row.competitor.display_name|e }}">
                             <td>
                                 {% if row.competitor.team %}
-                                <a href="{{ url_for('registration.team_detail', tournament_id=tournament.id, team_id=row.competitor.team.id) }}">{{ row.competitor.name }}</a>
+                                <a href="{{ url_for('registration.team_detail', tournament_id=tournament.id, team_id=row.competitor.team.id) }}">{{ row.competitor.display_name }}</a>
                                 {% else %}
-                                {{ row.competitor.name }}
+                                {{ row.competitor.display_name }}
                                 {% endif %}
                             </td>
                             <td><span class="badge bg-secondary">{{ row.team_code }}</span></td>
@@ -558,7 +557,7 @@
                                     <button type="button" class="btn btn-outline-secondary btn-sm"
                                             data-bs-toggle="modal" data-bs-target="#editCollegeGearModal"
                                             data-competitor-id="{{ row.competitor.id }}"
-                                            data-competitor-name="{{ row.competitor.name }}"
+                                            data-competitor-name="{{ row.competitor.display_name }}"
                                             data-event-key="{{ row.event_key }}"
                                             data-event-label="{{ row.event_label }}"
                                             data-partner="{{ row.partner }}">
@@ -567,7 +566,7 @@
                                     <form method="POST"
                                           action="{{ url_for('registration.college_gear_remove', tournament_id=tournament.id) }}"
                                           class="d-inline"
-                                          data-confirm="Remove this college gear entry for {{ row.competitor.name }}?">
+                                          data-confirm="Remove this college gear entry for {{ row.competitor.display_name }}?">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="competitor_id" value="{{ row.competitor.id }}">
                                         <input type="hidden" name="event_key" value="{{ row.event_key }}">
@@ -597,7 +596,7 @@
                             <option value="">-- select --</option>
                             {% if college_comps is defined %}
                             {% for c in college_comps %}
-                            <option value="{{ c.id }}">{{ c.name }}{% if c.team %} ({{ c.team.team_code }}){% endif %}</option>
+                            <option value="{{ c.id }}">{{ c.display_name }}</option>
                             {% endfor %}
                             {% endif %}
                         </select>

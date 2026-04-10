@@ -654,8 +654,8 @@ def _build_college_spectator_payload(tournament: Tournament) -> dict:
     result_counts = _completed_result_counts_by_event([event.id for event in completed_events])
 
     return {
-        'bull': [{'name': c.name, 'individual_points': c.individual_points} for c in bull],
-        'belle': [{'name': c.name, 'individual_points': c.individual_points} for c in belle],
+        'bull': [{'name': c.display_name, 'individual_points': c.individual_points} for c in bull],
+        'belle': [{'name': c.display_name, 'individual_points': c.individual_points} for c in belle],
         'team_standings': [{'team_code': t.team_code, 'total_points': t.total_points} for t in team_standings],
         'event_summaries': [
             {

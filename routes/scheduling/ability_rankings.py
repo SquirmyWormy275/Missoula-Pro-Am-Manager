@@ -1,15 +1,18 @@
 """
-Pro ability rankings route — judge-assigned per-event ranks for heat snake-draft sort.
+Ability rankings route — judge-assigned per-event ranks for heat snake-draft sort (pro)
+and per-school birling seedings (college).
 """
+import json
+
 from flask import flash, redirect, render_template, request, url_for
 
 from config import event_rank_category as _event_rank_category
 from database import db
 from models import Event, Tournament
-from models.competitor import ProCompetitor
+from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 
-from . import scheduling_bp
+from . import _signed_up_competitors, scheduling_bp
 
 # ---------------------------------------------------------------------------
 # Ability Rankings — per-event judge-assigned ranks for heat snake-draft sort
@@ -28,76 +31,127 @@ def ability_rankings(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
 
     if request.method == 'POST':
-        # Parse rank_{category}_{competitor_id} fields and upsert ProEventRank rows.
+        # Parse order_{category}_{gender} fields — each is a comma-separated list
+        # of competitor IDs in drag-and-drop rank order (position = rank).
+        # Competitors not in the list are unranked (their existing rank is deleted).
         saved_count = 0
         deleted_count = 0
+
+        # Collect all ordered lists from the form.
+        ordered_lists: dict = {}  # (category, gender) → [comp_id, ...]
         for key, raw_val in request.form.items():
-            if not key.startswith('rank_'):
+            if not key.startswith('order_'):
                 continue
-            parts = key.split('_', 2)
-            if len(parts) != 3:
+            # key format: order_{category}_{gender} — category may contain underscores
+            # so split from the right: last segment is gender, middle is category.
+            rest = key[len('order_'):]
+            last_underscore = rest.rfind('_')
+            if last_underscore < 0:
                 continue
-            _, category, comp_id_str = parts
+            category = rest[:last_underscore]
             if category not in RANKED_CATEGORIES:
                 continue
-            try:
-                competitor_id = int(comp_id_str)
-            except (TypeError, ValueError):
-                continue
-
             raw_val = raw_val.strip()
             if not raw_val:
-                # Blank field — delete existing rank if present.
+                ordered_lists[(category, rest[last_underscore + 1:])] = []
+                continue
+            try:
+                comp_ids = [int(x) for x in raw_val.split(',') if x.strip()]
+            except (TypeError, ValueError):
+                continue
+            ordered_lists[(category, rest[last_underscore + 1:])] = comp_ids
+
+        # Process each ordered list: ranked competitors get rank = position (1-based).
+        all_comp_ids_by_cat: dict = {}  # category → set of comp_ids that have been ranked
+        for (category, _gender), comp_ids in ordered_lists.items():
+            ranked_set = all_comp_ids_by_cat.setdefault(category, set())
+            for position, comp_id in enumerate(comp_ids, start=1):
+                ranked_set.add(comp_id)
                 existing = ProEventRank.query.filter_by(
                     tournament_id=tournament_id,
-                    competitor_id=competitor_id,
+                    competitor_id=comp_id,
                     event_category=category,
                 ).first()
                 if existing:
-                    db.session.delete(existing)
-                    deleted_count += 1
-                continue
+                    existing.rank = position
+                else:
+                    db.session.add(ProEventRank(
+                        tournament_id=tournament_id,
+                        competitor_id=comp_id,
+                        event_category=category,
+                        rank=position,
+                    ))
+                saved_count += 1
 
-            try:
-                rank = int(raw_val)
-                if rank < 1:
-                    raise ValueError
-            except (TypeError, ValueError):
-                flash(f'Invalid rank value "{raw_val}" for category {category} — must be a positive integer.', 'error')
-                continue
-
-            existing = ProEventRank.query.filter_by(
-                tournament_id=tournament_id,
-                competitor_id=competitor_id,
-                event_category=category,
-            ).first()
-            if existing:
-                existing.rank = rank
-            else:
-                db.session.add(ProEventRank(
-                    tournament_id=tournament_id,
-                    competitor_id=competitor_id,
-                    event_category=category,
-                    rank=rank,
-                ))
-            saved_count += 1
+        # Delete ranks for competitors that were NOT in any ordered list for their category.
+        for category, ranked_ids in all_comp_ids_by_cat.items():
+            stale = ProEventRank.query.filter(
+                ProEventRank.tournament_id == tournament_id,
+                ProEventRank.event_category == category,
+                ~ProEventRank.competitor_id.in_(ranked_ids) if ranked_ids else True,
+            ).all()
+            for r in stale:
+                db.session.delete(r)
+                deleted_count += 1
 
         db.session.commit()
         log_action('ability_rankings_saved', 'tournament', tournament_id, {
             'saved': saved_count,
             'cleared': deleted_count,
         })
-        flash(f'Ability rankings saved ({saved_count} set, {deleted_count} cleared).', 'success')
+
+        # ── College birling seedings ────────────────────────────────────
+        birling_saved = 0
+        birling_events = tournament.events.filter_by(
+            event_type='college', scoring_type='bracket'
+        ).all()
+        for bev in birling_events:
+            key = f'birling_schools_{bev.id}'
+            raw_schools = request.form.get(key, '').strip()
+            if not raw_schools:
+                continue
+            # raw_schools is JSON: {"school_name": [comp_id, comp_id], ...}
+            try:
+                school_orders = json.loads(raw_schools)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            # Compute global seed numbers:
+            # All #1 picks first (one per school), then all #2 picks.
+            pre_seedings = {}
+            max_depth = max((len(ids) for ids in school_orders.values()), default=0)
+            seed = 1
+            for depth in range(max_depth):
+                for _school, ids in sorted(school_orders.items()):
+                    if depth < len(ids):
+                        try:
+                            pre_seedings[int(ids[depth])] = seed
+                            seed += 1
+                        except (TypeError, ValueError):
+                            continue
+            # Store in the Event.payouts JSON under 'pre_seedings'.
+            try:
+                existing_data = json.loads(bev.payouts or '{}')
+            except (json.JSONDecodeError, TypeError):
+                existing_data = {}
+            existing_data['pre_seedings'] = pre_seedings
+            bev.payouts = json.dumps(existing_data)
+            birling_saved += len(pre_seedings)
+
+        if birling_saved:
+            db.session.commit()
+
+        total_saved = saved_count + birling_saved
+        flash(f'Rankings saved ({total_saved} set, {deleted_count} cleared).', 'success')
         return redirect(url_for('scheduling.ability_rankings', tournament_id=tournament_id))
 
     # GET — build display data.
-    # Find which ranked categories have at least one pro event for this tournament.
+    # ── Pro ability rankings ────────────────────────────────────────────
     pro_events = tournament.events.filter_by(event_type='pro').all()
-    category_event_map: dict = {}
+    active_categories: set = set()
     for event in pro_events:
         cat = _event_rank_category(event)
         if cat:
-            category_event_map.setdefault(cat, []).append(event)
+            active_categories.add(cat)
 
     # Load existing ranks for this tournament.
     existing_ranks = ProEventRank.query.filter_by(tournament_id=tournament_id).all()
@@ -105,26 +159,28 @@ def ability_rankings(tournament_id):
         (r.competitor_id, r.event_category): r.rank for r in existing_ranks
     }
 
-    # Build category_groups: {category: {'M': [...], 'F': [...], 'open': [...]}}
-    # Each entry is {competitor, rank (or None)}.
+    # Build category_groups: {category: {'M': [...], 'F': [...]}}
+    # Always segregate by competitor gender, regardless of whether the event is gendered.
+    # Jack & Jill is the only mixed-gender exception — show as 'open'.
+    all_active_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament_id,
+        status='active',
+    ).order_by(ProCompetitor.name).all()
+
     category_groups: dict = {}
-    for category, cat_events in category_event_map.items():
-        genders_seen: dict = {}  # gender -> set of competitor ids already added
+    for category in active_categories:
         group: dict = {}
-        for event in cat_events:
-            gender_key = event.gender if event.gender else 'open'
-            seen = genders_seen.setdefault(gender_key, set())
-            comps = ProCompetitor.query.filter_by(
-                tournament_id=tournament_id,
-                status='active',
-            )
-            if event.gender:
-                comps = comps.filter_by(gender=event.gender)
-            comps = comps.order_by(ProCompetitor.name).all()
-            for comp in comps:
-                if comp.id in seen:
-                    continue
-                seen.add(comp.id)
+        if category == 'jack_jill':
+            # Mixed-gender event — show all competitors in one list.
+            for comp in all_active_comps:
+                group.setdefault('open', []).append({
+                    'competitor': comp,
+                    'rank': rank_map.get((comp.id, category)),
+                })
+        else:
+            # Gender-segregated ranking.
+            for comp in all_active_comps:
+                gender_key = comp.gender if comp.gender else 'open'
                 group.setdefault(gender_key, []).append({
                     'competitor': comp,
                     'rank': rank_map.get((comp.id, category)),
@@ -138,10 +194,56 @@ def ability_rankings(tournament_id):
         if group:
             category_groups[category] = group
 
+    # ── College birling seedings ────────────────────────────────────────
+    birling_events_data = []
+    college_birling_events = tournament.events.filter_by(
+        event_type='college', scoring_type='bracket'
+    ).all()
+    for bev in college_birling_events:
+        signed_up = _signed_up_competitors(bev)
+        if not signed_up:
+            continue
+
+        # Load existing pre-seedings.
+        try:
+            bev_data = json.loads(bev.payouts or '{}')
+        except (json.JSONDecodeError, TypeError):
+            bev_data = {}
+        pre_seedings = bev_data.get('pre_seedings', {})
+        # pre_seedings is {comp_id_str: seed_number}
+        seed_map = {int(k): v for k, v in pre_seedings.items()}
+
+        # Group competitors by school.
+        schools: dict = {}  # school_name → [comp, ...]
+        for comp in signed_up:
+            team = getattr(comp, 'team', None)
+            school = team.school_name if team else 'Unaffiliated'
+            schools.setdefault(school, []).append(comp)
+
+        # Within each school, sort by existing seed (seeded first, then alphabetical).
+        school_groups = []
+        for school_name in sorted(schools.keys()):
+            comps = schools[school_name]
+            comps.sort(key=lambda c: (seed_map.get(c.id, 9999), c.name))
+            school_groups.append({
+                'school': school_name,
+                'competitors': [
+                    {'id': c.id, 'name': c.display_name, 'seed': seed_map.get(c.id)}
+                    for c in comps
+                ],
+            })
+
+        birling_events_data.append({
+            'event': bev,
+            'school_groups': school_groups,
+            'total_competitors': len(signed_up),
+        })
+
     return render_template(
         'scheduling/ability_rankings.html',
         tournament=tournament,
         category_groups=category_groups,
         category_display_names=CATEGORY_DISPLAY_NAMES,
         category_descriptions=CATEGORY_DESCRIPTIONS,
+        birling_events_data=birling_events_data,
     )

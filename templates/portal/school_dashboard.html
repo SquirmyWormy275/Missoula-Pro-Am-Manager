@@ -257,7 +257,7 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#{{ member_row_id }}">
                                     <td><i class="bi bi-chevron-down small"></i></td>
-                                    <td>{{ md.competitor.name }}</td>
+                                    <td>{{ md.competitor.display_name }}</td>
                                     <td>
                                         {% if md.competitor.gender == 'M' %}
                                         <span class="badge bg-primary">M</span>
@@ -278,7 +278,7 @@
                                 {# Print-visible static row (always shown in print) #}
                                 <tr class="d-none d-print-table-row">
                                     <td></td>
-                                    <td>{{ md.competitor.name }}</td>
+                                    <td>{{ md.competitor.display_name }}</td>
                                     <td>{{ md.competitor.gender }}</td>
                                     <td>{{ md.results_rows|length }}</td>
                                     <td>{{ md.competitor.individual_points }}</td>
@@ -289,7 +289,7 @@
                                     <td colspan="6" class="p-0">
                                         <div class="collapse" id="{{ member_row_id }}">
                                             <div class="p-3 bg-light border-top">
-                                                <strong class="d-block mb-2">{{ md.competitor.name }} — Score Breakdown</strong>
+                                                <strong class="d-block mb-2">{{ md.competitor.display_name }} — Score Breakdown</strong>
                                                 {% if md.results_rows %}
                                                 <div class="table-responsive">
                                                     <table class="table table-sm table-bordered bg-white mb-0">
@@ -380,7 +380,7 @@
                                 {% for row in md.schedule_rows %}
                                 {% set ns.found = true %}
                                 <tr>
-                                    <td>{{ md.competitor.name }}</td>
+                                    <td>{{ md.competitor.display_name }}</td>
                                     <td><span class="badge bg-secondary">{{ td.team.team_code }}</span></td>
                                     <td>{{ row.event_name }}</td>
                                     <td>{{ row.heat_number }}</td>
@@ -442,7 +442,7 @@
                                     <tr class="{% if c.id in school_member_ids %}row-school-highlight{% endif %}">
                                         <td>{{ loop.index }}</td>
                                         <td>
-                                            {{ c.name }}
+                                            {{ c.display_name }}
                                             {% if c.id in school_member_ids %}
                                             <span class="badge-school">Yours</span>
                                             {% endif %}
@@ -480,7 +480,7 @@
                                     <tr class="{% if c.id in school_member_ids %}row-school-highlight{% endif %}">
                                         <td>{{ loop.index }}</td>
                                         <td>
-                                            {{ c.name }}
+                                            {{ c.display_name }}
                                             {% if c.id in school_member_ids %}
                                             <span class="badge-school">Yours</span>
                                             {% endif %}

@@ -264,6 +264,36 @@ GEAR_FAMILIES = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Wood preset templates — common species/size combos for Virtual Woodboss.
+# Each preset defines species + diameter for block and log categories.
+# Presets are applied to all config_keys within the category.
+# Custom presets can be saved to instance/wood_presets.json at runtime.
+# ---------------------------------------------------------------------------
+COMMON_WOOD_SPECIES = [
+    'Western White Pine',
+    'Cottonwood',
+    'Aspen',
+    'Poplar',
+    'Western Larch',
+    'Douglas Fir',
+    'Lodgepole Pine',
+    'Sitka Spruce',
+    'Ponderosa Pine',
+    'White Fir',
+    'Western Red Cedar',
+]
+
+WOOD_PRESETS = {
+    'Missoula Standard': {
+        'blocks': {'species': 'Western White Pine', 'size_value': 13, 'size_unit': 'in'},
+        'log_general': {'species': 'Western Larch', 'size_value': 14, 'size_unit': 'in'},
+        'log_stock': {'species': 'Western Larch', 'size_value': 14, 'size_unit': 'in'},
+        'log_op': {'species': 'Lodgepole Pine', 'size_value': 10, 'size_unit': 'in'},
+        'log_cookie': {'species': 'Lodgepole Pine', 'size_value': 10, 'size_unit': 'in'},
+    },
+}
+
 # Stand types that have NO personal gear constraints — equipment is either
 # show-provided or not applicable.  The gear completeness check skips these.
 NO_CONSTRAINT_STAND_TYPES = {
@@ -448,6 +478,13 @@ def event_rank_category(event) -> 'str | None':
         return None
     st = getattr(event, 'stand_type', None)
     if st == 'springboard':
+        # Differentiate springboard sub-events by name.
+        name = getattr(event, 'name', '') or ''
+        name_lower = name.lower()
+        if '1-board' in name_lower or '1 board' in name_lower:
+            return 'pro_1board'
+        if '3-board' in name_lower or '3 board' in name_lower or 'jigger' in name_lower:
+            return '3board_jigger'
         return 'springboard'
     if st == 'underhand':
         return 'underhand'
@@ -470,6 +507,8 @@ def event_rank_category(event) -> 'str | None':
 # so services and routes can import them without pulling in the full ORM model.
 RANKED_CATEGORIES = {
     'springboard',
+    'pro_1board',
+    '3board_jigger',
     'underhand',
     'standing_block',
     'obstacle_pole',
@@ -481,6 +520,8 @@ RANKED_CATEGORIES = {
 
 CATEGORY_DISPLAY_NAMES = {
     'springboard': 'Springboard',
+    'pro_1board': 'Pro 1-Board',
+    '3board_jigger': '3-Board Jigger',
     'underhand': 'Underhand',
     'standing_block': 'Standing Block',
     'obstacle_pole': 'Obstacle Pole',
@@ -491,10 +532,12 @@ CATEGORY_DISPLAY_NAMES = {
 }
 
 CATEGORY_DESCRIPTIONS = {
-    'springboard': 'Covers Springboard, Pro 1-Board, 3-Board Jigger',
+    'springboard': "Men's and Women's Springboard",
+    'pro_1board': "Men's and Women's Pro 1-Board",
+    '3board_jigger': "Men's and Women's 3-Board Jigger",
     'underhand': "Men's and Women's Underhand Butcher Block",
     'standing_block': "Men's and Women's Standing Block (Speed & Hard Hit)",
-    'obstacle_pole': 'Obstacle Pole',
+    'obstacle_pole': "Men's and Women's Obstacle Pole",
     'singlebuck': "Men's and Women's Single Buck",
     'doublebuck': "Men's and Women's Double Buck",
     'jack_jill': 'Jack & Jill Sawing (mixed gender)',
@@ -512,4 +555,6 @@ COLLEGE_SATURDAY_PRIORITY_DEFAULT = [
     ('Double Buck', 'M'),
     ('Double Buck', 'F'),
     ('Jack & Jill Sawing', None),
+    ('Jack & Jill Sawing', 'M'),
+    ('Jack & Jill Sawing', 'F'),
 ]

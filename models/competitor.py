@@ -61,6 +61,13 @@ class CollegeCompetitor(db.Model):
 
     _PRO_AM_LOTTERY_META_KEY = '__pro_am_lottery_opt_in__'
 
+    @property
+    def display_name(self):
+        """Name with team designator, e.g. 'Alex Kaper (UM-A)'."""
+        if self.team:
+            return f'{self.name} ({self.team.team_code})'
+        return self.name
+
     def __repr__(self):
         return f'<CollegeCompetitor {self.name} ({self.team.team_code if self.team else "no team"})>'
 
@@ -221,6 +228,11 @@ class ProCompetitor(db.Model):
     # Format: first_initial + last_name + gender_code (e.g. AKAPERM for Alex Kaper Male).
     # Populated on registration; used to push results to the global STRATHMARK Supabase DB.
     strathmark_id = db.Column(db.String(50), nullable=True, index=True)
+
+    @property
+    def display_name(self):
+        """Display name (same as name — pro competitors have no team)."""
+        return self.name
 
     def __repr__(self):
         return f'<ProCompetitor {self.name}>'

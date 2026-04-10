@@ -10,7 +10,7 @@ from models import CollegeCompetitor, ProCompetitor, Team, Tournament
 from services.gear_sharing import infer_equipment_categories, normalize_person_name
 
 
-def process_college_entry_form(filepath: str, tournament: Tournament) -> dict:
+def process_college_entry_form(filepath: str, tournament: Tournament, original_filename: str = None) -> dict:
     """
     Process a college entry form Excel file and import teams/competitors.
 
@@ -21,6 +21,7 @@ def process_college_entry_form(filepath: str, tournament: Tournament) -> dict:
     Args:
         filepath: Path to the Excel file
         tournament: Tournament to add teams/competitors to
+        original_filename: Original uploaded filename (e.g., "University of Montana.xlsx")
 
     Returns:
         dict with counts: {'teams': int, 'competitors': int}
@@ -39,7 +40,8 @@ def process_college_entry_form(filepath: str, tournament: Tournament) -> dict:
     df = pd.read_excel(filepath, sheet_name=0, header=header_row)
     df = df.dropna(axis=1, how='all')
     df.columns = [str(c).strip() for c in df.columns]
-    default_school_name = _extract_school_name(raw_df, header_row)
+    # Extract school name: prefer filename (e.g., "University of Montana.xlsx"), fall back to preamble/data
+    default_school_name = _school_name_from_filename(original_filename) or _extract_school_name(raw_df, header_row)
 
     # Detect the format and process accordingly
     if _find_column(df, ['school', 'university', 'college', 'institution']) or _find_column(df, ['team', 'team code']):
@@ -58,6 +60,9 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
     # Get column mappings (flexible to handle variations)
     school_col = _find_column(df, ['school', 'university', 'college', 'institution'])
     team_col = _find_column(df, ['team', 'team_code', 'team_id', 'team name'])
+    # Fallback: detect unnamed columns whose values look like team identifiers (e.g., "A Team", "B Team")
+    if not team_col:
+        team_col = _detect_team_column_by_values(df)
     name_col = _find_column(df, ['name', 'first and last name', 'competitor', 'athlete', 'full name', 'competitor name'])
     gender_col = _find_column(df, ['gender', 'sex', 'm/f', 'male/female', 'male female', 'mf'])
     events_col = _find_column(df, ['events', 'event', 'entered'])
@@ -95,15 +100,23 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
             continue
 
         # Determine school and team code
-        if team_col:
-            team_code = str(team_identifier)
-            school_name = valid_team_df[school_col].iloc[0] if school_col else (default_school_name or team_code)
+        raw_team_id = str(team_identifier).strip()
+        # Resolve school name: prefer School column value, then filename-derived default
+        if school_col:
+            raw_school = str(valid_team_df[school_col].iloc[0]).strip() if not pd.isna(valid_team_df[school_col].iloc[0]) else ''
         else:
-            team_code = str(team_identifier)
-            school_name = default_school_name or team_code
-            if school_col and not _looks_like_team_code(team_code):
-                school_name = team_code
-                team_code = _generate_team_code(school_name, tournament)
+            raw_school = ''
+        # The School column may already contain a team code (e.g., "UM-A") — use default_school_name if available
+        school_name = default_school_name or raw_school or raw_team_id
+        school_abbr = _abbreviate_school(school_name)
+        # Extract team letter from identifiers like "A Team", "B Team" or use raw_team_id
+        team_letter = _extract_team_letter(raw_team_id)
+        if team_letter:
+            team_code = f"{school_abbr}-{team_letter}"
+        elif _looks_like_team_code(raw_team_id):
+            team_code = raw_team_id
+        else:
+            team_code = f"{school_abbr}-A"
 
         # Create or find team
         team = Team.query.filter_by(
@@ -237,6 +250,25 @@ def _find_column(df: pd.DataFrame, candidates: list) -> str:
     return None
 
 
+def _detect_team_column_by_values(df: pd.DataFrame) -> str:
+    """Detect an unnamed column whose values look like team identifiers (e.g., 'A Team', 'B Team')."""
+    import re
+    team_pattern = re.compile(r'^[a-d]\s*team$', re.IGNORECASE)
+    for col in df.columns:
+        normalized_header = _normalize_label(col)
+        if not normalized_header.startswith('unnamed'):
+            continue
+        values = df[col].dropna().astype(str).str.strip()
+        non_empty = values[values != '']
+        if len(non_empty) == 0:
+            continue
+        # Check if a meaningful fraction of values match the team pattern
+        match_count = sum(1 for v in non_empty if team_pattern.match(v))
+        if match_count >= 2 or (match_count >= 1 and match_count / len(non_empty) >= 0.3):
+            return col
+    return None
+
+
 def _normalize_label(value) -> str:
     """Normalize a header label for tolerant matching."""
     import re
@@ -285,6 +317,34 @@ def _extract_school_name(raw_df: pd.DataFrame, header_row: int) -> str:
     return None
 
 
+def _school_name_from_filename(filename: str) -> str:
+    """Extract school name from an uploaded filename (e.g., 'University of Montana.xlsx' → 'University of Montana')."""
+    if not filename:
+        return None
+    import os
+    name = os.path.splitext(filename)[0].strip()
+    # Remove common prefixes/suffixes that aren't part of the school name
+    for noise in ['entry form', 'entry', 'roster', 'registration', 'form', 'team', 'college', 'pro am', 'pro-am']:
+        name = name.replace(noise, '').replace(noise.title(), '').replace(noise.upper(), '')
+    name = name.strip(' -_')
+    return name if name else None
+
+
+def _extract_team_letter(raw_team_id: str) -> str:
+    """Extract team letter from identifiers like 'A Team', 'B Team', 'Team A', etc."""
+    import re
+    text = raw_team_id.strip()
+    # "A Team", "B Team", etc.
+    m = re.match(r'^([A-Da-d])\s*[Tt]eam$', text)
+    if m:
+        return m.group(1).upper()
+    # "Team A", "Team B", etc.
+    m = re.match(r'^[Tt]eam\s*([A-Da-d])$', text)
+    if m:
+        return m.group(1).upper()
+    return None
+
+
 def _looks_like_team_code(value: str) -> bool:
     """Return True when value looks like a team code (e.g., UM-A, JT-B)."""
     import re
@@ -302,7 +362,7 @@ def _find_event_marker_columns(df: pd.DataFrame, excluded_cols: list) -> list:
         if not normalized or normalized.startswith('unnamed'):
             continue
         # Event headers usually include short labels like "W."/"M." or event keywords.
-        if any(k in normalized for k in ['horiz', 'vert', 'pole', 'climb', 'choker', 'saw', 'birling', 'kaber', 'chop', 'buck', 'toss', 'hit', 'speed']):
+        if any(k in normalized for k in ['horiz', 'vert', 'pole', 'climb', 'choker', 'saw', 'birling', 'kaber', 'caber', 'chop', 'buck', 'toss', 'hit', 'speed', 'axe', 'throw', 'pv', 'peavey', 'log roll', 'pulp', 'power', 'obstacle', 'single']):
             marker_cols.append(col)
     return marker_cols
 
@@ -525,10 +585,28 @@ def _abbreviate_school(school_name: str) -> str:
         'montana state university': 'MSU',
         'colorado state university': 'CSU',
         'university of idaho': 'UI',
+        'idaho': 'UI',
         'oregon state university': 'OSU',
         'university of washington': 'UW',
         'humboldt state': 'HSU',
+        'humboldt state university': 'HSU',
         'cal poly': 'CP',
+        'cal poly humboldt': 'CPH',
+        'uc berkeley': 'UCB',
+        'uc berkley': 'UCB',
+        'berkeley': 'UCB',
+        'berkley': 'UCB',
+        'university of california berkeley': 'UCB',
+        'flathead valley community college': 'FVCC',
+        'flathead valley': 'FVCC',
+        'montana tech': 'MTech',
+        'university of oregon': 'UO',
+        'washington state university': 'WSU',
+        'university of british columbia': 'UBC',
+        'virginia tech': 'VT',
+        'virginia polytechnic': 'VT',
+        'northern arizona university': 'NAU',
+        'southern oregon university': 'SOU',
     }
 
     name_lower = school_name.lower().strip()
@@ -609,6 +687,9 @@ def _validate_college_entry_constraints(team_ids: set) -> dict:
     if not team_ids:
         return {}
 
+    MIN_MEN = 2
+    MIN_WOMEN = 2
+    MAX_TEAM_MEMBERS = 8
     MAX_EVENTS_PER_COMPETITOR = 6  # Applies to CLOSED events only; OPEN events are uncapped
     MAX_PER_EVENT_PER_GENDER_PER_TEAM = 3
     MAX_PAIRS_PER_PARTNERED_EVENT = 3
@@ -631,9 +712,30 @@ def _validate_college_entry_constraints(team_ids: set) -> dict:
         team_errors = []
         per_event_gender_counts = {}
         active_members = team.members.filter_by(status='active').all()
+
+        # --- Roster-level checks ---
+        men_count = sum(1 for m in active_members if (m.gender or '').strip().upper() == 'M')
+        women_count = sum(1 for m in active_members if (m.gender or '').strip().upper() == 'F')
+        total = len(active_members)
+        if men_count < MIN_MEN:
+            team_errors.append({
+                'type': 'roster_min_men',
+                'message': f'Team has {men_count} men but requires at least {MIN_MEN}',
+            })
+        if women_count < MIN_WOMEN:
+            team_errors.append({
+                'type': 'roster_min_women',
+                'message': f'Team has {women_count} women but requires at least {MIN_WOMEN}',
+            })
+        if total > MAX_TEAM_MEMBERS:
+            team_errors.append({
+                'type': 'roster_max_members',
+                'message': f'Team has {total} members but maximum is {MAX_TEAM_MEMBERS}',
+            })
         member_events_map = {}
         member_partners_map = {}
         member_by_norm_name = {}
+        member_by_first_name = {}
 
         for member in active_members:
             member_name_norm = _normalize_person_name(member.name)
@@ -642,6 +744,12 @@ def _validate_college_entry_constraints(team_ids: set) -> dict:
             member_events_map[member_name_norm] = set(events)
             member_partners_map[member_name_norm] = member.get_partners() if isinstance(member.get_partners(), dict) else {}
             member_by_norm_name[member_name_norm] = member
+            first_name_norm = _normalize_person_name(member.name.split()[0]) if member.name.strip() else ''
+            if first_name_norm:
+                if first_name_norm in member_by_first_name:
+                    member_by_first_name[first_name_norm] = None  # ambiguous — multiple members share first name
+                else:
+                    member_by_first_name[first_name_norm] = member
 
         for member in active_members:
             events = [_canonicalize_event_name(e) for e in member.get_events_entered() if str(e).strip()]
@@ -728,6 +836,17 @@ def _validate_college_entry_constraints(team_ids: set) -> dict:
                 partner_name_norm = _normalize_person_name(partner_name)
                 partner_member = member_by_norm_name.get(partner_name_norm)
                 if not partner_member:
+                    # Fallback: try matching by first name only (common in spreadsheets)
+                    first_match = member_by_first_name.get(partner_name_norm)
+                    if first_match is not None:
+                        partner_member = first_match
+                        partner_name_norm = _normalize_person_name(partner_member.name)
+                if not partner_member:
+                    # Fallback: fuzzy match — find closest name on team (handles typos like McKinley/Mickinley)
+                    partner_member = _fuzzy_match_member(partner_name_norm, member_by_norm_name, member_by_first_name)
+                    if partner_member:
+                        partner_name_norm = _normalize_person_name(partner_member.name)
+                if not partner_member:
                     team_errors.append({
                         'type': 'partner_not_on_team',
                         'message': f'{member_name} lists "{partner_name}" for "{event_name}" but that partner is not on this team',
@@ -753,7 +872,20 @@ def _validate_college_entry_constraints(team_ids: set) -> dict:
 
                 partner_partners = member_partners_map.get(partner_name_norm, {})
                 reciprocal_name = str(partner_partners.get(event_name, '')).strip()
-                if _normalize_person_name(reciprocal_name) != member_name_norm:
+                reciprocal_norm = _normalize_person_name(reciprocal_name)
+                # Resolve reciprocal name through same fallback chain: exact → first-name → fuzzy
+                reciprocal_resolved = member_by_norm_name.get(reciprocal_norm)
+                if not reciprocal_resolved:
+                    fm = member_by_first_name.get(reciprocal_norm)
+                    if fm is not None:
+                        reciprocal_resolved = fm
+                if not reciprocal_resolved:
+                    reciprocal_resolved = _fuzzy_match_member(reciprocal_norm, member_by_norm_name, member_by_first_name)
+                reciprocal_matches = (
+                    reciprocal_resolved is not None
+                    and _normalize_person_name(reciprocal_resolved.name) == member_name_norm
+                )
+                if not reciprocal_matches:
                     # Deduplicate: only report once per pair per event
                     pair_key = (event_name, tuple(sorted([member_name_norm, partner_name_norm])))
                     if pair_key not in partner_error_pairs:
@@ -854,6 +986,50 @@ def _normalize_person_name(name: str) -> str:
     text = '' if name is None else str(name).strip().lower()
     text = re.sub(r'[^a-z0-9]+', '', text)
     return text
+
+
+def _fuzzy_match_member(query_norm, member_by_norm_name, member_by_first_name):
+    """Find a team member by approximate name match (edit distance ≤ 2).
+
+    Handles common typos like McKinley/Mickinley. Returns None if no
+    unique close match found.
+    """
+    if not query_norm:
+        return None
+    best, best_dist, ambiguous = None, 3, False
+    # Check against full names and first names
+    for norm_name, member in member_by_norm_name.items():
+        d = _edit_distance(query_norm, norm_name)
+        if d < best_dist:
+            best, best_dist, ambiguous = member, d, False
+        elif d == best_dist and member != best:
+            ambiguous = True
+    for first_norm, member in member_by_first_name.items():
+        if member is None:
+            continue
+        d = _edit_distance(query_norm, first_norm)
+        if d < best_dist:
+            best, best_dist, ambiguous = member, d, False
+        elif d == best_dist and member != best:
+            ambiguous = True
+    if ambiguous or best is None:
+        return None
+    return best
+
+
+def _edit_distance(a: str, b: str) -> int:
+    """Levenshtein edit distance (bounded — returns 3 early for speed)."""
+    if abs(len(a) - len(b)) >= 3:
+        return 3
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        curr = [i + 1] + [0] * len(b)
+        for j, cb in enumerate(b):
+            curr[j + 1] = prev[j] if ca == cb else 1 + min(prev[j], prev[j + 1], curr[j])
+        if min(curr) >= 3:
+            return 3
+        prev = curr
+    return prev[len(b)]
 
 
 def _process_partners(competitor: CollegeCompetitor, partners_str):
