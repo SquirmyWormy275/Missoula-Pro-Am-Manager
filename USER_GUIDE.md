@@ -7,13 +7,19 @@ Welcome! This guide will help you use the Missoula Pro Am Tournament Manager sof
 ## Table of Contents
 
 1. [Getting Started](#getting-started)
-2. [Creating a Tournament](#creating-a-tournament)
-3. [Friday: College Competition](#friday-college-competition)
-4. [Saturday: Pro Competition](#saturday-pro-competition)
-5. [Entering Scores](#entering-scores)
-6. [Viewing Results & Reports](#viewing-results--reports)
-7. [Special Events](#special-events)
-8. [Troubleshooting](#troubleshooting)
+2. [Login & Roles](#login--roles)
+3. [Creating a Tournament](#creating-a-tournament)
+4. [Friday: College Competition](#friday-college-competition)
+5. [Saturday: Pro Competition](#saturday-pro-competition)
+6. [Entering Scores](#entering-scores)
+7. [Viewing Results & Reports](#viewing-results--reports)
+8. [Special Events](#special-events)
+9. [Pro Entry Import](#pro-entry-import)
+10. [Gear Sharing Manager](#gear-sharing-manager)
+11. [Virtual Woodboss](#virtual-woodboss)
+12. [Portals](#portals)
+13. [Fee Tracker](#fee-tracker)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -27,7 +33,24 @@ Welcome! This guide will help you use the Missoula Pro Am Tournament Manager sof
 4. Open your web browser (Chrome, Firefox, or Edge recommended)
 5. Go to: `http://localhost:5000`
 
-You should see the main dashboard.
+You should see the landing page with role selection (Judge, Competitor, Spectator).
+
+---
+
+## Login & Roles
+
+The system supports 7 roles: **admin**, **judge**, **scorer**, **registrar**, **competitor**, **spectator**, **viewer**.
+
+- **Admin/Judge**: Full access to all tournament management features
+- **Scorer**: Can enter scores and finalize events
+- **Registrar**: Can manage competitor registration
+- **Competitor**: Self-service portal access (results, schedule)
+- **Spectator**: Public standings and results view
+- **Viewer**: Read-only access
+
+The first time you run the app, visit `/auth/bootstrap` to create the initial admin account. After that, admins can manage users at `/auth/users`.
+
+---
 
 ### Main Dashboard
 
@@ -265,6 +288,86 @@ This event has preliminary rounds, then finals:
 
 ---
 
+## Pro Entry Import
+
+Import professional competitor registrations from a Google Forms Excel export:
+
+1. Go to the **Pro Dashboard** for your tournament
+2. Click **"Import Pro Entries"**
+3. Upload the `.xlsx` file exported from Google Forms
+4. The system parses all 31 columns (name, gender, events, partners, gear sharing, waiver, etc.)
+
+### Enhanced Import Analysis
+
+The import pipeline automatically handles dirty data:
+
+- **Garbage partner values**: "?", "idk", "Lookin", "Whoever", "N/A", "TBD" are auto-resolved to "Needs Partner"
+- **Name fuzzy matching**: Misspellings, abbreviations, and first-name-only references are resolved against the competitor list
+- **Duplicate detection**: If the same email appears twice, the latest submission is kept
+- **Gender-event cross-validation**: Warns if a male signs up for a women's event (or vice versa)
+- **Partner reciprocity check**: Warns if A lists B as partner but B lists someone else
+
+The **Import Analysis Report** (collapsible section on the review page) shows all auto-resolutions, fuzzy matches, warnings, and a "Needs Partner" roster grouped by event. Review the report before confirming the import.
+
+### Review and Confirm
+
+After parsing, you'll see a review table with all competitors. Red rows indicate missing waivers. Yellow rows indicate partner or gear issues. Click **"Confirm Import"** to write to the database.
+
+---
+
+## Gear Sharing Manager
+
+Manage equipment sharing between pro competitors:
+
+1. Go to **Pro Dashboard** > **Gear Sharing** (sidebar link)
+2. View verified pairs, unresolved entries, and conflicts
+3. Use the free-text parser to auto-detect sharing arrangements from registration text
+4. Click **"Complete One-Sided Pairs"** to mirror sharing onto both partners
+5. Run **"Fix Heat Conflicts"** to auto-resolve competitors sharing gear in the same heat
+6. Print a gear sharing report for race-day reference
+
+---
+
+## Virtual Woodboss
+
+Material planning for block prep and saw log ordering:
+
+1. Go to **Tournament Detail** > **Virtual Woodboss** (sidebar)
+2. Configure wood species and sizes per event category
+3. View the calculated report: blocks needed per event, saw log linear footage, relay blocks
+4. Use the **Lottery View** to estimate relay material needs
+5. Copy configuration from a prior tournament to save time
+
+---
+
+## Portals
+
+### Spectator Portal
+Public access (no login required). Shows live college standings (30-second auto-refresh), pro standings, event results, and relay results. Accessible via the role selection landing page.
+
+### Pro Competitor Portal
+Competitors access their personal dashboard via name search + PIN at `/portal/competitor/<tid>/pro/<id>/my-results`. Shows events entered, heat assignments, personal results, and gear-sharing partners.
+
+### School Captain Portal
+One PIN-protected account per school covers all teams. Access via `/portal/school/<name>`. Four-tab dashboard: overview, teams/members, schedule, Bull & Belle standings. PDF export via browser print.
+
+### Kiosk Display
+Full-screen TV display at `/portal/kiosk/<tid>`. Four-panel auto-rotation (15s) showing standings, results, and schedule. Ideal for posting at the competition venue.
+
+---
+
+## Fee Tracker
+
+Track entry fee collection for pro competitors:
+
+1. Go to **Reporting** > **Fee Tracker** (sidebar link)
+2. View per-competitor fee breakdown with expandable per-event rows
+3. Mark individual events or all fees as paid/unpaid
+4. Filter to show outstanding fees only
+5. Summary cards show total collected vs. outstanding
+
+---
+
 ## Troubleshooting
 
 ### The program won't start
@@ -397,4 +500,4 @@ If you run into problems not covered here:
 
 ---
 
-*Last updated: January 2026*
+*Last updated: April 2026 — V2.8.0*

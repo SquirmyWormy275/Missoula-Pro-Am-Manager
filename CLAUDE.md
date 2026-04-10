@@ -98,6 +98,7 @@ services/
     partnered_axe.py    # PartneredAxeThrow class — prelims/finals state machine
     validation.py       # ValidationResult, TeamValidator, CompetitorValidator, HeatValidator
     pro_entry_importer.py  # parse_pro_entries() + compute_review_flags() for xlsx import
+    registration_import.py # Enhanced import pipeline: dirty-file handling, fuzzy matching, cross-validation, report gen
     audit.py            # log_action() helper — writes AuditLog records best-effort
     background_jobs.py  # Thread-pool executor for async tasks (Excel export)
     report_cache.py     # In-memory TTL cache for report payloads
@@ -365,7 +366,7 @@ PayoutTemplate  (tournament-independent, standalone)
 
 - Tournament creation and lifecycle management (setup → college_active → pro_active); tournament clone route
 - College team import from Excel (flexible column detection)
-- Pro competitor manual registration; pro entry xlsx importer (Google Forms round-trip, duplicate detection, alias map)
+- Pro competitor manual registration; pro entry xlsx importer (Google Forms round-trip, duplicate detection, alias map); enhanced registration import pipeline (`services/registration_import.py`) with dirty-file support (garbage partner detection, first-name fuzzy matching, gear text parsing, dedup by timestamp, gender-event cross-validation, partner reciprocity, gear sharing inference from partnerships, structured import report)
 - Event configuration from `config.py` event lists, with OPEN/CLOSED designation choice
 - Heat generation: snake-draft distribution, stand capacity, springboard left-hand grouping, dual-run heat creation
 - Heat swap/edit: move competitors between heats (`/scheduling/<tid>/heats/swap`)
@@ -480,7 +481,7 @@ PayoutTemplate  (tournament-independent, standalone)
 
 **STRATHMARK integration:** Live data push wired (V2.2.0); handicap scoring math + mark assignment route wired (V2.3.0); prediction residuals infrastructure + `predicted_time` column added (V2.4.0). Remaining gap: `_get_handicap_calculator()` in `mark_assignment.py` still passes wrong kwargs to `HandicapCalculator.__init__`; `_fetch_start_mark()` calls `get_start_mark()` which does not exist on `HandicapCalculator` (correct method is `calculate()`). Until both are fixed, `predicted_time` is always stored as NULL and no residuals are recorded. Heat ability-weighting via STRATHMARK predictions is also still stub. See Section 7.
 
-**EntryFormReqs.md:** Contains only a stub note. Pro entry form redesign is pending.
+**Pro entry form redesign:** Scope pending. Current import flow handled by `services/pro_entry_importer.py` (basic parsing) and `services/registration_import.py` (enhanced pipeline with dirty-file support, fuzzy matching, cross-validation, and structured report). See `routes/import_routes.py` for the upload → review → confirm workflow.
 
 **Authentication:** Flask-Login is active. Management blueprints (main, registration, scheduling, scoring, reporting, proam_relay, partnered_axe, validation, import_pro) require `is_judge` (admin or judge role) via `require_judge_for_management_routes` in `app.py`. Auth routes (`/auth/*`) and portal routes (`/portal/*`) are public. Bootstrap endpoint (`/auth/bootstrap`) creates the first account when DB has no users — it locks itself afterward. Seven defined roles: admin, judge, scorer, registrar, competitor, spectator, viewer.
 
@@ -696,7 +697,7 @@ The following features remain as planned or implied by the codebase and requirem
 - Friday Night Feature heat generation and flight integration
 - Excel results export direct download route
 - Pro event fee configuration UI
-- Pro entry form redesign (noted in EntryFormReqs.md)
+- Pro entry form redesign (scope pending; current import handled by `registration_import.py` enhanced pipeline)
 
 **Technical debt:**
 - Comprehensive server-side input validation (continue hardening)

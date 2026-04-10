@@ -1,15 +1,5 @@
 # Gear Sharing Domain Knowledge
 
-> **Instructions for Alex:** Fill in each event section below. When done, tell Claude "I'm done editing GEAR_SHARING_DOMAIN.md" and it will use this to rebuild the gear sharing logic.
->
-> For each event, describe:
-> - **Equipment needed**: What physical gear does a competitor need to compete?
-> - **Personal vs. Shared**: Which items does each competitor own/bring, and which are shared between two or more people?
-> - **Sharing constraint**: If two competitors share gear, what does that mean for scheduling? (e.g., "cannot be in same heat", "need X minutes between runs", "no constraint")
-> - **Partner vs. Gear sharing**: Is sharing gear the same as being partners in this event, or can they be different? (e.g., Double Buck partners always share a saw, but two Single Buckers might share a saw without being partners)
->
-> Use plain language. If something doesn't apply, write "N/A".
-
 ---
 
 ## COLLEGE OPEN EVENTS

@@ -76,6 +76,7 @@ Missoula-Pro-Am-Manager/
 │   ├── proam_relay.py     # Pro-Am Relay team building + manual team builder
 │   ├── partnered_axe.py   # Axe throw scoring logic
 │   ├── pro_entry_importer.py  # Google Forms xlsx import with duplicate detection
+│   ├── registration_import.py # Enhanced import pipeline: dirty-file handling, fuzzy matching, cross-validation, report
 │   ├── audit.py           # log_action() helper
 │   ├── background_jobs.py # Thread-pool executor for async Excel export
 │   ├── report_cache.py    # In-memory TTL cache for report payloads
@@ -590,6 +591,48 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-04-10 (V2.8.0)
+
+**Registration Import Pipeline & Documentation Consolidation**
+
+**Enhanced registration import pipeline (`services/registration_import.py`):**
+- New `run_import_pipeline(filepath)` wraps existing `parse_pro_entries()` and adds comprehensive validation, cross-validation, and dirty-file handling
+- Dirty partner field detection: 10 garbage patterns auto-resolved ("?", "idk", "Lookin", "Whoever", "no oarnter", "N/A", "TBD", "Have saw need partner", "spare", "put me down") mapped to NEEDS_PARTNER
+- Fuzzy name matching: 4-tier resolution (exact normalized, difflib fuzzy, last-name/initial, first-name-only with 4-char minimum to prevent false positives)
+- Dirty gear sharing text parsing: handles `Name-equipment`, `equipment: name1 name2`, conversational ("Me and X sharing a Y"), parenthetical grouping, comma-separated, conditional language detection
+- Duplicate detection: keep latest entry by timestamp per email; warn on duplicate names with different emails
+- Gender-event cross-validation: warns on gender-mismatched event signups
+- Partner reciprocity validation: detects non-reciprocal partnerships (A lists B, but B lists C or is absent)
+- Gear sharing inference from partner assignments: auto-infers shared equipment for Jack & Jill, Double Buck, Partnered Axe Throw
+- Gear flag reconciliation: overrides sharing_gear=No to Yes when sharing data exists
+- Unregistered reference detection: catches references to non-competitors (event organizers, typos, non-entrants)
+- Structured 11-section plain-text import report (replaces 4 hours of manual review)
+- CLI entry point: `python -m services.registration_import <file.xlsx>`
+- `to_entry_dicts()` converts enhanced results back to entry dicts for existing DB commit flow
+
+**Import route integration (`routes/import_routes.py`):**
+- Upload route now runs enhanced pipeline alongside existing parser; stores report as temp file
+- Review page shows collapsible "Import Analysis Report" section above the review table
+- Confirm route cleans up report file alongside parsed data temp file
+
+**Test suite (`tests/test_registration_import.py` — 85 tests):**
+- Partner classification (garbage patterns, real names, empty/null)
+- Fuzzy name matching (exact, case-normalized, prefix, first-name-only, Levenshtein, unresolvable)
+- Equipment detection and gear text parsing (dirty patterns)
+- Gender-event cross-validation
+- Full integration against real dirty xlsx (47 competitors, dedup, auto-resolve, fuzzy match, reciprocity, inference)
+- Import report generation
+
+**Documentation consolidation:**
+- Moved SCORING_AUDIT.md and PLAN_REVIEW.md to docs/ (audit artifacts, not living root docs)
+- Archived stale PRODUCTION_AUDIT.md (V2.2.0) to docs/archived/
+- Cleaned GEAR_SHARING_DOMAIN.md template header in docs/Alex's docs/
+- Updated USER_GUIDE.md to V2.8.0 (added 10+ missing features from V2.1-V2.8)
+- Fixed dangling EntryFormReqs.md references in CLAUDE.md (file never existed)
+- Updated CLAUDE.md project structure and feature lists
+
+---
 
 ### 2026-04-09 (V2.8.0)
 

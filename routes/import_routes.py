@@ -5,9 +5,12 @@ Upload -> Review -> Confirm flow for importing Google Forms xlsx exports
 into the ProCompetitor table.
 """
 import json
+import logging
 import os
 import uuid
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from flask import (
     Blueprint,
@@ -115,16 +118,37 @@ def upload_pro_entries(tournament_id):
         flash('No competitor entries found in the file.', 'warning')
         return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
 
+    # Run enhanced import pipeline for validation, cross-validation, and report
+    import_report_text = ''
+    try:
+        from services.registration_import import run_import_pipeline, to_entry_dicts
+        import_result = run_import_pipeline(upload_path)
+        import_report_text = import_result.report_text()
+        # Use enhanced entries (with resolved partners, deduped, etc.)
+        if import_result.competitors and not import_result.errors:
+            entries = to_entry_dicts(import_result)
+    except Exception as exc:
+        logger.warning('Enhanced import pipeline failed, falling back to basic parser: %s', exc)
+
     # Compute review flags (#18: pass existing competitor names for duplicate detection)
     existing_names = [
         c.name for c in tournament.pro_competitors.filter_by(status='active').all()
     ]
     compute_review_flags(entries, existing_names=existing_names)
 
-    # Persist parsed data to a temp JSON file (avoids cookie-size limits)
+    # Persist parsed data and import report to temp JSON files
     temp_name = f'pro_import_{tournament_id}_{uuid.uuid4().hex}.json'
     with open(_temp_path(temp_name), 'w', encoding='utf-8') as fh:
         json.dump(entries, fh, ensure_ascii=False)
+
+    # Store import report alongside parsed data
+    report_name = temp_name.replace('.json', '_report.txt')
+    if import_report_text:
+        try:
+            with open(_temp_path(report_name), 'w', encoding='utf-8') as fh:
+                fh.write(import_report_text)
+        except OSError:
+            pass
 
     # Store only the filename in the session
     session[_session_key(tournament_id)] = temp_name
@@ -158,6 +182,15 @@ def review_pro_entries(tournament_id):
     total_fees        = sum(e['total_fees'] for e in entries)
     has_warnings      = any(e.get('flags') for e in entries)
 
+    # Load import report if available
+    import_report = ''
+    report_name = temp_name.replace('.json', '_report.txt')
+    try:
+        with open(_temp_path(report_name), encoding='utf-8') as fh:
+            import_report = fh.read()
+    except (OSError, ValueError):
+        pass
+
     return render_template(
         'pro/import_review.html',
         tournament=tournament,
@@ -165,6 +198,7 @@ def review_pro_entries(tournament_id):
         total_competitors=total_competitors,
         total_fees=total_fees,
         has_warnings=has_warnings,
+        import_report=import_report,
     )
 
 
@@ -375,9 +409,15 @@ def confirm_pro_entries(tournament_id):
         db.session.rollback()
         flash(f'Gear sharing mirror skipped: {exc}', 'warning')
 
-    # Clean up temp file and session key
+    # Clean up temp files and session key
     try:
         os.remove(_temp_path(temp_name))
+    except OSError:
+        pass
+    # Also clean up report file if it exists
+    report_name = temp_name.replace('.json', '_report.txt')
+    try:
+        os.remove(_temp_path(report_name))
     except OSError:
         pass
     session.pop(_session_key(tournament_id), None)
