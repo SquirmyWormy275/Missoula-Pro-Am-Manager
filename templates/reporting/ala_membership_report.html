@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}ALA Membership Report — {{ tournament.name }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0">ALA Membership Status Report</h4>
+        <div>
+            <a href="{{ url_for('reporting.ala_membership_report_pdf', tournament_id=tournament.id) }}" class="btn btn-outline-dark btn-sm">Download PDF</a>
+            <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}" class="btn btn-outline-secondary btn-sm">Back to Tournament</a>
+        </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-4">
+            <div class="card text-center border-primary shadow-sm">
+                <div class="card-body py-2">
+                    <div class="fs-4 fw-bold text-primary">{{ all_attendees|length }}</div>
+                    <div class="small text-muted">Total Attendees</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center border-success shadow-sm">
+                <div class="card-body py-2">
+                    <div class="fs-4 fw-bold text-success">{{ all_attendees|length - non_members|length }}</div>
+                    <div class="small text-muted">ALA Members</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center border-warning shadow-sm">
+                <div class="card-body py-2">
+                    <div class="fs-4 fw-bold text-warning">{{ non_members|length }}</div>
+                    <div class="small text-muted">Non-Members</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <p class="text-muted small">Generated: {{ generated_at }}</p>
+
+    <!-- Section 1: All Attendees -->
+    <h5 class="mt-4 mb-2">All Attending Pro Competitors ({{ all_attendees|length }})</h5>
+    {% if all_attendees %}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th style="width: 50px;">#</th>
+                    <th>Competitor Name</th>
+                    <th>ALA Membership Status</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for a in all_attendees %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ a.name }}</td>
+                <td>{{ a.ala_status }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted">No active pro competitors found for this tournament.</p>
+    {% endif %}
+
+    <!-- Section 2: Non-Members -->
+    <h5 class="mt-4 mb-2">Non-ALA Members ({{ non_members|length }})</h5>
+    {% if non_members %}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th style="width: 50px;">#</th>
+                    <th>Competitor Name</th>
+                    <th>ALA Membership Status</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for a in non_members %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ a.name }}</td>
+                <td>{{ a.ala_status }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted">All attending competitors are ALA members.</p>
+    {% endif %}
+</div>
+{% endblock %}

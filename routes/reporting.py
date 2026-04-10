@@ -624,3 +624,58 @@ def cloud_backup(tournament_id):
 
     flash('Database backup started in background.', 'success')
     return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
+
+
+# ---------------------------------------------------------------------------
+# ALA Membership Status Report
+# ---------------------------------------------------------------------------
+
+@reporting_bp.route('/ala-membership-report/<int:tournament_id>')
+def ala_membership_report(tournament_id):
+    """Admin-only ALA membership status report for all active pro competitors."""
+    if not current_user.is_authenticated or not current_user.is_admin:
+        abort(403)
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.ala_report import build_ala_report
+
+    report = build_ala_report(tournament)
+
+    return render_template(
+        'reporting/ala_membership_report.html',
+        tournament=tournament,
+        all_attendees=report['all_attendees'],
+        non_members=report['non_members'],
+        generated_at=report['generated_at'],
+        year=report['year'],
+    )
+
+
+@reporting_bp.route('/ala-membership-report/<int:tournament_id>/pdf')
+def ala_membership_report_pdf(tournament_id):
+    """Download ALA membership report as PDF."""
+    if not current_user.is_authenticated or not current_user.is_admin:
+        abort(403)
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.ala_report import build_ala_report, generate_ala_pdf
+
+    report = build_ala_report(tournament)
+
+    try:
+        path = generate_ala_pdf(report)
+    except Exception as exc:
+        flash(f'PDF generation failed: {exc}', 'error')
+        return redirect(url_for('reporting.ala_membership_report', tournament_id=tournament_id))
+
+    @after_this_request
+    def cleanup_file(response):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return response
+
+    from datetime import datetime
+    download_name = f'ala_report_{datetime.now().strftime("%Y%m%d")}.pdf'
+    return send_file(path, as_attachment=True, download_name=download_name)
