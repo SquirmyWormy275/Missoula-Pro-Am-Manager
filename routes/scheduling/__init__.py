@@ -49,6 +49,18 @@ def _is_list_only_event(event: Event) -> bool:
     return event.event_type == 'college' and _normalize_name(event.name) in LIST_ONLY_EVENT_NAMES
 
 
+def _max_per_heat(event: Event) -> int:
+    """Authoritative max competitors per heat for an event.
+
+    Resolution order: event.max_stands → config.STAND_CONFIGS → hard default 4.
+    Matches the logic in services/heat_generator.py line 106.
+    """
+    if event.max_stands is not None:
+        return event.max_stands
+    stand_config = config.STAND_CONFIGS.get(event.stand_type or '', {})
+    return stand_config.get('total', 4)
+
+
 def _load_competitor_lookup(event: Event, competitor_ids: list) -> dict:
     ids = sorted(set(int(cid) for cid in competitor_ids if cid is not None))
     if not ids:

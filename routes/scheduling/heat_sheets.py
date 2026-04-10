@@ -4,7 +4,7 @@ Heat sheet and day schedule print routes, plus schedule hydration helpers.
 from flask import redirect, render_template, session, url_for
 
 from database import db
-from models import Event, Flight, Heat, Tournament
+from models import Event, EventResult, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 
 from . import _load_competitor_lookup, scheduling_bp
@@ -71,6 +71,12 @@ def heat_sheets(tournament_id):
 
     tournament = Tournament.query.get_or_404(tournament_id)
 
+    # Build {(event_id, competitor_id): status} for SCR/DNF indicators on heat sheets
+    result_status = {
+        (r.event_id, r.competitor_id): r.status
+        for r in EventResult.query.join(Event).filter(Event.tournament_id == tournament_id).all()
+    }
+
     # Build ordered heat data: flights first, then ungrouped events
     flights = Flight.query.filter_by(tournament_id=tournament_id).order_by(Flight.flight_number).all()
 
@@ -95,7 +101,8 @@ def heat_sheets(tournament_id):
                 'event': event,
                 'competitors': [
                     {'name': comps[cid].display_name if cid in comps else f'ID:{cid}',
-                     'stand': assignments.get(str(cid), '?')}
+                     'stand': assignments.get(str(cid), '?'),
+                     'status': result_status.get((event.id, cid), 'pending')}
                     for cid in comp_ids
                 ],
             })
@@ -157,7 +164,8 @@ def heat_sheets(tournament_id):
                 'event': event,
                 'competitors': [
                     {'name': comps[cid].display_name if cid in comps else f'ID:{cid}',
-                     'stand': assignments.get(str(cid), '?')}
+                     'stand': assignments.get(str(cid), '?'),
+                     'status': result_status.get((event.id, cid), 'pending')}
                     for cid in comp_ids
                 ],
             })

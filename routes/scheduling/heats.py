@@ -1,21 +1,25 @@
 """
 Heat management routes: event_heats, generate_heats, generate_college_heats,
-move_competitor_between_heats, heat_sync_check, heat_sync_fix.
+move_competitor_between_heats, scratch_competitor, heat_sync_check, heat_sync_fix.
 """
 import json
 
 from flask import abort, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import current_user
 
 import config
 import strings as text
 from database import db
-from models import Event, Heat, HeatAssignment, Tournament
+from models import Event, EventResult, Heat, HeatAssignment, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
+from services.cache_invalidation import invalidate_tournament_caches
 
 from . import (
     _build_signup_rows,
     _is_list_only_event,
+    _load_competitor_lookup,
+    _max_per_heat,
     _normalize_name,
     _signed_up_competitors,
     scheduling_bp,
@@ -59,13 +63,33 @@ def event_heats(tournament_id, event_id):
                 ),
             }
 
+    # Batch-load competitor objects and result statuses to fix N+1 queries.
+    # Templates use comp_lookup and result_status_map instead of per-row DB hits.
+    all_comp_ids = []
+    for h in heats:
+        all_comp_ids.extend(h.get_competitors())
+    comp_lookup = _load_competitor_lookup(event, all_comp_ids)
+    all_results = EventResult.query.filter_by(event_id=event.id).all()
+    result_status_map = {r.competitor_id: r.status for r in all_results}
+
+    # Competitors registered for this event but not in any heat (for Add Competitor UI)
+    all_heat_comp_ids = set(all_comp_ids)
+    unassigned_competitors = [
+        {'id': r.competitor_id, 'name': r.competitor_name}
+        for r in all_results
+        if r.competitor_id not in all_heat_comp_ids and r.status != 'scratched'
+    ]
+
     return render_template('scheduling/heats.html',
                            tournament=tournament,
                            event=event,
                            heats=heats,
                            signup_rows=signup_rows,
                            signup_list_mode=signup_list_mode,
-                           spacing_data=spacing_data)
+                           spacing_data=spacing_data,
+                           comp_lookup=comp_lookup,
+                           result_status_map=result_status_map,
+                           unassigned_competitors=unassigned_competitors)
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/generate-heats', methods=['POST'])
@@ -75,11 +99,27 @@ def generate_heats(tournament_id, event_id):
     if event.tournament_id != tournament_id:
         abort(404)
 
+    # Hard block: finalized events cannot have heats regenerated
+    if event.is_finalized:
+        flash(f'{event.display_name} is finalized. Heat regeneration is blocked.', 'error')
+        return redirect(url_for('scheduling.event_heats',
+                                tournament_id=tournament_id, event_id=event_id))
+
+    # Soft warn: scored events require explicit confirmation to regenerate
+    has_scored = EventResult.query.filter_by(event_id=event.id, status='completed').first() is not None
+    if has_scored and request.form.get('confirm') != 'true':
+        flash(
+            f'{event.display_name} has scored results. Regenerating heats will orphan '
+            f'those results. Click Regenerate again to confirm.',
+            'warning'
+        )
+        return redirect(url_for('scheduling.event_heats',
+                                tournament_id=tournament_id, event_id=event_id))
+
     # Gear-sharing integrity gate for pro events: block generation when any enrolled
     # competitor has unstructured gear details but no structured gear_sharing map.
     # This prevents silently building heats with unresolved gear conflicts.
     if event.event_type == 'pro':
-        from models import EventResult
         enrolled_ids = {
             r.competitor_id
             for r in EventResult.query.filter_by(event_id=event.id, competitor_type='pro').all()
@@ -148,6 +188,7 @@ def generate_college_heats(tournament_id):
     skipped_completed = 0
     errors = 0
 
+    skipped_finalized = 0
     for event in events:
         if _is_list_only_event(event):
             skipped_open += 1
@@ -155,8 +196,12 @@ def generate_college_heats(tournament_id):
         if event.status == 'completed':
             skipped_completed += 1
             continue
+        if event.is_finalized:
+            skipped_finalized += 1
+            continue
         try:
-            generate_event_heats(event)
+            with db.session.begin_nested():
+                generate_event_heats(event)
             generated += 1
         except Exception as exc:
             if 'No competitors entered' in str(exc):
@@ -174,11 +219,14 @@ def generate_college_heats(tournament_id):
         parts.append(f'{skipped_open} signup-list event(s) skipped')
     if skipped_completed:
         parts.append(f'{skipped_completed} completed event(s) unchanged')
+    if skipped_finalized:
+        parts.append(f'{skipped_finalized} finalized event(s) unchanged')
     if parts:
         flash('. '.join(parts) + '.', 'success')
 
     log_action('generate_college_heats', 'tournament', tournament_id,
-               {'generated': generated, 'skipped_open': skipped_open, 'errors': errors})
+               {'generated': generated, 'skipped_open': skipped_open,
+                'skipped_finalized': skipped_finalized, 'errors': errors})
     return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
 
@@ -203,6 +251,18 @@ def move_competitor_between_heats(tournament_id, event_id):
         abort(404)
     if from_heat.id == to_heat.id:
         flash('Select a different destination heat.', 'warning')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    # Lock check — don't move into a heat that's being scored by another judge
+    user_id = _current_user_id()
+    if to_heat.is_locked() and to_heat.locked_by_user_id != (user_id or -1):
+        flash('Destination heat is being scored by another judge.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    # Capacity check — don't overfill the destination heat
+    max_cap = _max_per_heat(event)
+    if len(to_heat.get_competitors()) >= max_cap:
+        flash(f'Destination heat is full ({max_cap} competitors max).', 'error')
         return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
     run_numbers = [1, 2] if event.requires_dual_runs else [from_heat.run_number]
@@ -296,6 +356,374 @@ def _next_open_stand(target_ids: list, assignments: dict, event: Event):
         if stand not in used:
             return stand
     return available[0] if available else None
+
+
+def _current_user_id() -> int | None:
+    """Return authenticated user id, or None for anonymous/dev sessions."""
+    if current_user and current_user.is_authenticated:
+        return current_user.id
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Scratch competitor from heat
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/scratch-competitor', methods=['POST'])
+def scratch_competitor(tournament_id, event_id):
+    """Scratch a competitor from a heat (day-of no-show operation).
+
+    Removes the competitor from the Heat.competitors JSON and stand assignments,
+    sets their EventResult.status to 'scratched', cleans gear-sharing references,
+    and recalculates positions if the event has scored results.
+    For dual-run events, mirrors the scratch across both run heats.
+    """
+    event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id:
+        abort(404)
+
+    try:
+        competitor_id = int(request.form.get('competitor_id', ''))
+        heat_id = int(request.form.get('heat_id', ''))
+    except (TypeError, ValueError):
+        flash('Invalid scratch request.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    heat = Heat.query.get_or_404(heat_id)
+    if heat.event_id != event.id:
+        abort(404)
+
+    # Lock check — don't mutate a heat that's being scored by another judge
+    user_id = _current_user_id()
+    if heat.is_locked() and heat.locked_by_user_id != (user_id or -1):
+        flash('This heat is currently being scored by another judge. Try again after they finish.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    if competitor_id not in heat.get_competitors():
+        flash('Competitor is not in the selected heat.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    # Look up competitor name for flash message
+    if event.event_type == 'college':
+        comp = CollegeCompetitor.query.get(competitor_id)
+    else:
+        comp = ProCompetitor.query.get(competitor_id)
+    comp_name = comp.display_name if comp else f'Competitor #{competitor_id}'
+
+    try:
+        # For dual-run events, scratch from both run heats
+        run_numbers = [1, 2] if event.requires_dual_runs else [heat.run_number]
+        comp_type = event.event_type  # 'pro' or 'college'
+
+        for run_number in run_numbers:
+            target = event.heats.filter_by(heat_number=heat.heat_number, run_number=run_number).first()
+            if not target:
+                continue
+            if competitor_id not in target.get_competitors():
+                continue
+
+            target.remove_competitor(competitor_id)
+
+            # Free stand assignment
+            assignments = target.get_stand_assignments()
+            assignments.pop(str(competitor_id), None)
+            target.stand_assignments = json.dumps(assignments)
+
+            target.sync_assignments(comp_type)
+
+            # Auto-complete empty heats to prevent finalization block (Codex #7)
+            if len(target.get_competitors()) == 0:
+                target.status = 'completed'
+
+        # Set EventResult.status = 'scratched' (do NOT delete the row)
+        result = EventResult.query.filter_by(
+            event_id=event.id,
+            competitor_id=competitor_id,
+            competitor_type=comp_type,
+        ).first()
+        if result:
+            result.status = 'scratched'
+
+        # Clean gear-sharing references on other active competitors
+        if comp:
+            try:
+                from services.gear_sharing import cleanup_scratched_gear_entries
+                tournament = Tournament.query.get(tournament_id)
+                cleanup_scratched_gear_entries(tournament, scratched_competitor=comp)
+            except Exception:
+                pass  # Gear cleanup failure should not block the scratch
+
+        # Recalculate positions if event has scored results (Codex #1)
+        has_scored = EventResult.query.filter_by(event_id=event.id, status='completed').first() is not None
+        if has_scored:
+            if event.is_finalized:
+                event.is_finalized = False
+                event.status = 'in_progress'
+            try:
+                import services.scoring_engine as engine
+                engine.calculate_positions(event)
+            except Exception:
+                pass  # Position recalc failure should not block the scratch
+
+        invalidate_tournament_caches(tournament_id)
+        log_action('heat_scratch', 'event', event.id, {
+            'competitor_id': competitor_id,
+            'competitor_name': comp_name,
+            'heat_number': heat.heat_number,
+            'event_name': event.display_name,
+            'user_id': user_id,
+        })
+
+        db.session.commit()
+
+        # Flash messages
+        flash(f'{comp_name} scratched from {event.display_name} Heat {heat.heat_number}.', 'success')
+        if event.is_partnered:
+            flash(f'Warning: This is a partnered event. {comp_name}\'s partner may need to be scratched too.', 'warning')
+        # Check if any heat became empty
+        for run_number in run_numbers:
+            target = event.heats.filter_by(heat_number=heat.heat_number, run_number=run_number).first()
+            if target and len(target.get_competitors()) == 0:
+                flash(f'Heat {heat.heat_number} is now empty and marked complete.', 'info')
+                break
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error scratching competitor: {e}', 'error')
+
+    return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+
+# ---------------------------------------------------------------------------
+# Add late entry to a specific heat
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/add-to-heat', methods=['POST'])
+def add_to_heat(tournament_id, event_id):
+    """Add a competitor to an existing heat (day-of late entry).
+
+    Validates capacity, creates EventResult if missing, and mirrors
+    dual-run events. Blocked once the show is active for that division.
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id:
+        abort(404)
+
+    try:
+        competitor_id = int(request.form.get('competitor_id', ''))
+        heat_id = int(request.form.get('heat_id', ''))
+    except (TypeError, ValueError):
+        flash('Invalid add request.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    heat = Heat.query.get_or_404(heat_id)
+    if heat.event_id != event.id:
+        abort(404)
+
+    # Show-start lockout — additions blocked once the show is active
+    if event.event_type == 'pro' and tournament.status == 'pro_active':
+        flash('Cannot add competitors after the pro show has started.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+    if event.event_type == 'college' and tournament.status == 'college_active':
+        flash('Cannot add competitors after the college show has started.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    # Lock check
+    user_id = _current_user_id()
+    if heat.is_locked() and heat.locked_by_user_id != (user_id or -1):
+        flash('This heat is currently being scored by another judge. Try again after they finish.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    # Capacity check
+    max_cap = _max_per_heat(event)
+    if len(heat.get_competitors()) >= max_cap:
+        flash(f'Heat is full ({max_cap} competitors max).', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    # Verify competitor is already in the heat list — reject if duplicate
+    if competitor_id in heat.get_competitors():
+        flash('Competitor is already in this heat.', 'warning')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    # Look up competitor
+    if event.event_type == 'college':
+        comp = CollegeCompetitor.query.get(competitor_id)
+    else:
+        comp = ProCompetitor.query.get(competitor_id)
+    if not comp or comp.tournament_id != tournament_id:
+        flash('Competitor not found in this tournament.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+    comp_name = comp.display_name
+
+    try:
+        comp_type = event.event_type
+
+        # Ensure EventResult row exists
+        result = EventResult.query.filter_by(
+            event_id=event.id, competitor_id=competitor_id, competitor_type=comp_type,
+        ).first()
+        if not result:
+            result = EventResult(
+                event_id=event.id, competitor_id=competitor_id,
+                competitor_type=comp_type, competitor_name=comp.name,
+                status='pending',
+            )
+            db.session.add(result)
+        elif result.status == 'scratched':
+            # Re-add: reset status but preserve raw result values (Codex #4)
+            result.status = 'pending'
+            result.final_position = None
+            result.points_awarded = 0
+            result.payout_amount = 0.0
+            result.throwoff_pending = False
+            result.is_flagged = False
+
+        # For dual-run events, add to both run heats
+        run_numbers = [1, 2] if event.requires_dual_runs else [heat.run_number]
+        for run_number in run_numbers:
+            target = event.heats.filter_by(heat_number=heat.heat_number, run_number=run_number).first()
+            if not target:
+                continue
+            if competitor_id in target.get_competitors():
+                continue
+
+            target.add_competitor(competitor_id)
+            target_ids = target.get_competitors()
+            assignments = target.get_stand_assignments()
+            assignments[str(competitor_id)] = _next_open_stand(target_ids, assignments, event)
+            target.stand_assignments = json.dumps(assignments)
+            target.sync_assignments(comp_type)
+
+        # Gear-sharing conflict check (warn, don't block)
+        if event.event_type == 'pro':
+            try:
+                from services.gear_sharing import competitors_share_gear_for_event
+                mover_gear = comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {}
+                all_events = Event.query.filter_by(tournament_id=tournament_id).all()
+                target_comps_ids = [cid for cid in heat.get_competitors() if cid != competitor_id]
+                target_comps = ProCompetitor.query.filter(
+                    ProCompetitor.id.in_(target_comps_ids)
+                ).all() if target_comps_ids else []
+                conflicts = [
+                    tc.name for tc in target_comps
+                    if competitors_share_gear_for_event(
+                        comp.name, mover_gear,
+                        tc.name, tc.get_gear_sharing(),
+                        event, all_events=all_events,
+                    )
+                ]
+                if conflicts:
+                    flash(
+                        f'Warning: {comp_name} shares gear with '
+                        f'{", ".join(conflicts)} in this heat.',
+                        'warning',
+                    )
+            except Exception:
+                pass
+
+        invalidate_tournament_caches(tournament_id)
+        log_action('heat_add_competitor', 'event', event.id, {
+            'competitor_id': competitor_id,
+            'competitor_name': comp_name,
+            'heat_number': heat.heat_number,
+            'event_name': event.display_name,
+            'user_id': user_id,
+        })
+
+        db.session.commit()
+        flash(f'{comp_name} added to {event.display_name} Heat {heat.heat_number}.', 'success')
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error adding competitor: {e}', 'error')
+
+    return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+
+# ---------------------------------------------------------------------------
+# Delete empty heat
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/delete-heat/<int:heat_id>', methods=['POST'])
+def delete_heat(tournament_id, event_id, heat_id):
+    """Delete an empty heat and renumber remaining heats."""
+    event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id:
+        abort(404)
+
+    heat = Heat.query.get_or_404(heat_id)
+    if heat.event_id != event.id:
+        abort(404)
+
+    # Lock check
+    user_id = _current_user_id()
+    if heat.is_locked() and heat.locked_by_user_id != (user_id or -1):
+        flash('This heat is currently being scored by another judge.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    if len(heat.get_competitors()) > 0:
+        flash('Cannot delete a heat that has competitors. Scratch all competitors first.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    heat_number = heat.heat_number
+
+    try:
+        # For dual-run events, also delete the matching run_number=2 heat
+        heats_to_delete = [heat]
+        if event.requires_dual_runs:
+            partner_run = event.heats.filter_by(
+                heat_number=heat_number,
+                run_number=2 if heat.run_number == 1 else 1,
+            ).first()
+            if partner_run:
+                if len(partner_run.get_competitors()) > 0:
+                    flash(
+                        f'Cannot delete: the matching Run {partner_run.run_number} heat still has competitors.',
+                        'error',
+                    )
+                    return redirect(url_for('scheduling.event_heats',
+                                            tournament_id=tournament_id, event_id=event_id))
+                heats_to_delete.append(partner_run)
+
+        for h in heats_to_delete:
+            HeatAssignment.query.filter_by(heat_id=h.id).delete(synchronize_session=False)
+            if h.flight_id:
+                h.flight_id = None
+                h.flight_position = None
+            db.session.delete(h)
+
+        db.session.flush()
+
+        # Renumber remaining heats sequentially
+        remaining = (event.heats
+                     .order_by(Heat.heat_number, Heat.run_number)
+                     .all())
+        # Group by run_number=1 to get unique heat numbers, then assign sequentially
+        seen_numbers = {}
+        new_number = 1
+        for h in remaining:
+            if h.heat_number not in seen_numbers:
+                seen_numbers[h.heat_number] = new_number
+                new_number += 1
+            h.heat_number = seen_numbers[h.heat_number]
+
+        invalidate_tournament_caches(tournament_id)
+        log_action('heat_deleted', 'event', event.id, {
+            'deleted_heat_number': heat_number,
+            'event_name': event.display_name,
+            'user_id': user_id,
+        })
+
+        db.session.commit()
+        flash(f'Heat {heat_number} deleted from {event.display_name}. '
+              f'Heats renumbered. Reprint heat sheets if already distributed.', 'success')
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error deleting heat: {e}', 'error')
+
+    return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
 
 # ---------------------------------------------------------------------------

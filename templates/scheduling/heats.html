@@ -146,7 +146,8 @@
                     {% else %}
                     <form action="{{ url_for('scheduling.generate_heats', tournament_id=tournament.id, event_id=event.id) }}" method="POST" style="display:inline;">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-warning" data-confirm="This will regenerate all heats. Continue?">
+                        <input type="hidden" name="confirm" value="true">
+                        <button type="submit" class="btn btn-outline-warning" data-confirm="This will regenerate all heats. Any scored results may be orphaned. Continue?">
                             <i class="bi bi-arrow-repeat"></i> Regenerate
                         </button>
                     </form>
@@ -240,15 +241,14 @@
                         {% set r1_assignments = run1.get_stand_assignments() %}
                         <ul class="list-group list-group-flush">
                             {% for cid in run1.get_competitors() %}
-                            {% if event.event_type == 'college' %}
-                                {% set comp = tournament.college_competitors.filter_by(id=cid).first() %}
-                            {% else %}
-                                {% set comp = tournament.pro_competitors.filter_by(id=cid).first() %}
-                            {% endif %}
+                            {% set comp = comp_lookup.get(cid) %}
+                            {% set r_status = result_status_map.get(cid, 'pending') %}
                             {% set sn = r1_assignments.get(cid|string)|int if r1_assignments.get(cid|string) else 0 %}
                             <li class="list-group-item d-flex align-items-center" style="padding:5px 10px;">
                                 <span class="stand-badge stand-{{ sn }}">{{ r1_assignments.get(cid|string, '?') }}</span>
-                                <span class="comp-name">{{ comp.display_name if comp else 'Unknown' }}</span>
+                                <span class="comp-name{% if r_status in ('scratched', 'dnf') %} text-decoration-line-through opacity-50{% endif %}">
+                                    {{ comp.display_name if comp else 'Unknown' }}{% if r_status == 'scratched' %} <small class="text-danger fw-bold">(SCR)</small>{% elif r_status == 'dnf' %} <small class="text-warning fw-bold">(DNF)</small>{% endif %}
+                                </span>
                             </li>
                             {% else %}
                             <li class="list-group-item text-muted fst-italic" style="font-size:0.82rem;">No competitors</li>
@@ -263,15 +263,14 @@
                         {% set r2_assignments = run2.get_stand_assignments() %}
                         <ul class="list-group list-group-flush">
                             {% for cid in run2.get_competitors() %}
-                            {% if event.event_type == 'college' %}
-                                {% set comp = tournament.college_competitors.filter_by(id=cid).first() %}
-                            {% else %}
-                                {% set comp = tournament.pro_competitors.filter_by(id=cid).first() %}
-                            {% endif %}
+                            {% set comp = comp_lookup.get(cid) %}
+                            {% set r_status = result_status_map.get(cid, 'pending') %}
                             {% set sn = r2_assignments.get(cid|string)|int if r2_assignments.get(cid|string) else 0 %}
                             <li class="list-group-item d-flex align-items-center" style="padding:5px 10px;">
                                 <span class="stand-badge stand-{{ sn }}">{{ r2_assignments.get(cid|string, '?') }}</span>
-                                <span class="comp-name">{{ comp.display_name if comp else 'Unknown' }}</span>
+                                <span class="comp-name{% if r_status in ('scratched', 'dnf') %} text-decoration-line-through opacity-50{% endif %}">
+                                    {{ comp.display_name if comp else 'Unknown' }}{% if r_status == 'scratched' %} <small class="text-danger fw-bold">(SCR)</small>{% elif r_status == 'dnf' %} <small class="text-warning fw-bold">(DNF)</small>{% endif %}
+                                </span>
                             </li>
                             {% else %}
                             <li class="list-group-item text-muted fst-italic" style="font-size:0.82rem;">No competitors</li>
@@ -304,11 +303,7 @@
                                 <select class="form-select form-select-sm" name="competitor_id" required>
                                     <option value="">Select...</option>
                                     {% for cid in run1.get_competitors() %}
-                                    {% if event.event_type == 'college' %}
-                                        {% set c = tournament.college_competitors.filter_by(id=cid).first() %}
-                                    {% else %}
-                                        {% set c = tournament.pro_competitors.filter_by(id=cid).first() %}
-                                    {% endif %}
+                                    {% set c = comp_lookup.get(cid) %}
                                     {% if c %}<option value="{{ c.id }}">{{ c.display_name }}</option>{% endif %}
                                     {% endfor %}
                                 </select>
@@ -325,6 +320,27 @@
                                 </select>
                             </div>
                             <button type="submit" class="btn btn-sm btn-outline-primary w-100">Move</button>
+                        </form>
+                    </details>
+                    <details class="heat-assign-details">
+                        <summary class="text-danger">Scratch Competitor</summary>
+                        <form action="{{ url_for('scheduling.scratch_competitor', tournament_id=tournament.id, event_id=event.id) }}"
+                              method="POST" class="mt-2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="heat_id" value="{{ run1.id }}">
+                            <div class="mb-2">
+                                <select class="form-select form-select-sm" name="competitor_id" required>
+                                    <option value="">Select competitor to scratch...</option>
+                                    {% for cid in run1.get_competitors() %}
+                                    {% set c = comp_lookup.get(cid) %}
+                                    {% if c %}<option value="{{ c.id }}">{{ c.display_name }}</option>{% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-sm btn-outline-danger w-100"
+                                    data-confirm="Scratch this competitor from {{ event.display_name }} Heat {{ heat.heat_number }}? They will be removed from both runs but their result record is preserved.">
+                                Scratch
+                            </button>
                         </form>
                     </details>
                 </div>
@@ -361,15 +377,14 @@
                 {# Competitor list #}
                 <ul class="list-group list-group-flush">
                     {% for comp_id in competitors %}
-                        {% if event.event_type == 'college' %}
-                            {% set comp = tournament.college_competitors.filter_by(id=comp_id).first() %}
-                        {% else %}
-                            {% set comp = tournament.pro_competitors.filter_by(id=comp_id).first() %}
-                        {% endif %}
+                        {% set comp = comp_lookup.get(comp_id) %}
+                        {% set r_status = result_status_map.get(comp_id, 'pending') %}
                         {% set sn = assignments.get(comp_id|string)|int if assignments.get(comp_id|string) else 0 %}
                         <li class="list-group-item d-flex align-items-center">
                             <span class="stand-badge stand-{{ sn }}">{{ assignments.get(comp_id|string, '?') }}</span>
-                            <span class="comp-name">{{ comp.display_name if comp else 'Unknown' }}</span>
+                            <span class="comp-name{% if r_status in ('scratched', 'dnf') %} text-decoration-line-through opacity-50{% endif %}">
+                                {{ comp.display_name if comp else 'Unknown' }}{% if r_status == 'scratched' %} <small class="text-danger fw-bold">(SCR)</small>{% elif r_status == 'dnf' %} <small class="text-warning fw-bold">(DNF)</small>{% endif %}
+                            </span>
                         </li>
                     {% else %}
                         <li class="list-group-item text-muted fst-italic" style="font-size:0.82rem;">No competitors</li>
@@ -398,11 +413,7 @@
                                 <select class="form-select form-select-sm" name="competitor_id" required>
                                     <option value="">Select...</option>
                                     {% for cid in competitors %}
-                                        {% if event.event_type == 'college' %}
-                                            {% set c = tournament.college_competitors.filter_by(id=cid).first() %}
-                                        {% else %}
-                                            {% set c = tournament.pro_competitors.filter_by(id=cid).first() %}
-                                        {% endif %}
+                                        {% set c = comp_lookup.get(cid) %}
                                         {% if c %}
                                         <option value="{{ c.id }}">{{ c.display_name }}</option>
                                         {% endif %}
@@ -423,6 +434,58 @@
                             <button type="submit" class="btn btn-sm btn-outline-primary w-100">Move</button>
                         </form>
                     </details>
+                    <details class="heat-assign-details">
+                        <summary class="text-danger">Scratch Competitor</summary>
+                        <form action="{{ url_for('scheduling.scratch_competitor', tournament_id=tournament.id, event_id=event.id) }}"
+                              method="POST" class="mt-2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="heat_id" value="{{ heat.id }}">
+                            <div class="mb-2">
+                                <select class="form-select form-select-sm" name="competitor_id" required>
+                                    <option value="">Select competitor to scratch...</option>
+                                    {% for cid in competitors %}
+                                        {% set c = comp_lookup.get(cid) %}
+                                        {% if c %}
+                                        <option value="{{ c.id }}">{{ c.display_name }}</option>
+                                        {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-sm btn-outline-danger w-100"
+                                    data-confirm="Scratch this competitor from {{ event.display_name }} Heat {{ heat.heat_number }}? They will be removed from the heat but their result record is preserved.">
+                                Scratch
+                            </button>
+                        </form>
+                    </details>
+                    {% if unassigned_competitors %}
+                    <details class="heat-assign-details">
+                        <summary class="text-success">Add Competitor</summary>
+                        <form action="{{ url_for('scheduling.add_to_heat', tournament_id=tournament.id, event_id=event.id) }}"
+                              method="POST" class="mt-2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="heat_id" value="{{ heat.id }}">
+                            <div class="mb-2">
+                                <select class="form-select form-select-sm" name="competitor_id" required>
+                                    <option value="">Select competitor to add...</option>
+                                    {% for uc in unassigned_competitors %}
+                                    <option value="{{ uc.id }}">{{ uc.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-sm btn-outline-success w-100">Add</button>
+                        </form>
+                    </details>
+                    {% endif %}
+                    {% endif %}
+                    {% if not competitors %}
+                    <form action="{{ url_for('scheduling.delete_heat', tournament_id=tournament.id, event_id=event.id, heat_id=heat.id) }}"
+                          method="POST" class="mt-2">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger w-100"
+                                data-confirm="Delete empty Heat {{ heat.heat_number }} from {{ event.display_name }}?">
+                            Delete Empty Heat
+                        </button>
+                    </form>
                     {% endif %}
                 </div>
             </div>
