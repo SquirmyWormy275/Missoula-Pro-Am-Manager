@@ -999,18 +999,19 @@ def calculate_springboard_dummies(blocks, tournament_id=None):
     Calculate springboard dummy/tree requirements from block counts.
 
     Separates 1-board, 2-board, and 3-board into distinct groups because
-    each requires a different height dummy tree.
+    each requires a different height dummy tree. Per judge directive
+    (2026-04-10): 1-board and 2-board poles are NOT shared — each board
+    height gets its own dummies, no reuse.
 
     Rules:
-      - 1-board / 2-board runs: 3 runs per dummy
+      - 1-board runs: 3 runs per dummy
+      - 2-board runs: 3 runs per dummy
       - 3-board jigger runs: 2 runs per dummy
 
     Friday Feature logic:
       - College 1-Board always runs Friday → needs its own Friday dummies.
       - Pro 1-Board or 3-Board Jigger in the Friday Feature → separate
         Friday dummies (cannot reuse Saturday trees).
-      - If 1-board runs AFTER 2-board on Saturday, 2-board dummies can be
-        cut down to 6 feet and reused for 1-board → only need max, not sum.
     """
     # --- Separate competitor counts by board height ---
     # College 1-Board is always "1-board" height.
@@ -1079,18 +1080,21 @@ def calculate_springboard_dummies(blocks, tournament_id=None):
     sat_one_board_dummies = math.ceil(sat_one_board_runs / one_board_per_dummy) if sat_one_board_runs > 0 else 0
     sat_three_board_dummies = math.ceil(sat_three_board_runs / three_board_per_dummy) if sat_three_board_runs > 0 else 0
 
-    # Reuse logic: if 1-board follows 2-board on Saturday, 2-board trees
-    # can be cut down to 6ft → need max(2-board, 1-board) instead of sum.
-    # We assume 1-board always follows 2-board on Saturday (standard order).
-    sat_one_two_reusable = sat_one_board_runs > 0 and sat_two_board_runs > 0
-    if sat_one_two_reusable:
-        sat_combined_dummies = max(sat_two_board_dummies, sat_one_board_dummies)
-    else:
-        sat_combined_dummies = sat_two_board_dummies + sat_one_board_dummies
+    # No reuse — 1-board and 2-board poles are kept strictly separate
+    # per judge directive (2026-04-10).
+    sat_one_two_reusable = False
+    sat_combined_dummies = sat_two_board_dummies + sat_one_board_dummies
+
+    # Per-board-height totals across both days (for the print report).
+    one_board_total_runs = friday_one_board_runs + sat_one_board_runs
+    one_board_total_dummies = friday_one_board_dummies + sat_one_board_dummies
+    two_board_total_runs = sat_two_board_runs  # Pro 2-board only ever Saturday
+    two_board_total_dummies = sat_two_board_dummies
+    three_board_total_runs = friday_three_board_runs + sat_three_board_runs
+    three_board_total_dummies = friday_three_board_dummies + sat_three_board_dummies
 
     total_dummies = (
-        friday_one_board_dummies + friday_three_board_dummies
-        + sat_combined_dummies + sat_three_board_dummies
+        one_board_total_dummies + two_board_total_dummies + three_board_total_dummies
     )
 
     return {
@@ -1123,6 +1127,14 @@ def calculate_springboard_dummies(blocks, tournament_id=None):
         'sat_three_board_dummies': sat_three_board_dummies,
         'sat_one_two_reusable': sat_one_two_reusable,
         'sat_combined_dummies': sat_combined_dummies,
+
+        # Per-board-height totals (Friday + Saturday combined)
+        'one_board_total_runs': one_board_total_runs,
+        'one_board_total_dummies': one_board_total_dummies,
+        'two_board_total_runs': two_board_total_runs,
+        'two_board_total_dummies': two_board_total_dummies,
+        'three_board_total_runs': three_board_total_runs,
+        'three_board_total_dummies': three_board_total_dummies,
 
         # Totals
         'total_dummies': total_dummies,

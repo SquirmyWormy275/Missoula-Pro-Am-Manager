@@ -250,12 +250,7 @@
                         </tr>
                         {% if not sp.pro_one_board_is_friday %}
                         <tr class="{{ 'text-muted' if sp.sat_one_board_runs == 0 }}" style="{{ 'opacity:0.5;' if sp.sat_one_board_runs == 0 }}">
-                            <td>
-                                Pro 1-Board
-                                {% if sp.sat_one_two_reusable %}
-                                <span class="badge bg-warning text-dark ms-1" title="2-Board dummies can be cut down to 6ft for 1-Board reuse if 1-Board runs after 2-Board">reusable from 2-Board</span>
-                                {% endif %}
-                            </td>
+                            <td>Pro 1-Board</td>
                             <td><span class="badge bg-primary">Saturday</span></td>
                             <td class="text-end">{{ sp.sat_one_board_runs }}</td>
                             <td class="formula-code">{{ sp.one_board_per_dummy }} runs per dummy</td>
@@ -269,15 +264,6 @@
                             <td class="text-end">{{ sp.sat_three_board_runs }}</td>
                             <td class="formula-code">{{ sp.three_board_per_dummy }} runs per dummy</td>
                             <td class="text-end fw-bold">{{ sp.sat_three_board_dummies }}</td>
-                        </tr>
-                        {% endif %}
-                        {% if sp.sat_one_two_reusable %}
-                        <tr>
-                            <td colspan="5" class="small text-warning" style="padding:0.4rem 0.75rem;">
-                                <i class="bi bi-info-circle"></i>
-                                1-Board scheduled after 2-Board on Saturday: 2-Board dummies can be cut down to 6ft for reuse.
-                                Need {{ sp.sat_combined_dummies }} dummies (max of {{ sp.sat_two_board_dummies }} and {{ sp.sat_one_board_dummies }}) instead of {{ sp.sat_two_board_dummies + sp.sat_one_board_dummies }}.
-                            </td>
                         </tr>
                         {% endif %}
                         <tr style="background:var(--sx-surface-2);">
