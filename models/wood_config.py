@@ -17,6 +17,8 @@ config_key conventions:
                  block_relay_standing   (Pro-Am Relay standing butcher block)
                  These use count_override instead of enrollment-derived counts.
 """
+import sqlalchemy as sa
+
 from database import db
 
 
@@ -34,7 +36,10 @@ class WoodConfig(db.Model):
     # Wood spec
     species = db.Column(db.Text, nullable=True)
     size_value = db.Column(db.Float, nullable=True)
-    size_unit = db.Column(db.String(4), nullable=False, default='in')  # 'in' or 'mm'
+    # 'in' or 'mm' — server_default so raw SQL / PG inserts get a value
+    size_unit = db.Column(
+        db.String(4), nullable=False, default='in', server_default=sa.text("'in'")
+    )
     notes = db.Column(db.Text, nullable=True)
     # Manual count override — used for relay blocks and other non-enrollment-derived counts
     count_override = db.Column(db.Integer, nullable=True)

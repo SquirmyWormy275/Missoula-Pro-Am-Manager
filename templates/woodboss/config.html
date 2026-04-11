@@ -122,21 +122,25 @@
                     </form>
                 </div>
 
-                <!-- Save current as preset -->
+                <!-- Save current as preset — uses HTML5 form="wood-form" so
+                     the inputs below (species/size/unit) post along with it,
+                     capturing unsaved edits. -->
                 <div class="col-auto">
-                    <form method="POST" action="{{ url_for('woodboss.save_preset', tid=tournament.id) }}"
-                          class="d-flex gap-2 align-items-end">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="d-flex gap-2 align-items-end">
                         <div>
                             <label class="form-label small mb-1">Save Current Config As</label>
-                            <input type="text" name="preset_name" class="form-control form-control-sm"
-                                   placeholder="Preset name" required maxlength="60"
+                            <input type="text" name="preset_name" form="wood-form"
+                                   class="form-control form-control-sm"
+                                   placeholder="Preset name" maxlength="60"
                                    style="background:var(--sx-surface-3);border-color:var(--sx-border-bright);color:var(--sx-text);min-width:180px;">
                         </div>
-                        <button type="submit" class="btn btn-sm btn-outline-success">
+                        <button type="submit" form="wood-form"
+                                formaction="{{ url_for('woodboss.save_preset', tid=tournament.id) }}"
+                                formmethod="post"
+                                class="btn btn-sm btn-outline-success">
                             <i class="bi bi-floppy"></i> Save
                         </button>
-                    </form>
+                    </div>
                 </div>
             </div>
 
@@ -146,6 +150,28 @@
             </div>
             {% else %}
             <div class="mt-2 small text-muted">No presets saved yet. Configure wood specs below and save as a preset for reuse.</div>
+            {% endif %}
+
+            {% if custom_preset_names %}
+            <hr class="my-3" style="border-color: var(--sx-border);">
+            <div class="small text-muted mb-2">Manage custom presets</div>
+            <div class="d-flex flex-wrap gap-2">
+                {% for name in custom_preset_names %}
+                <form method="POST"
+                      action="{{ url_for('woodboss.delete_preset', tid=tournament.id) }}"
+                      class="d-inline"
+                      data-confirm="Delete custom preset '{{ name }}'? This cannot be undone.">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="preset_name" value="{{ name }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-trash"></i> {{ name }}
+                    </button>
+                </form>
+                {% endfor %}
+            </div>
+            <div class="small text-muted mt-2">
+                Built-in presets cannot be deleted. Saving a custom preset with a built-in name is blocked.
+            </div>
             {% endif %}
         </div>
     </div>
@@ -157,7 +183,7 @@
         {% endfor %}
     </datalist>
 
-    <form method="POST" action="{{ url_for('woodboss.save_config', tid=tournament.id) }}">
+    <form method="POST" id="wood-form" action="{{ url_for('woodboss.save_config', tid=tournament.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <!-- ── Section 1: Chopping Blocks ──────────────────────── -->

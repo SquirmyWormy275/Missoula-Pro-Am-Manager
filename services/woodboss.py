@@ -128,6 +128,93 @@ def _get_configs(tournament_id):
     return {row.config_key: row for row in rows}
 
 
+def _active_block_keys(tournament_id):
+    """
+    Return the set of block config_keys that are actually in use for this
+    tournament, derived from its Event records (not from enrollment counts,
+    so this works before registration is open).
+
+    An event "uses" a block key when its name contains a fragment from
+    BLOCK_EVENT_GROUPS that maps to that key AND the (comp_type, gender)
+    tuple matches. Pro 1-board / 3-board exclusivity rules mirror
+    calculate_blocks() — if an event name explicitly names 1-board or
+    3-board, the generic 'springboard' fragment is NOT also allowed to
+    match (otherwise every pro 1-board would also ghost a 2-board row).
+
+    Relay block keys are always included because they are manual and do
+    not correspond to any event name.
+    """
+    from models.event import Event
+    events = Event.query.filter_by(tournament_id=tournament_id).all()
+    active = set(RELAY_BLOCK_KEYS)
+    for event in events:
+        event_lower = (event.name or '').lower().strip()
+        if not event_lower:
+            continue
+        comp_type = event.event_type  # 'college' | 'pro'
+        # event.gender may be None for open/mixed events
+        event_gender = event.gender
+
+        is_pro_one_board = comp_type == 'pro' and (
+            '1-board' in event_lower or '1 board' in event_lower
+            or 'one board' in event_lower or 'one-board' in event_lower
+        )
+        is_pro_three_board = comp_type == 'pro' and (
+            '3-board' in event_lower or '3 board' in event_lower
+            or 'three-board' in event_lower or 'three board' in event_lower
+            or 'jigger' in event_lower
+        )
+        skip_pro_sb_fallback = is_pro_one_board or is_pro_three_board
+
+        for (fragment, grp_type, grp_gender, cfg_key, _label) in BLOCK_EVENT_GROUPS:
+            if fragment not in event_lower:
+                continue
+            if comp_type != grp_type:
+                continue
+            # College groups are gendered — need the event's gender to match.
+            # Pro groups with grp_gender=None are open.
+            if grp_gender is not None:
+                if event_gender != grp_gender:
+                    continue
+            if skip_pro_sb_fallback and cfg_key == 'block_springboard_pro':
+                continue
+            active.add(cfg_key)
+    return active
+
+
+def prune_stale_block_configs(tournament_id):
+    """
+    Delete WoodConfig rows for block keys that this tournament's events
+    do not use. Used as a one-shot cleanup for ghost rows planted by
+    apply_preset / copy_from before the active-key gating was added.
+
+    Log keys (log_general, log_stock, log_op, log_cookie,
+    log_relay_doublebuck) are never touched — they're tournament-wide
+    and not tied to a specific event.
+
+    Returns the number of rows deleted.
+    """
+    from models.wood_config import WoodConfig
+    from database import db
+
+    active = _active_block_keys(tournament_id)
+    # Only block_* keys are candidates. Log keys are never pruned here.
+    all_block_keys = set(BLOCK_CONFIG_LABELS.keys())
+    stale = all_block_keys - active
+    if not stale:
+        return 0
+    deleted = (
+        WoodConfig.query
+        .filter(
+            WoodConfig.tournament_id == tournament_id,
+            WoodConfig.config_key.in_(stale),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.session.commit()
+    return deleted
+
+
 def _get_pro_event_map(tournament_id):
     """
     Return (id_map, name_map) for all pro events in this tournament.
@@ -166,11 +253,21 @@ def _count_competitors(tournament_id):
 
     counts = defaultdict(int)
 
-    # Build college event lookup (events_entered stores IDs, not names)
+    # Build college event lookup. College registration + the Excel importer
+    # store event NAMES in events_entered (e.g. "Underhand Hard Hit"), not
+    # IDs. Map by ID first (future-proof) then by name/display_name — mirrors
+    # the pro lookup below. Prior version only mapped IDs and silently
+    # dropped every college enrollment, zeroing all college block counts.
     college_events = Event.query.filter_by(
         tournament_id=tournament_id, event_type='college'
     ).all()
-    college_event_map = {str(e.id): e for e in college_events}
+    college_id_map = {str(e.id): e for e in college_events}
+    college_name_map = {}
+    for e in college_events:
+        college_name_map[e.name.strip().lower()] = e
+        dn = getattr(e, 'display_name', None)
+        if dn:
+            college_name_map[dn.strip().lower()] = e
 
     college_comps = (
         CollegeCompetitor.query
@@ -180,7 +277,10 @@ def _count_competitors(tournament_id):
     for comp in college_comps:
         gender = comp.gender or 'M'
         for event_entry in comp.get_events_entered():
-            event = college_event_map.get(str(event_entry))
+            event_key = str(event_entry).strip()
+            event = college_id_map.get(event_key)
+            if not event:
+                event = college_name_map.get(event_key.lower())
             if not event:
                 continue
             key = (event.name.lower().strip(), 'college', gender)
@@ -225,11 +325,19 @@ def _list_competitors(tournament_id):
 
     result = []
 
-    # Build college event lookup (events_entered stores IDs, not names)
+    # events_entered stores NAMES on both college and pro competitors.
+    # Build id + name maps, try id first then name — same pattern as
+    # _count_competitors.
     college_events = Event.query.filter_by(
         tournament_id=tournament_id, event_type='college'
     ).all()
-    college_event_map = {str(e.id): e for e in college_events}
+    college_id_map = {str(e.id): e for e in college_events}
+    college_name_map = {}
+    for e in college_events:
+        college_name_map[e.name.strip().lower()] = e
+        dn = getattr(e, 'display_name', None)
+        if dn:
+            college_name_map[dn.strip().lower()] = e
 
     college_comps = (
         CollegeCompetitor.query
@@ -240,7 +348,10 @@ def _list_competitors(tournament_id):
         team_code = comp.team.team_code if comp.team else ''
         event_names = []
         for event_entry in comp.get_events_entered():
-            event = college_event_map.get(str(event_entry))
+            event_key = str(event_entry).strip()
+            event = college_id_map.get(event_key)
+            if not event:
+                event = college_name_map.get(event_key.lower())
             if event:
                 event_names.append(event.name)
         result.append({
@@ -403,7 +514,10 @@ def calculate_blocks(tournament_id, counts=None, configs=None):
 
         if is_relay:
             # Relay blocks: use count_override; enrollment count is always 0
-            manual_count = cfg.count_override if cfg and cfg.count_override else 0
+            # M4: use `is not None` so an explicit 0 override means "zero
+            # relay teams" rather than "not set" (consistent with the
+            # non-relay branch below).
+            manual_count = cfg.count_override if cfg and cfg.count_override is not None else 0
             competitor_count = manual_count
             is_manual = True
         else:
@@ -573,7 +687,10 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
                        (general_cfg.species if general_cfg else None))
         rel_size_value = (relay_db_cfg.size_value if relay_db_cfg and relay_db_cfg.size_value is not None else
                           (general_cfg.size_value if general_cfg else None))
-        rel_size_unit = (relay_db_cfg.size_unit if relay_db_cfg and relay_db_cfg.size_value is not None else
+        # M3: gate size_unit on the relay row having a real unit, not on
+        # size_value. Otherwise a relay row with a selected unit but blank
+        # diameter silently falls back to general.
+        rel_size_unit = (relay_db_cfg.size_unit if relay_db_cfg and relay_db_cfg.size_unit in ('in', 'mm') else
                          (general_cfg.size_unit if general_cfg else 'in'))
 
         # Build a temporary config-like object for _fmt_size
@@ -838,6 +955,45 @@ def get_lottery_view(tournament_id):
     return result
 
 
+def _detect_friday_feature_springboard(tournament_id):
+    """Return (pro_one_board_is_friday, three_board_is_friday) by reading
+    the Friday Feature config file for this tournament. Isolates the file
+    IO + DB lookup that used to live inside `calculate_springboard_dummies`
+    so the math function is pure(r) and unit-testable without disk state.
+    """
+    if tournament_id is None:
+        return (False, False)
+    import os
+    import json
+    pro_one_board_is_friday = False
+    three_board_is_friday = False
+    try:
+        instance_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance'
+        )
+        fnf_path = os.path.join(instance_dir, f'friday_feature_{tournament_id}.json')
+        if not os.path.exists(fnf_path):
+            return (False, False)
+        with open(fnf_path, 'r') as f:
+            fnf_data = json.load(f)
+        fnf_event_ids = set(fnf_data.get('event_ids', []))
+    except Exception:
+        return (False, False)
+
+    if not fnf_event_ids:
+        return (False, False)
+
+    from models.event import Event
+    fnf_events = Event.query.filter(Event.id.in_(fnf_event_ids)).all()
+    for ev in fnf_events:
+        name_lower = ev.name.lower()
+        if '1-board' in name_lower or '1 board' in name_lower:
+            pro_one_board_is_friday = True
+        elif '3-board' in name_lower or '3 board' in name_lower or 'jigger' in name_lower:
+            three_board_is_friday = True
+    return (pro_one_board_is_friday, three_board_is_friday)
+
+
 def calculate_springboard_dummies(blocks, tournament_id=None):
     """
     Calculate springboard dummy/tree requirements from block counts.
@@ -901,34 +1057,8 @@ def calculate_springboard_dummies(blocks, tournament_id=None):
     two_board_per_dummy = 3
     three_board_per_dummy = 2
 
-    # --- Friday Feature detection ---
-    fnf_event_ids = set()
-    pro_one_board_is_friday = False
-    three_board_is_friday = False
-    if tournament_id is not None:
-        try:
-            import os
-            import json
-            instance_dir = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance'
-            )
-            fnf_path = os.path.join(instance_dir, f'friday_feature_{tournament_id}.json')
-            if os.path.exists(fnf_path):
-                with open(fnf_path, 'r') as f:
-                    fnf_data = json.load(f)
-                fnf_event_ids = set(fnf_data.get('event_ids', []))
-        except Exception:
-            pass
-
-        if fnf_event_ids:
-            from models.event import Event
-            fnf_events = Event.query.filter(Event.id.in_(fnf_event_ids)).all()
-            for ev in fnf_events:
-                name_lower = ev.name.lower()
-                if '1-board' in name_lower or '1 board' in name_lower:
-                    pro_one_board_is_friday = True
-                elif '3-board' in name_lower or '3 board' in name_lower or 'jigger' in name_lower:
-                    three_board_is_friday = True
+    # --- Friday Feature detection (IO isolated in helper) ---
+    pro_one_board_is_friday, three_board_is_friday = _detect_friday_feature_springboard(tournament_id)
 
     # --- Calculate dummies by day ---
     # Friday: college 1-board + any pro FNF springboard events
@@ -1054,69 +1184,165 @@ def get_wood_report(tournament_id):
 
 # ---------------------------------------------------------------------------
 # Wood preset helpers
+#
+# Preset file format (instance/wood_presets.json):
+#
+#   {
+#     "preset_name": {
+#       "blocks": {"species": "...", "size_value": X, "size_unit": "in"},   # legacy fallback (V1)
+#       "blocks_by_key": {                                                    # V2 — per-category
+#         "block_underhand_college_M": {"species": "...", "size_value": X, "size_unit": "in"},
+#         ...
+#       },
+#       "log_general": {...},
+#       "log_stock": {...},
+#       "log_op": {...},
+#       "log_cookie": {...},
+#       "log_relay_doublebuck": {...}
+#     }
+#   }
+#
+# Readers prefer "blocks_by_key" when present; fall back to broadcasting
+# "blocks" across every active block key for older saved files.
 # ---------------------------------------------------------------------------
 
-_PRESET_FILE = None  # resolved lazily to instance/wood_presets.json
+_LOG_PRESET_KEYS = (
+    LOG_GENERAL_KEY,
+    LOG_STOCK_KEY,
+    LOG_OP_KEY,
+    LOG_COOKIE_KEY,
+    LOG_RELAY_DOUBLEBUCK_KEY,
+)
 
 
 def _preset_path():
-    """Return the path to instance/wood_presets.json, creating instance/ if needed."""
-    global _PRESET_FILE
-    if _PRESET_FILE is None:
-        import os
-        base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance')
-        os.makedirs(base, exist_ok=True)
-        _PRESET_FILE = os.path.join(base, 'wood_presets.json')
-    return _PRESET_FILE
+    """Return the path to instance/wood_presets.json, creating instance/ if needed.
+
+    No module-level cache — pytest workers would otherwise share the path
+    across tests and leak state.
+    """
+    import os
+    base = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance'
+    )
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, 'wood_presets.json')
+
+
+def _load_preset_file():
+    """Load the custom preset file, returning {} on missing/corrupt.
+
+    A corrupt file is logged as a warning (not silently swallowed) so
+    operators notice when custom presets are lost.
+    """
+    import json
+    import logging
+    try:
+        with open(_preset_path(), 'r') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as e:
+        logging.getLogger(__name__).warning(
+            'wood_presets.json is corrupt (%s); custom presets ignored', e
+        )
+        return {}
+
+
+def _write_preset_file(presets):
+    """Write custom presets atomically (tmpfile + os.replace).
+
+    Prevents half-written files from trashing all custom presets if the
+    process dies mid-write.
+    """
+    import json
+    import os
+    path = _preset_path()
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(presets, f, indent=2)
+    os.replace(tmp, path)
 
 
 def get_all_presets():
     """Return merged dict of built-in + custom presets (custom overrides built-in)."""
-    import json
     import config as cfg
     presets = dict(cfg.WOOD_PRESETS)
-    try:
-        with open(_preset_path(), 'r') as f:
-            custom = json.load(f)
-        if isinstance(custom, dict):
-            presets.update(custom)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    presets.update(_load_preset_file())
     return presets
 
 
+def is_builtin_preset(name):
+    """Return True if `name` is a built-in preset defined in config.WOOD_PRESETS."""
+    import config as cfg
+    return name in cfg.WOOD_PRESETS
+
+
 def save_custom_preset(name, preset_data):
-    """Save a named preset to instance/wood_presets.json."""
-    import json
-    presets = {}
-    try:
-        with open(_preset_path(), 'r') as f:
-            presets = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    """Save a named preset to instance/wood_presets.json.
+
+    Raises ValueError if `name` collides with a built-in preset name —
+    silently shadowing a built-in preset used to be possible and made
+    dashboard dropdowns confusing. Callers should catch and flash.
+    """
+    if is_builtin_preset(name):
+        raise ValueError(
+            f'"{name}" is a built-in preset name — pick a different name'
+        )
+    presets = _load_preset_file()
     presets[name] = preset_data
-    with open(_preset_path(), 'w') as f:
-        json.dump(presets, f, indent=2)
+    _write_preset_file(presets)
 
 
 def delete_custom_preset(name):
     """Delete a named preset from instance/wood_presets.json."""
-    import json
-    try:
-        with open(_preset_path(), 'r') as f:
-            presets = json.load(f)
-        presets.pop(name, None)
-        with open(_preset_path(), 'w') as f:
-            json.dump(presets, f, indent=2)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    presets = _load_preset_file()
+    presets.pop(name, None)
+    _write_preset_file(presets)
+
+
+def _resolve_block_spec_for_key(preset, cfg_key):
+    """Return the {species, size_value, size_unit} spec to apply to a given
+    block cfg_key, or None if the preset has nothing for that key.
+
+    Prefers `blocks_by_key[cfg_key]` (V2 per-category form); falls back to
+    the V1 broadcast `blocks` spec. Returns None if neither is set.
+    """
+    by_key = preset.get('blocks_by_key') or {}
+    if cfg_key in by_key:
+        return by_key[cfg_key]
+    legacy = preset.get('blocks') or {}
+    if legacy:
+        return legacy
+    return None
+
+
+def _apply_spec_to_row(row, spec):
+    """Overwrite species/size_value/size_unit on a WoodConfig row from a spec.
+
+    Skips any field whose spec value is None — that's how we preserve
+    existing diameters when a preset was saved with species-only (no
+    diameter). Previous behaviour wrote None through and wiped the row.
+    """
+    species = spec.get('species')
+    if species is not None:
+        row.species = species
+    size_value = spec.get('size_value')
+    if size_value is not None:
+        row.size_value = size_value
+    size_unit = spec.get('size_unit')
+    if size_unit is not None:
+        row.size_unit = size_unit
 
 
 def apply_preset(tournament_id, preset_name):
     """Apply a named preset to a tournament's wood config.
 
-    Only overwrites species, size_value, size_unit — leaves count_override
-    and notes untouched.
+    Only overwrites species/size_value/size_unit on existing rows; never
+    writes None through (so a species-only preset does not wipe existing
+    diameters). Leaves count_override and notes untouched. For block keys,
+    only touches keys the tournament's events actually use (no ghost rows).
 
     Returns the number of config keys updated.
     """
@@ -1129,86 +1355,145 @@ def apply_preset(tournament_id, preset_name):
         return 0
 
     updated = 0
-    block_spec = preset.get('blocks', {})
-    log_specs = {
-        LOG_GENERAL_KEY: preset.get('log_general', {}),
-        LOG_STOCK_KEY: preset.get('log_stock', {}),
-        LOG_OP_KEY: preset.get('log_op', {}),
-        LOG_COOKIE_KEY: preset.get('log_cookie', {}),
-    }
+    active_keys = _active_block_keys(tournament_id)
 
-    # Apply block preset to all block config_keys.
-    if block_spec:
-        for cfg_key in BLOCK_CONFIG_LABELS:
-            if cfg_key in RELAY_BLOCK_KEYS:
-                continue  # relay blocks keep their manual config
-            existing = WoodConfig.query.filter_by(
-                tournament_id=tournament_id, config_key=cfg_key
-            ).first()
-            if existing:
-                existing.species = block_spec.get('species', existing.species)
-                if 'size_value' in block_spec:
-                    existing.size_value = block_spec['size_value']
-                if 'size_unit' in block_spec:
-                    existing.size_unit = block_spec['size_unit']
-            else:
-                row = WoodConfig(
-                    tournament_id=tournament_id,
-                    config_key=cfg_key,
-                    species=block_spec.get('species'),
-                    size_value=block_spec.get('size_value'),
-                    size_unit=block_spec.get('size_unit', 'in'),
-                )
-                db.session.add(row)
-            updated += 1
-
-    # Apply log presets.
-    for log_key, spec in log_specs.items():
+    # ── Block keys ────────────────────────────────────────────────────────
+    # Try per-cfg_key spec first, fall back to broadcast `blocks` spec.
+    for cfg_key in BLOCK_CONFIG_LABELS:
+        if cfg_key in RELAY_BLOCK_KEYS:
+            continue
+        if cfg_key not in active_keys:
+            continue
+        spec = _resolve_block_spec_for_key(preset, cfg_key)
         if not spec:
+            continue
+        if spec.get('species') is None:
+            # No species to apply for this key — skip (avoids inserting
+            # a half-empty row when the preset only covers other keys).
+            continue
+        existing = WoodConfig.query.filter_by(
+            tournament_id=tournament_id, config_key=cfg_key
+        ).first()
+        if existing:
+            _apply_spec_to_row(existing, spec)
+        else:
+            db.session.add(WoodConfig(
+                tournament_id=tournament_id,
+                config_key=cfg_key,
+                species=spec.get('species'),
+                size_value=spec.get('size_value'),
+                size_unit=spec.get('size_unit') or 'in',
+            ))
+        updated += 1
+
+    # ── Log keys ──────────────────────────────────────────────────────────
+    for log_key in _LOG_PRESET_KEYS:
+        spec = preset.get(log_key)
+        if not spec:
+            continue
+        if spec.get('species') is None:
             continue
         existing = WoodConfig.query.filter_by(
             tournament_id=tournament_id, config_key=log_key
         ).first()
         if existing:
-            existing.species = spec.get('species', existing.species)
-            if 'size_value' in spec:
-                existing.size_value = spec['size_value']
-            if 'size_unit' in spec:
-                existing.size_unit = spec['size_unit']
+            _apply_spec_to_row(existing, spec)
         else:
-            row = WoodConfig(
+            db.session.add(WoodConfig(
                 tournament_id=tournament_id,
                 config_key=log_key,
                 species=spec.get('species'),
                 size_value=spec.get('size_value'),
-                size_unit=spec.get('size_unit', 'in'),
-            )
-            db.session.add(row)
+                size_unit=spec.get('size_unit') or 'in',
+            ))
         updated += 1
 
     db.session.commit()
     return updated
 
 
+def _parse_size(raw):
+    """Coerce a form field to float or None."""
+    raw = (raw or '').strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_unit(raw):
+    """Coerce a form unit field to 'in' or 'mm'."""
+    u = (raw or 'in').strip()
+    return u if u in ('in', 'mm') else 'in'
+
+
+def build_preset_from_form(form_data):
+    """Build a preset dict from a posted wood config form (same field names
+    as `save_config`). Captures per-category block specs so different
+    species can live under different block keys.
+
+    Emits BOTH `blocks_by_key` (V2) and `blocks` (V1 broadcast) — `blocks`
+    holds the first non-empty spec so older readers still get something
+    useful.
+    """
+    blocks_by_key = {}
+    broadcast = {}
+    for cfg_key in BLOCK_CONFIG_LABELS:
+        if cfg_key in RELAY_BLOCK_KEYS:
+            continue
+        species = (form_data.get(f'species_{cfg_key}', '') or '').strip()
+        if not species:
+            continue
+        spec = {
+            'species': species,
+            'size_value': _parse_size(form_data.get(f'size_value_{cfg_key}')),
+            'size_unit': _parse_unit(form_data.get(f'size_unit_{cfg_key}')),
+        }
+        blocks_by_key[cfg_key] = spec
+        if not broadcast:
+            broadcast = dict(spec)
+
+    preset = {'blocks': broadcast, 'blocks_by_key': blocks_by_key}
+    for log_key in _LOG_PRESET_KEYS:
+        species = (form_data.get(f'species_{log_key}', '') or '').strip()
+        if not species:
+            continue
+        preset[log_key] = {
+            'species': species,
+            'size_value': _parse_size(form_data.get(f'size_value_{log_key}')),
+            'size_unit': _parse_unit(form_data.get(f'size_unit_{log_key}')),
+        }
+    return preset
+
+
 def build_preset_from_config(tournament_id):
-    """Build a preset dict from the current tournament's wood config."""
+    """Build a preset dict from the current tournament's wood config.
+
+    Captures every non-relay block row that has a species set into
+    `blocks_by_key`, plus the first as a legacy `blocks` broadcast.
+    """
     configs = _get_configs(tournament_id)
-    # Use the first non-relay block config as the representative block spec.
-    block_spec = {}
+    blocks_by_key = {}
+    broadcast = {}
     for cfg_key in BLOCK_CONFIG_LABELS:
         if cfg_key in RELAY_BLOCK_KEYS:
             continue
         cfg = configs.get(cfg_key)
-        if cfg and cfg.species:
-            block_spec = {
-                'species': cfg.species,
-                'size_value': cfg.size_value,
-                'size_unit': cfg.size_unit or 'in',
-            }
-            break
+        if not cfg or not cfg.species:
+            continue
+        spec = {
+            'species': cfg.species,
+            'size_value': cfg.size_value,
+            'size_unit': cfg.size_unit or 'in',
+        }
+        blocks_by_key[cfg_key] = spec
+        if not broadcast:
+            broadcast = dict(spec)
 
-    preset = {'blocks': block_spec}
-    for log_key in (LOG_GENERAL_KEY, LOG_STOCK_KEY, LOG_OP_KEY, LOG_COOKIE_KEY):
+    preset = {'blocks': broadcast, 'blocks_by_key': blocks_by_key}
+    for log_key in _LOG_PRESET_KEYS:
         cfg = configs.get(log_key)
         if cfg and cfg.species:
             preset[log_key] = {

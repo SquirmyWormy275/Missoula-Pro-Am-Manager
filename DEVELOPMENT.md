@@ -592,6 +592,58 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-11 (V2.8.3)
+
+**Virtual Woodboss audit sweep — all HIGH/MEDIUM/LOW findings resolved except M7/M8 (deferred)**
+
+**HIGH resolved:**
+- **H1 — `apply_preset` wiped existing `size_value`.** `apply_preset` used to write any field present in the preset dict; `build_preset_from_*` stored `None` when the user left diameter blank, so applying a species-only preset nulled out the target tournament's diameters. New `_apply_spec_to_row()` helper skips any field whose value is `None`. Regression test: `TestPresetRoundtrip::test_apply_preset_does_not_wipe_existing_diameter`.
+- **H2 — `save_config` couldn't clear a row.** Blanking every field on an existing row silently skipped the update, stranding old values. `save_config` now writes `None` through when the DB row already exists, and still skips inserts for new-and-empty rows. Flashes a "cleared" count separate from the "updated" count. Regression test: `TestSaveConfigClear::test_blanking_existing_row_clears_it` (uses a unique test judge + test client session cookie to hit the real view).
+- **H3 — `delete_preset` route had no UI.** [config_form](routes/woodboss.py) now passes `custom_preset_names` to the template; [templates/woodboss/config.html](templates/woodboss/config.html) renders a "Manage custom presets" row of delete buttons wired to the existing `delete_preset` route. Built-ins aren't shown.
+
+**MEDIUM resolved:**
+- **M1 — block presets stamped a single species on every category.** Preset format is now V2-aware: new `blocks_by_key` dict (`{cfg_key: spec}`) lets one preset cover different species for College M / College F / Pro / Pro 3-Board Jigger / etc. The V1 `blocks` single-dict form is kept as a backwards-compatible broadcast fallback. `build_preset_from_form` and `build_preset_from_config` emit both. Regression test: `TestPresetRoundtrip::test_apply_preset_per_cfg_key_support`.
+- **M2 — `log_relay_doublebuck` wasn't in presets.** New constant `_LOG_PRESET_KEYS = (LOG_GENERAL_KEY, LOG_STOCK_KEY, LOG_OP_KEY, LOG_COOKIE_KEY, LOG_RELAY_DOUBLEBUCK_KEY)` drives both apply and build. Regression test: `TestPresetRoundtrip::test_apply_preset_includes_log_relay_doublebuck`.
+- **M3 — relay `size_unit` fallback gated on `size_value`.** `calculate_saw_wood` now gates on `relay_db_cfg.size_unit in ('in', 'mm')` instead.
+- **M4 — `count_override` inconsistent handling.** Relay branch in `calculate_blocks` now uses `is not None` matching the non-relay branch.
+- **M5 — `WoodConfig.size_unit` missing `server_default`.** Now declares `server_default=sa.text("'in'")`. Already in `KNOWN_SERVER_DEFAULT_DRIFT` allowlist so no new migration needed.
+- **M6 — preset file write was not atomic.** New `_write_preset_file()` writes to `wood_presets.json.tmp` then `os.replace()`. New `_load_preset_file()` logs a warning via `logging.getLogger(__name__)` on `JSONDecodeError` rather than silently swallowing. Regression test: `TestPresetRoundtrip::test_atomic_write_survives_simulated_crash`.
+
+**MEDIUM deferred (no user-facing impact today):**
+- **M7** — preset routes don't revalidate tournament ownership. Kept as-is until multi-tenant lands.
+- **M8** — no rate-limit on public share route. Separate concern from the audit; file under general API rate-limiting work.
+
+**LOW resolved:**
+- **L1** — negative `count_override` silently swallowed → now flashes a warning listing affected cfg_keys.
+- **L3** — `apply_preset` created ghost rows for zero-enrollment categories → already gated on `_active_block_keys(tournament_id)` and followed by `prune_stale_block_configs` (added in the H0 pass).
+- **L4** — `save_custom_preset` now raises `ValueError` on built-in name collision; route catches and flashes. Regression test: `TestPresetRoundtrip::test_save_rejects_builtin_name_collision`.
+- **L5** — Friday Feature JSON IO lifted out of `calculate_springboard_dummies` into `_detect_friday_feature_springboard(tournament_id)` helper. Math function is now pure(r).
+- **L6** — Removed `_PRESET_FILE` module global; `_preset_path()` is a plain function that computes the path each call. Safer under pytest parallelism.
+
+**LOW deferred:**
+- **L2** — `is_gendered` list omits `jack & jill`. Intentional — J&J is mixed-gender-partnered and collapses to `'open'`.
+
+**Collateral fixes:**
+- `CollegeCompetitor.closed_event_count` ([models/competitor.py](models/competitor.py)) is now a dual ID+name resolver. The V2.8.2 fix broke the `test_counts_closed_events_only` test which had encoded the original bug (stored IDs and the model compared against names). The resolver now builds both sets and matches either form, so test fixtures using IDs and real-world competitors using names both work. Previously this property silently returned 0 for every real competitor, so the 6-CLOSED-events enforcement had never run.
+- [tests/test_route_smoke.py](tests/test_route_smoke.py) fixture: added `None` guards on `first_heat`, `first_event`, `first_user` so the fixture doesn't `AttributeError` on partially-seeded test DBs. Woodboss smoke tests (12) now run clean.
+
+**Test coverage added:** `tests/test_woodboss.py` grew three classes — `TestCollegeEnrollmentByName` (H0 regression), `TestPresetRoundtrip` (H1/M1/M2/M6/L4 + roundtrip), `TestSaveConfigClear` (H2). 40 woodboss tests, 218 tests across the woodboss-adjacent suites, all passing.
+
+Audit doc with per-finding status table: [docs/WOODBOSS_AUDIT.md](docs/WOODBOSS_AUDIT.md).
+
+### 2026-04-10 (V2.8.2)
+
+**Patch — Woodboss college enrollment lookup + save-preset form-data capture**
+
+**Virtual Woodboss (`services/woodboss.py`, `models/competitor.py`):**
+- **Fixed: college blocks were entirely missing from the Wood Count Report (By Species view).** Discovered the day before block turning. Root cause: `events_entered` stores event **names** as strings on both `CollegeCompetitor` and `ProCompetitor` (what college registration and the Excel importer actually write — e.g. `"Underhand Hard Hit"`), but `_count_competitors` and `_list_competitors` built only an ID-keyed lookup for college events. Every lookup hit `if not event: continue`, so college block counts stayed at 0, and `_group_by_species` filtered the zero rows out of the by-species view. Saw logs still appeared because `calculate_saw_wood` emits zero-count rows unconditionally and the logs view doesn't filter them — masking the bug for weeks. The pro path was unaffected because `_get_pro_event_map` already had a name fallback.
+- Both woodboss helpers now build `{college_id_map, college_name_map}` (by `.name` and `.display_name`) and try ID → name → skip, mirroring the pro lookup pattern.
+- Same ID-vs-name mismatch fixed in `CollegeCompetitor.closed_event_count` — it built a set of event IDs and compared against names, always returning 0, so the 6-CLOSED-events-per-athlete enforcement had been silently off.
+- Verified against the live `(WOOD TEST) 2026` tournament — 32 college count keys populated, 4 new college block groups appear in the by-species view.
+- Save Preset form (`templates/woodboss/config.html`, `routes/woodboss.py`, `services/woodboss.py`): now reads the current wood config form data via HTML5 `form="wood-form"` + `build_preset_from_form()`, so unsaved species/sizes are captured. Prior version read only committed DB state, so pressing Save Preset after typing into the form but before pressing Save Configuration produced a preset with blank values.
+- Audit report added: [docs/WOODBOSS_AUDIT.md](docs/WOODBOSS_AUDIT.md) — 3 HIGH, 8 MEDIUM, 6 LOW findings across routes/service/model/templates/tests. H0 and the Save Preset issue resolved in this patch; H1 (preset apply wipes existing sizes when value is None), H2 (save_config can't clear rows), H3 (delete_preset route has no UI) pending.
+- CLAUDE.md Section 4 updated to state explicitly that both competitor types store event names in `events_entered`. Prior documentation said "list of event IDs" — the doc drift is what let the woodboss bug live.
+
 ### 2026-04-10 (V2.8.1)
 
 **Patch — Name parser correctness & Virtual Woodboss pro springboard exclusivity**

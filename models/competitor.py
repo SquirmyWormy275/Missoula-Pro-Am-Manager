@@ -144,18 +144,36 @@ class CollegeCompetitor(db.Model):
     def closed_event_count(self):
         """Return count of CLOSED events entered (max 6 allowed).
 
-        events_entered stores integer event IDs, so we look up which event IDs
-        in this tournament are is_open=False (CLOSED) and count matches.
+        events_entered stores event NAMES on college competitors in real
+        data, but test fixtures and legacy rows may carry integer IDs.
+        We build BOTH an ID set and a name set of CLOSED college events
+        and match either form — mirrors the dual-lookup pattern in
+        `services/woodboss.py::_count_competitors`. Prior code built only
+        an ID set and compared against names, silently returning 0 for
+        every real competitor — so the 6-CLOSED-events enforcement was
+        never running.
         """
         from models.event import Event
-        closed_ids = {
-            e.id for e in Event.query.filter_by(
-                tournament_id=self.tournament_id,
-                event_type='college',
-                is_open=False,
-            ).all()
-        }
-        return sum(1 for eid in self.get_events_entered() if eid in closed_ids)
+        closed_events = Event.query.filter_by(
+            tournament_id=self.tournament_id,
+            event_type='college',
+            is_open=False,
+        ).all()
+        closed_ids = {e.id for e in closed_events}
+        closed_names = {e.name.strip().lower() for e in closed_events}
+        count = 0
+        for entry in self.get_events_entered():
+            if isinstance(entry, int) and entry in closed_ids:
+                count += 1
+                continue
+            entry_str = str(entry).strip()
+            # Pure-digit strings may be IDs stored as strings.
+            if entry_str.isdigit() and int(entry_str) in closed_ids:
+                count += 1
+                continue
+            if entry_str.lower() in closed_names:
+                count += 1
+        return count
 
     @property
     def has_portal_pin(self) -> bool:

@@ -64,6 +64,11 @@ def config_form(tid):
 
     import config as app_config
     presets = woodboss_svc.get_all_presets()
+    # Custom preset names are everything NOT in config.WOOD_PRESETS;
+    # used to render the per-preset delete button.
+    custom_preset_names = sorted(
+        n for n in presets.keys() if n not in app_config.WOOD_PRESETS
+    )
 
     return render_template(
         'woodboss/config.html',
@@ -76,6 +81,7 @@ def config_form(tid):
         configs=configs,
         other_tournaments=other_tournaments,
         presets=presets,
+        custom_preset_names=custom_preset_names,
         common_species=app_config.COMMON_WOOD_SPECIES,
     )
 
@@ -91,8 +97,23 @@ def save_config(tid):
             if field_name.startswith(prefix):
                 all_keys.add(field_name[len(prefix):])
 
+    # Gate block writes to keys this tournament's events actually use.
+    # Log keys (log_general, log_stock, log_op, log_cookie, log_relay_doublebuck)
+    # and relay block keys are tournament-wide and always allowed.
+    active_block_keys = woodboss_svc._active_block_keys(tid)
+    def _is_writable(cfg_key):
+        if not cfg_key.startswith('block_'):
+            return True  # log_* keys
+        return cfg_key in active_block_keys
+
     saved = 0
+    cleared = 0
+    skipped = 0
+    negative_overrides = []
     for cfg_key in all_keys:
+        if not _is_writable(cfg_key):
+            skipped += 1
+            continue
         species = request.form.get(f'species_{cfg_key}', '').strip() or None
         size_raw = request.form.get(f'size_value_{cfg_key}', '').strip()
         size_unit = request.form.get(f'size_unit_{cfg_key}', 'in').strip()
@@ -106,40 +127,75 @@ def save_config(tid):
 
         try:
             count_override = int(override_raw) if override_raw else None
-            if count_override is not None and count_override < 0:
-                count_override = None
         except (ValueError, TypeError):
             count_override = None
-
-        # Skip rows with nothing at all
-        if species is None and size_value is None and notes is None and count_override is None:
-            continue
+        # L1: surface the ignored value instead of silently dropping it
+        if count_override is not None and count_override < 0:
+            negative_overrides.append(cfg_key)
+            count_override = None
 
         existing = WoodConfig.query.filter_by(
             tournament_id=tid, config_key=cfg_key
         ).first()
+
+        # H2: allow clearing a previously-set row. If the row exists, write
+        # through even when every field is None (user blanked it on purpose).
+        # For new rows, keep skipping empty submissions so we don't insert
+        # ghost rows for categories the user never touched.
+        all_empty = (
+            species is None and size_value is None
+            and notes is None and count_override is None
+        )
+        if existing is None and all_empty:
+            continue
+
+        normalized_unit = size_unit if size_unit in ('in', 'mm') else 'in'
         if existing:
             existing.species = species
             existing.size_value = size_value
-            existing.size_unit = size_unit if size_unit in ('in', 'mm') else 'in'
+            existing.size_unit = normalized_unit
             existing.notes = notes
             existing.count_override = count_override
+            if all_empty:
+                cleared += 1
+            else:
+                saved += 1
         else:
-            row = WoodConfig(
+            db.session.add(WoodConfig(
                 tournament_id=tid,
                 config_key=cfg_key,
                 species=species,
                 size_value=size_value,
-                size_unit=size_unit if size_unit in ('in', 'mm') else 'in',
+                size_unit=normalized_unit,
                 notes=notes,
                 count_override=count_override,
-            )
-            db.session.add(row)
-        saved += 1
+            ))
+            saved += 1
 
     db.session.commit()
-    log_action('wood_config_saved', 'tournament', tid, {'keys_saved': saved})
-    flash(f'Wood specifications saved ({saved} entries updated).', 'success')
+    # One-shot cleanup: delete any ghost block rows planted by older
+    # preset/copy runs for events this tournament doesn't actually have.
+    pruned = woodboss_svc.prune_stale_block_configs(tid)
+    log_action('wood_config_saved', 'tournament', tid, {
+        'keys_saved': saved, 'keys_cleared': cleared,
+        'keys_skipped': skipped, 'ghost_rows_pruned': pruned,
+        'negative_overrides': negative_overrides,
+    })
+    parts = [f'{saved} entries updated']
+    if cleared:
+        parts.append(f'{cleared} row(s) cleared')
+    if pruned:
+        parts.append(f'{pruned} stale row(s) removed')
+    if skipped:
+        parts.append(f'{skipped} row(s) ignored (event not in tournament)')
+    msg = f'Wood specifications saved ({", ".join(parts)}).'
+    flash(msg, 'success')
+    if negative_overrides:
+        flash(
+            f'Negative count override ignored on: {", ".join(negative_overrides)}. '
+            'Count overrides must be zero or positive.',
+            'warning',
+        )
     if request.form.get('return_to') == 'setup':
         return redirect(url_for('main.tournament_setup', tournament_id=tid, tab='wood'))
     return redirect(url_for('woodboss.config_form', tid=tid))
@@ -165,8 +221,15 @@ def copy_from(tid):
         return redirect(url_for('woodboss.config_form', tid=tid))
 
     source_configs = woodboss_svc._get_configs(source_tid)
+    # Gate copies to block keys that the DESTINATION tournament actually
+    # uses. Log keys are tournament-wide and always allowed.
+    active_block_keys = woodboss_svc._active_block_keys(tid)
     copied = 0
+    skipped = 0
     for cfg_key, src in source_configs.items():
+        if cfg_key.startswith('block_') and cfg_key not in active_block_keys:
+            skipped += 1
+            continue
         existing = WoodConfig.query.filter_by(
             tournament_id=tid, config_key=cfg_key
         ).first()
@@ -189,8 +252,14 @@ def copy_from(tid):
         copied += 1
 
     db.session.commit()
-    log_action('wood_config_copied', 'tournament', tid, {'source_tid': source_tid, 'copied': copied})
-    flash(f'Copied {copied} wood spec entries from {source.name} {source.year}.', 'success')
+    woodboss_svc.prune_stale_block_configs(tid)
+    log_action('wood_config_copied', 'tournament', tid, {
+        'source_tid': source_tid, 'copied': copied, 'skipped': skipped,
+    })
+    msg = f'Copied {copied} wood spec entries from {source.name} {source.year}.'
+    if skipped:
+        msg += f' Skipped {skipped} row(s) for events not in this tournament.'
+    flash(msg, 'success')
     if request.form.get('return_to') == 'setup':
         return redirect(url_for('main.tournament_setup', tournament_id=tid, tab='wood'))
     return redirect(url_for('woodboss.config_form', tid=tid))
@@ -211,8 +280,14 @@ def apply_preset(tid):
 
     updated = woodboss_svc.apply_preset(tid, preset_name)
     if updated:
-        log_action('wood_preset_applied', 'tournament', tid, {'preset': preset_name, 'updated': updated})
-        flash(f'Applied preset "{preset_name}" ({updated} entries updated).', 'success')
+        pruned = woodboss_svc.prune_stale_block_configs(tid)
+        log_action('wood_preset_applied', 'tournament', tid, {
+            'preset': preset_name, 'updated': updated, 'pruned': pruned,
+        })
+        msg = f'Applied preset "{preset_name}" ({updated} entries updated).'
+        if pruned:
+            msg += f' Cleaned up {pruned} stale row(s).'
+        flash(msg, 'success')
     else:
         flash(f'Preset "{preset_name}" not found.', 'danger')
     return redirect(url_for('woodboss.config_form', tid=tid))
@@ -227,8 +302,23 @@ def save_preset(tid):
         flash('Preset name is required.', 'warning')
         return redirect(url_for('woodboss.config_form', tid=tid))
 
-    preset_data = woodboss_svc.build_preset_from_config(tid)
-    woodboss_svc.save_custom_preset(preset_name, preset_data)
+    # Build from currently-posted form data so unsaved edits on the wood
+    # config form are captured. Falls back to DB if the form didn't include
+    # wood fields (e.g. posted from a different page).
+    preset_data = woodboss_svc.build_preset_from_form(request.form)
+    has_form_data = (
+        bool(preset_data.get('blocks'))
+        or bool(preset_data.get('blocks_by_key'))
+        or any(k.startswith('log_') for k in preset_data)
+    )
+    if not has_form_data:
+        preset_data = woodboss_svc.build_preset_from_config(tid)
+    try:
+        woodboss_svc.save_custom_preset(preset_name, preset_data)
+    except ValueError as e:
+        # L4: built-in preset name collision
+        flash(str(e), 'warning')
+        return redirect(url_for('woodboss.config_form', tid=tid))
     log_action('wood_preset_saved', 'tournament', tid, {'preset': preset_name})
     flash(f'Saved current config as preset "{preset_name}".', 'success')
     return redirect(url_for('woodboss.config_form', tid=tid))
