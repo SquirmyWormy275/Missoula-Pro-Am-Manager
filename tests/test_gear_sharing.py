@@ -153,6 +153,64 @@ class TestResolvePartnerName:
         result = resolve_partner_name('Alice', {})
         assert result == 'Alice'
 
+    def test_generational_suffix_not_merged_into_plain(self):
+        # Only "David Moses Jr." is in the index. A text reference to plain
+        # "David Moses" must NOT silently resolve to the Jr. record — they
+        # are different people. Regression for 2026-04-10 profile bug.
+        idx = build_name_index(['David Moses Jr.', 'Alice Smith'])
+        assert resolve_partner_name('David Moses', idx) == 'David Moses'
+
+    def test_plain_name_not_merged_into_generational_suffix(self):
+        # Reverse: only "David Moses" is in the index; "David Moses Jr." in
+        # free text must NOT silently resolve to the plain record.
+        idx = build_name_index(['David Moses', 'Alice Smith'])
+        assert resolve_partner_name('David Moses Jr.', idx) == 'David Moses Jr.'
+
+    def test_both_generational_variants_resolve_exactly(self):
+        # When both variants exist in the index, each must resolve to itself.
+        idx = build_name_index(['David Moses', 'David Moses Jr.'])
+        assert resolve_partner_name('David Moses', idx) == 'David Moses'
+        assert resolve_partner_name('David Moses Jr.', idx) == 'David Moses Jr.'
+
+    def test_full_first_name_typo_does_not_collapse_via_initials(self):
+        # "Eric Lavoie" (full first name, wrong last-name pairing) must NOT
+        # resolve to "Erin Lavoie" via the initials fallback. The initials
+        # fallback only fires for real initials (1–2 chars).
+        idx = build_name_index(['Erin Lavoie', 'Eric Hoberg'])
+        result = resolve_partner_name('Eric Lavoie', idx)
+        assert result != 'Erin Lavoie'
+
+    def test_full_name_two_tokens_first_name_typo_stays_raw(self):
+        # Similar sanity check: "Erin Hoberg" must not silently resolve to
+        # either real person via initials or last-name fallbacks.
+        idx = build_name_index(['Erin Lavoie', 'Eric Hoberg'])
+        result = resolve_partner_name('Erin Hoberg', idx)
+        assert result not in {'Erin Lavoie'}
+
+
+# ---------------------------------------------------------------------------
+# parse_gear_sharing_details — generational suffix handling
+# ---------------------------------------------------------------------------
+
+class TestParseGearSharingDetailsSuffix:
+    def setup_method(self):
+        from services.gear_sharing import build_name_index
+        # Only the plain "David Moses" is a known competitor.
+        self.name_index = build_name_index(['David Moses', 'Alice Smith'])
+
+    def test_text_with_jr_suffix_does_not_match_plain_name(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, warnings = parse_gear_sharing_details(
+            'sharing springboard with David Moses Jr.',
+            event_pool=[],
+            name_index=self.name_index,
+            self_name='Bob Smith',
+        )
+        # "David Moses Jr." must not silently collapse into the plain
+        # "David Moses" record — they are different people. The partner is
+        # left as-is (unresolved against the index) rather than mis-merged.
+        assert 'David Moses' not in gear_map.values()
+
 
 # ---------------------------------------------------------------------------
 # infer_equipment_categories

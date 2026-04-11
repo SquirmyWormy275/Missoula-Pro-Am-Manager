@@ -592,6 +592,35 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-10 (V2.8.1)
+
+**Patch — Name parser correctness & Virtual Woodboss pro springboard exclusivity**
+
+**Gear-sharing / registration name parser (`services/gear_sharing.py`):**
+- Fixed silent merge of generational-suffix variants: "David Moses" and "David Moses Jr." are now always treated as different people. The fuzzy matcher (SequenceMatcher ratio 0.91 > 0.86 cutoff) and the last-name-only fallback were both collapsing them into a single record.
+- Fixed same-last-name first-name collisions: "Eric Lavoie" no longer silently resolves to "Erin Lavoie", and "Eric Hoberg" / "Erin Lavoie" stay distinct. The initials fallback was truncating full first names to a single character; the fuzzy matcher scored Eric/Erin at 0.90 and accepted it.
+- `parse_gear_sharing_details` mention detection rewritten from normalized-substring to token-sequence matching: "...David Moses Jr..." in free text no longer matches a plain "David Moses" entry at the same position because the next token `jr` rejects the shorter canonical.
+- New helpers: `_NAME_SUFFIXES` (Jr/Sr/II/III/IV/V), `_name_tokens`, `_strip_name_suffix_tokens`, `_name_stem`, `_suffix_mismatch`, `_names_token_compatible`.
+- `resolve_partner_name` now:
+  - Rejects fuzzy candidates that differ only by a generational suffix.
+  - Rejects fuzzy candidates with identical last names and divergent first names unless the first names are either prefix-compatible (`Bri`/`Brianna`) or tight typo-fuzzy (first-name SequenceMatcher ratio ≥ 0.80 — `Imortol`/`Imortal` passes, `Eric`/`Erin` fails).
+  - Returns the raw input when multiple distinct close matches tie, instead of silently picking the first.
+  - Restricts the last-name-only fallback to single-token inputs.
+  - Two-token fallback requires either a real 1–2 char initial or a prefix/typo-fuzzy relationship between first names.
+- 6 regression tests added to `tests/test_gear_sharing.py` covering Moses Jr. (both directions, both variants present) and Lavoie/Hoberg scenarios.
+- 271 gear-sharing + registration-import tests pass.
+
+**Virtual Woodboss pro springboard exclusivity (`services/woodboss.py`):**
+- Pro springboard now splits into three distinct wood categories instead of lumping everything into one `block_springboard_pro` bucket:
+  - `block_springboard_pro` — Pro Springboard (2-board) only
+  - `block_1board_pro` — Pro 1-Board
+  - `block_3board_pro` — 3-Board Jigger
+- `calculate_blocks()` now enforces pro 1-board / 3-board / 2-board exclusivity: an event whose name explicitly contains `1-board` / `one board` / `3-board` / `three board` / `jigger` no longer also matches the generic `springboard` fragment. Previously a single Pro 1-Board competitor was counted twice (once against 2-board, once against 1-board), either shorting real 2-board inventory on block-turning day or ghosting extra blocks for a category that wasn't running.
+- `BLOCK_CONFIG_LABELS` updated to expose the three distinct keys in setup UIs.
+- Dummy-math docstring clarified — `calculate_springboard_dummies()` still walks real event counts as the authoritative source to avoid any double-count regression.
+
+---
+
 ### 2026-04-10 (V2.8.0)
 
 **Registration Import Pipeline & Documentation Consolidation**

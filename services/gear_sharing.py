@@ -19,6 +19,71 @@ logger = logging.getLogger(__name__)
 
 _CATEGORY_KEYS = {'category:crosscut', 'category:chainsaw', 'category:springboard'}
 
+# Generational/ordinal suffixes that distinguish otherwise-identical names
+# (e.g. "David Moses" vs "David Moses Jr."). Two people sharing a stem but
+# differing only by a suffix are DIFFERENT people — never fuzzy-merge them.
+_NAME_SUFFIXES = frozenset({'jr', 'sr', 'ii', 'iii', 'iv', 'v'})
+
+
+def _name_tokens(value: str) -> list[str]:
+    """Return lowercase alphanumeric tokens from a name."""
+    return re.findall(r'[a-z0-9]+', str(value or '').lower())
+
+
+def _strip_name_suffix_tokens(tokens: list[str]) -> list[str]:
+    """Drop trailing generational suffixes (Jr/Sr/II/III/IV/V)."""
+    result = list(tokens)
+    while result and result[-1] in _NAME_SUFFIXES:
+        result.pop()
+    return result
+
+
+def _name_stem(value: str) -> str:
+    """Normalized name stem with generational suffixes removed."""
+    return ''.join(_strip_name_suffix_tokens(_name_tokens(value)))
+
+
+def _names_token_compatible(a: str, b: str) -> bool:
+    """True if two multi-token names are plausibly the same person.
+
+    Rejects the specific failure mode where two real people share a last name
+    but have divergent first names (e.g. "Eric Lavoie" vs "Erin Lavoie") —
+    difflib will happily fuzzy-match those because only one char differs, but
+    they are different people. Returns True for single-token inputs so that
+    downstream last-name / initial fallbacks can still run.
+    """
+    ta = _strip_name_suffix_tokens(_name_tokens(a))
+    tb = _strip_name_suffix_tokens(_name_tokens(b))
+    if len(ta) < 2 or len(tb) < 2:
+        return True
+    a_first, b_first = ta[0], tb[0]
+    a_last = ''.join(ta[1:])
+    b_last = ''.join(tb[1:])
+    if a_last != b_last:
+        return True
+    if a_first == b_first:
+        return True
+    # Same last name: allow prefix relationship ("Bri" → "Brianna") or a
+    # tight typo-fuzzy match on the first name itself (≥ 0.80). "Eric"/"Erin"
+    # scores 0.75 and is correctly rejected; "Imortol"/"Imortal" scores 0.86
+    # and passes as a valid typo.
+    if a_first.startswith(b_first) or b_first.startswith(a_first):
+        return True
+    return difflib.SequenceMatcher(None, a_first, b_first).ratio() >= 0.80
+
+
+def _suffix_mismatch(candidate: str, canonical: str) -> bool:
+    """True if two names share a stem but differ only by a generational suffix.
+
+    Used to reject fuzzy/last-name/initial matches that would silently merge
+    "David Moses" and "David Moses Jr." into the same person.
+    """
+    cand_norm = normalize_person_name(candidate)
+    match_norm = normalize_person_name(canonical)
+    if cand_norm == match_norm:
+        return False
+    return _name_stem(candidate) == _name_stem(canonical)
+
 
 # ---------------------------------------------------------------------------
 # Gear family helpers
@@ -133,10 +198,28 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
     if not wanted:
         return candidate
 
-    close = difflib.get_close_matches(wanted, keys, n=1, cutoff=cutoff)
+    close = difflib.get_close_matches(wanted, keys, n=3, cutoff=cutoff)
+    # Reject fuzzy candidates that differ from the input only by a generational
+    # suffix ("David Moses" vs "David Moses Jr." — different people) or that
+    # share a last name with a divergent first name ("Eric"/"Erin" Lavoie).
+    close = [
+        k for k in close
+        if not _suffix_mismatch(candidate, name_index[k])
+        and _names_token_compatible(candidate, name_index[k])
+    ]
     if close:
         score = difflib.SequenceMatcher(None, wanted, close[0]).ratio()
         resolved = name_index[close[0]]
+        # Guard against ambiguous fuzzy matches: if multiple candidates score
+        # above the cutoff and point at different people, refuse to pick one.
+        if len(close) > 1:
+            distinct = {name_index[k] for k in close}
+            if len(distinct) > 1:
+                logger.info(
+                    "Gear partner ambiguous fuzzy: %r -> %s (returning raw)",
+                    candidate, sorted(distinct),
+                )
+                return candidate
         logger.info(
             "Gear partner resolved: %r -> %r (method: fuzzy, score: %.2f)",
             candidate, resolved, score,
@@ -144,30 +227,59 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
         return resolved
 
     # Last-name-only fallback: "Smith" → matches "John Smith" when unambiguous.
+    # Only fires for a single-token input (bare surname) so that typos on a full
+    # name like "Eric Lavoie" can never silently resolve to "Erin Lavoie".
     candidate_tokens = candidate.strip().split()
-    if candidate_tokens:
+    if len(candidate_tokens) == 1:
         last_norm = normalize_person_name(candidate_tokens[-1])
         if len(last_norm) >= 3:
             last_matches = [k for k in keys if k.endswith(last_norm)]
             if len(last_matches) == 1:
                 resolved = name_index[last_matches[0]]
+                if _suffix_mismatch(candidate, resolved):
+                    return candidate
                 logger.info(
                     "Gear partner resolved: %r -> %r (method: last_name_only, score: 1.00)",
                     candidate, resolved,
                 )
                 return resolved
 
-    # Initials fallback: "J. Smith" or "J Smith" → matches "John Smith" when unambiguous.
+    # Two-token fallback: "A. Smith" / "Bri Kvinge" → "Alice Smith" / "Brianna
+    # Kvinge" when unambiguous. Matching rules, designed to reject first-name
+    # collisions like "Eric Lavoie" vs "Erin Lavoie":
+    #   * last names must match exactly (after normalization)
+    #   * first tokens must be compatible: either a real initial (1–2 chars,
+    #     matched by first letter) OR one first-name is a proper prefix of the
+    #     other (so "Bri" → "Brianna" works, but "Eric" → "Erin" does not).
     if len(candidate_tokens) == 2:
-        first_initial = normalize_person_name(candidate_tokens[0])[:1]
+        first_token_norm = normalize_person_name(candidate_tokens[0])
         last_norm = normalize_person_name(candidate_tokens[1])
-        if first_initial and len(last_norm) >= 3:
-            initial_matches = [
-                k for k in keys
-                if k.startswith(first_initial) and k.endswith(last_norm)
-            ]
-            if len(initial_matches) == 1:
-                resolved = name_index[initial_matches[0]]
+        if first_token_norm and len(last_norm) >= 3:
+            matches: list[str] = []
+            for canonical in name_index.values():
+                canon_tokens = _name_tokens(canonical)
+                canon_tokens = _strip_name_suffix_tokens(canon_tokens)
+                if len(canon_tokens) < 2:
+                    continue
+                canon_first = canon_tokens[0]
+                canon_last_joined = ''.join(canon_tokens[1:])
+                if canon_last_joined != last_norm:
+                    continue
+                if len(first_token_norm) <= 2:
+                    # real initial: match by first letter
+                    if canon_first.startswith(first_token_norm):
+                        matches.append(canonical)
+                else:
+                    # full first name: require prefix relationship in either
+                    # direction — rejects "Eric"/"Erin" because neither is a
+                    # prefix of the other.
+                    if (canon_first.startswith(first_token_norm) or
+                            first_token_norm.startswith(canon_first)):
+                        matches.append(canonical)
+            if len(matches) == 1:
+                resolved = matches[0]
+                if _suffix_mismatch(candidate, resolved):
+                    return candidate
                 logger.info(
                     "Gear partner resolved: %r -> %r (method: initial_last, score: 1.00)",
                     candidate, resolved,
@@ -298,11 +410,30 @@ def parse_gear_sharing_details(
     entered_norm = {normalize_event_text(v) for v in (entered_event_names or []) if str(v or '').strip()}
 
     # Detect partner name from known competitor names mentioned in details.
+    # Token-sequence match (not normalized substring) so that "David Moses Jr."
+    # in the text never silently matches a separate "David Moses" entry — if
+    # the text continues into a generational suffix the canonical does not
+    # carry, the shorter name is rejected at that position.
+    text_tokens = _name_tokens(text)
     mentioned = []
     for norm_name, canonical_name in name_index.items():
-        if norm_name and norm_name in normalize_person_name(lowered):
-            if norm_name != self_norm:
-                mentioned.append((len(norm_name), canonical_name))
+        if not norm_name or norm_name == self_norm:
+            continue
+        canon_tokens = _name_tokens(canonical_name)
+        if not canon_tokens:
+            continue
+        n = len(canon_tokens)
+        canon_has_suffix = canon_tokens[-1] in _NAME_SUFFIXES
+        for i in range(len(text_tokens) - n + 1):
+            if text_tokens[i:i + n] != canon_tokens:
+                continue
+            next_tok = text_tokens[i + n] if i + n < len(text_tokens) else None
+            if next_tok in _NAME_SUFFIXES and not canon_has_suffix:
+                # Text says "...David Moses Jr..." but this canonical is just
+                # "David Moses" — a different person; skip this position.
+                continue
+            mentioned.append((len(norm_name), canonical_name))
+            break
     partner_name = ''
     if mentioned:
         mentioned.sort(reverse=True)

@@ -1,4 +1,4 @@
-# Missoula Pro Am Manager — V2.8.0
+# Missoula Pro Am Manager — V2.8.1
 
 A web-based tournament management system for the Missoula Pro Am timbersports competition.
 
@@ -517,4 +517,4 @@ command is `flask db upgrade` (configured in `railway.toml`).
 
 ---
 
-*Last updated: April 2026 — V2.8.0*
+*Last updated: April 2026 — V2.8.1*

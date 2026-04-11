@@ -49,13 +49,17 @@ BLOCK_EVENT_GROUPS = [
     ('2 board', 'college', 'F', 'block_springboard_college_F', 'Springboard — College Women'),
     ('two board', 'college', 'M', 'block_springboard_college_M', 'Springboard — College Men'),
     ('two board', 'college', 'F', 'block_springboard_college_F', 'Springboard — College Women'),
-    # Pro springboard events: 1-Board, 3-Board Jigger, Pro 1-Board are all open gender
-    ('springboard',  'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
-    ('1-board',      'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
-    ('one board',    'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
-    ('2-board',      'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
-    ('2 board',      'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
-    ('two board',    'pro', None, 'block_springboard_pro', 'Springboard — Pro'),
+    # Pro springboard events — three distinct wood categories:
+    #   Pro Springboard (2-board) → block_springboard_pro
+    #   Pro 1-Board                → block_1board_pro
+    #   3-Board Jigger             → block_3board_pro
+    # All are open gender.
+    ('2-board',      'pro', None, 'block_springboard_pro', 'Springboard (2-Board) — Pro'),
+    ('2 board',      'pro', None, 'block_springboard_pro', 'Springboard (2-Board) — Pro'),
+    ('two board',    'pro', None, 'block_springboard_pro', 'Springboard (2-Board) — Pro'),
+    ('springboard',  'pro', None, 'block_springboard_pro', 'Springboard (2-Board) — Pro'),
+    ('1-board',      'pro', None, 'block_1board_pro',      'Pro 1-Board'),
+    ('one board',    'pro', None, 'block_1board_pro',      'Pro 1-Board'),
     ('3-board',      'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
     ('3 board',      'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
     ('three-board',  'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
@@ -81,7 +85,8 @@ BLOCK_CONFIG_LABELS = {
     'block_underhand_pro_F':       'Underhand — Pro Women',
     'block_standing_pro_M':        'Standing Block — Pro Men',
     'block_standing_pro_F':        'Standing Block — Pro Women',
-    'block_springboard_pro':       'Springboard — Pro',
+    'block_springboard_pro':       'Springboard (2-Board) — Pro',
+    'block_1board_pro':            'Pro 1-Board',
     'block_3board_pro':            '3-Board Jigger — Pro',
     # Relay
     'block_relay_underhand':       'Pro-Am Relay — Underhand Butcher Block',
@@ -352,6 +357,25 @@ def calculate_blocks(tournament_id, counts=None, configs=None):
     key_counts = defaultdict(int)
     for (event_lower, comp_type, gender), n in counts.items():
         matched_cfg_keys = set()
+
+        # Pro exclusivity: on the pro side, the 1-Board and 3-Board Jigger
+        # categories are DISTINCT from the generic 2-board Springboard
+        # category. If the event name explicitly names 1-board or 3-board,
+        # the generic 'springboard' fragment must NOT also match — otherwise
+        # one competitor would be counted twice (one 2-board plus one 1-board
+        # / 3-board block), shorting real 2-board inventory on block-turning
+        # day or ghosting extra blocks for a category that isn't running.
+        is_pro_one_board = comp_type == 'pro' and (
+            '1-board' in event_lower or '1 board' in event_lower
+            or 'one board' in event_lower or 'one-board' in event_lower
+        )
+        is_pro_three_board = comp_type == 'pro' and (
+            '3-board' in event_lower or '3 board' in event_lower
+            or 'three-board' in event_lower or 'three board' in event_lower
+            or 'jigger' in event_lower
+        )
+        skip_pro_springboard_fallback = is_pro_one_board or is_pro_three_board
+
         for (fragment, grp_type, grp_gender, cfg_key, _label) in BLOCK_EVENT_GROUPS:
             if fragment not in event_lower:
                 continue
@@ -359,6 +383,10 @@ def calculate_blocks(tournament_id, counts=None, configs=None):
                 continue
             # grp_gender=None means open (any gender matches)
             if grp_gender is not None and gender != grp_gender:
+                continue
+            # Exclusivity: don't fold a 1-board / 3-board event into the
+            # generic 2-board Springboard bucket.
+            if skip_pro_springboard_fallback and cfg_key == 'block_springboard_pro':
                 continue
             matched_cfg_keys.add(cfg_key)
         for cfg_key in matched_cfg_keys:
@@ -846,9 +874,10 @@ def calculate_springboard_dummies(blocks, tournament_id=None):
     # Pro 1-Board runs
     pro_one_board_runs = 0
 
-    # To distinguish pro 1-board from 2-board, we need actual event data.
-    # The block list lumps all pro springboard into 'block_springboard_pro'.
-    # Split using tournament event data if available.
+    # Split pro 1-board vs 2-board runs via tournament event data.
+    # (Block config keys are now already split into block_springboard_pro and
+    # block_1board_pro, but this direct event-name walk is the authoritative
+    # source for dummy math and avoids any double-counting.)
     if tournament_id is not None:
         counts = _count_competitors(tournament_id)
         for (event_lower, comp_type, _gender), n in counts.items():
