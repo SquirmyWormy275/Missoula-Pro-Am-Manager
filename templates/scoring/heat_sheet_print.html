@@ -65,7 +65,7 @@
     {% for comp in competitors %}
     <tr>
       <td>{{ loop.index }}</td>
-      <td{% if comp.status in ('scratched', 'dnf') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}><strong>{{ comp.name }}</strong>{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% endif %}</td>
+      <td{% if comp.status in ('scratched', 'dnf', 'dq') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}><strong>{{ comp.name }}</strong>{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% elif comp.status == 'dq' %} <small>(DQ)</small>{% endif %}</td>
       <td>{{ comp.stand or '—' }}</td>
       {% if event.requires_dual_runs %}
         <td>{{ comp.run1_value if comp.run1_value is not none else '' }}</td>

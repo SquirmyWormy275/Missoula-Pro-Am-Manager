@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Judge Sheet{% if sheets and sheets|length == 1 %} — {{ sheets[0].event_name }}{% endif %}</title>
+<style>
+    /* WeasyPrint requires inline CSS — no external stylesheets. */
+    @page {
+        size: {% if sheets and sheets[0].num_runs > 1 %}Letter landscape{% else %}Letter portrait{% endif %};
+        margin: 0.5in 0.4in 0.6in 0.4in;
+        @bottom-center {
+            content: "Page " counter(page) " of " counter(pages) "  —  STRATHEX Tournament Management";
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9pt;
+            color: #444;
+        }
+    }
+    * { box-sizing: border-box; }
+    html, body {
+        margin: 0;
+        padding: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #000;
+        background: #fff;
+    }
+    .sheet-header {
+        text-align: center;
+        margin-bottom: 0.15in;
+    }
+    .sheet-header h1 {
+        font-size: 26pt;
+        margin: 0 0 4pt 0;
+        letter-spacing: 0.5pt;
+    }
+    .sheet-header .meta {
+        font-size: 11pt;
+        color: #333;
+    }
+    .heat-block {
+        /* Never split a heat across pages. */
+        page-break-inside: avoid;
+        break-inside: avoid;
+        margin-top: 0.2in;
+    }
+    .heat-block:first-of-type {
+        margin-top: 0;
+    }
+    .heat-header {
+        font-size: 14pt;
+        font-weight: 700;
+        border-bottom: 2pt solid #000;
+        padding: 3pt 0 2pt 0;
+        margin-bottom: 4pt;
+    }
+    table.sheet-table {
+        width: 100%;
+        border-collapse: collapse;
+        border: 2pt solid #000;
+        table-layout: fixed;
+    }
+    table.sheet-table th,
+    table.sheet-table td {
+        border: 1pt solid #000;
+        padding: 4pt 6pt;
+        font-size: 12pt;
+        vertical-align: middle;
+    }
+    table.sheet-table thead th {
+        background: #e8e8e8;
+        font-size: 11pt;
+        text-align: center;
+    }
+    table.sheet-table td.comp-name {
+        font-size: 14pt;
+        font-weight: 600;
+        /* 1.5in wide already enforced via column widths below */
+    }
+    table.sheet-table td.blank-cell {
+        height: 0.62in;
+        min-width: 1.5in;
+    }
+    table.sheet-table td.status-cell {
+        text-align: center;
+        font-size: 9pt;
+        color: #555;
+        width: 0.8in;
+    }
+    table.sheet-table td.reason-cell {
+        min-width: 2.2in;
+    }
+    /* Column widths — name column ~2.5in, reason ~2.2in, status ~0.8in,
+       remaining width split evenly among the timer/judge columns. */
+    col.col-name   { width: 2.5in; }
+    col.col-status { width: 0.8in; }
+    col.col-reason { width: 2.2in; }
+    col.col-run    { width: 1.5in; }
+    .team-code {
+        font-weight: 400;
+        font-size: 11pt;
+        color: #444;
+    }
+</style>
+</head>
+<body>
+
+{% for page_sheet in sheets %}
+    {% if not loop.first %}<div style="page-break-before: always;"></div>{% endif %}
+    <div class="sheet-header">
+        <h1>{{ page_sheet.event_name }}</h1>
+        <div class="meta">Missoula Pro-Am {{ year }}{% if event_date %} &nbsp;·&nbsp; {{ event_date }}{% endif %}</div>
+    </div>
+
+    {% if not page_sheet.heats %}
+        <p style="text-align:center; font-size:12pt; margin-top:0.5in;">
+            No heats assigned for this event.
+        </p>
+    {% else %}
+        {% for heat in page_sheet.heats %}
+        <div class="heat-block">
+            <div class="heat-header">Heat {{ heat.heat_number }}</div>
+            <table class="sheet-table">
+                <colgroup>
+                    <col class="col-name">
+                    {% for _ in range(page_sheet.num_runs) %}
+                        <col class="col-run">
+                        <col class="col-run">
+                    {% endfor %}
+                    <col class="col-status">
+                    <col class="col-reason">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th rowspan="2">Competitor</th>
+                        {% for r in range(page_sheet.num_runs) %}
+                            <th colspan="2">Run {{ r + 1 }}</th>
+                        {% endfor %}
+                        <th rowspan="2">Status</th>
+                        <th rowspan="2">Reason</th>
+                    </tr>
+                    <tr>
+                        {% for r in range(page_sheet.num_runs) %}
+                            {% if page_sheet.scoring_type == 'timed' %}
+                                <th>Timer 1</th>
+                                <th>Timer 2</th>
+                            {% else %}
+                                <th>Judge 1</th>
+                                <th>Judge 2</th>
+                            {% endif %}
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for comp in heat.competitors %}
+                    <tr>
+                        <td class="comp-name">
+                            {{ comp.name }}{% if comp.team_code %} <span class="team-code">({{ comp.team_code }})</span>{% endif %}
+                        </td>
+                        {% for r in range(page_sheet.num_runs) %}
+                            <td class="blank-cell">&nbsp;</td>
+                            <td class="blank-cell">&nbsp;</td>
+                        {% endfor %}
+                        <td class="status-cell">&nbsp;</td>
+                        <td class="reason-cell">&nbsp;</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endfor %}
+    {% endif %}
+{% endfor %}
+
+</body>
+</html>

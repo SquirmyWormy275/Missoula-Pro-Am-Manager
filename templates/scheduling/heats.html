@@ -158,6 +158,11 @@
                     <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}" class="btn btn-outline-secondary" target="_blank">
                         <i class="bi bi-printer"></i> Print Heat Sheets
                     </a>
+                    <a href="{{ url_for('scoring.judge_sheet_for_event', tournament_id=tournament.id, event_id=event.id) }}"
+                       class="btn btn-outline-warning" target="_blank"
+                       title="Blank judge scoring sheet for this event (all heats)">
+                        <i class="bi bi-pencil-square"></i> Print Judge Sheet
+                    </a>
                     <button type="button" class="btn btn-outline-info btn-sm"
                             data-check-heat-sync data-tournament-id="{{ tournament.id }}" data-event-id="{{ event.id }}">
                         <i class="bi bi-arrow-repeat"></i> Sync Check
@@ -246,8 +251,8 @@
                             {% set sn = r1_assignments.get(cid|string)|int if r1_assignments.get(cid|string) else 0 %}
                             <li class="list-group-item d-flex align-items-center" style="padding:5px 10px;">
                                 <span class="stand-badge stand-{{ sn }}">{{ r1_assignments.get(cid|string, '?') }}</span>
-                                <span class="comp-name{% if r_status in ('scratched', 'dnf') %} text-decoration-line-through opacity-50{% endif %}">
-                                    {{ comp.display_name if comp else 'Unknown' }}{% if r_status == 'scratched' %} <small class="text-danger fw-bold">(SCR)</small>{% elif r_status == 'dnf' %} <small class="text-warning fw-bold">(DNF)</small>{% endif %}
+                                <span class="comp-name{% if r_status in ('scratched', 'dnf', 'dq') %} text-decoration-line-through opacity-50{% endif %}">
+                                    {{ comp.display_name if comp else 'Unknown' }}{% if r_status == 'scratched' %} <small class="text-danger fw-bold">(SCR)</small>{% elif r_status == 'dnf' %} <small class="text-warning fw-bold">(DNF)</small>{% elif r_status == 'dq' %} <small class="text-danger fw-bold">(DQ)</small>{% endif %}
                                 </span>
                             </li>
                             {% else %}
@@ -268,8 +273,8 @@
                             {% set sn = r2_assignments.get(cid|string)|int if r2_assignments.get(cid|string) else 0 %}
                             <li class="list-group-item d-flex align-items-center" style="padding:5px 10px;">
                                 <span class="stand-badge stand-{{ sn }}">{{ r2_assignments.get(cid|string, '?') }}</span>
-                                <span class="comp-name{% if r_status in ('scratched', 'dnf') %} text-decoration-line-through opacity-50{% endif %}">
-                                    {{ comp.display_name if comp else 'Unknown' }}{% if r_status == 'scratched' %} <small class="text-danger fw-bold">(SCR)</small>{% elif r_status == 'dnf' %} <small class="text-warning fw-bold">(DNF)</small>{% endif %}
+                                <span class="comp-name{% if r_status in ('scratched', 'dnf', 'dq') %} text-decoration-line-through opacity-50{% endif %}">
+                                    {{ comp.display_name if comp else 'Unknown' }}{% if r_status == 'scratched' %} <small class="text-danger fw-bold">(SCR)</small>{% elif r_status == 'dnf' %} <small class="text-warning fw-bold">(DNF)</small>{% elif r_status == 'dq' %} <small class="text-danger fw-bold">(DQ)</small>{% endif %}
                                 </span>
                             </li>
                             {% else %}
@@ -382,8 +387,8 @@
                         {% set sn = assignments.get(comp_id|string)|int if assignments.get(comp_id|string) else 0 %}
                         <li class="list-group-item d-flex align-items-center">
                             <span class="stand-badge stand-{{ sn }}">{{ assignments.get(comp_id|string, '?') }}</span>
-                            <span class="comp-name{% if r_status in ('scratched', 'dnf') %} text-decoration-line-through opacity-50{% endif %}">
-                                {{ comp.display_name if comp else 'Unknown' }}{% if r_status == 'scratched' %} <small class="text-danger fw-bold">(SCR)</small>{% elif r_status == 'dnf' %} <small class="text-warning fw-bold">(DNF)</small>{% endif %}
+                            <span class="comp-name{% if r_status in ('scratched', 'dnf', 'dq') %} text-decoration-line-through opacity-50{% endif %}">
+                                {{ comp.display_name if comp else 'Unknown' }}{% if r_status == 'scratched' %} <small class="text-danger fw-bold">(SCR)</small>{% elif r_status == 'dnf' %} <small class="text-warning fw-bold">(DNF)</small>{% elif r_status == 'dq' %} <small class="text-danger fw-bold">(DQ)</small>{% endif %}
                             </span>
                         </li>
                     {% else %}

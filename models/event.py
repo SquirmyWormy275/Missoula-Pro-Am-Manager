@@ -224,8 +224,13 @@ class EventResult(db.Model):
     # Score discrepancy flag
     is_flagged = db.Column(db.Boolean, nullable=False, default=False)
 
-    # Status
-    status = db.Column(db.String(20), nullable=False, default='pending')  # pending, completed, scratched, dnf
+    # Status — allowed values: pending, completed, scratched, dnf, dq, partial
+    # 'dq' (disqualified) was added alongside 'status_reason' so judges can record
+    # the ground for a disqualification (illegal axe, stepped out of stand, etc.).
+    # 'status_reason' also applies to 'scratched' and 'dnf' — it's a free-text
+    # explanation for any non-completion state.
+    status = db.Column(db.String(20), nullable=False, default='pending')
+    status_reason = db.Column(db.Text, nullable=True)
     version_id = db.Column(db.Integer, nullable=False, default=1)
 
     __mapper_args__ = {

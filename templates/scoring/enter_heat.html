@@ -470,13 +470,21 @@
                     </td>
                   {% endif %}
 
-                  {# status select #}
+                  {# status select + reason (reason is hidden until a non-completion status is chosen) #}
                   <td>
-                    <select class="form-select" name="status_{{ comp.id }}">
+                    <select class="form-select status-select" name="status_{{ comp.id }}" data-comp="{{ comp.id }}">
                       <option value="completed" {% if comp.existing_status == 'completed' %}selected{% endif %}>Done</option>
                       <option value="dnf"       {% if comp.existing_status == 'dnf' %}selected{% endif %}>DNF</option>
+                      <option value="dq"        {% if comp.existing_status == 'dq' %}selected{% endif %}>DQ</option>
                       <option value="scratched" {% if comp.existing_status == 'scratched' %}selected{% endif %}>Scratched</option>
                     </select>
+                    <input type="text"
+                           class="form-control form-control-sm mt-1 reason-input"
+                           name="reason_{{ comp.id }}"
+                           data-comp="{{ comp.id }}"
+                           placeholder="Reason (optional)"
+                           value="{{ comp.existing_status_reason or '' }}"
+                           {% if comp.existing_status not in ('scratched', 'dnf', 'dq') %}style="display:none;"{% endif %}>
                   </td>
 
                   {# quick-action buttons #}
@@ -706,20 +714,39 @@ document.addEventListener('DOMContentLoaded', function () {
         btn.addEventListener('click', () => {
             const cid = btn.dataset.comp;
             const sel = form.querySelector(`select[name="status_${cid}"]`);
-            if (sel) sel.value = 'dnf';
+            if (sel) { sel.value = 'dnf'; sel.dispatchEvent(new Event('change')); }
         });
     });
     document.querySelectorAll('.quick-scratch').forEach(btn => {
         btn.addEventListener('click', () => {
             const cid = btn.dataset.comp;
             const sel = form.querySelector(`select[name="status_${cid}"]`);
-            if (sel) sel.value = 'scratched';
+            if (sel) { sel.value = 'scratched'; sel.dispatchEvent(new Event('change')); }
         });
     });
 
     /* ── Mark all complete ───────────────────────────────────────────────── */
     document.getElementById('markAllCompleteBtn').addEventListener('click', () => {
-        form.querySelectorAll('select[name^="status_"]').forEach(s => s.value = 'completed');
+        form.querySelectorAll('select[name^="status_"]').forEach(s => {
+            s.value = 'completed';
+            s.dispatchEvent(new Event('change'));
+        });
+    });
+
+    /* ── Reason input show/hide ──────────────────────────────────────────
+       The reason box applies to scratched, dnf, and dq.  Hide for 'completed'
+       and 'partial' so judges aren't tempted to put notes on normal runs.
+       ────────────────────────────────────────────────────────────────────*/
+    function syncReasonVisibility(sel) {
+        const cid = sel.dataset.comp;
+        const reason = form.querySelector(`input.reason-input[data-comp="${cid}"]`);
+        if (!reason) return;
+        const show = (sel.value === 'scratched' || sel.value === 'dnf' || sel.value === 'dq');
+        reason.style.display = show ? '' : 'none';
+        if (!show) reason.value = '';
+    }
+    form.querySelectorAll('select.status-select').forEach(sel => {
+        sel.addEventListener('change', () => syncReasonVisibility(sel));
     });
 
     /* ── Live dual-timer average display (Phase 2 V2.8.0) ──────────────────
