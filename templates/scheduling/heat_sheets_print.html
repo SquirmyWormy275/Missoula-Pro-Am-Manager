@@ -303,7 +303,7 @@
                             {% set sn = comp.stand | string | int if comp.stand else 0 %}
                             <tr>
                                 <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
-                                <td{% if comp.status in ('scratched', 'dnf') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}>{{ comp.name }}{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% endif %}</td>
+                                <td{% if comp.status in ('scratched', 'dnf', 'dq') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}>{{ comp.name }}{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% elif comp.status == 'dq' %} <small>(DQ)</small>{% endif %}</td>
                             </tr>
                         {% else %}
                             <tr><td colspan="2" class="text-muted px-3 py-2 fst-italic">No competitors</td></tr>
@@ -341,7 +341,7 @@
                         {% set sn = comp.stand | string | int if comp.stand else 0 %}
                         <tr>
                             <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
-                            <td{% if comp.status in ('scratched', 'dnf') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}>{{ comp.name }}{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% endif %}</td>
+                            <td{% if comp.status in ('scratched', 'dnf', 'dq') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}>{{ comp.name }}{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% elif comp.status == 'dq' %} <small>(DQ)</small>{% endif %}</td>
                         </tr>
                     {% else %}
                         <tr><td colspan="2" class="text-muted fst-italic px-3">No competitors</td></tr>
@@ -391,7 +391,7 @@
                         {% set sn = comp.stand | string | int if comp.stand else 0 %}
                         <tr>
                             <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
-                            <td{% if comp.status in ('scratched', 'dnf') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}>{{ comp.name }}{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% endif %}</td>
+                            <td{% if comp.status in ('scratched', 'dnf', 'dq') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}>{{ comp.name }}{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% elif comp.status == 'dq' %} <small>(DQ)</small>{% endif %}</td>
                         </tr>
                     {% else %}
                         <tr><td colspan="2" class="text-muted px-3 py-2 fst-italic">No competitors</td></tr>

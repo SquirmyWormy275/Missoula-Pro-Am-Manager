@@ -365,8 +365,12 @@
                   <td>
                     {% if r.status == 'completed' %}<span class="badge bg-success">Done</span>
                     {% elif r.status == 'dnf' %}<span class="badge bg-danger">DNF</span>
+                    {% elif r.status == 'dq' %}<span class="badge bg-danger">DQ</span>
                     {% elif r.status == 'scratched' %}<span class="badge bg-secondary">SCR</span>
                     {% else %}<span class="badge bg-warning text-dark">Pending</span>{% endif %}
+                    {% if r.status_reason and r.status in ('dnf', 'dq', 'scratched') %}
+                      <small class="text-muted d-block">({{ r.status_reason }})</small>
+                    {% endif %}
                   </td>
                 </tr>
                 {% endfor %}

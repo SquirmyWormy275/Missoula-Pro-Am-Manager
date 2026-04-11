@@ -330,6 +330,16 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
 
             result.status = status
 
+            # Capture free-text reason for non-completion statuses.
+            # The form always posts reason_{cid}; we only persist it when the
+            # status is one of scratched/dnf/dq, otherwise clear it so stale
+            # reasons don't linger from an earlier edit.
+            raw_reason = (request.form.get(f'reason_{comp_id}') or '').strip()
+            if status in ('scratched', 'dnf', 'dq'):
+                result.status_reason = raw_reason or None
+            else:
+                result.status_reason = None
+
             # Audit: log if result already existed (edit scenario)
             if result.id:
                 log_action('score_edited', 'event_result', result.id,
@@ -685,6 +695,7 @@ def enter_heat_results(tournament_id, heat_id):
                 'existing_t1_run2': float(result.t1_run2) if result and result.t1_run2 is not None else None,
                 'existing_t2_run2': float(result.t2_run2) if result and result.t2_run2 is not None else None,
                 'existing_status': result.status if result else 'completed',
+                'existing_status_reason': result.status_reason if result else None,
                 'run1_context': run1_results.get(comp_id),  # for run-2 display
             })
 
@@ -1218,6 +1229,87 @@ def birling_bracket(tournament_id, event_id):
     """Legacy route — redirects to the full birling management page."""
     return redirect(url_for('scheduling.birling_manage',
                             tournament_id=tournament_id, event_id=event_id))
+
+
+# ---------------------------------------------------------------------------
+# Routes: blank judge sheets (printable recording forms)
+# ---------------------------------------------------------------------------
+# These produce OUTPUT-ONLY documents — no data is written back to the DB.
+# A judge sheet is a blank form the judges fill in by hand during the event.
+# It mirrors the heat sheet PDF flow: WeasyPrint if installed, HTML fallback.
+
+def _safe_filename_part(name: str) -> str:
+    """Strip characters that break Content-Disposition filenames."""
+    return ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in name)
+
+
+def _render_judge_sheet_html(sheets: list, tournament: Tournament) -> str:
+    """Render the template with a uniform sheets list (one or many events)."""
+    return render_template(
+        'scoring/judge_sheet.html',
+        sheets=sheets,
+        year=tournament.year if tournament else '',
+        event_date=None,
+    )
+
+
+def _judge_sheet_response(html: str, filename: str):
+    """Return a WeasyPrint PDF if available; otherwise return print HTML."""
+    try:
+        from weasyprint import HTML as WP_HTML  # type: ignore
+        pdf_bytes = WP_HTML(string=html).write_pdf()
+        return pdf_bytes, 200, {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': f'attachment; filename="{filename}.pdf"',
+        }
+    except ImportError:
+        return html, 200, {'Content-Type': 'text/html'}
+
+
+@scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/judge-sheet')
+def judge_sheet_for_event(tournament_id: int, event_id: int):
+    """Blank judge sheet PDF (or HTML fallback) for a single event."""
+    from services.judge_sheet import get_event_heats_for_judging
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    event = _event_for_tournament_or_404(tournament_id, event_id)
+    sheet = get_event_heats_for_judging(event.id)
+    if sheet is None:
+        abort(404)
+
+    html = _render_judge_sheet_html([sheet], tournament)
+    filename = f'judge_sheet_{_safe_filename_part(event.display_name)}'
+    return _judge_sheet_response(html, filename)
+
+
+@scoring_bp.route('/<int:tournament_id>/judge-sheets/all')
+def judge_sheets_all(tournament_id: int):
+    """Concatenated judge sheet document for every event in the tournament
+    that has heats assigned.  Events without heats are skipped silently so
+    that the 'print everything before the day starts' button is one-click.
+    """
+    from services.judge_sheet import get_event_heats_for_judging
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    events = (
+        Event.query
+        .filter_by(tournament_id=tournament.id)
+        .order_by(Event.event_type.asc(), Event.id.asc())
+        .all()
+    )
+    sheets = []
+    for event in events:
+        sheet = get_event_heats_for_judging(event.id)
+        if sheet and sheet['heats']:
+            sheets.append(sheet)
+
+    if not sheets:
+        flash('No events with heats are available for judge sheets yet.', 'warning')
+        return redirect(url_for('main.tournament_detail', tournament_id=tournament.id))
+
+    html = _render_judge_sheet_html(sheets, tournament)
+    filename = f'judge_sheets_tournament_{tournament.id}'
+    return _judge_sheet_response(html, filename)
 
 
 # ---------------------------------------------------------------------------
