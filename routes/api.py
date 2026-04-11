@@ -4,8 +4,24 @@ import threading
 import time
 from collections import defaultdict
 from datetime import datetime
+from decimal import Decimal
 
 from flask import Blueprint, Response, current_app, jsonify, stream_with_context
+
+
+def _json_default(obj):
+    """JSON encoder fallback for types the stdlib encoder doesn't handle.
+
+    Decimal appears in payload dicts because EventResult.points_awarded and
+    related columns are Numeric (Phase 1B migration) — json.dumps raises
+    TypeError on Decimal without this. Flask's own jsonify handles Decimal
+    via DefaultJSONProvider, but the SSE stream path uses raw json.dumps.
+    """
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f'Object of type {obj.__class__.__name__} is not JSON serializable')
 
 from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import ProCompetitor
@@ -327,7 +343,7 @@ def standings_stream(tournament_id):
                     yield ': keep-alive\n\n'
                     time.sleep(poll_interval)
                     continue
-                payload_json = json.dumps(payload)
+                payload_json = json.dumps(payload, default=_json_default)
                 if payload_json != last_payload_json:
                     last_payload_json = payload_json
                     yield f'data: {payload_json}\n\n'

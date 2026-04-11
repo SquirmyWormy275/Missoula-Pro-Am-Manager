@@ -332,19 +332,42 @@ class ProAmRelay:
                     raise ValueError(f"College competitor {cid} is assigned to multiple teams.")
                 all_college_ids.add(cid)
 
-            # Resolve competitor objects.
+            # Resolve competitor objects. Every lookup MUST filter on
+            # tournament_id + status='active' + pro_am_lottery_opt_in so
+            # a tampered POST cannot inject a competitor from another
+            # tournament, a scratched competitor, or someone who never
+            # opted into the relay lottery.
             pro_members = []
             for pid in pro_ids:
-                comp = ProCompetitor.query.get(pid)
+                comp = ProCompetitor.query.filter_by(
+                    id=pid,
+                    tournament_id=self.tournament.id,
+                    status='active',
+                    pro_am_lottery_opt_in=True,
+                ).first()
                 if not comp:
-                    raise ValueError(f"Pro competitor ID {pid} not found.")
+                    raise ValueError(
+                        f"Pro competitor ID {pid} not found, not active, "
+                        f"or not opted into Pro-Am Relay."
+                    )
                 pro_members.append({'id': comp.id, 'name': comp.name, 'gender': comp.gender})
 
             college_members = []
             for cid in college_ids:
-                comp = CollegeCompetitor.query.get(cid)
+                comp = CollegeCompetitor.query.filter_by(
+                    id=cid,
+                    tournament_id=self.tournament.id,
+                    status='active',
+                ).first()
                 if not comp:
-                    raise ValueError(f"College competitor ID {cid} not found.")
+                    raise ValueError(
+                        f"College competitor ID {cid} not found in this "
+                        f"tournament or not active."
+                    )
+                if not getattr(comp, 'pro_am_lottery_opt_in', False):
+                    raise ValueError(
+                        f"College competitor {comp.name} is not opted into Pro-Am Relay."
+                    )
                 college_members.append({
                     'id': comp.id, 'name': comp.name, 'gender': comp.gender,
                     'team': comp.team.team_code if comp.team else 'N/A',
@@ -394,16 +417,34 @@ class ProAmRelay:
         """
         teams = self.relay_data.get('teams', [])
 
-        # Get new competitor info
+        # Get new competitor info. Filter on tournament_id + active status +
+        # pro_am_lottery_opt_in so a tampered POST cannot swap in a
+        # competitor from another tournament, a scratched athlete, or
+        # someone who never opted into the relay.
         if competitor_type == 'pro':
-            new_comp = ProCompetitor.query.get(new_competitor_id)
+            new_comp = ProCompetitor.query.filter_by(
+                id=new_competitor_id,
+                tournament_id=self.tournament.id,
+                status='active',
+                pro_am_lottery_opt_in=True,
+            ).first()
             member_key = 'pro_members'
         else:
-            new_comp = CollegeCompetitor.query.get(new_competitor_id)
+            new_comp = CollegeCompetitor.query.filter_by(
+                id=new_competitor_id,
+                tournament_id=self.tournament.id,
+                status='active',
+            ).first()
             member_key = 'college_members'
+            if new_comp is not None and not getattr(new_comp, 'pro_am_lottery_opt_in', False):
+                raise ValueError(
+                    "Replacement college competitor is not opted into the Pro-Am Relay"
+                )
 
         if not new_comp:
-            raise ValueError("Replacement competitor not found")
+            raise ValueError(
+                "Replacement competitor not found in this tournament or not eligible"
+            )
 
         new_comp_data = {
             'id': new_comp.id,

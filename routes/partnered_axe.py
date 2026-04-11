@@ -7,36 +7,83 @@ from database import db
 from models import Tournament
 from models.competitor import ProCompetitor
 from services.cache_invalidation import invalidate_tournament_caches
-from services.partnered_axe import get_partnered_axe_throw
+from services.partnered_axe import (
+    find_partnered_axe_throw,
+    get_or_create_partnered_axe_throw,
+)
 
 bp = Blueprint('partnered_axe', __name__, url_prefix='/tournament/<int:tournament_id>/partnered-axe')
 
 
+def _eligible_pros(tournament_id: int, event_id: int) -> list:
+    """Active pros in this tournament who are actually entered in the
+    Partnered Axe Throw event. Filtering here (instead of passing the
+    whole active roster to the template) prevents judges from
+    accidentally pairing someone who never signed up."""
+    pros = ProCompetitor.query.filter_by(
+        tournament_id=tournament_id,
+        status='active',
+    ).all()
+    eligible = []
+    for comp in pros:
+        entered = set()
+        for raw in comp.get_events_entered():
+            try:
+                entered.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        if event_id in entered:
+            eligible.append(comp)
+    return eligible
+
+
 @bp.route('/')
 def dashboard(tournament_id):
-    """Partnered Axe Throw dashboard."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    """Partnered Axe Throw dashboard.
 
-    # Get available pro competitors for pair registration
-    available_pros = ProCompetitor.query.filter_by(
-        tournament_id=tournament_id,
-        status='active'
-    ).all()
+    GET is read-only: if the tournament never configured Partnered Axe
+    Throw, render a prompt to enable it rather than silently creating
+    an Event row (GET-with-side-effect is the same class of bug as the
+    Woodboss ghost rows — one of the reasons this branch exists).
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    pat = find_partnered_axe_throw(tournament_id)
+
+    if pat is None:
+        return render_template('partnered_axe/dashboard.html',
+                               tournament=tournament,
+                               pat=None,
+                               stage=None,
+                               pairs=[],
+                               available_pros=[],
+                               event_missing=True)
+
+    available_pros = _eligible_pros(tournament_id, pat.event.id)
 
     return render_template('partnered_axe/dashboard.html',
                          tournament=tournament,
                          pat=pat,
                          stage=pat.get_stage(),
                          pairs=pat.get_pairs(),
-                         available_pros=available_pros)
+                         available_pros=available_pros,
+                         event_missing=False)
+
+
+@bp.route('/enable', methods=['POST'])
+def enable(tournament_id):
+    """Explicit POST to create the Partnered Axe Throw event row."""
+    Tournament.query.get_or_404(tournament_id)
+    get_or_create_partnered_axe_throw(tournament_id)
+    invalidate_tournament_caches(tournament_id)
+    flash('Partnered Axe Throw enabled for this tournament.', 'success')
+    return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))
 
 
 @bp.route('/register-pair', methods=['POST'])
 def register_pair(tournament_id):
     """Register a new pair."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    pat = get_or_create_partnered_axe_throw(tournament_id)
 
     try:
         competitor1_id = int(request.form.get('competitor1_id'))
@@ -63,7 +110,10 @@ def register_pair(tournament_id):
 def prelims(tournament_id):
     """Prelims scoring page."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    pat = find_partnered_axe_throw(tournament_id)
+    if pat is None:
+        flash('Partnered Axe Throw is not enabled for this tournament.', 'warning')
+        return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))
 
     return render_template('partnered_axe/prelims.html',
                          tournament=tournament,
@@ -78,7 +128,7 @@ def prelims(tournament_id):
 def record_prelim(tournament_id):
     """Record a prelim result."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    pat = get_or_create_partnered_axe_throw(tournament_id)
 
     try:
         pair_id = int(request.form.get('pair_id'))
@@ -104,7 +154,7 @@ def record_prelim(tournament_id):
 def advance_to_finals(tournament_id):
     """Advance top 4 to finals."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    pat = get_or_create_partnered_axe_throw(tournament_id)
 
     try:
         finalists = pat.advance_to_finals()
@@ -120,7 +170,10 @@ def advance_to_finals(tournament_id):
 def finals(tournament_id):
     """Finals scoring page."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    pat = find_partnered_axe_throw(tournament_id)
+    if pat is None:
+        flash('Partnered Axe Throw is not enabled for this tournament.', 'warning')
+        return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))
 
     return render_template('partnered_axe/finals.html',
                          tournament=tournament,
@@ -134,7 +187,7 @@ def finals(tournament_id):
 def record_final(tournament_id):
     """Record a final result."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    pat = get_or_create_partnered_axe_throw(tournament_id)
 
     try:
         pair_id = int(request.form.get('pair_id'))
@@ -158,7 +211,10 @@ def record_final(tournament_id):
 def results(tournament_id):
     """Final results page."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    pat = find_partnered_axe_throw(tournament_id)
+    if pat is None:
+        flash('Partnered Axe Throw is not enabled for this tournament.', 'warning')
+        return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))
 
     return render_template('partnered_axe/results.html',
                          tournament=tournament,
@@ -172,7 +228,10 @@ def results(tournament_id):
 def reset(tournament_id):
     """Reset the event."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    pat = find_partnered_axe_throw(tournament_id)
+    if pat is None:
+        flash('Partnered Axe Throw is not enabled for this tournament.', 'warning')
+        return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))
 
     pat.reset()
     invalidate_tournament_caches(tournament_id)
@@ -186,9 +245,19 @@ def reset(tournament_id):
 def api_status(tournament_id):
     """Get event status as JSON."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    pat = get_partnered_axe_throw(tournament_id)
+    pat = find_partnered_axe_throw(tournament_id)
+    if pat is None:
+        return jsonify({
+            'enabled': False,
+            'stage': None,
+            'pairs': [],
+            'prelim_standings': [],
+            'finalists': [],
+            'can_advance': False,
+        })
 
     return jsonify({
+        'enabled': True,
         'stage': pat.get_stage(),
         'pairs': pat.get_pairs(),
         'prelim_standings': pat.get_prelim_standings(),

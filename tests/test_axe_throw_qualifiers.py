@@ -70,7 +70,7 @@ class TestAxeThrowPrelimScoring:
         for name in all_names:
             p_info = next((p for p in PRO_COMPETITORS if p['name'] == name), None)
             gender = p_info['gender'] if p_info else 'M'
-            comp = make_pro_competitor(db_session, tournament, name=name, gender=gender)
+            comp = make_pro_competitor(db_session, tournament, name=name, gender=gender, events=[event.id])
             pro_lookup[name] = comp
 
         pat = PartneredAxeThrow(event)
@@ -125,7 +125,7 @@ class TestAxeThrowPrelimScoring:
         for name in all_names:
             p_info = next((p for p in PRO_COMPETITORS if p['name'] == name), None)
             gender = p_info['gender'] if p_info else 'M'
-            comp = make_pro_competitor(db_session, tournament, name=name, gender=gender)
+            comp = make_pro_competitor(db_session, tournament, name=name, gender=gender, events=[event.id])
             pro_lookup[name] = comp
 
         pat = PartneredAxeThrow(event)
@@ -172,7 +172,7 @@ class TestAxeThrowPrelimScoring:
         for name in all_names:
             p_info = next((p for p in PRO_COMPETITORS if p['name'] == name), None)
             gender = p_info['gender'] if p_info else 'M'
-            comp = make_pro_competitor(db_session, tournament, name=name, gender=gender)
+            comp = make_pro_competitor(db_session, tournament, name=name, gender=gender, events=[event.id])
             pro_lookup[name] = comp
 
         pat = PartneredAxeThrow(event)
@@ -223,7 +223,7 @@ class TestAxeThrowPrelimScoring:
         for name in all_names:
             p_info = next((p for p in PRO_COMPETITORS if p['name'] == name), None)
             gender = p_info['gender'] if p_info else 'M'
-            comp = make_pro_competitor(db_session, tournament, name=name, gender=gender)
+            comp = make_pro_competitor(db_session, tournament, name=name, gender=gender, events=[event.id])
             pro_lookup[name] = comp
 
         pat = PartneredAxeThrow(event)

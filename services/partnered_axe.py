@@ -58,13 +58,45 @@ class PartneredAxeThrow:
         """
         Register a pair for the event.
 
+        Both competitors must belong to the same tournament as this
+        Partnered Axe event, be active, and have Partnered Axe Throw in
+        their events_entered list. Without these checks, a tampered POST
+        could inject competitors from another tournament into this
+        event's state JSON (tenancy leak) or pair competitors who never
+        signed up for the event.
+
         Returns pair info dict.
         """
-        comp1 = ProCompetitor.query.get(competitor1_id)
-        comp2 = ProCompetitor.query.get(competitor2_id)
+        # Filter tenancy at query time so a crafted ID from another
+        # tournament fails the existence check, not just the comparison.
+        comp1 = ProCompetitor.query.filter_by(
+            id=competitor1_id,
+            tournament_id=self.event.tournament_id,
+            status='active',
+        ).first()
+        comp2 = ProCompetitor.query.filter_by(
+            id=competitor2_id,
+            tournament_id=self.event.tournament_id,
+            status='active',
+        ).first()
 
         if not comp1 or not comp2:
-            raise ValueError("One or both competitors not found")
+            raise ValueError("One or both competitors not found in this tournament")
+
+        # Must be entered in Partnered Axe Throw. events_entered is a JSON
+        # list of event IDs (int or str) — accept either form.
+        event_id = self.event.id
+        for comp, label in ((comp1, 'competitor 1'), (comp2, 'competitor 2')):
+            entered = set()
+            for raw in comp.get_events_entered():
+                try:
+                    entered.add(int(raw))
+                except (TypeError, ValueError):
+                    continue
+            if event_id not in entered:
+                raise ValueError(
+                    f"{comp.name} ({label}) is not entered in Partnered Axe Throw"
+                )
 
         pair = {
             'pair_id': len(self.state['pairs']) + 1,
@@ -298,25 +330,47 @@ class PartneredAxeThrow:
         self._save_state()
 
 
-def get_partnered_axe_throw(tournament_id: int) -> PartneredAxeThrow:
-    """Get the Partnered Axe Throw manager for a tournament."""
+def find_partnered_axe_throw(tournament_id: int) -> PartneredAxeThrow | None:
+    """Return the Partnered Axe Throw manager for a tournament, or None.
+
+    Read-only: never creates an Event row. Callers that render a GET page
+    MUST use this function, not ``get_partnered_axe_throw``. Auto-creating
+    on GET would plant a phantom Event in tournaments that never configured
+    Partnered Axe — the same GET-with-side-effect class of bug that filled
+    the Woodboss config table with ghost rows.
+    """
     event = Event.query.filter_by(
         tournament_id=tournament_id,
-        name='Partnered Axe Throw'
+        name='Partnered Axe Throw',
     ).first()
+    return PartneredAxeThrow(event) if event else None
 
-    if not event:
-        from models import Tournament
-        tournament = Tournament.query.get(tournament_id)
-        event = Event(
-            tournament_id=tournament_id,
-            name='Partnered Axe Throw',
-            event_type='pro',
-            scoring_type='hits',
-            is_partnered=True,
-            status='pending'
-        )
-        db.session.add(event)
-        db.session.commit()
 
+def get_or_create_partnered_axe_throw(tournament_id: int) -> PartneredAxeThrow:
+    """Return or create the Partnered Axe Throw manager for a tournament.
+
+    Write-allowed: creates the Event row on first call. Reserved for POST
+    handlers that represent an explicit decision to enable the event
+    (register-pair, record-prelim, etc.) — never use on GET.
+    """
+    pat = find_partnered_axe_throw(tournament_id)
+    if pat is not None:
+        return pat
+
+    event = Event(
+        tournament_id=tournament_id,
+        name='Partnered Axe Throw',
+        event_type='pro',
+        scoring_type='hits',
+        is_partnered=True,
+        status='pending',
+    )
+    db.session.add(event)
+    db.session.commit()
     return PartneredAxeThrow(event)
+
+
+# Back-compat alias. Prefer the explicit names above.
+def get_partnered_axe_throw(tournament_id: int) -> PartneredAxeThrow:
+    """Deprecated. Use find_partnered_axe_throw or get_or_create_partnered_axe_throw."""
+    return get_or_create_partnered_axe_throw(tournament_id)

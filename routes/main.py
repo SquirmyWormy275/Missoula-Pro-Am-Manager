@@ -556,13 +556,14 @@ def clone_tournament(tournament_id):
     db.session.add(new_tournament)
     db.session.flush()
 
-    # Copy teams
+    # Copy teams. school_abbreviation is NOT NULL on Team — must be copied.
     from models.team import Team
     team_id_map = {}
     for team in source.teams.all():
         new_team = Team(
             tournament_id=new_tournament.id,
             school_name=team.school_name,
+            school_abbreviation=team.school_abbreviation,
             team_code=team.team_code,
             total_points=0,
         )
@@ -609,8 +610,17 @@ def clone_tournament(tournament_id):
         )
         db.session.add(new_comp)
 
-    # Copy events (no heats or results)
+    # Copy events (no heats or results). Several event types store workflow
+    # state in the `payouts` JSON field rather than payout amounts — copying
+    # that state across tournaments drags stale pairs / bracket rows / relay
+    # teams along with competitor IDs from the source tournament that don't
+    # exist in the clone. Reset those to empty state during clone.
+    _STATEFUL_EVENT_NAMES = {'Partnered Axe Throw', 'Pro-Am Relay'}
     for event in source.events.all():
+        is_state_event = (
+            event.name in _STATEFUL_EVENT_NAMES
+            or (event.stand_type or '').lower() == 'birling'
+        )
         new_event = Event(
             tournament_id=new_tournament.id,
             name=event.name,
@@ -619,14 +629,17 @@ def clone_tournament(tournament_id):
             scoring_type=event.scoring_type,
             scoring_order=event.scoring_order,
             is_open=event.is_open,
+            is_handicap=event.is_handicap,
             is_partnered=event.is_partnered,
             partner_gender_requirement=event.partner_gender_requirement,
             requires_dual_runs=event.requires_dual_runs,
+            requires_triple_runs=event.requires_triple_runs,
             stand_type=event.stand_type,
             max_stands=event.max_stands,
             has_prelims=event.has_prelims,
-            payouts=event.payouts,
+            payouts='{}' if is_state_event else event.payouts,
             status='pending',
+            is_finalized=False,
         )
         db.session.add(new_event)
 

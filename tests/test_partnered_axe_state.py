@@ -38,9 +38,13 @@ def axe_event(db_session, tournament):
     )
 
 
-def _make_pair(db_session, tournament, name1, name2):
-    c1 = make_pro_competitor(db_session, tournament, name1, 'M')
-    c2 = make_pro_competitor(db_session, tournament, name2, 'F')
+def _make_pair(db_session, tournament, name1, name2, event_id=None):
+    # Tests must enroll pairs in the axe_event before register_pair() will
+    # accept them — the service now requires that event.id appears in both
+    # competitors' events_entered list (tenancy hardening, April 2026).
+    events = [event_id] if event_id is not None else []
+    c1 = make_pro_competitor(db_session, tournament, name1, 'M', events=events)
+    c2 = make_pro_competitor(db_session, tournament, name2, 'F', events=events)
     return c1, c2
 
 
@@ -59,7 +63,7 @@ class TestPartneredAxeLifecycle:
     def test_register_pair(self, db_session, tournament, axe_event):
         from services.partnered_axe import PartneredAxeThrow
         pat = PartneredAxeThrow(axe_event)
-        c1, c2 = _make_pair(db_session, tournament, 'PA1', 'PA2')
+        c1, c2 = _make_pair(db_session, tournament, 'PA1', 'PA2', event_id=axe_event.id)
         db_session.flush()
 
         pair = pat.register_pair(c1.id, c2.id)
@@ -72,7 +76,7 @@ class TestPartneredAxeLifecycle:
 
         pairs = []
         for i in range(5):
-            c1, c2 = _make_pair(db_session, tournament, f'Pre{i}A', f'Pre{i}B')
+            c1, c2 = _make_pair(db_session, tournament, f'Pre{i}A', f'Pre{i}B', event_id=axe_event.id)
             db_session.flush()
             pair = pat.register_pair(c1.id, c2.id)
             pairs.append(pair)
@@ -92,7 +96,7 @@ class TestPartneredAxeLifecycle:
 
         pairs = []
         for i in range(4):
-            c1, c2 = _make_pair(db_session, tournament, f'Adv{i}A', f'Adv{i}B')
+            c1, c2 = _make_pair(db_session, tournament, f'Adv{i}A', f'Adv{i}B', event_id=axe_event.id)
             db_session.flush()
             pair = pat.register_pair(c1.id, c2.id)
             pairs.append(pair)
@@ -113,7 +117,7 @@ class TestPartneredAxeLifecycle:
 
         pairs = []
         for i in range(6):
-            c1, c2 = _make_pair(db_session, tournament, f'Fin{i}A', f'Fin{i}B')
+            c1, c2 = _make_pair(db_session, tournament, f'Fin{i}A', f'Fin{i}B', event_id=axe_event.id)
             db_session.flush()
             pair = pat.register_pair(c1.id, c2.id)
             pairs.append(pair)
@@ -131,7 +135,7 @@ class TestPartneredAxeLifecycle:
 
         pairs = []
         for i in range(5):
-            c1, c2 = _make_pair(db_session, tournament, f'FC{i}A', f'FC{i}B')
+            c1, c2 = _make_pair(db_session, tournament, f'FC{i}A', f'FC{i}B', event_id=axe_event.id)
             db_session.flush()
             pair = pat.register_pair(c1.id, c2.id)
             pairs.append(pair)
@@ -153,7 +157,7 @@ class TestPartneredAxeLifecycle:
 
         pairs = []
         for i in range(6):
-            c1, c2 = _make_pair(db_session, tournament, f'FS{i}A', f'FS{i}B')
+            c1, c2 = _make_pair(db_session, tournament, f'FS{i}A', f'FS{i}B', event_id=axe_event.id)
             db_session.flush()
             pair = pat.register_pair(c1.id, c2.id)
             pairs.append(pair)
@@ -183,7 +187,7 @@ class TestPartneredAxeEdgeCases:
 
         pairs = []
         for i in range(3):
-            c1, c2 = _make_pair(db_session, tournament, f'Few{i}A', f'Few{i}B')
+            c1, c2 = _make_pair(db_session, tournament, f'Few{i}A', f'Few{i}B', event_id=axe_event.id)
             db_session.flush()
             pair = pat.register_pair(c1.id, c2.id)
             pairs.append(pair)
@@ -195,7 +199,7 @@ class TestPartneredAxeEdgeCases:
         from services.partnered_axe import PartneredAxeThrow
         pat = PartneredAxeThrow(axe_event)
 
-        c1, c2 = _make_pair(db_session, tournament, 'Reset1', 'Reset2')
+        c1, c2 = _make_pair(db_session, tournament, 'Reset1', 'Reset2', event_id=axe_event.id)
         db_session.flush()
         pat.register_pair(c1.id, c2.id)
         assert len(pat.get_pairs()) == 1
@@ -215,7 +219,7 @@ class TestPartneredAxeEdgeCases:
 
         pairs = []
         for i in range(4):
-            c1, c2 = _make_pair(db_session, tournament, f'Min{i}A', f'Min{i}B')
+            c1, c2 = _make_pair(db_session, tournament, f'Min{i}A', f'Min{i}B', event_id=axe_event.id)
             db_session.flush()
             pair = pat.register_pair(c1.id, c2.id)
             pairs.append(pair)

@@ -281,6 +281,22 @@ def _create_app_inner():
             'unscored_heats': unscored_heats,
         }
 
+    # Custom Jinja test: `search` — regex search used by templates with
+    # `selectattr(attr, 'search', pattern)`. Not a Jinja built-in, so
+    # unregistered templates crash on TemplateRuntimeError. Used at
+    # minimum by templates/pro/gear_sharing_print.html.
+    import re as _re
+
+    def _jinja_search(value, pattern):
+        if value is None:
+            return False
+        try:
+            return _re.search(pattern, str(value)) is not None
+        except _re.error:
+            return False
+
+    app.jinja_env.tests['search'] = _jinja_search
+
     # Register blueprints
     from routes.demo_data import demo_bp
     from routes.import_routes import import_pro_bp

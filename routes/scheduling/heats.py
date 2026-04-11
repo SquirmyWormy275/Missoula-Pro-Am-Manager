@@ -546,14 +546,48 @@ def add_to_heat(tournament_id, event_id):
         flash('Competitor is already in this heat.', 'warning')
         return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
-    # Look up competitor
+    # Look up competitor. Filter on tournament_id + status='active' at
+    # the query so a tampered POST with an ID from another tournament
+    # fails existence, not just the tournament_id compare below.
     if event.event_type == 'college':
-        comp = CollegeCompetitor.query.get(competitor_id)
+        comp = CollegeCompetitor.query.filter_by(
+            id=competitor_id, tournament_id=tournament_id, status='active'
+        ).first()
     else:
-        comp = ProCompetitor.query.get(competitor_id)
-    if not comp or comp.tournament_id != tournament_id:
-        flash('Competitor not found in this tournament.', 'error')
+        comp = ProCompetitor.query.filter_by(
+            id=competitor_id, tournament_id=tournament_id, status='active'
+        ).first()
+    if not comp:
+        flash('Competitor not found in this tournament or not active.', 'error')
         return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    # Event enrollment check: the competitor must actually be entered
+    # in this event. Without this gate, a late-add POST could insert a
+    # competitor who never signed up, giving them an EventResult row
+    # and potentially a payout.
+    entered = set()
+    for raw in comp.get_events_entered():
+        try:
+            entered.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if event.id not in entered:
+        flash(
+            f'{comp.display_name} is not entered in {event.display_name}. '
+            f'Enter the competitor in this event from the registration page first.',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    # Gender check for gendered events
+    if event.gender and comp.gender and comp.gender != event.gender:
+        flash(
+            f'{comp.display_name} cannot be added to {event.display_name} '
+            f'(gender mismatch).',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
     comp_name = comp.display_name
 
     try:

@@ -137,10 +137,17 @@ def _parse_dual_timer(comp_id: int, run_suffix: str, invalid: list) -> tuple:
         if raw is None or raw == '':
             return None
         try:
-            return float(raw)
+            val = float(raw)
         except (TypeError, ValueError):
             invalid.append((comp_id, raw))
             return None
+        # Negative times/distances are physically impossible. Treat them as
+        # invalid so the submission is rejected rather than silently storing
+        # a nonsense value. Zero is allowed (e.g., Hard Hit zero-hits row).
+        if val < 0:
+            invalid.append((comp_id, raw))
+            return None
+        return val
 
     t1 = _try_parse(raw_t1)
     t2 = _try_parse(raw_t2)
@@ -255,6 +262,9 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
                 try:
                     parsed = float(raw)
                 except (TypeError, ValueError):
+                    invalid.append((comp_id, raw))
+                    continue
+                if parsed < 0:
                     invalid.append((comp_id, raw))
                     continue
 

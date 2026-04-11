@@ -4,6 +4,28 @@
 
 {% block content %}
 <div class="container-fluid py-4">
+    {% if event_missing %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1>
+                <i class="bi bi-bullseye text-danger"></i>
+                Partnered Axe Throw
+            </h1>
+            <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
+            <div class="alert alert-warning">
+                <strong>Partnered Axe Throw is not enabled for this tournament.</strong><br>
+                Enable it below to register pairs and score prelims/finals. The
+                event row is created only when you click Enable.
+            </div>
+            <form method="POST" action="{{ url_for('partnered_axe.enable', tournament_id=tournament.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-plus-circle"></i> Enable Partnered Axe Throw
+                </button>
+            </form>
+        </div>
+    </div>
+    {% else %}
     <div class="row mb-4">
         <div class="col-12">
             <div class="d-flex justify-content-between align-items-center">
@@ -210,5 +232,6 @@
             </div>
         </div>
     </div>
+    {% endif %}
 </div>
 {% endblock %}

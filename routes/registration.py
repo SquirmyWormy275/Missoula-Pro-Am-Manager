@@ -1288,13 +1288,56 @@ def pro_gear_print(tournament_id):
 
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/scratch', methods=['POST'])
 def scratch_pro_competitor(tournament_id, competitor_id):
-    """Scratch a professional competitor."""
+    """Scratch a professional competitor.
+
+    Day-of scratch workflow: mark status, pull from any pending heats,
+    and leave a 'scratched' EventResult row for every event the competitor
+    was entered in so the scratch is visible in results reports.
+    """
     tournament = Tournament.query.get_or_404(tournament_id)
     competitor = ProCompetitor.query.get_or_404(competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
     competitor.status = 'scratched'
+
+    # Remove from any uncompleted pro heats the competitor is assigned to.
+    _remove_pro_competitor_from_unfinished_heats(competitor.id, tournament_id)
+
+    # Leave a scratched EventResult row on every event the competitor
+    # entered. Update-or-insert so we don't overwrite completed results.
+    entered_event_ids = set()
+    for raw in competitor.get_events_entered():
+        try:
+            entered_event_ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if entered_event_ids:
+        pro_events = Event.query.filter(
+            Event.tournament_id == tournament_id,
+            Event.event_type == 'pro',
+            Event.id.in_(entered_event_ids),
+        ).all()
+        existing_by_event = {
+            r.event_id: r for r in EventResult.query.filter(
+                EventResult.event_id.in_([e.id for e in pro_events]),
+                EventResult.competitor_type == 'pro',
+                EventResult.competitor_id == competitor.id,
+            ).all()
+        }
+        for ev in pro_events:
+            result = existing_by_event.get(ev.id)
+            if result is None:
+                db.session.add(EventResult(
+                    event_id=ev.id,
+                    competitor_id=competitor.id,
+                    competitor_type='pro',
+                    competitor_name=competitor.name,
+                    status='scratched',
+                ))
+            elif result.status != 'completed':
+                result.status = 'scratched'
+
     # Remove gear-sharing entries on active competitors that reference this person.
     from services.gear_sharing import cleanup_scratched_gear_entries
     result = cleanup_scratched_gear_entries(tournament, scratched_competitor=competitor)
@@ -1314,6 +1357,25 @@ def _remove_college_competitor_from_unfinished_heats(competitor_id: int, tournam
         Event.tournament_id == tournament_id,
         Event.id == Heat.event_id,
         Event.event_type == 'college',
+        Heat.status != 'completed'
+    ).all()
+
+    for heat in heats:
+        comp_ids = heat.get_competitors()
+        if competitor_id in comp_ids:
+            heat.remove_competitor(competitor_id)
+            assignments = heat.get_stand_assignments()
+            if str(competitor_id) in assignments:
+                del assignments[str(competitor_id)]
+                heat.stand_assignments = json.dumps(assignments)
+
+
+def _remove_pro_competitor_from_unfinished_heats(competitor_id: int, tournament_id: int):
+    """Remove a competitor from uncompleted pro heats and stand assignments."""
+    heats = Heat.query.join(Event).filter(
+        Event.tournament_id == tournament_id,
+        Event.id == Heat.event_id,
+        Event.event_type == 'pro',
         Heat.status != 'completed'
     ).all()
 

@@ -346,10 +346,13 @@ class TestCsvImportWithDQ:
             stand_type='hot_saw',
         )
 
-        # Create competitors in the tournament
-        comp1 = make_pro_competitor(db_session, tournament, 'Alice Smith', gender='F')
-        comp2 = make_pro_competitor(db_session, tournament, 'Bob Jones', gender='M')
-        comp3 = make_pro_competitor(db_session, tournament, 'Charlie Brown', gender='M')
+        # Create competitors in the tournament AND enroll them in this
+        # event — the CSV importer now requires the competitor to be
+        # entered in the event before accepting a result for them.
+        db_session.flush()  # ensure event.id is populated
+        comp1 = make_pro_competitor(db_session, tournament, 'Alice Smith', gender='F', events=[event.id])
+        comp2 = make_pro_competitor(db_session, tournament, 'Bob Jones', gender='M', events=[event.id])
+        comp3 = make_pro_competitor(db_session, tournament, 'Charlie Brown', gender='M', events=[event.id])
         db_session.flush()
 
         csv_text = """competitor_name,result,status
@@ -390,8 +393,9 @@ Charlie Brown,7.2,
             event_type='pro', scoring_type='time', scoring_order='lowest_wins',
         )
 
-        comp1 = make_pro_competitor(db_session, tournament, 'Runner One', gender='M')
-        comp2 = make_pro_competitor(db_session, tournament, 'Runner Two', gender='M')
+        db_session.flush()
+        comp1 = make_pro_competitor(db_session, tournament, 'Runner One', gender='M', events=[event.id])
+        comp2 = make_pro_competitor(db_session, tournament, 'Runner Two', gender='M', events=[event.id])
         db_session.flush()
 
         csv_text = """competitor_name,result

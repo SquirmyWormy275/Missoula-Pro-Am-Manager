@@ -799,12 +799,38 @@ def import_results_from_csv(event: Event, csv_text: str) -> dict:
     skipped = 0
     errors = []
 
-    # Build name → competitor lookup
+    # Build name → competitor lookup scoped to THIS event's roster, not the
+    # whole tournament. If the lookup used the tournament-wide roster, a
+    # competitor who is in the tournament but NOT entered in this event
+    # could receive an EventResult row via CSV import (and points, and a
+    # payout). Only accept names that match a competitor whose
+    # events_entered list includes this event ID.
     if event.event_type == 'college':
-        all_comps = CollegeCompetitor.query.filter_by(tournament_id=event.tournament_id).all()
+        all_comps = CollegeCompetitor.query.filter_by(
+            tournament_id=event.tournament_id, status='active'
+        ).all()
     else:
-        all_comps = ProCompetitor.query.filter_by(tournament_id=event.tournament_id).all()
-    comp_by_name = {c.name.strip().lower(): c for c in all_comps}
+        all_comps = ProCompetitor.query.filter_by(
+            tournament_id=event.tournament_id, status='active'
+        ).all()
+
+    event_id = event.id
+    comp_by_name = {}
+    for c in all_comps:
+        entered = set()
+        for raw in c.get_events_entered():
+            try:
+                entered.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        if event_id not in entered:
+            continue
+        # Gender filter: refuse to import men's results into a women's
+        # event and vice versa. Open events (event.gender is None) accept
+        # any gender.
+        if event.gender and c.gender and c.gender != event.gender:
+            continue
+        comp_by_name[c.name.strip().lower()] = c
 
     existing = {r.competitor_id: r for r in event.results.all()}
 
