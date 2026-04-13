@@ -505,15 +505,29 @@ def reorder_saturday_events(tournament_id):
 
 @scheduling_bp.route('/<int:tournament_id>/events/reset-order', methods=['POST'])
 def reset_event_order(tournament_id):
-    """Remove custom event ordering, reverting to config defaults."""
+    """Remove custom event ordering, reverting to config defaults.
+
+    Accepts optional JSON {day: 'friday'|'saturday'} to reset only one day.
+    Without the day key, resets both.
+    """
     from flask import jsonify
     tournament = Tournament.query.get_or_404(tournament_id)
     cfg = tournament.get_schedule_config()
-    cfg.pop('friday_event_order', None)
-    cfg.pop('saturday_event_order', None)
+    try:
+        data = request.get_json(force=True) or {}
+        day = data.get('day')
+    except Exception:
+        day = None
+    if day == 'friday':
+        cfg.pop('friday_event_order', None)
+    elif day == 'saturday':
+        cfg.pop('saturday_event_order', None)
+    else:
+        cfg.pop('friday_event_order', None)
+        cfg.pop('saturday_event_order', None)
     tournament.set_schedule_config(cfg)
     db.session.commit()
-    log_action('event_order_reset', 'tournament', tournament_id, {})
+    log_action('event_order_reset', 'tournament', tournament_id, {'day': day or 'both'})
     return jsonify({'ok': True})
 
 

@@ -79,12 +79,14 @@ def friday_feature(tournament_id):
         except (TypeError, ValueError):
             saturday_college_event_ids = []
 
+        # Merge into DB config (preserves friday_event_order / saturday_event_order)
+        db_cfg = tournament.get_schedule_config()
+        db_cfg['saturday_college_event_ids'] = saturday_college_event_ids
         saved_opts = dict(saved_opts)
         saved_opts['saturday_college_event_ids'] = saturday_college_event_ids
         session[session_key] = saved_opts
         session.modified = True
-        # Also persist to DB
-        tournament.set_schedule_config(saved_opts)
+        tournament.set_schedule_config(db_cfg)
         db.session.commit()
 
         if action == 'generate_heats' and selected_ids:

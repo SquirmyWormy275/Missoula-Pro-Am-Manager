@@ -1092,7 +1092,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var tid = {{ tournament.id }};
     var csrfToken = '{{ csrf_token() }}';
 
-    function initOrderToggle(toggleBtnId, resetBtnId, listId, savedMsgId, endpoint) {
+    function initOrderToggle(toggleBtnId, resetBtnId, listId, savedMsgId, endpoint, day) {
         var toggleBtn = document.getElementById(toggleBtnId);
         var resetBtn = document.getElementById(resetBtnId);
         var list = document.getElementById(listId);
@@ -1136,7 +1136,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 fetch('/scheduling/' + tid + '/events/reset-order', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                    body: '{}'
+                    body: JSON.stringify({day: day})
                 }).then(function(r) { return r.json(); }).then(function(data) {
                     if (data.ok) location.reload();
                 });
@@ -1164,11 +1164,11 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('DOMContentLoaded', function() {
         initOrderToggle(
             'toggleFridayOrder', 'resetFridayOrder', 'fridayEventOrder', 'fridayOrderSaved',
-            '/scheduling/' + tid + '/events/reorder-friday'
+            '/scheduling/' + tid + '/events/reorder-friday', 'friday'
         );
         initOrderToggle(
             'toggleSaturdayOrder', 'resetSaturdayOrder', 'saturdayEventOrder', 'saturdayOrderSaved',
-            '/scheduling/' + tid + '/events/reorder-saturday'
+            '/scheduling/' + tid + '/events/reorder-saturday', 'saturday'
         );
     });
 })();
