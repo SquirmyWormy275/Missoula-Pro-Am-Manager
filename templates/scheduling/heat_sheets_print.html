@@ -500,7 +500,14 @@
     {% macro bracket_match(match, lookup) %}
         <div class="hs-match {{ 'is-bye' if match.get('is_bye') else '' }}">
             <div class="hs-match-header">
-                <span>{{ match.match_id }}</span>
+                <span>{{ match.match_id }}
+                {% if match.winner and match.get('falls', []) %}
+                    {% set falls = match.get('falls', []) %}
+                    {% set w_falls = falls|selectattr('winner', 'equalto', match.winner)|list|length %}
+                    {% set l_falls = falls|length - w_falls %}
+                    ({{ w_falls }}-{{ l_falls }})
+                {% endif %}
+                </span>
                 {% if match.winner %}<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>{% endif %}
             </div>
             {{ bracket_slot(match.competitor1, match.winner, match.loser, lookup) }}

@@ -231,28 +231,78 @@
                     <div class="card border-warning h-100">
                         <div class="card-header py-2 d-flex justify-content-between">
                             <strong>{{ match.match_id }}</strong>
-                            <span class="badge bg-warning text-dark">In Play</span>
+                            <span class="badge bg-warning text-dark">Best of 3</span>
                         </div>
                         <div class="card-body py-2">
-                            <form method="POST" action="{{ url_for('scheduling.birling_record_match', tournament_id=tournament.id, event_id=event.id) }}">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                            {% set name1 = comp_lookup.get(match.competitor1|string, 'Unknown') %}
+                            {% set name2 = comp_lookup.get(match.competitor2|string, 'Unknown') %}
+                            {% set falls = match.get('falls', []) if match.get is defined else (match.falls if match.falls is defined else []) %}
+                            {% set c1_falls = falls|selectattr('winner', 'equalto', match.competitor1)|list|length %}
+                            {% set c2_falls = falls|selectattr('winner', 'equalto', match.competitor2)|list|length %}
 
-                                {% set name1 = comp_lookup.get(match.competitor1|string, 'Unknown') %}
-                                {% set name2 = comp_lookup.get(match.competitor2|string, 'Unknown') %}
+                            {# Fall tracker #}
+                            <div class="text-center mb-2">
+                                <span class="fw-bold">{{ name1 }}</span>
+                                <span class="mx-2 fs-5 fw-bold">{{ c1_falls }} - {{ c2_falls }}</span>
+                                <span class="fw-bold">{{ name2 }}</span>
+                            </div>
+                            {% if falls %}
+                            <div class="text-center mb-2 small text-muted">
+                                Falls:
+                                {% for f in falls %}
+                                    <span class="badge bg-secondary">{{ comp_lookup.get(f.winner|string, '?') }}</span>
+                                {% endfor %}
+                                {% for _ in range(3 - falls|length) %}
+                                    <span class="badge bg-dark" style="opacity:0.3">--</span>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <div class="text-center mb-2 small text-muted">
+                                <span class="badge bg-dark" style="opacity:0.3">--</span>
+                                <span class="badge bg-dark" style="opacity:0.3">--</span>
+                                <span class="badge bg-dark" style="opacity:0.3">--</span>
+                            </div>
+                            {% endif %}
 
-                                <div class="d-grid gap-2">
-                                    <button type="submit" name="winner_id" value="{{ match.competitor1 }}"
-                                            class="btn btn-outline-success btn-sm text-start">
-                                        <i class="bi bi-trophy me-1"></i> {{ name1 }}
+                            {# Fall recording buttons #}
+                            <div class="d-grid gap-2 mb-2">
+                                <form method="POST" action="{{ url_for('scheduling.birling_record_fall', tournament_id=tournament.id, event_id=event.id) }}" class="d-grid">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                    <button type="submit" name="fall_winner_id" value="{{ match.competitor1 }}"
+                                            class="btn btn-outline-primary btn-sm text-start">
+                                        Fall to {{ name1 }}
                                     </button>
-                                    <div class="text-center text-muted small">vs</div>
-                                    <button type="submit" name="winner_id" value="{{ match.competitor2 }}"
-                                            class="btn btn-outline-success btn-sm text-start">
-                                        <i class="bi bi-trophy me-1"></i> {{ name2 }}
+                                </form>
+                                <form method="POST" action="{{ url_for('scheduling.birling_record_fall', tournament_id=tournament.id, event_id=event.id) }}" class="d-grid">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                    <button type="submit" name="fall_winner_id" value="{{ match.competitor2 }}"
+                                            class="btn btn-outline-primary btn-sm text-start">
+                                        Fall to {{ name2 }}
                                     </button>
-                                </div>
-                            </form>
+                                </form>
+                            </div>
+
+                            {# Direct declare (collapsed) #}
+                            <details class="mt-1">
+                                <summary class="small text-muted" style="cursor:pointer">Direct declare winner</summary>
+                                <div class="mt-1 small text-muted mb-1">Skip fall tracking</div>
+                                <form method="POST" action="{{ url_for('scheduling.birling_record_match', tournament_id=tournament.id, event_id=event.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                    <div class="d-grid gap-1">
+                                        <button type="submit" name="winner_id" value="{{ match.competitor1 }}"
+                                                class="btn btn-outline-success btn-sm text-start">
+                                            <i class="bi bi-trophy me-1"></i> {{ name1 }} wins
+                                        </button>
+                                        <button type="submit" name="winner_id" value="{{ match.competitor2 }}"
+                                                class="btn btn-outline-success btn-sm text-start">
+                                            <i class="bi bi-trophy me-1"></i> {{ name2 }} wins
+                                        </button>
+                                    </div>
+                                </form>
+                            </details>
                         </div>
                     </div>
                 </div>
@@ -295,10 +345,29 @@
             {% macro render_match(match, playable_ids) %}
                 {% set is_playable = match.match_id in playable_ids %}
                 {% set is_done = match.winner is not none %}
+                {% set is_undoable = match.match_id in undoable_match_ids %}
+                {% set falls = match.get('falls', []) if match.get is defined else [] %}
                 <div class="bracket-match {{ 'playable' if is_playable else '' }} {{ 'completed' if is_done else '' }}">
                     <div class="match-header">
-                        <span>{{ match.match_id }}</span>
-                        {% if is_done %}
+                        <span>{{ match.match_id }}
+                        {% if is_done and falls %}
+                            {% set w_falls = falls|selectattr('winner', 'equalto', match.winner)|list|length %}
+                            {% set l_falls = falls|length - w_falls %}
+                            <span style="opacity:0.7">({{ w_falls }}-{{ l_falls }})</span>
+                        {% endif %}
+                        </span>
+                        {% if is_done and is_undoable %}
+                            <form method="POST" action="{{ url_for('scheduling.birling_undo_match', tournament_id=tournament.id, event_id=event.id) }}" style="display:inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                <button type="submit" class="btn btn-link btn-sm p-0 text-muted"
+                                        style="font-size:0.65rem; text-decoration:none"
+                                        data-confirm="Undo this match result? Both competitors will be returned to this match."
+                                        title="Undo match result">
+                                    <i class="bi bi-arrow-counterclockwise"></i>
+                                </button>
+                            </form>
+                        {% elif is_done %}
                             <span class="text-success"><i class="bi bi-check-circle-fill"></i></span>
                         {% elif is_playable %}
                             <span class="text-warning"><i class="bi bi-play-fill"></i> Ready</span>

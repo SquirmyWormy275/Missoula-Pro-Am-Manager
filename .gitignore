@@ -35,6 +35,7 @@ dist/
 build/
 .gstack/
 .claude/
+.compound-engineering/*.local.yaml
 
 # Test / lint / coverage caches
 .pytest_cache/

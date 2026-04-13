@@ -63,6 +63,9 @@ def birling_manage(tournament_id, event_id):
     total_competitors = len(bracket_data.get('competitors', []))
     is_complete = len(placements) >= total_competitors and total_competitors > 0
 
+    # Compute which decided matches can be undone (no downstream play)
+    undoable_match_ids = bb.get_undoable_matches() if has_bracket else set()
+
     return render_template(
         'scheduling/birling_manage.html',
         tournament=tournament,
@@ -75,6 +78,7 @@ def birling_manage(tournament_id, event_id):
         placements=placements,
         is_complete=is_complete,
         total_competitors=total_competitors,
+        undoable_match_ids=undoable_match_ids,
     )
 
 
@@ -205,6 +209,118 @@ def birling_record_match(tournament_id, event_id):
         'winner_name': winner_name,
     })
     flash(f'{winner_name} wins match {match_id}.', 'success')
+    return redirect(url_for('scheduling.birling_manage',
+                            tournament_id=tournament_id, event_id=event_id))
+
+
+@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/fall', methods=['POST'])
+def birling_record_fall(tournament_id, event_id):
+    """Record a single fall in a best-of-3 birling match."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
+        abort(404)
+
+    match_id = request.form.get('match_id', '').strip()
+    fall_winner_raw = request.form.get('fall_winner_id', '').strip()
+
+    if not match_id or not fall_winner_raw:
+        flash('Match ID and fall winner are required.', 'error')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
+
+    try:
+        fall_winner_id = int(fall_winner_raw)
+    except (TypeError, ValueError):
+        flash('Invalid fall winner ID.', 'error')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
+
+    from services.birling_bracket import BirlingBracket
+    bb = BirlingBracket(event)
+
+    try:
+        result = bb.record_fall(match_id, fall_winner_id)
+    except ValueError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
+
+    comp_lookup = {c['id']: c['name'] for c in bb.bracket_data.get('competitors', [])}
+    fall_winner_name = comp_lookup.get(fall_winner_id, f'#{fall_winner_id}')
+
+    if result['match_decided']:
+        winner_name = comp_lookup.get(result['winner'], f'#{result["winner"]}')
+        flash(f'{winner_name} wins match {match_id} (2-{_fall_loser_count(result)}).', 'success')
+    else:
+        c1 = bb._find_match(match_id)['competitor1']
+        c2 = bb._find_match(match_id)['competitor2']
+        c1_name = comp_lookup.get(c1, f'#{c1}')
+        c2_name = comp_lookup.get(c2, f'#{c2}')
+        c1_falls = sum(1 for f in result['falls'] if f['winner'] == c1)
+        c2_falls = sum(1 for f in result['falls'] if f['winner'] == c2)
+        flash(
+            f'Fall {len(result["falls"])} recorded. '
+            f'Score: {c1_name} {c1_falls} - {c2_name} {c2_falls}',
+            'info'
+        )
+
+    log_action('birling_fall_recorded', 'event', event_id, {
+        'match_id': match_id,
+        'fall_number': len(result['falls']),
+        'fall_winner_id': fall_winner_id,
+        'fall_winner_name': fall_winner_name,
+        'match_decided': result['match_decided'],
+    })
+    return redirect(url_for('scheduling.birling_manage',
+                            tournament_id=tournament_id, event_id=event_id))
+
+
+def _fall_loser_count(result):
+    """Count falls won by the losing competitor."""
+    winner = result['winner']
+    return sum(1 for f in result['falls'] if f['winner'] != winner)
+
+
+@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/undo', methods=['POST'])
+def birling_undo_match(tournament_id, event_id):
+    """Undo a birling match result — return both competitors to the match."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
+        abort(404)
+
+    match_id = request.form.get('match_id', '').strip()
+    if not match_id:
+        flash('Match ID is required.', 'error')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
+
+    from services.birling_bracket import BirlingBracket
+    bb = BirlingBracket(event)
+
+    # Capture previous state for audit log
+    match = bb._find_match(match_id)
+    prev_winner = match['winner'] if match else None
+    prev_loser = match['loser'] if match else None
+
+    try:
+        result = bb.undo_match_result(match_id)
+    except ValueError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
+
+    comp_lookup = {c['id']: c['name'] for c in bb.bracket_data.get('competitors', [])}
+
+    log_action('birling_match_undone', 'event', event_id, {
+        'match_id': match_id,
+        'previous_winner': prev_winner,
+        'previous_winner_name': comp_lookup.get(prev_winner, '?') if prev_winner else None,
+        'previous_loser': prev_loser,
+        'previous_loser_name': comp_lookup.get(prev_loser, '?') if prev_loser else None,
+    })
+    flash(f'Match {match_id} result undone.', 'success')
     return redirect(url_for('scheduling.birling_manage',
                             tournament_id=tournament_id, event_id=event_id))
 

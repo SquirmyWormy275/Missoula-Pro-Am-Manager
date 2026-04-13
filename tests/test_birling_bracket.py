@@ -285,3 +285,125 @@ class TestGrandFinals:
             b.record_match_result('F2', 20)
         assert b.bracket_data['placements']['20'] == 1
         assert b.bracket_data['placements']['10'] == 2
+
+
+# ---------------------------------------------------------------------------
+# record_fall — best-of-3 fall recording
+# ---------------------------------------------------------------------------
+
+class TestFallRecording:
+    def test_fall_recording_best_of_3_straight(self):
+        """Record 2 falls to the same competitor. Match auto-resolves."""
+        b = _bracket(4)
+        match = b.bracket_data['bracket']['winners'][0][0]
+        comp1 = match['competitor1']
+
+        with patch('services.birling_bracket.db'):
+            result1 = b.record_fall(match['match_id'], comp1)
+        assert not result1['match_decided']
+        assert len(result1['falls']) == 1
+
+        with patch('services.birling_bracket.db'):
+            result2 = b.record_fall(match['match_id'], comp1)
+        assert result2['match_decided']
+        assert result2['winner'] == comp1
+        assert match['winner'] == comp1
+
+    def test_fall_recording_best_of_3_split(self):
+        """Record falls A, B, A. Match auto-resolves after 3rd fall."""
+        b = _bracket(4)
+        match = b.bracket_data['bracket']['winners'][0][0]
+        comp1 = match['competitor1']
+        comp2 = match['competitor2']
+
+        with patch('services.birling_bracket.db'):
+            r1 = b.record_fall(match['match_id'], comp1)
+        assert not r1['match_decided']
+
+        with patch('services.birling_bracket.db'):
+            r2 = b.record_fall(match['match_id'], comp2)
+        assert not r2['match_decided']
+
+        with patch('services.birling_bracket.db'):
+            r3 = b.record_fall(match['match_id'], comp1)
+        assert r3['match_decided']
+        assert r3['winner'] == comp1
+        assert len(r3['falls']) == 3
+
+    def test_fall_recording_non_playable_raises(self):
+        """Attempt to record fall for non-playable match raises ValueError."""
+        b = _bracket(4)
+        # W2_1 is not playable yet (no competitors filled)
+        with patch('services.birling_bracket.db'):
+            with pytest.raises(ValueError, match="not currently playable"):
+                b.record_fall('W2_1', 1)
+
+    def test_direct_declare_sets_falls_retroactively(self):
+        """Direct declare (record_match_result) sets 2 falls for the winner."""
+        b = _bracket(4)
+        match = b.bracket_data['bracket']['winners'][0][0]
+        comp1 = match['competitor1']
+
+        with patch('services.birling_bracket.db'):
+            b.record_match_result(match['match_id'], comp1)
+        falls = match.get('falls', [])
+        assert len(falls) == 2
+        assert all(f['winner'] == comp1 for f in falls)
+
+
+# ---------------------------------------------------------------------------
+# undo_match_result — single-match undo
+# ---------------------------------------------------------------------------
+
+class TestUndoMatchResult:
+    def test_undo_match_success(self):
+        """Record a match, undo it. Verify state cleared."""
+        b = _bracket(4)
+        match = b.bracket_data['bracket']['winners'][0][0]
+        comp1 = match['competitor1']
+        comp2 = match['competitor2']
+
+        with patch('services.birling_bracket.db'):
+            b.record_match_result(match['match_id'], comp1)
+        assert match['winner'] == comp1
+        assert match['loser'] == comp2
+
+        with patch('services.birling_bracket.db'):
+            result = b.undo_match_result(match['match_id'])
+        assert result['undone'] is True
+        assert match['winner'] is None
+        assert match['loser'] is None
+        assert match['falls'] == []
+        # Both competitors should still be in the match
+        assert match['competitor1'] == comp1
+        assert match['competitor2'] == comp2
+
+    def test_undo_with_downstream_played_raises(self):
+        """Record two consecutive rounds, try to undo the first. Expect error."""
+        b = _bracket(4)
+        first_round = b.bracket_data['bracket']['winners'][0]
+        # Play both first-round matches
+        for m in first_round:
+            if m['competitor1'] is not None and m['competitor2'] is not None:
+                with patch('services.birling_bracket.db'):
+                    b.record_match_result(m['match_id'], m['competitor1'])
+
+        # Play the second-round match (uses winners from first round)
+        second_round = b.bracket_data['bracket']['winners'][1]
+        for m in second_round:
+            if m['competitor1'] is not None and m['competitor2'] is not None:
+                with patch('services.birling_bracket.db'):
+                    b.record_match_result(m['match_id'], m['competitor1'])
+
+        # Try to undo the first-round match — should fail (downstream played)
+        with patch('services.birling_bracket.db'):
+            with pytest.raises(ValueError, match="downstream match"):
+                b.undo_match_result(first_round[0]['match_id'])
+
+    def test_undo_match_no_winner_raises(self):
+        """Try to undo a match with no winner. Expect ValueError."""
+        b = _bracket(4)
+        match = b.bracket_data['bracket']['winners'][0][0]
+        with patch('services.birling_bracket.db'):
+            with pytest.raises(ValueError, match="no result to undo"):
+                b.undo_match_result(match['match_id'])
