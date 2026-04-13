@@ -461,6 +461,62 @@ def day_schedule(tournament_id):
     return redirect(url_for('scheduling.event_list', tournament_id=tournament_id), 301)
 
 
+# ---------------------------------------------------------------------------
+# Manual event ordering — drag-and-drop endpoints
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/events/reorder-friday', methods=['POST'])
+def reorder_friday_events(tournament_id):
+    """Save custom Friday event display order. Expects JSON {event_ids: [int, ...]}."""
+    from flask import jsonify
+    tournament = Tournament.query.get_or_404(tournament_id)
+    try:
+        data = request.get_json(force=True)
+        event_ids = [int(eid) for eid in data.get('event_ids', [])]
+    except (TypeError, ValueError, AttributeError):
+        return jsonify({'ok': False, 'error': 'Invalid event_ids'}), 400
+
+    cfg = tournament.get_schedule_config()
+    cfg['friday_event_order'] = event_ids
+    tournament.set_schedule_config(cfg)
+    db.session.commit()
+    log_action('friday_event_order_set', 'tournament', tournament_id, {'order': event_ids})
+    return jsonify({'ok': True})
+
+
+@scheduling_bp.route('/<int:tournament_id>/events/reorder-saturday', methods=['POST'])
+def reorder_saturday_events(tournament_id):
+    """Save custom Saturday event display order (fallback mode). Expects JSON {event_ids: [int, ...]}."""
+    from flask import jsonify
+    tournament = Tournament.query.get_or_404(tournament_id)
+    try:
+        data = request.get_json(force=True)
+        event_ids = [int(eid) for eid in data.get('event_ids', [])]
+    except (TypeError, ValueError, AttributeError):
+        return jsonify({'ok': False, 'error': 'Invalid event_ids'}), 400
+
+    cfg = tournament.get_schedule_config()
+    cfg['saturday_event_order'] = event_ids
+    tournament.set_schedule_config(cfg)
+    db.session.commit()
+    log_action('saturday_event_order_set', 'tournament', tournament_id, {'order': event_ids})
+    return jsonify({'ok': True})
+
+
+@scheduling_bp.route('/<int:tournament_id>/events/reset-order', methods=['POST'])
+def reset_event_order(tournament_id):
+    """Remove custom event ordering, reverting to config defaults."""
+    from flask import jsonify
+    tournament = Tournament.query.get_or_404(tournament_id)
+    cfg = tournament.get_schedule_config()
+    cfg.pop('friday_event_order', None)
+    cfg.pop('saturday_event_order', None)
+    tournament.set_schedule_config(cfg)
+    db.session.commit()
+    log_action('event_order_reset', 'tournament', tournament_id, {})
+    return jsonify({'ok': True})
+
+
 def _day_schedule_legacy(tournament_id):
     """Legacy day-schedule logic — kept for reference, no longer routed."""
     from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
