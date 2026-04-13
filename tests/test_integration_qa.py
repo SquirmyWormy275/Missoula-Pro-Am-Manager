@@ -10,7 +10,6 @@ import pytest
 
 from app import create_app
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DB = PROJECT_ROOT / "instance" / "proam.db"
 TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
@@ -53,8 +52,8 @@ def qa_env(monkeypatch):
 def _seed_pro_workflow(app, *, event_name: str, max_stands: int = 2):
     """Create an isolated pro tournament, timed event, and ranked competitors."""
     with app.app_context():
-        from database import db
         from config import event_rank_category
+        from database import db
         from models import Event, EventResult, ProEventRank, Tournament
         from models.competitor import ProCompetitor
 
@@ -347,8 +346,8 @@ def test_registration_to_heat_workflow(qa_env):
     assert create_response.status_code == 302
 
     with app.app_context():
-        from database import db
         from config import event_rank_category
+        from database import db
         from models import Event, ProEventRank
         from models.competitor import ProCompetitor
 
@@ -409,8 +408,8 @@ def test_heat_generation_rule_verification(qa_env):
     client = qa_env["client"]
 
     with app.app_context():
-        from database import db
         from config import event_rank_category
+        from database import db
         from models import Event, EventResult, ProEventRank, Tournament
         from models.competitor import ProCompetitor
 

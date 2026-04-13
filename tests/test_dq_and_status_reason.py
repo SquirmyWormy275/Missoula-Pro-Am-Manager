@@ -9,12 +9,12 @@ import pytest
 from database import db
 from models.event import EventResult
 from tests.conftest import (
-    make_tournament,
-    make_team,
     make_college_competitor,
     make_event,
-    make_heat,
     make_event_result,
+    make_heat,
+    make_team,
+    make_tournament,
 )
 
 

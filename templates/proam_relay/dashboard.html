@@ -138,6 +138,21 @@
                         <i class="bi bi-info-circle"></i>
                         Teams have been drawn. {{ teams|length }} teams are ready to compete.
                     </div>
+                    {% if teams %}
+                    <div class="mb-3">
+                        <small class="text-muted d-block mb-1">Team Health</small>
+                        {% for team in teams %}
+                        {% set h = team_health.get(team.team_number, {'status': 'green', 'detail': ''}) %}
+                        <span
+                            class="badge rounded-circle me-1
+                                {% if h.status == 'green' %}bg-success
+                                {% elif h.status == 'yellow' %}bg-warning
+                                {% else %}bg-danger{% endif %}"
+                            title="{{ team.name }}: {{ h.detail }}"
+                        >&nbsp;</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
                     <div class="d-grid gap-2">
                         <a href="{{ url_for('proam_relay.view_teams', tournament_id=tournament.id) }}" class="btn btn-primary">
                             <i class="bi bi-people"></i> View Teams

@@ -290,3 +290,100 @@ class TestEmptyAndNullCases:
         assert belle == []
         data = tournament.get_bull_belle_with_tiebreak_data('M', 10)
         assert data == []
+
+
+# ---------------------------------------------------------------------------
+# 6. Scratch filter — Unit 6
+# ---------------------------------------------------------------------------
+
+
+class TestScratchedCompetitorExcluded:
+    """Scratched competitors must NOT appear in Bull/Belle standings."""
+
+    def test_scratched_competitor_excluded(self, db_session, tournament):
+        """A competitor with status='scratched' is excluded from standings."""
+        from models.competitor import CollegeCompetitor
+
+        team = _make_team(db_session, tournament)
+        active = _make_competitor(db_session, tournament, team, 'Active', 'M', 40)
+        # Create a scratched competitor directly (bypass helper which sets 'active').
+        scratched = CollegeCompetitor(
+            tournament_id=tournament.id,
+            team_id=team.id,
+            name='Scratched',
+            gender='M',
+            events_entered='[]',
+            status='scratched',
+            individual_points=50,  # higher points — must NOT appear
+        )
+        db_session.add(scratched)
+        db_session.flush()
+
+        bull = tournament.get_bull_of_woods(10)
+        names = [c.name for c in bull]
+        assert 'Scratched' not in names
+        assert 'Active' in names
+
+    def test_active_competitor_with_points_appears(self, db_session, tournament):
+        """An active competitor appears normally in standings."""
+        team = _make_team(db_session, tournament)
+        _make_competitor(db_session, tournament, team, 'Visible', 'M', 35)
+        db_session.flush()
+
+        bull = tournament.get_bull_of_woods(10)
+        names = [c.name for c in bull]
+        assert 'Visible' in names
+
+    def test_standings_page_no_unfinalized_indicator_when_all_finalized(
+        self, db_session, tournament
+    ):
+        """When all events are finalized, unfinalized_events list is empty."""
+        from models.event import Event, EventResult
+
+        team = _make_team(db_session, tournament)
+        event = Event(
+            tournament_id=tournament.id,
+            name='Finalized Event',
+            event_type='college',
+            gender='M',
+            scoring_type='time',
+            scoring_order='lowest_wins',
+            stand_type='underhand',
+            max_stands=5,
+            payouts='{}',
+            status='completed',
+            is_finalized=True,
+        )
+        db_session.add(event)
+        db_session.flush()
+        comp = _make_competitor(db_session, tournament, team, 'Comp A', 'M', 20)
+        result = EventResult(
+            event_id=event.id,
+            competitor_id=comp.id,
+            competitor_type='college',
+            competitor_name=comp.name,
+            result_value=25.0,
+            run1_value=25.0,
+            final_position=1,
+            points_awarded=5,
+            status='completed',
+        )
+        db_session.add(result)
+        db_session.flush()
+
+        from models.event import Event as Ev
+        from models.event import EventResult as ER
+        unfinalized = (
+            db_session.query(Ev)
+            .filter(
+                Ev.tournament_id == tournament.id,
+                Ev.is_finalized == False,  # noqa: E712
+            )
+            .filter(
+                db_session.query(ER)
+                .filter(ER.event_id == Ev.id, ER.status == 'completed')
+                .exists()
+            )
+            .all()
+        )
+        assert unfinalized == []

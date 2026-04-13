@@ -23,9 +23,9 @@ from __future__ import annotations
 
 from typing import TypedDict
 
+from models.competitor import CollegeCompetitor, ProCompetitor
 from models.event import Event
 from models.heat import Heat
-from models.competitor import CollegeCompetitor, ProCompetitor
 
 
 class JudgeSheetCompetitor(TypedDict):

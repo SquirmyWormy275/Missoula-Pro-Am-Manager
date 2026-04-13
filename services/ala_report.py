@@ -83,6 +83,7 @@ def generate_ala_pdf(report_data):
     """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import inch
     from reportlab.platypus import (
         Paragraph,
@@ -91,7 +92,6 @@ def generate_ala_pdf(report_data):
         Table,
         TableStyle,
     )
-    from reportlab.lib.styles import getSampleStyleSheet
 
     fd, path = tempfile.mkstemp(prefix="ala_report_", suffix=".pdf")
     os.close(fd)

@@ -194,8 +194,8 @@ def prune_stale_block_configs(tournament_id):
 
     Returns the number of rows deleted.
     """
-    from models.wood_config import WoodConfig
     from database import db
+    from models.wood_config import WoodConfig
 
     active = _active_block_keys(tournament_id)
     # Only block_* keys are candidates. Log keys are never pruned here.
@@ -963,8 +963,8 @@ def _detect_friday_feature_springboard(tournament_id):
     """
     if tournament_id is None:
         return (False, False)
-    import os
     import json
+    import os
     pro_one_board_is_friday = False
     three_board_is_friday = False
     try:
@@ -1358,8 +1358,8 @@ def apply_preset(tournament_id, preset_name):
 
     Returns the number of config keys updated.
     """
-    from models.wood_config import WoodConfig
     from database import db
+    from models.wood_config import WoodConfig
 
     presets = get_all_presets()
     preset = presets.get(preset_name)

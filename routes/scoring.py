@@ -920,6 +920,167 @@ def import_results(tournament_id, event_id):
 
 
 # ---------------------------------------------------------------------------
+# Routes: scratch cascade — preview / confirm / undo
+# ---------------------------------------------------------------------------
+
+
+def _load_competitor_for_tournament(tournament_id: int, competitor_id: int):
+    """Return (competitor, tournament) or abort 404/403.
+
+    Tries ProCompetitor first, then CollegeCompetitor.
+    Aborts 404 if not found, 403 if tournament mismatch (IDOR guard R6).
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    comp = ProCompetitor.query.get(competitor_id)
+    if comp is None:
+        comp = CollegeCompetitor.query.get(competitor_id)
+    if comp is None:
+        abort(404)
+    if comp.tournament_id != tournament_id:
+        abort(403)
+    return comp, tournament
+
+
+@scoring_bp.route('/<int:tournament_id>/competitor/<int:competitor_id>/scratch-preview')
+def scratch_preview(tournament_id, competitor_id):
+    """GET: Compute cascade effects and return JSON for the preview modal.
+
+    Response body: {"competitor_name": str, "effects": [CascadeEffect dicts]}
+    """
+    comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
+    from services.scratch_cascade import compute_scratch_effects
+    try:
+        effects = compute_scratch_effects(comp, tournament)
+    except ValueError:
+        abort(403)
+
+    return jsonify({
+        'competitor_name': comp.name,
+        'effects': [
+            {
+                'effect_type': e.effect_type,
+                'description': e.description,
+                'affected_entity_id': e.affected_entity_id,
+                'affected_entity_type': e.affected_entity_type,
+                'metadata': e.metadata,
+            }
+            for e in effects
+        ],
+    })
+
+
+@scoring_bp.route(
+    '/<int:tournament_id>/competitor/<int:competitor_id>/scratch-confirm',
+    methods=['POST'],
+)
+@write_limit('10 per minute')
+def scratch_confirm(tournament_id, competitor_id):
+    """POST: Execute scratch cascade with judge-selected effects.
+
+    Form fields:
+        effect_count          — total number of effects from preview
+        effect_type_{i}       — effect_type for effect i
+        affected_entity_id_{i} — affected_entity_id for effect i
+        affected_entity_type_{i} — affected_entity_type for effect i
+        effect_checked_{i}    — present (any value) if effect i is checked
+    """
+    comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
+
+    from services.scratch_cascade import CascadeEffect, compute_scratch_effects, execute_cascade
+
+    # Re-compute from fresh DB state so we can't be fed stale/forged IDs.
+    try:
+        fresh_effects = compute_scratch_effects(comp, tournament)
+    except ValueError:
+        abort(403)
+
+    # Build a lookup of fresh effects keyed by (effect_type, affected_entity_id).
+    fresh_lookup: dict[tuple, CascadeEffect] = {
+        (e.effect_type, e.affected_entity_id): e for e in fresh_effects
+    }
+
+    # Parse checked effects from form.
+    try:
+        effect_count = int(request.form.get('effect_count', 0))
+    except (TypeError, ValueError):
+        effect_count = 0
+
+    checked_effects: list[CascadeEffect] = []
+    for i in range(effect_count):
+        if request.form.get(f'effect_checked_{i}') is None:
+            continue  # unchecked
+        try:
+            etype = request.form.get(f'effect_type_{i}', '')
+            eid = int(request.form.get(f'affected_entity_id_{i}', 0))
+        except (TypeError, ValueError):
+            continue
+        effect = fresh_lookup.get((etype, eid))
+        if effect is not None:
+            checked_effects.append(effect)
+
+    if not checked_effects and effect_count == 0:
+        # No effects at all (competitor had none or form was empty) —
+        # still mark the competitor scratched with an empty cascade.
+        pass
+
+    judge_id = _current_user_id()
+    result = execute_cascade(comp, checked_effects, judge_id, tournament)
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+
+    if result['effects_applied'] == 0 and effect_count > 0:
+        flash('No changes applied — all effects were unchecked.', 'warning')
+    else:
+        flash(
+            f'{comp.name} scratched. {result["effects_applied"]} effect(s) applied.',
+            'warning',
+        )
+
+    # Redirect back to the competitor's registration page (pro or college).
+    from models.competitor import CollegeCompetitor as _CC
+    if isinstance(comp, _CC):
+        return redirect(
+            url_for('registration.team_detail',
+                    tournament_id=tournament_id, team_id=comp.team_id)
+        )
+    return redirect(
+        url_for('registration.pro_registration', tournament_id=tournament_id)
+    )
+
+
+@scoring_bp.route(
+    '/<int:tournament_id>/competitor/<int:competitor_id>/scratch-undo',
+    methods=['POST'],
+)
+@write_limit('10 per minute')
+def scratch_undo(tournament_id, competitor_id):
+    """POST: Reverse the most recent scratch within the undo window."""
+    comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
+
+    from services.scratch_cascade import reverse_cascade
+
+    judge_id = _current_user_id()
+    result = reverse_cascade(comp.id, judge_id, tournament)
+
+    if result['success']:
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        flash(f'Scratch reversed for {comp.name}.', 'success')
+    else:
+        flash(result['message'], 'warning')
+
+    from models.competitor import CollegeCompetitor as _CC
+    if isinstance(comp, _CC):
+        return redirect(
+            url_for('registration.team_detail',
+                    tournament_id=tournament_id, team_id=comp.team_id)
+        )
+    return redirect(
+        url_for('registration.pro_registration', tournament_id=tournament_id)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Routes: offline ops
 # ---------------------------------------------------------------------------
 
@@ -1178,6 +1339,45 @@ def tournament_payout_manager(tournament_id):
         total_purse=total_purse,
         configured_count=configured_count,
         total_events=len(pro_events),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Routes: payout settlement toggle (per EventResult)
+# ---------------------------------------------------------------------------
+
+
+@scoring_bp.route('/tournament/<int:tid>/result/<int:rid>/toggle-settled', methods=['POST'])
+@login_required
+def toggle_settlement(tid, rid):
+    """Toggle payout_settled boolean on a single EventResult.
+
+    Verifies the result belongs to tournament ``tid`` (returns 404 otherwise).
+    AJAX callers (X-Requested-With: XMLHttpRequest) receive JSON
+    ``{"ok": true, "settled": <bool>}``.  Plain-form callers are redirected.
+    """
+    result = EventResult.query.get_or_404(rid)
+    # Ownership check — result must belong to an event in this tournament.
+    event = Event.query.get_or_404(result.event_id)
+    if event.tournament_id != tid:
+        abort(404)
+
+    result.payout_settled = not result.payout_settled
+    db.session.commit()
+    log_action(
+        'payout_settlement_toggled',
+        'event_result',
+        rid,
+        {'settled': result.payout_settled, 'competitor': result.competitor_name},
+    )
+
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    if is_ajax:
+        return jsonify({'ok': True, 'settled': result.payout_settled})
+
+    # Non-JS fallback: redirect back to the payout summary for this tournament.
+    return redirect(
+        url_for('reporting.pro_payout_summary', tournament_id=tid)
     )
 
 

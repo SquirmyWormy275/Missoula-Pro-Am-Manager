@@ -44,7 +44,7 @@ def app():
 
 def _seed_rich_db(app):
     """Seed tournament, events, heats, competitors, teams, results."""
-    from models import Tournament, Event, EventResult, Heat, Team
+    from models import Event, EventResult, Heat, Team, Tournament
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.user import User
 

@@ -137,6 +137,19 @@
                             </td>
                             {% if current_user.is_authenticated and current_user.is_admin %}
                             <td class="text-center">
+                                {% set rid = result_id_map.get(c.id) %}
+                                {% if rid %}
+                                <button
+                                    type="button"
+                                    class="btn btn-sm settle-btn {% if c.payout_settled %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
+                                    data-result-id="{{ rid }}"
+                                    data-tournament-id="{{ tournament.id }}"
+                                    data-settled="{{ 'true' if c.payout_settled else 'false' }}"
+                                >
+                                    {% if c.payout_settled %}Unmark{% else %}Mark Paid{% endif %}
+                                </button>
+                                {% else %}
+                                {# Fallback form for competitors without an EventResult yet #}
                                 <form method="POST" style="display:inline;">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="competitor_id" value="{{ c.id }}">
@@ -144,6 +157,7 @@
                                         {% if c.payout_settled %}Unmark{% else %}Mark Paid{% endif %}
                                     </button>
                                 </form>
+                                {% endif %}
                             </td>
                             {% endif %}
                         </tr>
@@ -168,4 +182,64 @@
         </div>
     </div>
 </div>
+
+<script>
+(function () {
+    const csrfToken = "{{ csrf_token() }}";
+
+    document.querySelectorAll('.settle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const rid = btn.dataset.resultId;
+            const tid = btn.dataset.tournamentId;
+            const url = '/scoring/tournament/' + tid + '/result/' + rid + '/toggle-settled';
+
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': csrfToken,
+                },
+            })
+                .then(function (resp) { return resp.json(); })
+                .then(function (data) {
+                    if (!data.ok) return;
+                    const settled = data.settled;
+                    btn.dataset.settled = settled ? 'true' : 'false';
+
+                    // Update button label + style
+                    btn.textContent = settled ? 'Unmark' : 'Mark Paid';
+                    btn.classList.toggle('btn-outline-warning', settled);
+                    btn.classList.toggle('btn-outline-success', !settled);
+
+                    // Update row highlight
+                    const row = btn.closest('tr');
+                    if (row) {
+                        row.classList.toggle('table-success', settled);
+                    }
+
+                    // Update the status badge in the same row
+                    const statusCell = row ? row.querySelector('td:nth-child(5)') : null;
+                    if (statusCell) {
+                        statusCell.innerHTML = settled
+                            ? '<span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> Paid</span>'
+                            : '<span class="badge bg-warning text-dark">Pending</span>';
+                    }
+                })
+                .catch(function () {
+                    // On network error fall back to a plain form POST
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = '/scoring/tournament/' + tid + '/result/' + rid + '/toggle-settled';
+                    const csrf = document.createElement('input');
+                    csrf.type = 'hidden';
+                    csrf.name = 'csrf_token';
+                    csrf.value = csrfToken;
+                    form.appendChild(csrf);
+                    document.body.appendChild(form);
+                    form.submit();
+                });
+        });
+    });
+}());
+</script>
 {% endblock %}

@@ -58,6 +58,9 @@
             {% if event.is_hard_hit %}<span class="badge bg-dark">Hard Hit</span>{% endif %}
             {% if event.is_partnered %}<span class="badge bg-info">Partnered</span>{% endif %}
             {% if event.is_finalized %}<span class="badge bg-success"><i class="bi bi-lock"></i> Finalized</span>{% endif %}
+            {% if not event.is_finalized and (results | selectattr('status', 'equalto', 'completed') | list) %}
+            <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Pending re-finalization</span>
+            {% endif %}
           </div>
         </div>
         <div class="d-flex gap-2 flex-wrap">
