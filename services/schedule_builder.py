@@ -354,9 +354,12 @@ def _gender_rank(gender: str | None) -> int:
 
 def _add_mandatory_day_split_run2(schedule_entries: list[dict], college_events: list[Event]) -> list[dict]:
     """Always include Run 2 of day-split events on Saturday when configured."""
+    existing_event_ids = {entry.get('event_id') for entry in schedule_entries}
     updated = list(schedule_entries)
     for event in college_events:
         if event.name not in DAY_SPLIT_EVENT_NAMES or event.event_type != 'college':
+            continue
+        if event.id in existing_event_ids:
             continue
         updated.append({
             'slot': len(updated) + 1,
