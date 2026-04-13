@@ -271,6 +271,7 @@ from . import (
     friday_feature,  # noqa: F401, E402
     heat_sheets,  # noqa: F401, E402
     heats,  # noqa: F401, E402
+    partners,  # noqa: F401, E402
     preflight,  # noqa: F401, E402
     show_day,  # noqa: F401, E402
 )

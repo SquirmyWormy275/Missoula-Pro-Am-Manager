@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}Ops Dashboard – {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.ops-card {
+    background: var(--sx-surface);
+    border: 1px solid var(--sx-border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.22);
+    height: 100%;
+}
+.ops-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1rem;
+    background: var(--sx-surface-2);
+    border-bottom: 1px solid var(--sx-border);
+    font-weight: 700;
+    font-size: 0.86rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--sx-text-2);
+}
+.ops-card-body { padding: 0.9rem 1rem; }
+
+/* Relay dot indicators */
+.relay-dot {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.relay-dot.green  { background: #2da85e; }
+.relay-dot.yellow { background: #e8b84b; }
+.relay-dot.red    { background: #e74c3c; }
+
+/* Event strip badges */
+.ev-strip-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    background: var(--sx-surface-2);
+    border: 1px solid var(--sx-border);
+    white-space: nowrap;
+}
+.ev-strip-item.is-completed { border-color: rgba(45,168,94,0.45); background: rgba(45,168,94,0.07); }
+.ev-strip-item.is-in-progress { border-color: rgba(232,184,75,0.55); background: rgba(232,184,75,0.08); }
+.ev-strip-item.is-finalized { border-color: rgba(45,168,94,0.7); }
+
+#refresh-countdown { font-size: 0.72rem; color: var(--sx-text-2); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    {# ── Breadcrumb + Header ──────────────────────────────────── #}
+    <div class="row mb-3">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item">
+                        <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
+                            {{ tournament.name }}
+                        </a>
+                    </li>
+                    <li class="breadcrumb-item active">Ops Dashboard</li>
+                </ol>
+            </nav>
+
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                <div>
+                    <h1 class="mb-0">
+                        <i class="bi bi-radar text-warning me-2"></i>Race-Day Ops
+                    </h1>
+                    <p class="text-muted mb-0 small">
+                        {{ tournament.name }} {{ tournament.year }} &mdash; Mission Control
+                    </p>
+                </div>
+                <div class="d-flex gap-2 flex-wrap align-items-center">
+                    <span id="refresh-countdown">Refreshing in <span id="rc-num">30</span>s</span>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh Now
+                    </button>
+                    <a href="{{ url_for('scheduling.show_day', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-broadcast me-1"></i>Show Day
+                    </a>
+                    <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-arrow-left me-1"></i>Back
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# ══════════════════════════════════════════════════════════════
+       ROW 1: Scratch Feed | Relay Health | Standings Integrity
+    ══════════════════════════════════════════════════════════════ #}
+    <div class="row g-3 mb-3">
+
+        {# --- Section 1: Live Scratch Feed --- #}
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="ops-card">
+                <div class="ops-card-header">
+                    <span><i class="bi bi-person-dash me-1 text-danger"></i>Recent Scratches</span>
+                    <span class="badge bg-secondary">{{ scratch_feed|length }}</span>
+                </div>
+                <div class="ops-card-body p-0">
+                    {% if scratch_feed %}
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0" style="font-size:0.80rem;">
+                            <thead>
+                                <tr>
+                                    <th class="ps-3">Time</th>
+                                    <th>Competitor</th>
+                                    <th class="pe-3">By</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for entry in scratch_feed %}
+                                <tr>
+                                    <td class="ps-3 text-muted" style="white-space:nowrap;">
+                                        {{ entry.created_at.strftime('%H:%M') if entry.created_at else '—' }}
+                                    </td>
+                                    <td>
+                                        {{ entry.entity_id or '—' }}
+                                    </td>
+                                    <td class="pe-3 text-muted">
+                                        {% if entry.actor_user_id %}
+                                            Judge #{{ entry.actor_user_id }}
+                                        {% else %}
+                                            —
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="ops-card-body text-muted small">
+                        <i class="bi bi-check-circle text-success me-1"></i>No recent scratches
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {# --- Section 2: Relay Team Health --- #}
+        {% if relay_event %}
+        <div class="col-12 col-md-6 col-lg-4" id="relay-health-section">
+            <div class="ops-card">
+                <div class="ops-card-header">
+                    <span><i class="bi bi-people me-1 text-info"></i>Relay Team Health</span>
+                    <span class="badge bg-secondary">{{ team_health|length }} teams</span>
+                </div>
+                <div class="ops-card-body">
+                    {% if team_health %}
+                        {% for th in team_health %}
+                        <div class="d-flex align-items-center mb-2" style="font-size:0.85rem;">
+                            <span class="relay-dot {{ th.health.status }}"></span>
+                            <span class="fw-semibold me-2">Team {{ th.team.get('team_number', loop.index) }}</span>
+                            <span class="text-muted small">{{ th.health.detail }}</span>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted small mb-0">Relay draw not yet completed.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {# --- Section 3: Standings Integrity --- #}
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="ops-card">
+                <div class="ops-card-header">
+                    <span><i class="bi bi-shield-check me-1 text-warning"></i>Standings Integrity</span>
+                    {% if integrity_warnings %}
+                        <span class="badge bg-warning text-dark">{{ integrity_warnings|length }}</span>
+                    {% else %}
+                        <span class="badge bg-success">OK</span>
+                    {% endif %}
+                </div>
+                <div class="ops-card-body">
+                    {% if integrity_warnings %}
+                        {% for w in integrity_warnings %}
+                        <div class="d-flex align-items-start gap-2 mb-2" style="font-size:0.82rem;">
+                            <i class="bi bi-exclamation-triangle-fill text-warning mt-1 flex-shrink-0"></i>
+                            <span>{{ w.message }}</span>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-success" style="font-size:0.88rem;">
+                            <i class="bi bi-check-circle-fill me-1"></i>
+                            All finalized. No scratched competitors with standing results.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+    </div>{# /row 1 #}
+
+    {# ══════════════════════════════════════════════════════════════
+       ROW 2: Payout Status | Event Strip
+    ══════════════════════════════════════════════════════════════ #}
+    <div class="row g-3 mb-3">
+
+        {# --- Section 4: Payout Status --- #}
+        <div class="col-12 col-md-5 col-lg-4">
+            <div class="ops-card">
+                <div class="ops-card-header">
+                    <span><i class="bi bi-cash-stack me-1 text-success"></i>Payout Status</span>
+                </div>
+                <div class="ops-card-body">
+                    <div class="row text-center g-2 mb-3">
+                        <div class="col-4">
+                            <div class="small text-muted">Total Purse</div>
+                            <div class="fw-bold" style="font-size:1.1rem;">
+                                ${{ "%.2f"|format(payout_summary.total_purse) }}
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="small text-muted">Settled</div>
+                            <div class="fw-bold text-success" style="font-size:1.1rem;">
+                                ${{ '%.2f' | format(payout_summary.total_settled) }}
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="small text-muted">Outstanding</div>
+                            <div class="fw-bold {% if payout_summary.outstanding > 0 %}text-warning{% else %}text-success{% endif %}"
+                                 style="font-size:1.1rem;">
+                                ${{ '%.2f' | format(payout_summary.outstanding) }}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="progress" style="height:8px;">
+                        <div class="progress-bar bg-success"
+                             role="progressbar"
+                             style="width:{{ payout_summary.pct }}%;"
+                             aria-valuenow="{{ payout_summary.pct }}"
+                             aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <div class="text-end small text-muted mt-1">{{ payout_summary.pct }}% settled</div>
+                </div>
+            </div>
+        </div>
+
+        {# --- Section 5: Event Finalization Strip --- #}
+        <div class="col-12 col-md-7 col-lg-8">
+            <div class="ops-card">
+                <div class="ops-card-header">
+                    <span><i class="bi bi-list-check me-1"></i>Event Status Strip</span>
+                    <span class="badge bg-secondary">{{ events|length }}</span>
+                </div>
+                <div class="ops-card-body">
+                    {% if events %}
+                    <div class="d-flex flex-wrap gap-2">
+                        {% for ev in events %}
+                        <span class="ev-strip-item
+                            {% if ev.status == 'completed' %}is-completed{% elif ev.status == 'in_progress' %}is-in-progress{% endif %}
+                            {% if ev.is_finalized %}is-finalized{% endif %}">
+                            {% if ev.status == 'completed' and ev.is_finalized %}
+                                <i class="bi bi-check-circle-fill text-success"></i>
+                            {% elif ev.status == 'completed' and not ev.is_finalized %}
+                                <i class="bi bi-exclamation-circle-fill text-warning" title="Needs re-finalization"></i>
+                            {% elif ev.status == 'in_progress' %}
+                                <i class="bi bi-play-circle-fill text-warning"></i>
+                            {% else %}
+                                <i class="bi bi-circle text-muted"></i>
+                            {% endif %}
+                            {{ ev.display_name }}
+                            {% if ev.status == 'completed' and not ev.is_finalized %}
+                                <span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;">re-fin</span>
+                            {% endif %}
+                        </span>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                        <p class="text-muted small mb-0">No events configured.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+    </div>{# /row 2 #}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var secs = 30;
+    var el = document.getElementById('rc-num');
+    var iv = setInterval(function () {
+        secs -= 1;
+        if (el) el.textContent = secs;
+        if (secs <= 0) { clearInterval(iv); location.reload(); }
+    }, 1000);
+}());
+</script>
+{% endblock %}

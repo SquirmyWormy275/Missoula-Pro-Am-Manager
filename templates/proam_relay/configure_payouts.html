@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Relay Payouts – {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="row justify-content-center">
+    <div class="col-lg-7">
+
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item">
+            <a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}">Pro-Am Relay</a>
+          </li>
+          <li class="breadcrumb-item active">Configure Payouts</li>
+        </ol>
+      </nav>
+
+      <div class="card">
+        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+          <h5 class="mb-0"><i class="bi bi-cash-stack me-2"></i>Pro-Am Relay — Team Payouts</h5>
+          {% if current_payouts %}
+          <span class="badge bg-dark">
+            Total: ${{ "%.2f"|format(current_payouts.values()|map('float')|sum) }}
+          </span>
+          {% endif %}
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Set lump-sum payout per finishing position (places 1–8).
+            Leave blank for no payout at that place.
+          </p>
+
+          <form method="POST" id="relayPayoutForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead class="table-light">
+                  <tr>
+                    <th>Place</th>
+                    <th>Team Payout</th>
+                    <th class="text-muted small text-end">Running Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for i in range(1, 9) %}
+                  <tr>
+                    <td>
+                      {% if i == 1 %}<span class="badge badge-gold">1st</span>
+                      {% elif i == 2 %}<span class="badge badge-silver">2nd</span>
+                      {% elif i == 3 %}<span class="badge badge-bronze">3rd</span>
+                      {% else %}<span class="text-muted">{{ i }}th</span>{% endif %}
+                    </td>
+                    <td>
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text">$</span>
+                        <input type="number" class="form-control payout-input"
+                               name="payout_{{ i }}" step="0.01" min="0"
+                               value="{{ "%.2f"|format(current_payouts.get(i|string)|float) if current_payouts.get(i|string) else '' }}"
+                               placeholder="0.00">
+                      </div>
+                    </td>
+                    <td class="text-end text-muted small">
+                      <span class="running-total" id="rt_{{ i }}">$0.00</span>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+                <tfoot>
+                  <tr class="table-light fw-bold">
+                    <td>Total</td>
+                    <td colspan="2" class="text-end" id="grandTotal">$0.00</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div class="d-grid gap-2 mt-3">
+              <button type="submit" class="btn btn-warning">
+                <i class="bi bi-check-circle"></i> Save Relay Payouts
+              </button>
+              <a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}"
+                 class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Back to Relay Dashboard
+              </a>
+            </div>
+          </form>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const inputs   = document.querySelectorAll('.payout-input');
+    const grandTot = document.getElementById('grandTotal');
+
+    function updateTotals() {
+        let running = 0;
+        inputs.forEach((inp, idx) => {
+            const v = parseFloat(inp.value) || 0;
+            running += v;
+            const rt = document.getElementById(`rt_${idx + 1}`);
+            if (rt) rt.textContent = `$${running.toFixed(2)}`;
+        });
+        grandTot.textContent = `$${running.toFixed(2)}`;
+    }
+    inputs.forEach(inp => inp.addEventListener('input', updateTotals));
+    updateTotals();
+});
+</script>
+{% endblock %}

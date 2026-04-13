@@ -654,8 +654,179 @@ def clone_tournament(tournament_id):
 
 
 # ---------------------------------------------------------------------------
-# Tournament config export to JSON
+# Race-Day Operations Dashboard (Unit 12 capstone)
 # ---------------------------------------------------------------------------
+
+@main_bp.route('/tournament/<int:tid>/ops-dashboard')
+def ops_dashboard(tid):
+    """GET: Race-day operations dashboard — single-page mission control.
+
+    Read-only.  Requires judge role (main is in MANAGEMENT_BLUEPRINTS).
+    Auto-refreshes every 30 seconds via JS.
+    """
+    tournament = Tournament.query.get_or_404(tid)
+
+    from models.audit_log import AuditLog
+    from models.event import EventResult
+
+    # ------------------------------------------------------------------
+    # Section 1: Live scratch feed — last 20 competitor_scratched entries
+    # ------------------------------------------------------------------
+    # Filter to this tournament by checking details_json for the tournament_id.
+    # AuditLog has no tournament_id column, so we filter in Python.
+    _all_scratches = (
+        AuditLog.query
+        .filter_by(action='competitor_scratched')
+        .order_by(AuditLog.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    scratch_feed = []
+    for entry in _all_scratches:
+        try:
+            details = json.loads(entry.details_json or '{}')
+            if details.get('tournament_id') == tid:
+                scratch_feed.append(entry)
+                if len(scratch_feed) >= 20:
+                    break
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    # ------------------------------------------------------------------
+    # Section 2: Relay team health
+    # ------------------------------------------------------------------
+    relay_event = Event.query.filter_by(
+        tournament_id=tid, name='Pro-Am Relay'
+    ).first()
+    team_health = []
+    if relay_event:
+        try:
+            from services.proam_relay import compute_team_health
+            import json as _json
+            raw = relay_event.event_state or relay_event.payouts or '{}'
+            relay_data = _json.loads(raw)
+            for team in relay_data.get('teams', []):
+                health = compute_team_health(team, tournament)
+                team_health.append({'team': team, 'health': health})
+        except Exception:
+            logger.warning('ops_dashboard: relay health computation failed', exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Section 3: Standings integrity warnings
+    # ------------------------------------------------------------------
+    integrity_warnings = []
+    # Unfinalized events that have at least one completed result
+    all_events = tournament.events.all()
+    for ev in all_events:
+        if not ev.is_finalized:
+            has_completed = ev.results.filter_by(status='completed').first() is not None
+            if has_completed:
+                integrity_warnings.append({
+                    'type': 'unfinalized',
+                    'message': f'{ev.display_name} has completed results but is not finalized',
+                    'event_id': ev.id,
+                })
+
+    # Scratched competitors that still have completed EventResults
+    event_ids = [ev.id for ev in all_events]
+    if event_ids:
+        from models.competitor import CollegeCompetitor, ProCompetitor
+        scratched_college_ids = [
+            c.id for c in tournament.college_competitors.filter_by(status='scratched').all()
+        ]
+        scratched_pro_ids = [
+            c.id for c in tournament.pro_competitors.filter_by(status='scratched').all()
+        ]
+        if scratched_college_ids:
+            ghost_count = (
+                EventResult.query
+                .filter(
+                    EventResult.event_id.in_(event_ids),
+                    EventResult.competitor_type == 'college',
+                    EventResult.competitor_id.in_(scratched_college_ids),
+                    EventResult.status == 'completed',
+                )
+                .count()
+            )
+            if ghost_count:
+                integrity_warnings.append({
+                    'type': 'scratched_has_results',
+                    'message': (
+                        f'{ghost_count} completed result(s) belong to scratched college competitor(s)'
+                    ),
+                })
+        if scratched_pro_ids:
+            ghost_count = (
+                EventResult.query
+                .filter(
+                    EventResult.event_id.in_(event_ids),
+                    EventResult.competitor_type == 'pro',
+                    EventResult.competitor_id.in_(scratched_pro_ids),
+                    EventResult.status == 'completed',
+                )
+                .count()
+            )
+            if ghost_count:
+                integrity_warnings.append({
+                    'type': 'scratched_has_results',
+                    'message': (
+                        f'{ghost_count} completed result(s) belong to scratched pro competitor(s)'
+                    ),
+                })
+
+    # ------------------------------------------------------------------
+    # Section 4: Payout status — pro events only
+    # ------------------------------------------------------------------
+    pro_event_ids = [ev.id for ev in all_events if ev.event_type == 'pro']
+    total_purse = 0.0
+    total_settled = 0.0
+    if pro_event_ids:
+        from sqlalchemy import case, func
+        row = (
+            EventResult.query
+            .filter(EventResult.event_id.in_(pro_event_ids))
+            .with_entities(
+                func.coalesce(func.sum(EventResult.payout_amount), 0.0).label('total'),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (EventResult.payout_settled == True, EventResult.payout_amount),  # noqa: E712
+                            else_=0.0,
+                        )
+                    ),
+                    0.0,
+                ).label('settled'),
+            )
+            .first()
+        )
+        if row:
+            total_purse = float(row.total or 0.0)
+            total_settled = float(row.settled or 0.0)
+    payout_outstanding = total_purse - total_settled
+    payout_pct = int(total_settled / total_purse * 100) if total_purse > 0 else 0
+    payout_summary = {
+        'total_purse': total_purse,
+        'total_settled': total_settled,
+        'outstanding': payout_outstanding,
+        'pct': payout_pct,
+    }
+
+    # ------------------------------------------------------------------
+    # Section 5: Event finalization strip — all events with status info
+    # ------------------------------------------------------------------
+    events = all_events
+
+    return render_template(
+        'ops_dashboard.html',
+        tournament=tournament,
+        scratch_feed=scratch_feed,
+        team_health=team_health,
+        relay_event=relay_event,
+        integrity_warnings=integrity_warnings,
+        payout_summary=payout_summary,
+        events=events,
+    )
+
 
 @main_bp.route('/tournament/<int:tournament_id>/export-config')
 def export_tournament_config(tournament_id):

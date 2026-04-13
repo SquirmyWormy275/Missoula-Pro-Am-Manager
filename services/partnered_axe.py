@@ -24,9 +24,17 @@ class PartneredAxeThrow:
         self._load_state()
 
     def _load_state(self) -> dict:
-        """Load partnered axe state from event payouts field."""
+        """Load partnered axe state from event_state column with payouts fallback.
+
+        Reads from event_state (primary) with fallback to payouts for
+        backward compatibility during the migration transition.
+        """
+        raw = self.event.event_state
+        if not raw:
+            # Fallback: payouts column (legacy path)
+            raw = self.event.payouts
         try:
-            self.state = json.loads(self.event.payouts or '{}')
+            self.state = json.loads(raw or '{}')
         except:
             self.state = {}
 
@@ -41,10 +49,18 @@ class PartneredAxeThrow:
 
         return self.state
 
-    def _save_state(self):
-        """Save state to event."""
-        self.event.payouts = json.dumps(self.state)
-        db.session.commit()
+    def _save_state(self, commit: bool = True):
+        """Save state to event.
+
+        Args:
+            commit: When True (default) commits immediately so existing
+                callers are unaffected.  Pass commit=False to flush into
+                the current session without committing so the caller can
+                wrap multiple saves in a single outer transaction.
+        """
+        self.event.event_state = json.dumps(self.state)
+        if commit:
+            db.session.commit()
 
     def get_stage(self) -> str:
         """Get current stage: prelims, finals, or completed."""

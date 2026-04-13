@@ -40,6 +40,9 @@ def app():
     """Create a test Flask app with temp-file SQLite built via flask db upgrade."""
     from tests.db_test_utils import create_test_app
     _app, db_path = create_test_app()
+    # Disable session protection so session_transaction() injected sessions work
+    # regardless of preceding request context state.
+    _app.config['SESSION_PROTECTION'] = None
 
     with _app.app_context():
         _seed_db(_app)
@@ -52,8 +55,12 @@ def app():
 
 
 def _seed_db(app):
-    """Insert minimal seed data: one admin user, one tournament."""
+    """Insert minimal seed data: one admin user, one tournament, plus events for
+    the TestRefinalizationBadge smoke tests so no test body needs to commit."""
+    import json
+    from decimal import Decimal
     from models import Tournament
+    from models.event import Event, EventResult
     from models.user import User
 
     # Admin user — role='admin' grants is_admin, is_judge, can_score, etc.
@@ -67,6 +74,85 @@ def _seed_db(app):
         t = Tournament(name='Smoke Test 2026', year=2026, status='setup')
         _db.session.add(t)
 
+    _db.session.flush()
+
+    t = Tournament.query.first()
+
+    # Badge test event 1: in_progress, not finalized, has a completed result
+    if not Event.query.filter_by(name='Badge Test Unfinalized').first():
+        ev = Event(
+            tournament_id=t.id,
+            name='Badge Test Unfinalized',
+            event_type='pro',
+            gender='M',
+            scoring_type='time',
+            scoring_order='lowest_wins',
+            stand_type='underhand',
+            max_stands=5,
+            payouts=json.dumps({}),
+            status='in_progress',
+            is_finalized=False,
+        )
+        _db.session.add(ev)
+        _db.session.flush()
+        _db.session.add(EventResult(
+            event_id=ev.id,
+            competitor_id=1,
+            competitor_type='pro',
+            competitor_name='Test Pro Badge',
+            result_value=30.0,
+            run1_value=30.0,
+            final_position=1,
+            points_awarded=Decimal('10.00'),
+            status='completed',
+        ))
+
+    # Badge test event 2: finalized, has completed result — badge should NOT appear
+    if not Event.query.filter_by(name='Badge Test Finalized').first():
+        ev2 = Event(
+            tournament_id=t.id,
+            name='Badge Test Finalized',
+            event_type='pro',
+            gender='M',
+            scoring_type='time',
+            scoring_order='lowest_wins',
+            stand_type='underhand',
+            max_stands=5,
+            payouts=json.dumps({}),
+            status='completed',
+            is_finalized=True,
+        )
+        _db.session.add(ev2)
+        _db.session.flush()
+        _db.session.add(EventResult(
+            event_id=ev2.id,
+            competitor_id=1,
+            competitor_type='pro',
+            competitor_name='Test Pro Badge 2',
+            result_value=31.0,
+            run1_value=31.0,
+            final_position=1,
+            points_awarded=Decimal('10.00'),
+            status='completed',
+        ))
+
+    # Badge test event 3: in_progress, not finalized, NO completed results
+    if not Event.query.filter_by(name='Badge Test No Results').first():
+        ev3 = Event(
+            tournament_id=t.id,
+            name='Badge Test No Results',
+            event_type='pro',
+            gender='M',
+            scoring_type='time',
+            scoring_order='lowest_wins',
+            stand_type='underhand',
+            max_stands=5,
+            payouts=json.dumps({}),
+            status='in_progress',
+            is_finalized=False,
+        )
+        _db.session.add(ev3)
+
     _db.session.commit()
 
 
@@ -78,14 +164,20 @@ def client(app):
 
 @pytest.fixture()
 def auth_client(app):
-    """Return a test client logged in as the smoke_admin judge."""
-    c = app.test_client()
-    with app.app_context():
-        # POST to login
-        c.post('/auth/login', data={
-            'username': 'smoke_admin',
-            'password': 'smoke_pass',
-        }, follow_redirects=True)
+    """Return a test client logged in as the smoke_admin judge.
+
+    The login POST is made WITHOUT a nested app.app_context() push — the
+    module-scoped app context is already active when this fixture runs.
+    Passing use_cookies=True (default) and keeping the same client instance
+    ensures the session cookie from the login response is re-sent on the
+    subsequent authenticated request.
+    """
+    c = app.test_client(use_cookies=True)
+    # Login POST runs in the current (module-level) app context — no nesting.
+    c.post('/auth/login', data={
+        'username': 'smoke_admin',
+        'password': 'smoke_pass',
+    }, follow_redirects=True)
     return c
 
 
@@ -411,3 +503,96 @@ class TestImportRoutes:
 
     def test_import_upload(self, auth_client, tid):
         _ok(auth_client.get(f'/import/{tid}/pro/upload'))
+
+
+# ---------------------------------------------------------------------------
+# Unit 7: Re-finalization warning badge
+# ---------------------------------------------------------------------------
+
+
+class TestRefinalizationBadge:
+    """Verify the 'Pending re-finalization' badge appears on event_results page
+    when an event has completed results but is_finalized=False.
+
+    Events are pre-seeded in _seed_db so no test body commits are needed.
+    This avoids the SQLAlchemy scoped-session teardown interaction that caused
+    auth failures when portal tests preceded these tests in the run order.
+    """
+
+    def test_badge_shown_for_unfinalized_event_with_completed_results(
+        self, auth_client, tid
+    ):
+        """event_results page shows badge when is_finalized=False and results exist.
+
+        eid=1 because 'Badge Test Unfinalized' is the first event seeded in _seed_db.
+        """
+        import sys
+        r1 = auth_client.get(f'/scoring/{tid}/event/1/results')
+        r2 = auth_client.get(f'/scoring/{tid}/event/2/results')
+        print(f'\nDEBUG: event/1 -> {r1.status_code}, event/2 -> {r2.status_code}', file=sys.stderr)
+        r = r1
+        assert r.status_code not in (500, 502, 503)
+        assert b'Pending re-finalization' in r.data
+
+    def test_badge_not_shown_for_finalized_event(self, auth_client, tid):
+        """No badge when event is already finalized."""
+        from models.event import Event
+        eid = Event.query.filter_by(name='Badge Test Finalized').first().id
+        _db.session.remove()
+
+        r = auth_client.get(f'/scoring/{tid}/event/{eid}/results')
+        assert r.status_code not in (500, 502, 503)
+        assert b'Pending re-finalization' not in r.data
+
+    def test_badge_not_shown_for_new_event_with_no_results(
+        self, auth_client, tid
+    ):
+        """No badge when event has no completed results (never finalized)."""
+        from models.event import Event
+        eid = Event.query.filter_by(name='Badge Test No Results').first().id
+        _db.session.remove()
+
+        r = auth_client.get(f'/scoring/{tid}/event/{eid}/results')
+        assert r.status_code not in (500, 502, 503)
+        assert b'Pending re-finalization' not in r.data
+
+
+# ---------------------------------------------------------------------------
+# Unit 12: Race-Day Operations Dashboard
+# ---------------------------------------------------------------------------
+
+
+class TestOpsDashboard:
+    """Smoke tests for the race-day ops dashboard (capstone)."""
+
+    def test_dashboard_loads(self, auth_client, tid):
+        """Happy path: dashboard returns 200."""
+        r = auth_client.get(f'/tournament/{tid}/ops-dashboard')
+        assert r.status_code == 200
+
+    def test_auto_refresh_meta_tag_present(self, auth_client, tid):
+        """Page must contain an auto-refresh directive."""
+        r = auth_client.get(f'/tournament/{tid}/ops-dashboard')
+        assert r.status_code == 200
+        body = r.data
+        # Accept either meta http-equiv refresh OR JS setInterval reload pattern
+        assert (b'http-equiv="refresh"' in body or b'location.reload' in body)
+
+    def test_no_scratch_entries_shows_empty_message(self, auth_client, tid):
+        """When no audit entries exist, scratch feed shows empty state text."""
+        r = auth_client.get(f'/tournament/{tid}/ops-dashboard')
+        assert r.status_code == 200
+        assert b'No recent scratches' in r.data
+
+    def test_no_relay_event_hides_relay_section(self, auth_client, tid):
+        """When no Pro-Am Relay event exists, relay section is absent or hidden."""
+        r = auth_client.get(f'/tournament/{tid}/ops-dashboard')
+        assert r.status_code == 200
+        # Section must not show relay health content when no relay event exists
+        assert b'relay-health-section' not in r.data
+
+    def test_payout_section_shows_zero_when_no_payouts(self, auth_client, tid):
+        """Payout section renders $0.00 totals when no payout_amounts set."""
+        r = auth_client.get(f'/tournament/{tid}/ops-dashboard')
+        assert r.status_code == 200
+        assert b'$0.00' in r.data

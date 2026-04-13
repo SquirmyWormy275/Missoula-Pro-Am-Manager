@@ -30,16 +30,24 @@ class ProAmRelay:
         self.relay_data = self._load_relay_data()
 
     def _load_relay_data(self) -> dict:
-        """Load relay data from tournament or create new."""
-        # Store in a special event's payouts field
+        """Load relay data from tournament or create new.
+
+        Reads from event_state (primary) with fallback to payouts for
+        backward compatibility during the migration transition.
+        """
         relay_event = Event.query.filter_by(
             tournament_id=self.tournament.id,
             name='Pro-Am Relay'
         ).first()
 
         if relay_event:
+            # Primary: event_state column (new path)
+            raw = relay_event.event_state
+            if not raw:
+                # Fallback: payouts column (legacy path)
+                raw = relay_event.payouts
             try:
-                return json.loads(relay_event.payouts or '{}')
+                return json.loads(raw or '{}')
             except:
                 pass
 
@@ -52,8 +60,15 @@ class ProAmRelay:
             'drawn_pro': []
         }
 
-    def _save_relay_data(self):
-        """Save relay data to the relay event."""
+    def _save_relay_data(self, commit: bool = True):
+        """Save relay data to the relay event.
+
+        Args:
+            commit: When True (default) commits immediately so existing
+                callers are unaffected.  Pass commit=False to flush into
+                the current session without committing so the caller can
+                wrap multiple saves in a single outer transaction.
+        """
         relay_event = Event.query.filter_by(
             tournament_id=self.tournament.id,
             name='Pro-Am Relay'
@@ -69,8 +84,9 @@ class ProAmRelay:
             )
             db.session.add(relay_event)
 
-        relay_event.payouts = json.dumps(self.relay_data)
-        db.session.commit()
+        relay_event.event_state = json.dumps(self.relay_data)
+        if commit:
+            db.session.commit()
 
     def get_eligible_pro_competitors(self) -> list:
         """Get pro competitors who opted into the lottery."""
@@ -452,6 +468,7 @@ class ProAmRelay:
             'gender': new_comp.gender
         }
 
+        affected_team = None
         for team in teams:
             if team['team_number'] == team_number:
                 for i, member in enumerate(team[member_key]):
@@ -463,9 +480,109 @@ class ProAmRelay:
                         if competitor_type == 'college' and not new_comp.pro_am_lottery_opt_in:
                             raise ValueError("Replacement college competitor must be opted into Pro-Am lottery")
                         team[member_key][i] = new_comp_data
+                        affected_team = team
                         break
 
         self._save_relay_data()
+
+        # Compute and return health — warn if red but always allow (judge may have no choice)
+        if affected_team is not None:
+            health = compute_team_health(affected_team, self.tournament)
+            return {'health': health}
+        return {'health': {'status': 'green', 'detail': 'No team found for given team_number'}}
+
+
+def compute_team_health(team_data: dict, tournament) -> dict:
+    """
+    Compute health status for a relay team.
+
+    Args:
+        team_data: dict with pro_members and college_members lists
+        tournament: Tournament instance (unused directly; reserved for future
+                    multi-tournament lookups)
+
+    Returns:
+        dict with 'status': 'green'|'yellow'|'red', 'detail': str
+
+    Rules:
+        Green: All 8 members have Competitor.status == 'active'
+        Yellow: 1-2 members scratched/inactive but team meets minimum:
+                at least 3 active per division (pro/college) with
+                at least 1M and 1F in each division
+        Red: Below minimum threshold or gender/division balance broken
+    """
+    pro_members = team_data.get('pro_members', [])
+    college_members = team_data.get('college_members', [])
+
+    inactive_names = []
+
+    def _member_status(member, model_cls):
+        obj = model_cls.query.get(member['id'])
+        if obj is None:
+            return 'unknown'
+        return obj.status
+
+    # Tally active counts per gender per division
+    pro_active_m = 0
+    pro_active_f = 0
+    for m in pro_members:
+        st = _member_status(m, ProCompetitor)
+        if st == 'active':
+            if m.get('gender') == 'M':
+                pro_active_m += 1
+            else:
+                pro_active_f += 1
+        else:
+            inactive_names.append(m.get('name', str(m.get('id'))))
+
+    col_active_m = 0
+    col_active_f = 0
+    for m in college_members:
+        st = _member_status(m, CollegeCompetitor)
+        if st == 'active':
+            if m.get('gender') == 'M':
+                col_active_m += 1
+            else:
+                col_active_f += 1
+        else:
+            inactive_names.append(m.get('name', str(m.get('id'))))
+
+    total_members = len(pro_members) + len(college_members)
+    inactive_count = len(inactive_names)
+
+    pro_active_total = pro_active_m + pro_active_f
+    col_active_total = col_active_m + col_active_f
+
+    # Determine status
+    if inactive_count == 0:
+        return {'status': 'green', 'detail': 'Full roster active'}
+
+    # Check minimums: each division needs >= 3 active with >= 1M and >= 1F
+    pro_ok = pro_active_total >= 3 and pro_active_m >= 1 and pro_active_f >= 1
+    col_ok = col_active_total >= 3 and col_active_m >= 1 and col_active_f >= 1
+    within_yellow_limit = inactive_count <= 2
+
+    if pro_ok and col_ok and within_yellow_limit:
+        names_str = ', '.join(inactive_names)
+        return {
+            'status': 'yellow',
+            'detail': f'{inactive_count} inactive member(s): {names_str}',
+        }
+
+    # Build red detail
+    reasons = []
+    if not pro_ok:
+        reasons.append(
+            f'Pro division below minimum (active: {pro_active_m}M/{pro_active_f}F)'
+        )
+    if not col_ok:
+        reasons.append(
+            f'College division below minimum (active: {col_active_m}M/{col_active_f}F)'
+        )
+    if inactive_count > 2:
+        reasons.append(f'{inactive_count} members inactive')
+    detail = '; '.join(reasons) if reasons else f'{inactive_count} inactive members'
+    return {'status': 'red', 'detail': detail}
 
 
 def get_proam_relay(tournament: Tournament) -> ProAmRelay:

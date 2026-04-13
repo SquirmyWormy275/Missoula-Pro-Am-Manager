@@ -212,5 +212,20 @@
             </div>
         </div>
     </div>
+
+    {% if unfinalized_events %}
+    <div class="row mt-2">
+        <div class="col-12">
+            <div class="alert alert-warning d-flex align-items-center gap-2" role="alert">
+                <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+                <div>
+                    Includes results from {{ unfinalized_events|length }} unfinalized event{{ 's' if unfinalized_events|length != 1 else '' }}:
+                    <strong>{{ unfinalized_events | map(attribute='display_name') | join(', ') }}</strong>.
+                    Standings may change after finalization.
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}

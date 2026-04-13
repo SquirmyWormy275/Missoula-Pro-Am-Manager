@@ -1,5 +1,5 @@
 """
-Unit tests for services/proam_relay.py
+Unit tests for services/proam_relay.py and relay payout routes.
 
 Tests focus on pure state management methods.  The __init__ calls
 _load_relay_data() which queries Event — we patch that out, then
@@ -10,6 +10,8 @@ is needed.
 
 Run:  pytest tests/test_proam_relay.py -v
 """
+import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -240,3 +242,219 @@ class TestRecordEventResult:
         team2 = relay.relay_data['teams'][1]
         assert team2['events']['partnered_sawing']['result'] is None
         assert team2['events']['partnered_sawing']['status'] == 'pending'
+
+
+# ---------------------------------------------------------------------------
+# Event.uses_payouts_for_state — relay must return False (state moved to event_state)
+# ---------------------------------------------------------------------------
+
+class TestUsesPayoutsForState:
+    def _make_event(self, name='Test', has_prelims=False, scoring_type='time'):
+        from unittest.mock import MagicMock
+        from models.event import Event
+        ev = MagicMock()
+        ev.name = name
+        ev.has_prelims = has_prelims
+        ev.scoring_type = scoring_type
+        # Evaluate the actual property logic against the mock
+        ev.uses_payouts_for_state = Event.uses_payouts_for_state.fget(ev)
+        return ev
+
+    def test_relay_returns_false(self):
+        ev = self._make_event(name='Pro-Am Relay', scoring_type='time')
+        assert ev.uses_payouts_for_state is False
+
+    def test_bracket_returns_true(self):
+        ev = self._make_event(scoring_type='bracket')
+        assert ev.uses_payouts_for_state is True
+
+    def test_has_prelims_returns_true(self):
+        ev = self._make_event(has_prelims=True)
+        assert ev.uses_payouts_for_state is True
+
+    def test_ordinary_event_returns_false(self):
+        ev = self._make_event(name='Underhand Speed', scoring_type='time')
+        assert ev.uses_payouts_for_state is False
+
+
+# ---------------------------------------------------------------------------
+# Relay payout routes (integration — uses Flask test client)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope='module')
+def relay_app():
+    from tests.db_test_utils import create_test_app
+    _app, db_path = create_test_app()
+    _app.config['SESSION_PROTECTION'] = None
+
+    with _app.app_context():
+        _seed_relay_db(_app)
+        yield _app
+        from database import db as _db
+        _db.session.remove()
+
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
+
+
+def _seed_relay_db(app):
+    from database import db as _db
+    from models import Tournament
+    from models.event import Event
+    from models.user import User
+
+    if not User.query.filter_by(username='relay_admin').first():
+        u = User(username='relay_admin', role='admin')
+        u.set_password('relay_pass')
+        _db.session.add(u)
+
+    if not Tournament.query.filter_by(name='Relay Payout Test Tournament').first():
+        t = Tournament(name='Relay Payout Test Tournament', year=2026, status='setup')
+        _db.session.add(t)
+
+    _db.session.flush()
+    t = Tournament.query.filter_by(name='Relay Payout Test Tournament').first()
+
+    if not Event.query.filter_by(tournament_id=t.id, name='Pro-Am Relay').first():
+        ev = Event(
+            tournament_id=t.id,
+            name='Pro-Am Relay',
+            event_type='pro',
+            scoring_type='time',
+            scoring_order='lowest_wins',
+            is_partnered=True,
+            payouts=json.dumps({}),
+            status='pending',
+        )
+        _db.session.add(ev)
+
+    _db.session.commit()
+
+
+@pytest.fixture()
+def relay_auth_client(relay_app):
+    c = relay_app.test_client(use_cookies=True)
+    c.post('/auth/login', data={
+        'username': 'relay_admin',
+        'password': 'relay_pass',
+    }, follow_redirects=True)
+    return c
+
+
+@pytest.fixture()
+def relay_tid(relay_app):
+    with relay_app.app_context():
+        from models import Tournament
+        t = Tournament.query.filter_by(name='Relay Payout Test Tournament').first()
+        return t.id
+
+
+class TestRelayPayoutsGet:
+    def test_get_returns_200(self, relay_auth_client, relay_tid):
+        resp = relay_auth_client.get(
+            f'/tournament/{relay_tid}/proam-relay/payouts'
+        )
+        assert resp.status_code == 200
+
+    def test_get_shows_form(self, relay_auth_client, relay_tid):
+        resp = relay_auth_client.get(
+            f'/tournament/{relay_tid}/proam-relay/payouts'
+        )
+        assert b'payout_1' in resp.data
+
+    def test_get_prefills_existing_payouts(self, relay_app, relay_auth_client, relay_tid):
+        from database import db as _db
+        from models.event import Event
+        with relay_app.app_context():
+            ev = Event.query.filter_by(
+                tournament_id=relay_tid, name='Pro-Am Relay'
+            ).first()
+            ev.payouts = json.dumps({'1': 500.0, '2': 300.0})
+            _db.session.commit()
+
+        resp = relay_auth_client.get(
+            f'/tournament/{relay_tid}/proam-relay/payouts'
+        )
+        assert b'500' in resp.data
+        assert b'300' in resp.data
+
+    def test_no_relay_event_returns_404(self, relay_app, relay_auth_client):
+        with relay_app.app_context():
+            from models import Tournament
+            from database import db as _db
+            t = Tournament(name='Empty Tournament', year=2026, status='setup')
+            _db.session.add(t)
+            _db.session.commit()
+            empty_tid = t.id
+
+        resp = relay_auth_client.get(
+            f'/tournament/{empty_tid}/proam-relay/payouts'
+        )
+        assert resp.status_code == 404
+
+
+class TestRelayPayoutsPost:
+    def test_save_happy_path_three_positions(self, relay_app, relay_auth_client, relay_tid):
+        resp = relay_auth_client.post(
+            f'/tournament/{relay_tid}/proam-relay/payouts',
+            data={
+                'payout_1': '1000.00',
+                'payout_2': '600.00',
+                'payout_3': '300.00',
+            },
+            follow_redirects=False,
+        )
+        # POST-redirect-GET
+        assert resp.status_code == 302
+
+        with relay_app.app_context():
+            from models.event import Event
+            ev = Event.query.filter_by(
+                tournament_id=relay_tid, name='Pro-Am Relay'
+            ).first()
+            saved = json.loads(ev.payouts)
+        assert saved['1'] == 1000.0
+        assert saved['2'] == 600.0
+        assert saved['3'] == 300.0
+
+    def test_negative_amount_clamped_to_zero(self, relay_app, relay_auth_client, relay_tid):
+        resp = relay_auth_client.post(
+            f'/tournament/{relay_tid}/proam-relay/payouts',
+            data={'payout_1': '-50.00'},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+        with relay_app.app_context():
+            from models.event import Event
+            ev = Event.query.filter_by(
+                tournament_id=relay_tid, name='Pro-Am Relay'
+            ).first()
+            saved = json.loads(ev.payouts)
+        assert saved.get('1', 0.0) == 0.0
+
+    def test_non_numeric_input_flashes_error(self, relay_auth_client, relay_tid):
+        resp = relay_auth_client.post(
+            f'/tournament/{relay_tid}/proam-relay/payouts',
+            data={'payout_1': 'abc'},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b'Invalid' in resp.data or b'invalid' in resp.data
+
+    def test_post_no_relay_event_returns_404(self, relay_app, relay_auth_client):
+        with relay_app.app_context():
+            from models import Tournament
+            from database import db as _db
+            t = Tournament(name='No Relay POST', year=2026, status='setup')
+            _db.session.add(t)
+            _db.session.commit()
+            no_relay_tid = t.id
+
+        resp = relay_auth_client.post(
+            f'/tournament/{no_relay_tid}/proam-relay/payouts',
+            data={'payout_1': '100'},
+        )
+        assert resp.status_code == 404

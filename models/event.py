@@ -56,6 +56,12 @@ class Event(db.Model):
     # Payout configuration (pro only) - stored as JSON
     payouts = db.Column(db.Text, nullable=False, default='{}')  # Dict: position -> amount
 
+    # State-machine storage for events that overload payouts (Pro-Am Relay,
+    # Partnered Axe Throw, Birling bracket).  Nullable TEXT — NULL means no
+    # state has been written yet.  Populated by migration b1c2d3e4f5a6 for
+    # pre-existing events and by their respective services going forward.
+    event_state = db.Column(db.Text, nullable=True)
+
     # Status
     status = db.Column(db.String(20), nullable=False, default='pending')  # pending, in_progress, completed
 
@@ -95,10 +101,12 @@ class Event(db.Model):
     @property
     def uses_payouts_for_state(self):
         """True when the payouts column stores state-machine data instead of
-        payout amounts (Pro-Am Relay, Partnered Axe Throw, Birling bracket)."""
-        return (self.has_prelims
-                or self.scoring_type == 'bracket'
-                or self.name == 'Pro-Am Relay')
+        payout amounts (Partnered Axe Throw, Birling bracket).
+
+        Pro-Am Relay is excluded: its state-machine data moved to event_state
+        (migration b1c2d3e4f5a6), so payouts is now free for payout amounts.
+        """
+        return self.has_prelims or self.scoring_type == 'bracket'
 
     def get_payouts(self):
         """Return dict of position -> payout amount."""
@@ -220,6 +228,14 @@ class EventResult(db.Model):
 
     # Payout (pro only)
     payout_amount = db.Column(db.Float, nullable=False, default=0.0)
+
+    # Payout settlement tracking (pro only).
+    # True once the organizer marks this competitor's payout as collected.
+    # server_default='false' keeps the column non-nullable without a table
+    # rewrite on PG (migration b1c2d3e4f5a6).
+    payout_settled = db.Column(
+        db.Boolean, nullable=False, server_default=sa.text("false"), default=False
+    )
 
     # Score discrepancy flag
     is_flagged = db.Column(db.Boolean, nullable=False, default=False)

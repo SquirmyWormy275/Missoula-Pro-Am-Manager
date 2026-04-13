@@ -1,12 +1,13 @@
 """
 Routes for Pro-Am Relay lottery and management.
 """
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
 
 from database import db
 from models import Tournament
+from models.event import Event
 from services.cache_invalidation import invalidate_tournament_caches
-from services.proam_relay import create_proam_relay_event, get_proam_relay
+from services.proam_relay import compute_team_health, create_proam_relay_event, get_proam_relay
 
 bp = Blueprint('proam_relay', __name__, url_prefix='/tournament/<int:tournament_id>/proam-relay')
 
@@ -17,11 +18,18 @@ def relay_dashboard(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     relay = get_proam_relay(tournament)
 
+    teams = relay.get_teams()
+    team_health = {
+        t['team_number']: compute_team_health(t, tournament)
+        for t in teams
+    }
+
     return render_template('proam_relay/dashboard.html',
                          tournament=tournament,
                          relay=relay,
                          status=relay.get_status(),
-                         teams=relay.get_teams(),
+                         teams=teams,
+                         team_health=team_health,
                          capacity=relay.get_lottery_capacity(),
                          eligible_pro=relay.get_eligible_pro_competitors(),
                          eligible_college=relay.get_eligible_college_competitors())
@@ -73,11 +81,14 @@ def view_teams(tournament_id):
     """View the relay teams."""
     tournament = Tournament.query.get_or_404(tournament_id)
     relay = get_proam_relay(tournament)
+    teams = relay.get_teams()
+    team_health = {t['team_number']: compute_team_health(t, tournament) for t in teams}
 
     return render_template('proam_relay/teams.html',
                          tournament=tournament,
                          relay=relay,
-                         teams=relay.get_teams(),
+                         teams=teams,
+                         team_health=team_health,
                          status=relay.get_status())
 
 
@@ -198,6 +209,58 @@ def replace_competitor(tournament_id):
         flash(str(e), 'danger')
 
     return redirect(url_for('proam_relay.view_teams', tournament_id=tournament_id))
+
+
+# ---------------------------------------------------------------------------
+# Relay payout configuration
+# ---------------------------------------------------------------------------
+
+@bp.route('/payouts', methods=['GET'])
+def relay_payouts(tournament_id):
+    """Show relay payout configuration form."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    relay_event = Event.query.filter_by(
+        tournament_id=tournament_id, name='Pro-Am Relay'
+    ).first()
+    if relay_event is None:
+        abort(404)
+
+    current_payouts = relay_event.get_payouts()
+    return render_template(
+        'proam_relay/configure_payouts.html',
+        tournament=tournament,
+        relay_event=relay_event,
+        current_payouts=current_payouts,
+    )
+
+
+@bp.route('/payouts', methods=['POST'])
+def save_relay_payouts(tournament_id):
+    """Save per-team lump sum payout amounts."""
+    Tournament.query.get_or_404(tournament_id)
+    relay_event = Event.query.filter_by(
+        tournament_id=tournament_id, name='Pro-Am Relay'
+    ).first()
+    if relay_event is None:
+        abort(404)
+
+    payouts = {}
+    for i in range(1, 9):
+        raw = request.form.get(f'payout_{i}')
+        if raw:
+            try:
+                amount = max(0.0, float(raw))
+                payouts[str(i)] = amount
+            except (TypeError, ValueError):
+                flash(f'Invalid payout amount for position {i}: {raw!r}', 'error')
+                return redirect(url_for('proam_relay.relay_payouts',
+                                        tournament_id=tournament_id))
+
+    relay_event.set_payouts(payouts)
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    flash('Relay payouts saved.', 'success')
+    return redirect(url_for('proam_relay.relay_payouts', tournament_id=tournament_id))
 
 
 # API endpoints for AJAX calls

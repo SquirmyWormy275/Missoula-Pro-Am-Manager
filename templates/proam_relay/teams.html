@@ -35,9 +35,20 @@
         <div class="col-lg-6 mb-4">
             <div class="card h-100">
                 <div class="card-header bg-{% if loop.index == 1 %}primary{% elif loop.index == 2 %}danger{% elif loop.index == 3 %}success{% else %}info{% endif %} text-white">
-                    <h4 class="mb-0">
+                    <h4 class="mb-0 d-flex align-items-center gap-2">
                         <i class="bi bi-people-fill"></i>
                         {{ team.name }}
+                        {% if team_health is defined %}
+                        {% set h = team_health.get(team.team_number, {'status': 'green', 'detail': 'Full roster active'}) %}
+                        <span
+                            class="badge rounded-circle ms-1
+                                {% if h.status == 'green' %}bg-success
+                                {% elif h.status == 'yellow' %}bg-warning text-dark
+                                {% else %}bg-danger{% endif %}"
+                            title="{{ h.detail }}"
+                            style="width:1rem;height:1rem;"
+                        >&nbsp;</span>
+                        {% endif %}
                     </h4>
                 </div>
                 <div class="card-body">

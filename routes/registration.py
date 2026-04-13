@@ -228,36 +228,21 @@ def team_detail(tournament_id, team_id):
 
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/scratch', methods=['POST'])
 def scratch_college_competitor(tournament_id, competitor_id):
-    """Scratch a college competitor and remove from uncompleted heats."""
+    """Scratch a college competitor via the cascade preview flow."""
     competitor = CollegeCompetitor.query.get_or_404(competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
-    competitor.status = 'scratched'
-    _remove_college_competitor_from_unfinished_heats(competitor.id, tournament_id)
-
-    college_event_ids = [e.id for e in Event.query.filter_by(tournament_id=tournament_id, event_type='college').all()]
-    if college_event_ids:
-        EventResult.query.filter(
-            EventResult.event_id.in_(college_event_ids),
-            EventResult.competitor_type == 'college',
-            EventResult.competitor_id == competitor.id,
-            EventResult.status != 'completed'
-        ).update({EventResult.status: 'scratched'}, synchronize_session=False)
-
-    # Remove gear-sharing entries on active college competitors that reference this person.
-    from services.gear_sharing import cleanup_scratched_gear_entries
-    tournament = Tournament.query.get_or_404(tournament_id)
-    gear_result = cleanup_scratched_gear_entries(tournament, scratched_competitor=competitor, competitor_type='college')
-
-    db.session.commit()
-    invalidate_tournament_caches(tournament_id)
-    msg = text.FLASH['competitor_scratched'].format(name=competitor.name)
-    if gear_result['cleaned']:
-        msg += f' Removed {gear_result["cleaned"]} gear-sharing reference(s) from {len(gear_result["affected"])} competitor(s).'
-    flash(msg, 'warning')
-    return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id))
+    # Delegate to the cascade preview so the judge sees all downstream effects
+    # before confirming.  The preview page handles the actual scratch on confirm.
+    return redirect(
+        url_for(
+            'scoring.scratch_preview',
+            tournament_id=tournament_id,
+            competitor_id=competitor_id,
+        )
+    )
 
 
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/delete', methods=['POST'])
@@ -1288,67 +1273,21 @@ def pro_gear_print(tournament_id):
 
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/scratch', methods=['POST'])
 def scratch_pro_competitor(tournament_id, competitor_id):
-    """Scratch a professional competitor.
-
-    Day-of scratch workflow: mark status, pull from any pending heats,
-    and leave a 'scratched' EventResult row for every event the competitor
-    was entered in so the scratch is visible in results reports.
-    """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    """Scratch a professional competitor via the cascade preview flow."""
     competitor = ProCompetitor.query.get_or_404(competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
-    competitor.status = 'scratched'
 
-    # Remove from any uncompleted pro heats the competitor is assigned to.
-    _remove_pro_competitor_from_unfinished_heats(competitor.id, tournament_id)
-
-    # Leave a scratched EventResult row on every event the competitor
-    # entered. Update-or-insert so we don't overwrite completed results.
-    entered_event_ids = set()
-    for raw in competitor.get_events_entered():
-        try:
-            entered_event_ids.add(int(raw))
-        except (TypeError, ValueError):
-            continue
-    if entered_event_ids:
-        pro_events = Event.query.filter(
-            Event.tournament_id == tournament_id,
-            Event.event_type == 'pro',
-            Event.id.in_(entered_event_ids),
-        ).all()
-        existing_by_event = {
-            r.event_id: r for r in EventResult.query.filter(
-                EventResult.event_id.in_([e.id for e in pro_events]),
-                EventResult.competitor_type == 'pro',
-                EventResult.competitor_id == competitor.id,
-            ).all()
-        }
-        for ev in pro_events:
-            result = existing_by_event.get(ev.id)
-            if result is None:
-                db.session.add(EventResult(
-                    event_id=ev.id,
-                    competitor_id=competitor.id,
-                    competitor_type='pro',
-                    competitor_name=competitor.name,
-                    status='scratched',
-                ))
-            elif result.status != 'completed':
-                result.status = 'scratched'
-
-    # Remove gear-sharing entries on active competitors that reference this person.
-    from services.gear_sharing import cleanup_scratched_gear_entries
-    result = cleanup_scratched_gear_entries(tournament, scratched_competitor=competitor)
-    db.session.commit()
-    invalidate_tournament_caches(tournament_id)
-
-    msg = text.FLASH['competitor_scratched'].format(name=competitor.name)
-    if result['cleaned']:
-        msg += f' Removed {result["cleaned"]} gear-sharing reference(s) from {len(result["affected"])} competitor(s).'
-    flash(msg, 'warning')
-    return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
+    # Delegate to the cascade preview so the judge sees all downstream effects
+    # before confirming.  The preview page handles the actual scratch on confirm.
+    return redirect(
+        url_for(
+            'scoring.scratch_preview',
+            tournament_id=tournament_id,
+            competitor_id=competitor_id,
+        )
+    )
 
 
 def _remove_college_competitor_from_unfinished_heats(competitor_id: int, tournament_id: int):

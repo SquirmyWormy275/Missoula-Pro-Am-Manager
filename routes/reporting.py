@@ -74,13 +74,34 @@ def college_standings(tournament_id):
         }
     )
 
+    # Events that are not finalized but have at least one completed result —
+    # these mean standings may be incomplete / provisional.
+    from models.event import EventResult
+    from sqlalchemy import exists
+    unfinalized_events = (
+        Event.query
+        .filter(
+            Event.tournament_id == tournament_id,
+            Event.is_finalized == False,  # noqa: E712
+        )
+        .filter(
+            exists().where(
+                (EventResult.event_id == Event.id) &
+                (EventResult.status == 'completed')
+            )
+        )
+        .order_by(Event.name)
+        .all()
+    )
+
     return render_template('reports/college_standings.html',
                            tournament=tournament,
                            bull=payload['bull'],
                            belle=payload['belle'],
                            bull_tiebreak=payload['bull_tiebreak'],
                            belle_tiebreak=payload['belle_tiebreak'],
-                           team_standings=payload['team_standings'])
+                           team_standings=payload['team_standings'],
+                           unfinalized_events=unfinalized_events)
 
 
 @reporting_bp.route('/<int:tournament_id>/college/standings/print')
@@ -162,6 +183,31 @@ def pro_payout_summary(tournament_id):
     total_settled = sum(c.total_earnings for c in earners if c.payout_settled)
     total_outstanding = total_owed - total_settled
 
+    # Build a mapping of competitor_id → first EventResult id with payout_amount > 0
+    # so the template can wire per-result AJAX toggle buttons.
+    from models.event import EventResult
+    comp_ids = [c.id for c in competitors]
+    if comp_ids:
+        results_with_payout = (
+            EventResult.query
+            .join(Event, EventResult.event_id == Event.id)
+            .filter(
+                Event.tournament_id == tournament_id,
+                EventResult.competitor_type == 'pro',
+                EventResult.competitor_id.in_(comp_ids),
+                EventResult.payout_amount > 0,
+            )
+            .order_by(EventResult.payout_amount.desc())
+            .all()
+        )
+        # Keep only the first (highest-payout) result per competitor.
+        result_id_map = {}
+        for r in results_with_payout:
+            if r.competitor_id not in result_id_map:
+                result_id_map[r.competitor_id] = r.id
+    else:
+        result_id_map = {}
+
     return render_template('reports/payout_summary.html',
                            tournament=tournament,
                            competitors=competitors,
@@ -169,7 +215,8 @@ def pro_payout_summary(tournament_id):
                            total_settled=total_settled,
                            total_outstanding=total_outstanding,
                            earners_count=len(earners),
-                           total_competitors=total_competitors)
+                           total_competitors=total_competitors,
+                           result_id_map=result_id_map)
 
 
 @reporting_bp.route('/<int:tournament_id>/pro/payouts/print')
