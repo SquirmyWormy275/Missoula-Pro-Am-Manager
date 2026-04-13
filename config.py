@@ -230,6 +230,10 @@ PLACEMENT_POINTS = {
 # Stand types that support Championship vs. Handicap format selection (STRATHMARK integration)
 HANDICAP_ELIGIBLE_STAND_TYPES = {'underhand', 'standing_block', 'springboard'}
 
+# Dual-run events whose Run 2 splits to Saturday (day-split rule).
+# Caber Toss is dual-run but both runs stay on Friday — not listed here.
+DAY_SPLIT_EVENT_NAMES = {"Chokerman's Race", "Speed Climb"}
+
 # Gear family taxonomy — groups events by shared equipment type.
 # cascade=True means sharing gear in ANY event within the family creates a
 # conflict in ALL events within that family (e.g. sharing an axe for springboard

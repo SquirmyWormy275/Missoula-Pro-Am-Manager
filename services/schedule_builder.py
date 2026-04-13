@@ -8,6 +8,7 @@ import os
 import re
 
 import config
+from config import DAY_SPLIT_EVENT_NAMES
 from models import Event, Flight, Tournament
 
 
@@ -64,7 +65,7 @@ def build_day_schedule(
     friday_day = _build_friday_day_block(friday_college)
     friday_feature = _build_friday_feature_block(friday_feature_college, friday_feature_pro)
     saturday_show, saturday_source = _build_saturday_show_block(tournament, friday_show_pro, saturday_college)
-    saturday_show = _add_mandatory_chokerman_run2(saturday_show, college_events)
+    saturday_show = _add_mandatory_day_split_run2(saturday_show, college_events)
 
     return {
         'friday_day': friday_day,
@@ -234,12 +235,16 @@ def _to_schedule_entries(events: list[Event], start_slot: int = 1) -> list[dict]
 
 
 def _college_friday_sort_key(event: Event):
-    # OPEN events run first, birling always at the end of college day.
-    is_birling = 1 if 'birling' in event.name.lower() else 0
+    # OPEN events run first.
+    # Chokerman's Race Run 1 goes at end of day, BEFORE Birling.
+    # Birling is always the absolute last event on Friday.
+    is_birling = 2 if 'birling' in event.name.lower() else 0
+    is_chokerman = 1 if "chokerman" in event.name.lower() else 0
+    end_of_day = max(is_birling, is_chokerman)
     open_rank = 0 if event.is_open else 1
     event_rank = _college_name_rank(event.name)
     gender_rank = _gender_rank(event.gender)
-    return (is_birling, open_rank, event_rank, gender_rank)
+    return (end_of_day, open_rank, event_rank, gender_rank)
 
 
 def _spillover_sort_key(event: Event):
@@ -321,24 +326,18 @@ def _gender_rank(gender: str | None) -> int:
     return 2
 
 
-def _add_mandatory_chokerman_run2(schedule_entries: list[dict], college_events: list[Event]) -> list[dict]:
-    """Always include Chokerman's Race run 2 on Saturday when event is configured."""
-    chokerman = next(
-        (
-            e for e in college_events
-            if e.name == "Chokerman's Race" and e.event_type == 'college'
-        ),
-        None
-    )
-    if not chokerman:
-        return schedule_entries
-
+def _add_mandatory_day_split_run2(schedule_entries: list[dict], college_events: list[Event]) -> list[dict]:
+    """Always include Run 2 of day-split events on Saturday when configured."""
     updated = list(schedule_entries)
-    updated.append({
-        'slot': len(updated) + 1,
-        'event_id': chokerman.id,
-        'label': f"{chokerman.display_name} (Run 2)",
-        'event_type': chokerman.event_type,
-        'stand_type': chokerman.stand_type,
-    })
+    for event in college_events:
+        if event.name not in DAY_SPLIT_EVENT_NAMES or event.event_type != 'college':
+            continue
+        updated.append({
+            'slot': len(updated) + 1,
+            'event_id': event.id,
+            'label': f"{event.display_name} (Run 2)",
+            'event_type': event.event_type,
+            'stand_type': event.stand_type,
+            'is_run2': True,
+        })
     return updated

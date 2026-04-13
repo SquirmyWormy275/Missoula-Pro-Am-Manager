@@ -61,12 +61,26 @@
             letter-spacing: 0.03em;
         }
         .col-heat { width: 130px; }
-        .col-stand { width: 70px; text-align: center; }
+        .col-stand { width: 100px; text-align: center; }
         .stand-cell { text-align: center; font-weight: 700; }
         .no-data {
             padding: 10px;
             color: #666;
             font-style: italic;
+        }
+        .bracket-notice {
+            padding: 10px;
+            color: #333;
+            font-style: italic;
+            border-top: 1px solid #ddd;
+        }
+        .bracket-roster {
+            padding: 6px 10px;
+            columns: 2;
+            column-gap: 20px;
+        }
+        .bracket-roster li {
+            margin-bottom: 2px;
         }
         @media print {
             .no-print { display: none !important; }
@@ -78,98 +92,30 @@
     <h1>{{ tournament.name }} {{ tournament.year }} - Day Schedule</h1>
     <div class="muted">Saturday source: {{ 'Flights' if schedule.saturday_source == 'flights' else 'Fallback Event Order' }}</div>
 
+    {% macro render_schedule_block(items, block_title) %}
     <div class="section">
-        <h2>Friday Day Show</h2>
-        {% for item in detailed_schedule.friday_day %}
-            <div class="slot">
-                <div class="slot-header">
-                    <div class="slot-title">{{ item.slot }}. {{ item.label }}</div>
-                    <div class="slot-meta">{{ item.event_type|title }} | {{ item.stand_type }}</div>
-                </div>
-                {% if item.heats %}
-                <table class="heat-table">
-                    <thead>
-                        <tr>
-                            <th class="col-heat">Heat / Run</th>
-                            <th class="col-stand">Stand</th>
-                            <th>Competitor</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for heat in item.heats %}
-                            {% for comp in heat.competitors %}
-                            <tr>
-                                <td>
-                                    Heat {{ heat.heat_number }}{% if heat.run_number > 1 %} - Run {{ heat.run_number }}{% endif %}
-                                </td>
-                                <td class="stand-cell">{{ comp.stand if comp.stand is not none else '?' }}</td>
-                                <td>{{ comp.name }}</td>
-                            </tr>
-                            {% endfor %}
-                        {% endfor %}
-                    </tbody>
-                </table>
-                {% else %}
-                    <div class="no-data">No heats in this slot.</div>
-                {% endif %}
-            </div>
-        {% else %}
-            <div class="muted">No events in this block.</div>
-        {% endfor %}
-    </div>
-
-    <div class="section">
-        <h2>Friday Showcase</h2>
-        {% for item in detailed_schedule.friday_feature %}
-            <div class="slot">
-                <div class="slot-header">
-                    <div class="slot-title">{{ item.slot }}. {{ item.label }}</div>
-                    <div class="slot-meta">{{ item.event_type|title }} | {{ item.stand_type }}</div>
-                </div>
-                {% if item.heats %}
-                <table class="heat-table">
-                    <thead>
-                        <tr>
-                            <th class="col-heat">Heat / Run</th>
-                            <th class="col-stand">Stand</th>
-                            <th>Competitor</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for heat in item.heats %}
-                            {% for comp in heat.competitors %}
-                            <tr>
-                                <td>
-                                    Heat {{ heat.heat_number }}{% if heat.run_number > 1 %} - Run {{ heat.run_number }}{% endif %}
-                                </td>
-                                <td class="stand-cell">{{ comp.stand if comp.stand is not none else '?' }}</td>
-                                <td>{{ comp.name }}</td>
-                            </tr>
-                            {% endfor %}
-                        {% endfor %}
-                    </tbody>
-                </table>
-                {% else %}
-                    <div class="no-data">No heats in this slot.</div>
-                {% endif %}
-            </div>
-        {% else %}
-            <div class="muted">No events in this block.</div>
-        {% endfor %}
-    </div>
-
-    <div class="section">
-        <h2>Saturday Show</h2>
-        {% for item in detailed_schedule.saturday_show %}
+        <h2>{{ block_title }}</h2>
+        {% for item in items %}
             <div class="slot">
                 <div class="slot-header">
                     <div class="slot-title">{{ item.slot }}. {{ item.label }}</div>
                     <div class="slot-meta">
-                        {{ item.event_type|title }} | {{ item.stand_type }}
-                        {% if item.flight_number %}| Flight {{ item.flight_number }}{% endif %}
+                        {{ item.event_type|title }}
+                        {% if item.flight_number %} | Flight {{ item.flight_number }}{% endif %}
                     </div>
                 </div>
-                {% if item.heats %}
+                {% if item.is_bracket %}
+                    <div class="bracket-notice">
+                        Bracket event -- see bracket sheet for matchups and seedings.
+                    </div>
+                    {% if item.bracket_competitors %}
+                    <ol class="bracket-roster">
+                        {% for name in item.bracket_competitors %}
+                        <li>{{ name }}</li>
+                        {% endfor %}
+                    </ol>
+                    {% endif %}
+                {% elif item.heats %}
                 <table class="heat-table">
                     <thead>
                         <tr>
@@ -185,7 +131,7 @@
                                 <td>
                                     Heat {{ heat.heat_number }}{% if heat.run_number > 1 %} - Run {{ heat.run_number }}{% endif %}
                                 </td>
-                                <td class="stand-cell">{{ comp.stand if comp.stand is not none else '?' }}</td>
+                                <td class="stand-cell">{{ comp.stand_label if comp.stand_label is defined else (comp.stand if comp.stand is not none else '?') }}</td>
                                 <td>{{ comp.name }}</td>
                             </tr>
                             {% endfor %}
@@ -200,6 +146,11 @@
             <div class="muted">No events in this block.</div>
         {% endfor %}
     </div>
+    {% endmacro %}
+
+    {{ render_schedule_block(detailed_schedule.friday_day, 'Friday Day Show') }}
+    {{ render_schedule_block(detailed_schedule.friday_feature, 'Friday Showcase') }}
+    {{ render_schedule_block(detailed_schedule.saturday_show, 'Saturday Show') }}
 
     <button class="no-print" data-print style="position: fixed; top: 10px; right: 10px; padding: 10px 16px;">Print</button>
     <script>
