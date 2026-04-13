@@ -436,7 +436,7 @@ These are confirmed gaps. Do not assume the system handles these automatically.
 | Stand conflict check in heat generator | `_CONFLICTING_STANDS` is only enforced in flight ordering, not during initial heat generation. |
 | Dual-run pro events | No pro events currently require dual runs. If one is added, Run 2 heats will not be placed in flights without code changes. |
 | Friday Night Feature | No flight generation exists for Friday Night Feature events. |
-| Manual flight editing | There is no drag-drop or move-heat UI. Rebuilding flights from scratch is the only option. |
+| Manual flight editing | Drag-and-drop heat reordering within flights is supported via SortableJS UI. Event order within the day schedule is also manually reorderable. |
 | Status validation on Flight.status | Any string can be written to `Flight.status`; the code does not enforce the allowed set. |
 
 ---

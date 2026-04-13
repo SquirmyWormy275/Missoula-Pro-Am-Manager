@@ -206,7 +206,28 @@ Teams are organized by school. A school can enter multiple teams (e.g., UM-A, UM
 
 **OPEN vs CLOSED events:** OPEN events (Axe Throw, Peavey Log Roll, Caber Toss, Pulp Toss) have no competitor count restriction and traditionally run at the start of the day with a come-and-go format. CLOSED events (all others) limit each athlete to a maximum of 6 entries. The app allows the traditionally OPEN events to be configured as CLOSED when setting up a tournament, because the Missoula Pro Am sometimes runs them as CLOSED to save time.
 
-**Two-run events:** Chokerman's Race and Speed Climb give each competitor two runs on different courses. The best (lowest) time counts. The heat generator creates run 1 and run 2 heats automatically and swaps stand assignments between runs. Obstacle Pole is single-run in both college and pro divisions.
+**Dual-run day-split events:** Chokerman's Race and Speed Climb are the two dual-run events that split across days. The rule is:
+
+- **Run 1: Friday.** Both events have their first run on Friday.
+- **Run 2: Saturday.** The second run is ALWAYS on Saturday. Non-negotiable.
+- **Stand/course swap:** Stands are reversed between Run 1 and Run 2 (the heat generator already does this). Chokerman swaps Course 1 / Course 2. Speed Climb swaps Pole 2 / Pole 4.
+- **Chokerman's Race Run 1 placement:** End of the Friday schedule, but BEFORE Birling. Birling is always the last college event on Friday.
+- **Speed Climb Run 1 placement:** Normal position in the Friday schedule (no special end-of-day requirement).
+- **Saturday placement:** Both Chokerman Run 2 and Speed Climb Run 2 go to Saturday. Chokerman Run 2 is placed at the end of the last flight per the existing rule. Speed Climb Run 2 is placed via the college overflow integration (round-robin across flights, or judge-selected position).
+
+Obstacle Pole is single-run in both college and pro divisions for 2026.
+
+**Caber Toss:** Caber Toss has `requires_dual_runs=True` in config.py but does NOT split across days -- both runs occur on Friday. The day-split rule applies only to Chokerman's Race and Speed Climb.
+
+**Other two-run events:** The heat generator creates run 1 and run 2 heats automatically and swaps stand assignments between runs for all events with `requires_dual_runs=True`. The best (lowest) time counts.
+
+**Friday event order:**
+1. OPEN events first (come-and-go format): Axe Throw, Peavey Log Roll, Caber Toss, Pulp Toss
+2. CLOSED events in configured order
+3. Chokerman's Race Run 1 (end of day, before Birling)
+4. Birling (always last -- double-elimination bracket, runs until complete)
+
+Chokerman's Race Run 2 and Speed Climb Run 2 do NOT appear on the Friday schedule.
 
 **Birling:** College Birling is gender segregated — separate men's and women's brackets are run. It runs at the end of the college day as a double-elimination bracket, pre-seeded, top 6 determined. Pro Birling is not gender segregated and has been removed from the pro events list entirely (removed per the 2026-01-25 changelog; `config.py` PRO_EVENTS does not include birling).
 
@@ -257,7 +278,7 @@ The second run of Chokerman's Race must always be conducted on Saturday — this
 4. Women's Standing Block Hard Hit
 5. Men's Obstacle Pole
 
-Saturday overflow college events are judged and scored as normal college events — points count toward individual and team college totals. No dedicated scheduling mechanism currently exists to designate college events as Saturday overflow or integrate them into the pro flight schedule. Flag as a known gap (see Section 5).
+Saturday overflow college events are judged and scored as normal college events — points count toward individual and team college totals. College overflow integration is handled by `integrate_college_spillover_into_flights()` in the flight builder. Manual event ordering within the day schedule and manual heat ordering within flights is supported via drag-and-drop UI on the Events & Schedule page and the Flight Builder page.
 
 ### Friday Night Feature
 
