@@ -13,6 +13,7 @@ Tests cover:
 """
 
 import os
+
 import pytest
 
 from services.registration_import import (

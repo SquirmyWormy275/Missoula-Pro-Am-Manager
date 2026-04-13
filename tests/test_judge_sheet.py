@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from tests.conftest import (
-    make_tournament,
-    make_team,
     make_college_competitor,
-    make_pro_competitor,
     make_event,
     make_heat,
+    make_pro_competitor,
+    make_team,
+    make_tournament,
 )
 
 

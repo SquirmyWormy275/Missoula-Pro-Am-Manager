@@ -371,7 +371,8 @@ class TestScratchedCompetitorExcluded:
         db_session.add(result)
         db_session.flush()
 
-        from models.event import Event as Ev, EventResult as ER
+        from models.event import Event as Ev
+        from models.event import EventResult as ER
         unfinalized = (
             db_session.query(Ev)
             .filter(

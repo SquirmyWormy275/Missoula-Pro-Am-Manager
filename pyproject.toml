@@ -63,3 +63,7 @@ ignore = [
 # Sub-module imports MUST come after scheduling_bp and shared helpers are
 # defined — this is intentional to avoid circular imports.
 "routes/scheduling/__init__.py" = ["E402"]
+# api.py defines a custom JSON encoder before imports; import_routes.py
+# has logging setup before imports.  Both are intentional.
+"routes/api.py" = ["E402"]
+"routes/import_routes.py" = ["E402"]

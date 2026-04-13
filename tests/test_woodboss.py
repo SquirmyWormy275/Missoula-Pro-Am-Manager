@@ -747,7 +747,7 @@ class TestPresetRoundtrip:
     L4 (built-in name collision), plus basic save/load/delete."""
 
     def test_save_and_load_roundtrip(self, tmp_preset_file):
-        from services.woodboss import save_custom_preset, get_all_presets
+        from services.woodboss import get_all_presets, save_custom_preset
         save_custom_preset('my-2026', {'blocks': {'species': 'Western White Pine',
                                                   'size_value': 13.0, 'size_unit': 'in'}})
         presets = get_all_presets()
@@ -755,7 +755,7 @@ class TestPresetRoundtrip:
         assert presets['my-2026']['blocks']['species'] == 'Western White Pine'
 
     def test_delete_custom_preset(self, tmp_preset_file):
-        from services.woodboss import save_custom_preset, delete_custom_preset, get_all_presets
+        from services.woodboss import delete_custom_preset, get_all_presets, save_custom_preset
         save_custom_preset('disposable', {'blocks': {'species': 'Pine'}})
         assert 'disposable' in get_all_presets()
         delete_custom_preset('disposable')
@@ -779,8 +779,8 @@ class TestPresetRoundtrip:
         a form with no diameter then applied it to a new tournament saw
         every diameter wiped.
         """
-        from models.wood_config import WoodConfig
         from models.event import Event
+        from models.wood_config import WoodConfig
         # Set up an event so _active_block_keys() accepts the block_key.
         db_session.add(Event(
             tournament_id=tournament.id, name='Underhand Hard Hit',
@@ -797,7 +797,7 @@ class TestPresetRoundtrip:
         ))
         db_session.flush()
 
-        from services.woodboss import save_custom_preset, apply_preset
+        from services.woodboss import apply_preset, save_custom_preset
         # Preset carries species only — diameter is None.
         save_custom_preset('species-only', {
             'blocks': {'species': 'Western White Pine',
@@ -816,8 +816,8 @@ class TestPresetRoundtrip:
 
     def test_apply_preset_per_cfg_key_support(self, tmp_preset_file, db_session, tournament):
         """M1 — blocks_by_key gives different species to different categories."""
-        from models.wood_config import WoodConfig
         from models.event import Event
+        from models.wood_config import WoodConfig
         for name, gender in [('Underhand Hard Hit', 'M'),
                              ('Standing Block Speed', 'M')]:
             db_session.add(Event(
@@ -827,7 +827,7 @@ class TestPresetRoundtrip:
             ))
         db_session.flush()
 
-        from services.woodboss import save_custom_preset, apply_preset
+        from services.woodboss import apply_preset, save_custom_preset
         save_custom_preset('per-key', {
             'blocks_by_key': {
                 'block_underhand_college_M': {
@@ -854,7 +854,7 @@ class TestPresetRoundtrip:
     def test_apply_preset_includes_log_relay_doublebuck(self, tmp_preset_file, db_session, tournament):
         """M2 — log_relay_doublebuck must roundtrip through presets."""
         from models.wood_config import WoodConfig
-        from services.woodboss import save_custom_preset, apply_preset
+        from services.woodboss import apply_preset, save_custom_preset
         save_custom_preset('with-relay-log', {
             'log_relay_doublebuck': {
                 'species': 'Western Larch', 'size_value': 18.0, 'size_unit': 'in',
@@ -895,7 +895,8 @@ class TestPresetRoundtrip:
         """M6 — partial write via .tmp + os.replace keeps the live file
         readable even if an in-progress write never finishes."""
         import json
-        from services.woodboss import save_custom_preset, get_all_presets
+
+        from services.woodboss import get_all_presets, save_custom_preset
         save_custom_preset('round-one', {'blocks': {'species': 'Pine'}})
 
         # Simulate a crashed write: leave a stray .tmp file AND corrupt the
@@ -920,8 +921,8 @@ class TestSaveConfigClear:
     not silently skip it."""
 
     def test_blanking_existing_row_clears_it(self, auth_client, db_session, tournament):
-        from models.wood_config import WoodConfig
         from models.event import Event
+        from models.wood_config import WoodConfig
 
         db_session.add(Event(
             tournament_id=tournament.id, name='Underhand Hard Hit',

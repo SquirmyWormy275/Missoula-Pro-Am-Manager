@@ -1,6 +1,8 @@
 """
 Main routes for dashboard and navigation.
 """
+import json
+import logging
 import time
 from urllib.parse import urlsplit
 
@@ -22,6 +24,8 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for stripped environm
         is_admin = False
 
     current_user = _AnonymousCurrentUser()
+
+logger = logging.getLogger(__name__)
 
 main_bp = Blueprint('main', __name__)
 
@@ -701,8 +705,9 @@ def ops_dashboard(tid):
     team_health = []
     if relay_event:
         try:
-            from services.proam_relay import compute_team_health
             import json as _json
+
+            from services.proam_relay import compute_team_health
             raw = relay_event.event_state or relay_event.payouts or '{}'
             relay_data = _json.loads(raw)
             for team in relay_data.get('teams', []):

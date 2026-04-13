@@ -59,6 +59,7 @@ def _seed_db(app):
     the TestRefinalizationBadge smoke tests so no test body needs to commit."""
     import json
     from decimal import Decimal
+
     from models import Tournament
     from models.event import Event, EventResult
     from models.user import User

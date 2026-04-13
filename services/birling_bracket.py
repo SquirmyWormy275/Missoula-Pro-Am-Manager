@@ -806,6 +806,7 @@ class BirlingBracket:
         1st=10, 2nd=7, 3rd=5, 4th=3, 5th=2, 6th=1. Positions 7+ get 0.
         """
         from decimal import Decimal
+
         from services.scoring_engine import PLACEMENT_POINTS_DECIMAL
 
         placements = self.get_placements()

@@ -251,6 +251,7 @@ class TestRecordEventResult:
 class TestUsesPayoutsForState:
     def _make_event(self, name='Test', has_prelims=False, scoring_type='time'):
         from unittest.mock import MagicMock
+
         from models.event import Event
         ev = MagicMock()
         ev.name = name
@@ -382,8 +383,8 @@ class TestRelayPayoutsGet:
 
     def test_no_relay_event_returns_404(self, relay_app, relay_auth_client):
         with relay_app.app_context():
-            from models import Tournament
             from database import db as _db
+            from models import Tournament
             t = Tournament(name='Empty Tournament', year=2026, status='setup')
             _db.session.add(t)
             _db.session.commit()
@@ -446,8 +447,8 @@ class TestRelayPayoutsPost:
 
     def test_post_no_relay_event_returns_404(self, relay_app, relay_auth_client):
         with relay_app.app_context():
-            from models import Tournament
             from database import db as _db
+            from models import Tournament
             t = Tournament(name='No Relay POST', year=2026, status='setup')
             _db.session.add(t)
             _db.session.commit()

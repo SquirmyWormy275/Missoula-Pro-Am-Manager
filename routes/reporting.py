@@ -76,8 +76,9 @@ def college_standings(tournament_id):
 
     # Events that are not finalized but have at least one completed result —
     # these mean standings may be incomplete / provisional.
-    from models.event import EventResult
     from sqlalchemy import exists
+
+    from models.event import EventResult
     unfinalized_events = (
         Event.query
         .filter(
@@ -746,11 +747,11 @@ def ala_email_report(tournament_id):
 def _send_ala_email(pdf_path, tournament, report):
     """Send ALA report PDF via SMTP (uses same config as sms_notify)."""
     import smtplib
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.base import MIMEBase
-    from email.mime.text import MIMEText
-    from email import encoders
     from datetime import datetime
+    from email import encoders
+    from email.mime.base import MIMEBase
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
 
     smtp_host = os.environ.get('SMTP_HOST', '')
     smtp_port = int(os.environ.get('SMTP_PORT', 587))

@@ -108,8 +108,8 @@ def _seed_pro(db, tournament, name="Alice Pro", gender="F", status="active"):
 
 
 def _seed_college(db, tournament, name="Bob College", gender="M", status="active"):
-    from models.team import Team
     from models.competitor import CollegeCompetitor
+    from models.team import Team
 
     team = Team.query.filter_by(tournament_id=tournament.id).first()
     if team is None:
@@ -685,6 +685,7 @@ class TestReverseCascadeExpiredWindow:
 
     def test_expired_window_returns_error(self, app):
         from datetime import datetime, timedelta
+
         from database import db
         from models.audit_log import AuditLog
         from services.scratch_cascade import (

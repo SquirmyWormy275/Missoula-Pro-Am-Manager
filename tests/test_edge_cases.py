@@ -9,7 +9,6 @@ import pytest
 
 from app import create_app
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DB = PROJECT_ROOT / "instance" / "proam.db"
 TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
@@ -52,8 +51,8 @@ def qa_env(monkeypatch):
 def _seed_boundary_event(app, competitor_count: int, max_stands: int):
     """Create a pro event with the requested competitor count and standings config."""
     with app.app_context():
-        from database import db
         from config import event_rank_category
+        from database import db
         from models import Event, EventResult, ProEventRank, Tournament
         from models.competitor import ProCompetitor
 

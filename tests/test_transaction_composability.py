@@ -85,6 +85,7 @@ def axe_event(db_session, tournament):
 def _relay_instance(tournament, relay_event):
     """Return a ProAmRelay bound to relay_event without touching DB on init."""
     from unittest.mock import patch
+
     from services.proam_relay import ProAmRelay
 
     # Patch the Event.query inside __init__ → _load_relay_data so it returns

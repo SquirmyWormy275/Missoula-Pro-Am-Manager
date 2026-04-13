@@ -399,6 +399,7 @@ class TestScratchLockedHeat:
 
     def test_scratch_locked_heat_rejected(self, db_session, auth_client):
         from datetime import datetime, timezone
+
         from models.user import User
 
         t = _make_tournament(db_session)

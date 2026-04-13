@@ -242,13 +242,13 @@ def _classify_partner_value(raw: str) -> tuple[str, str | None]:
     if _HAS_SAW_PATTERN.search(val):
         return (
             "needs_partner",
-            f'AUTO-RESOLVED: "Have saw, need partner" -> Needs Partner (note: has equipment)',
+            'AUTO-RESOLVED: "Have saw, need partner" -> Needs Partner (note: has equipment)',
         )
 
     if _SPARE_PATTERN.search(val):
         return (
             "needs_partner",
-            f"AUTO-RESOLVED: spare request -> Needs Partner (note: available as spare)",
+            "AUTO-RESOLVED: spare request -> Needs Partner (note: available as spare)",
         )
 
     # Contains "put me down" pattern

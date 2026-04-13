@@ -22,8 +22,8 @@ Run:  python tests/verify_losers_bracket.py
 """
 
 import math
-import sys
 import os
+import sys
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -164,7 +164,7 @@ def run_verification():
         w1 = winners[0] if winners else []
         if w1:
             m1 = w1[0]
-            print(f"  W1_1 loser drop target: losers[0][(1-1)//2] = losers[0][0]")
+            print("  W1_1 loser drop target: losers[0][(1-1)//2] = losers[0][0]")
             if losers:
                 target = losers[0][0] if losers[0] else None
                 print(f"    Target match: {target['match_id'] if target else 'NONE'}")

@@ -16,11 +16,11 @@ import pytest
 
 from models.event import Event, EventResult
 from tests.conftest import (
-    make_tournament,
-    make_team,
     make_college_competitor,
     make_event,
     make_event_result,
+    make_team,
+    make_tournament,
 )
 
 # ---------------------------------------------------------------------------

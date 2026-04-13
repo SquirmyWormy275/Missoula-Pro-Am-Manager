@@ -20,8 +20,8 @@ import pytest
 os.environ.setdefault("SECRET_KEY", "test-secret-partner-reassign")
 os.environ.setdefault("WTF_CSRF_ENABLED", "False")
 
-from tests.db_test_utils import create_test_app
 from database import db as _db
+from tests.db_test_utils import create_test_app
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -50,8 +50,9 @@ def db_session(app):
 
 @pytest.fixture()
 def auth_client(app, db_session, request):
-    from models.user import User
     import uuid
+
+    from models.user import User
 
     unique_name = f"test_admin_pr_{uuid.uuid4().hex[:8]}"
     u = User(username=unique_name, role="admin")
