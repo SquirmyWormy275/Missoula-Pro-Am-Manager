@@ -84,6 +84,10 @@
     font-size: 0.83rem;
     color: var(--sx-text-2);
 }
+
+/* ── Sortable drag-and-drop ─────────────────────────────── */
+.sortable-ghost { opacity: 0.35; background: #e9f0fb !important; }
+.sortable-chosen { border-color: var(--bs-primary, #0d6efd) !important; }
 </style>
 {% endblock %}
 
@@ -603,6 +607,42 @@
             </div>
             {% endif %}
 
+            {# ── Friday Event Ordering ─────────────────────────────────── #}
+            {% if college_events %}
+            <div class="card mt-4">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                    <h6 class="mb-0"><i class="bi bi-arrows-move me-1"></i> Friday Event Order</h6>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-secondary" id="toggleFridayOrder" type="button">
+                            <i class="bi bi-pencil me-1"></i>Edit Order
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger d-none" id="resetFridayOrder" type="button">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Default
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-2">
+                    <ul class="list-group list-group-flush" id="fridayEventOrder">
+                        {% for e in college_events %}
+                        <li class="list-group-item d-flex align-items-center gap-2 py-2"
+                            data-event-id="{{ e.id }}"
+                            {% if 'birling' in e.name|lower %}data-locked="true"{% endif %}>
+                            <span class="drag-handle d-none" style="cursor:grab; color:var(--sx-text-2);">
+                                <i class="bi bi-grip-vertical"></i>
+                            </span>
+                            <span class="fw-semibold" style="font-size:0.85rem;">{{ e.display_name }}</span>
+                            {% if e.is_open %}<span class="badge bg-success" style="font-size:0.65rem;">OPEN</span>{% endif %}
+                            {% if 'birling' in e.name|lower %}<span class="badge bg-secondary" style="font-size:0.65rem;">Always Last</span>{% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    <div class="d-none text-center py-2" id="fridayOrderSaved">
+                        <span class="text-success small"><i class="bi bi-check-circle me-1"></i>Order saved</span>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
         </div>{# /tab-friday #}
 
 
@@ -824,6 +864,39 @@
             </div>
             {% endif %}
 
+            {# ── Saturday Event Ordering (fallback mode only) ──────────── #}
+            {% if pro_events and not flights_built %}
+            <div class="card mt-4">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                    <h6 class="mb-0"><i class="bi bi-arrows-move me-1"></i> Saturday Event Order (Fallback)</h6>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-secondary" id="toggleSaturdayOrder" type="button">
+                            <i class="bi bi-pencil me-1"></i>Edit Order
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger d-none" id="resetSaturdayOrder" type="button">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Default
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-2">
+                    <ul class="list-group list-group-flush" id="saturdayEventOrder">
+                        {% for e in pro_events %}
+                        <li class="list-group-item d-flex align-items-center gap-2 py-2"
+                            data-event-id="{{ e.id }}">
+                            <span class="drag-handle d-none" style="cursor:grab; color:var(--sx-text-2);">
+                                <i class="bi bi-grip-vertical"></i>
+                            </span>
+                            <span class="fw-semibold" style="font-size:0.85rem;">{{ e.display_name }}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    <div class="d-none text-center py-2" id="saturdayOrderSaved">
+                        <span class="text-success small"><i class="bi bi-check-circle me-1"></i>Order saved</span>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
         </div>{# /tab-saturday #}
 
     </div>{# /tab-content #}
@@ -1012,6 +1085,93 @@ document.addEventListener('DOMContentLoaded', function() {
         if (t) { e.preventDefault(); loadPreflight(); }
     });
 });
+</script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+(function() {
+    var tid = {{ tournament.id }};
+    var csrfToken = '{{ csrf_token() }}';
+
+    function initOrderToggle(toggleBtnId, resetBtnId, listId, savedMsgId, endpoint, day) {
+        var toggleBtn = document.getElementById(toggleBtnId);
+        var resetBtn = document.getElementById(resetBtnId);
+        var list = document.getElementById(listId);
+        var savedMsg = document.getElementById(savedMsgId);
+        if (!toggleBtn || !list) return;
+
+        var editing = false;
+        var sortable = null;
+
+        toggleBtn.addEventListener('click', function() {
+            editing = !editing;
+            list.querySelectorAll('.drag-handle').forEach(function(h) {
+                h.classList.toggle('d-none', !editing);
+            });
+            toggleBtn.innerHTML = editing
+                ? '<i class="bi bi-check-circle me-1"></i>Done'
+                : '<i class="bi bi-pencil me-1"></i>Edit Order';
+            if (resetBtn) resetBtn.classList.toggle('d-none', !editing);
+
+            if (editing && !sortable) {
+                sortable = Sortable.create(list, {
+                    handle: '.drag-handle',
+                    animation: 150,
+                    ghostClass: 'sortable-ghost',
+                    filter: '[data-locked="true"]',
+                    onEnd: function() {
+                        // Enforce Birling stays last
+                        var items = list.querySelectorAll('li[data-event-id]');
+                        var birlingItem = list.querySelector('li[data-locked="true"]');
+                        if (birlingItem && birlingItem !== items[items.length - 1]) {
+                            list.appendChild(birlingItem);
+                        }
+                        saveOrder();
+                    }
+                });
+            }
+        });
+
+        if (resetBtn) {
+            resetBtn.addEventListener('click', function() {
+                fetch('/scheduling/' + tid + '/events/reset-order', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                    body: JSON.stringify({day: day})
+                }).then(function(r) { return r.json(); }).then(function(data) {
+                    if (data.ok) location.reload();
+                });
+            });
+        }
+
+        function saveOrder() {
+            var ids = [];
+            list.querySelectorAll('li[data-event-id]').forEach(function(li) {
+                ids.push(parseInt(li.dataset.eventId, 10));
+            });
+            fetch(endpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                body: JSON.stringify({event_ids: ids})
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.ok && savedMsg) {
+                    savedMsg.classList.remove('d-none');
+                    setTimeout(function() { savedMsg.classList.add('d-none'); }, 2000);
+                }
+            });
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        initOrderToggle(
+            'toggleFridayOrder', 'resetFridayOrder', 'fridayEventOrder', 'fridayOrderSaved',
+            '/scheduling/' + tid + '/events/reorder-friday', 'friday'
+        );
+        initOrderToggle(
+            'toggleSaturdayOrder', 'resetSaturdayOrder', 'saturdayEventOrder', 'saturdayOrderSaved',
+            '/scheduling/' + tid + '/events/reorder-saturday', 'saturday'
+        );
+    });
+})();
 </script>
 {% endblock %}
 {% endblock %}

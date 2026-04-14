@@ -8,6 +8,7 @@ import os
 import re
 
 import config
+from config import DAY_SPLIT_EVENT_NAMES
 from models import Event, Flight, Tournament
 
 
@@ -61,10 +62,17 @@ def build_day_schedule(
 
     friday_college, friday_feature_college = _extract_collegiate_feature_events(friday_college)
 
-    friday_day = _build_friday_day_block(friday_college)
+    # Check for custom ordering in schedule_config
+    sched_cfg = tournament.get_schedule_config()
+    friday_custom = sched_cfg.get('friday_event_order')
+    saturday_custom = sched_cfg.get('saturday_event_order')
+
+    friday_day = _build_friday_day_block(friday_college, custom_order=friday_custom)
     friday_feature = _build_friday_feature_block(friday_feature_college, friday_feature_pro)
-    saturday_show, saturday_source = _build_saturday_show_block(tournament, friday_show_pro, saturday_college)
-    saturday_show = _add_mandatory_chokerman_run2(saturday_show, college_events)
+    saturday_show, saturday_source = _build_saturday_show_block(
+        tournament, friday_show_pro, saturday_college, custom_order=saturday_custom
+    )
+    saturday_show = _add_mandatory_day_split_run2(saturday_show, college_events)
 
     return {
         'friday_day': friday_day,
@@ -82,8 +90,11 @@ def _extract_collegiate_feature_events(friday_college: list[Event]):
     return remaining, feature_events
 
 
-def _build_friday_day_block(events: list[Event]) -> list[dict]:
-    ordered = sorted(events, key=_college_friday_sort_key)
+def _build_friday_day_block(events: list[Event], custom_order: list[int] | None = None) -> list[dict]:
+    if custom_order:
+        ordered = _apply_custom_order(events, custom_order)
+    else:
+        ordered = sorted(events, key=_college_friday_sort_key)
     return _to_schedule_entries(ordered, start_slot=1)
 
 
@@ -130,20 +141,22 @@ def _apply_friday_springboard_ordering(events: list[Event]) -> list[Event]:
 def _build_saturday_show_block(
     tournament: Tournament,
     pro_events: list[Event],
-    college_spillover: list[Event]
+    college_spillover: list[Event],
+    custom_order: list[int] | None = None,
 ) -> tuple[list[dict], str]:
     """Build Saturday show from pro flights when available; fallback to event order."""
     allowed_event_ids = {event.id for event in pro_events}
     allowed_event_ids.update(event.id for event in college_spillover)
-    chokerman = tournament.events.filter_by(event_type='college', name="Chokerman's Race").first()
-    if chokerman:
-        allowed_event_ids.add(chokerman.id)
+    # Include all day-split events so their Run 2 can appear on Saturday
+    for e in tournament.events.filter_by(event_type='college').all():
+        if e.name in DAY_SPLIT_EVENT_NAMES:
+            allowed_event_ids.add(e.id)
 
     flight_entries = _build_saturday_from_flights(tournament, allowed_event_ids)
     if flight_entries:
         return _append_college_spillover(flight_entries, college_spillover), 'flights'
 
-    fallback_entries = _build_saturday_from_event_order(pro_events, college_spillover)
+    fallback_entries = _build_saturday_from_event_order(pro_events, college_spillover, custom_order=custom_order)
     return fallback_entries, 'events'
 
 
@@ -197,8 +210,15 @@ def _append_college_spillover(existing_entries: list[dict], college_spillover: l
     return entries
 
 
-def _build_saturday_from_event_order(pro_events: list[Event], college_spillover: list[Event]) -> list[dict]:
+def _build_saturday_from_event_order(
+    pro_events: list[Event],
+    college_spillover: list[Event],
+    custom_order: list[int] | None = None,
+) -> list[dict]:
     """Intermix Saturday college spillover events into pro show order."""
+    if custom_order:
+        all_events = pro_events + college_spillover
+        return _to_schedule_entries(_apply_custom_order(all_events, custom_order), start_slot=1)
     ordered_pro = sorted(pro_events, key=_pro_sort_key)
     ordered_spillover = sorted(college_spillover, key=_spillover_sort_key)
 
@@ -234,12 +254,16 @@ def _to_schedule_entries(events: list[Event], start_slot: int = 1) -> list[dict]
 
 
 def _college_friday_sort_key(event: Event):
-    # OPEN events run first, birling always at the end of college day.
-    is_birling = 1 if 'birling' in event.name.lower() else 0
+    # OPEN events run first.
+    # Chokerman's Race Run 1 goes at end of day, BEFORE Birling.
+    # Birling is always the absolute last event on Friday.
+    is_birling = 2 if 'birling' in event.name.lower() else 0
+    is_chokerman = 1 if "chokerman" in event.name.lower() else 0
+    end_of_day = max(is_birling, is_chokerman)
     open_rank = 0 if event.is_open else 1
     event_rank = _college_name_rank(event.name)
     gender_rank = _gender_rank(event.gender)
-    return (is_birling, open_rank, event_rank, gender_rank)
+    return (end_of_day, open_rank, event_rank, gender_rank)
 
 
 def _spillover_sort_key(event: Event):
@@ -313,6 +337,13 @@ def _normalize_name(value: str) -> str:
     return re.sub(r'[^a-z0-9]+', '', (value or '').lower())
 
 
+def _apply_custom_order(events: list[Event], custom_order: list[int]) -> list[Event]:
+    """Sort events by a custom ID list. Unrecognized events go at the end."""
+    order_map = {eid: idx for idx, eid in enumerate(custom_order)}
+    fallback = len(custom_order)
+    return sorted(events, key=lambda e: order_map.get(e.id, fallback))
+
+
 def _gender_rank(gender: str | None) -> int:
     if gender == 'M':
         return 0
@@ -321,24 +352,21 @@ def _gender_rank(gender: str | None) -> int:
     return 2
 
 
-def _add_mandatory_chokerman_run2(schedule_entries: list[dict], college_events: list[Event]) -> list[dict]:
-    """Always include Chokerman's Race run 2 on Saturday when event is configured."""
-    chokerman = next(
-        (
-            e for e in college_events
-            if e.name == "Chokerman's Race" and e.event_type == 'college'
-        ),
-        None
-    )
-    if not chokerman:
-        return schedule_entries
-
+def _add_mandatory_day_split_run2(schedule_entries: list[dict], college_events: list[Event]) -> list[dict]:
+    """Always include Run 2 of day-split events on Saturday when configured."""
+    existing_event_ids = {entry.get('event_id') for entry in schedule_entries}
     updated = list(schedule_entries)
-    updated.append({
-        'slot': len(updated) + 1,
-        'event_id': chokerman.id,
-        'label': f"{chokerman.display_name} (Run 2)",
-        'event_type': chokerman.event_type,
-        'stand_type': chokerman.stand_type,
-    })
+    for event in college_events:
+        if event.name not in DAY_SPLIT_EVENT_NAMES or event.event_type != 'college':
+            continue
+        if event.id in existing_event_ids:
+            continue
+        updated.append({
+            'slot': len(updated) + 1,
+            'event_id': event.id,
+            'label': f"{event.display_name} (Run 2)",
+            'event_type': event.event_type,
+            'stand_type': event.stand_type,
+            'is_run2': True,
+        })
     return updated
