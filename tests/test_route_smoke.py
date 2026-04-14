@@ -36,19 +36,83 @@ SOURCE_DB = PROJECT_ROOT / "instance" / "proam.db"
 TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
 
 
+def _seed_minimal_smoke_data(app):
+    """Seed a fresh migrated DB with minimal entities for route smoke tests.
+
+    Used in CI where instance/proam.db is absent (gitignored). Creates one of
+    each entity the smoke_env fixture needs: tournament, event (birling +
+    regular + Pro-Am Relay), heat, user, team, college + pro competitors,
+    and one EventResult for settlement-toggle routes.
+    """
+    from database import db as _db
+    from models.user import User
+    from tests.conftest import (
+        make_college_competitor,
+        make_event,
+        make_event_result,
+        make_heat,
+        make_pro_competitor,
+        make_team,
+        make_tournament,
+    )
+
+    with app.app_context():
+        admin = User(username="smoke_admin", role="admin")
+        admin.set_password("smoketest")
+        _db.session.add(admin)
+        _db.session.flush()
+
+        tournament = make_tournament(_db.session, name="Smoke Tournament", year=2026)
+        team = make_team(_db.session, tournament)
+
+        college = make_college_competitor(
+            _db.session, tournament, team, name="Smoke College", gender="M", events=[]
+        )
+        pro = make_pro_competitor(
+            _db.session, tournament, name="Smoke Pro", gender="M", events=[]
+        )
+
+        # Partnered event first so it becomes the first_event — needed for
+        # partner_queue / reassign_partner routes which 404 on non-partnered events
+        event = make_event(
+            _db.session, tournament, name="Jack & Jill Sawing", event_type="pro",
+            scoring_type="time", stand_type="saw_hand", is_partnered=True,
+        )
+        make_event(
+            _db.session, tournament, name="Underhand", event_type="pro",
+            gender="M", stand_type="underhand",
+        )
+        make_event(
+            _db.session, tournament, name="Birling", event_type="college",
+            gender="M", scoring_type="bracket", stand_type="birling",
+        )
+        # Pro-Am Relay event needed for relay_payouts routes (they 404 without it)
+        make_event(
+            _db.session, tournament, name="Pro-Am Relay", event_type="pro",
+            scoring_type="time", stand_type="underhand",
+        )
+        make_heat(_db.session, event, heat_number=1, competitors=[pro.id])
+        # EventResult needed for toggle_settlement route
+        make_event_result(
+            _db.session, event, pro, competitor_type="pro",
+            result_value=90.0, status="completed",
+        )
+
+        _db.session.commit()
+
+
 @pytest.fixture()
 def smoke_env(monkeypatch):
-    """Return a fresh app/client pair backed by a copied real database."""
-    if not SOURCE_DB.exists():
-        pytest.skip(
-            f"route-smoke fixture requires a local {SOURCE_DB.name} with real data; "
-            "not available in CI"
-        )
+    """Return a fresh app/client pair backed by either a copied real DB
+    (local dev) or a freshly migrated + seeded DB (CI)."""
     TMP_ROOT.mkdir(exist_ok=True)
     temp_dir = TMP_ROOT / f"route-smoke-{uuid.uuid4().hex}"
     temp_dir.mkdir()
     db_copy = temp_dir / "proam-copy.db"
-    shutil.copy2(SOURCE_DB, db_copy)
+
+    use_real_db = SOURCE_DB.exists()
+    if use_real_db:
+        shutil.copy2(SOURCE_DB, db_copy)
 
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_copy}")
     monkeypatch.setenv("SECRET_KEY", "route-smoke-secret")
@@ -58,8 +122,16 @@ def smoke_env(monkeypatch):
     app = create_app()
     app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
 
+    if not use_real_db:
+        # Fresh DB: run migrations and seed minimal fixtures
+        from flask_migrate import upgrade
+        migrations_dir = PROJECT_ROOT / "migrations"
+        with app.app_context():
+            upgrade(directory=str(migrations_dir))
+        _seed_minimal_smoke_data(app)
+
     with app.app_context():
-        from models import Event, Heat, Team, Tournament, User
+        from models import Event, EventResult, Heat, Team, Tournament, User
         from models.competitor import CollegeCompetitor, ProCompetitor
 
         first_tournament = Tournament.query.order_by(Tournament.id).first()
@@ -70,6 +142,7 @@ def smoke_env(monkeypatch):
         first_college = CollegeCompetitor.query.order_by(CollegeCompetitor.id).first()
         first_pro = ProCompetitor.query.order_by(ProCompetitor.id).first()
         birling_event = Event.query.filter_by(stand_type="birling").order_by(Event.id).first()
+        first_result = EventResult.query.order_by(EventResult.id).first()
 
         ids = {
             "tournament_id": first_tournament.id,
@@ -85,6 +158,7 @@ def smoke_env(monkeypatch):
             "competitor_type": "pro",
             "portal_competitor_id": first_pro.id if first_pro else None,
             "birling_event_id": birling_event.id if birling_event else None,
+            "result_id": first_result.id if first_result else None,
             "flight_id": None,
             "job_id": None,
             "competition_type": "college",
@@ -141,11 +215,14 @@ def _build_path(rule: str, ids: dict[str, object]) -> str:
         "<int:tournament_id>": str(ids["tournament_id"]),
         "<int:tid>": str(ids["tid"]),
         "<int:event_id>": str(event_id),
+        "<int:eid>": str(event_id),
         "<int:heat_id>": str(ids["heat_id"]),
         "<int:user_id>": str(ids["user_id"]),
         "<int:team_id>": str(ids["team_id"]) if ids["team_id"] is not None else "",
         "<int:competitor_id>": str(competitor_id) if competitor_id is not None else "",
         "<int:flight_id>": str(ids["flight_id"]) if ids["flight_id"] is not None else "",
+        "<int:result_id>": str(ids["result_id"]) if ids.get("result_id") is not None else "",
+        "<int:rid>": str(ids["result_id"]) if ids.get("result_id") is not None else "",
         "<job_id>": str(ids["job_id"]) if ids["job_id"] is not None else "",
         "<competition_type>": str(ids["competition_type"]),
         "<lang_code>": str(ids["lang_code"]),
@@ -181,6 +258,8 @@ def _should_skip(rule: str, ids: dict[str, object]) -> str | None:
         return "no real portal competitor exists in Phase 0B database state"
     if "registration/headshots/<path:filename>" in rule and not ids["headshot_filename"]:
         return "no real headshot filename exists in Phase 0B database state"
+    if ("<int:rid>" in rule or "<int:result_id>" in rule) and ids.get("result_id") is None:
+        return "no real result_id exists in Phase 0B database state"
     return None
 
 
