@@ -592,6 +592,25 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-13 (V2.9.0)
+
+**Minor release — race-day integrity, birling rebuild, judge sheet, day-schedule audit**
+
+Rolls up everything committed since V2.8.3 on 2026-04-11. Individual PRs carry the full rationale; this entry is a release-level index.
+
+**Features:**
+- **Race-Day Integrity (PR #22, commit `5be5e04`).** Scratch-cascade service (`services/scratch_cascade.py`), relay payout finalization, judge-facing ops dashboard (`templates/ops_dashboard.html`). Scratches now propagate through heats, flights, and standings in one transaction.
+- **Birling double-elimination rebuild (commit `5efd74f`).** Losers-bracket fix, fall recording, per-match undo, placement points. Full rebuild of `services/birling_bracket.py` plus bracket state on heat-sheet print.
+- **Judge Sheet feature (PR #7 via merge `bed2bc3` + commit `e9762fa`).** DQ status + `status_reason` TEXT column on `event_results` (migration `a1b2c3d4e5f8`), blank scoring-sheet PDF download, judge-facing entry UI. Full service module at `services/judge_sheet.py`.
+- **Day-schedule audit + manual event ordering (PR #23, commit `5820039`).** Drag-and-drop event reordering on the Events & Schedule page; schedule audit exposes per-event sequencing problems before heat generation.
+
+**Fixes:**
+- **Woodboss 1-board / 2-board / 3-board springboard split (commit `a13c62c`).** Separates the three springboard dummy classes in the Wood Count Report so each gets its own row and count. Fixes double-counting across board heights.
+- **Tournament-scope audit + QA harness integration (commit `1365da4`).** Scheduling actions now log tournament-scoped audit entries; QA harness hooks validate integrity after each mutation.
+
+**Docs:**
+- CLAUDE.md Section 5 + 8 — retired stale STRATHMARK gap bullets (commit `304cd17`). The `_get_handicap_calculator()` / `_fetch_start_mark()` bugs described as open were actually fixed by PR #6 (V2.7.0) months ago; main's code correctly uses `ollama_url` / `wood_df` / `results_df` and calls `calculator.calculate()`. Branch `feat/strathmark-v2.7-deploy-wiring` deleted local + remote (was the pre-squash source of PR #6).
+
 ### 2026-04-11 (V2.8.3)
 
 **Virtual Woodboss audit sweep — all HIGH/MEDIUM/LOW findings resolved except M7/M8 (deferred)**
