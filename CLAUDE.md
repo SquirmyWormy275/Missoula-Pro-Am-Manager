@@ -500,7 +500,7 @@ PayoutTemplate  (tournament-independent, standalone)
 
 **Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
 
-**STRATHMARK integration:** Live data push wired (V2.2.0); handicap scoring math + mark assignment route wired (V2.3.0); prediction residuals infrastructure + `predicted_time` column added (V2.4.0). Remaining gap: `_get_handicap_calculator()` in `mark_assignment.py` still passes wrong kwargs to `HandicapCalculator.__init__`; `_fetch_start_mark()` calls `get_start_mark()` which does not exist on `HandicapCalculator` (correct method is `calculate()`). Until both are fixed, `predicted_time` is always stored as NULL and no residuals are recorded. Heat ability-weighting via STRATHMARK predictions is also still stub. See Section 7.
+**STRATHMARK integration:** Live data push wired (V2.2.0); handicap scoring math + mark assignment route wired (V2.3.0); prediction residuals infrastructure + `predicted_time` column added (V2.4.0); batched pipeline with full data context + CSV/manual offline paths wired (V2.7.0 via PR #6). Remaining gap: heat ability-weighting via STRATHMARK predictions — `optimize_flight_for_ability()` in `flight_builder.py` and ability-weighted input to `_generate_event_heats()` in `heat_generator.py` are still stubs. See Section 7.
 
 **Pro entry form redesign:** Scope pending. Current import flow handled by `services/pro_entry_importer.py` (basic parsing) and `services/registration_import.py` (enhanced pipeline with dirty-file support, fuzzy matching, cross-validation, and structured report). See `routes/import_routes.py` for the upload → review → confirm workflow.
 
@@ -739,8 +739,8 @@ The following features remain as planned or implied by the codebase and requirem
 - `_record_prediction_residuals_for_pro_event()` in `strathmark_sync.py` (V2.4.0) ✓
 - Import fix in `mark_assignment.py` (`strathmark.calculator` path) (V2.4.0) ✓
 - STRATHMARK logo on assign marks page (V2.4.0) ✓
-- `_get_handicap_calculator()` constructor kwargs still wrong — `HandicapCalculator` does not accept `supabase_url`/`supabase_key`; needs correct signature
-- `_fetch_start_mark()` calls `get_start_mark()` which does not exist — needs to call `calculate()` and unpack `MarkResult`; until fixed, `predicted_time` is always NULL and no residuals are recorded
+- Batched `HandicapCalculator.calculate()` pipeline with `wood_df` + `results_df` + per-competitor `CompetitorRecord` history; `predicted_time` now populated end-to-end (V2.7.0, PR #6) ✓
+- Offline CSV upload/preview + manual/bulk-paste mark entry paths for Railway deployments without Ollama reach (V2.7.0, PR #6) ✓
 - `optimize_flight_for_ability()` stub in `flight_builder.py` is the designed hook for predicted times
 - `_generate_event_heats()` in `heat_generator.py` needs ability-weighting input
 
