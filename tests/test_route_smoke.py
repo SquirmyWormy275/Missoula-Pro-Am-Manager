@@ -143,6 +143,9 @@ def smoke_env(monkeypatch):
         first_pro = ProCompetitor.query.order_by(ProCompetitor.id).first()
         birling_event = Event.query.filter_by(stand_type="birling").order_by(Event.id).first()
         first_result = EventResult.query.order_by(EventResult.id).first()
+        # Route-specific event lookups (some routes 404 on wrong event type)
+        partnered_event = Event.query.filter_by(is_partnered=True).order_by(Event.id).first()
+        relay_event = Event.query.filter_by(name="Pro-Am Relay").order_by(Event.id).first()
 
         ids = {
             "tournament_id": first_tournament.id,
@@ -158,6 +161,9 @@ def smoke_env(monkeypatch):
             "competitor_type": "pro",
             "portal_competitor_id": first_pro.id if first_pro else None,
             "birling_event_id": birling_event.id if birling_event else None,
+            "partnered_event_id": partnered_event.id if partnered_event else None,
+            "relay_event_id": relay_event.id if relay_event else None,
+            "relay_tournament_id": relay_event.tournament_id if relay_event else None,
             "result_id": first_result.id if first_result else None,
             "flight_id": None,
             "job_id": None,
@@ -196,11 +202,16 @@ def smoke_env(monkeypatch):
 def _build_path(rule: str, ids: dict[str, object]) -> str:
     """Resolve a Flask rule string to a concrete path."""
     event_id = ids["event_id"]
+    tournament_id = ids["tournament_id"]
     competitor_id = ids["competitor_id"]
     competitor_type = ids["competitor_type"]
 
     if "/birling" in rule and ids["birling_event_id"] is not None:
         event_id = ids["birling_event_id"]
+    if ("/partner-queue" in rule or "/reassign-partner" in rule) and ids.get("partnered_event_id") is not None:
+        event_id = ids["partnered_event_id"]
+    if "/proam-relay/payouts" in rule and ids.get("relay_tournament_id") is not None:
+        tournament_id = ids["relay_tournament_id"]
     if "/delete-heat/" in rule:
         event_id = ids["heat_event_id"]
     if "/pro/" in rule:
@@ -212,8 +223,8 @@ def _build_path(rule: str, ids: dict[str, object]) -> str:
         competitor_type = ids["competitor_type"]
 
     replacements = {
-        "<int:tournament_id>": str(ids["tournament_id"]),
-        "<int:tid>": str(ids["tid"]),
+        "<int:tournament_id>": str(tournament_id),
+        "<int:tid>": str(tournament_id),
         "<int:event_id>": str(event_id),
         "<int:eid>": str(event_id),
         "<int:heat_id>": str(ids["heat_id"]),
@@ -260,6 +271,10 @@ def _should_skip(rule: str, ids: dict[str, object]) -> str | None:
         return "no real headshot filename exists in Phase 0B database state"
     if ("<int:rid>" in rule or "<int:result_id>" in rule) and ids.get("result_id") is None:
         return "no real result_id exists in Phase 0B database state"
+    if ("/partner-queue" in rule or "/reassign-partner" in rule) and ids.get("partnered_event_id") is None:
+        return "no partnered event exists in Phase 0B database state"
+    if "/proam-relay/payouts" in rule and ids.get("relay_event_id") is None:
+        return "no Pro-Am Relay event exists in Phase 0B database state"
     return None
 
 
