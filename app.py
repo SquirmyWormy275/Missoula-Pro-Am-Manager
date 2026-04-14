@@ -214,11 +214,14 @@ def _create_app_inner():
     request_id_middleware(app)
     configure_jobs(int(app.config.get('JOB_MAX_WORKERS', 2)))
 
-    # Session cookie hardening
-    app.config.setdefault('SESSION_COOKIE_HTTPONLY', True)
-    app.config.setdefault('SESSION_COOKIE_SAMESITE', 'Lax')
+    # Session cookie hardening.  Use direct assignment — Flask pre-seeds
+    # these keys with its own defaults (SECURE=False, SAMESITE=None), so
+    # setdefault() is a no-op and silently leaves production cookies
+    # unprotected.  See /health/diag for the reported values.
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     if app.config.get('ENV_NAME') == 'production':
-        app.config.setdefault('SESSION_COOKIE_SECURE', True)
+        app.config['SESSION_COOKIE_SECURE'] = True
 
     # Ensure upload folder exists
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)

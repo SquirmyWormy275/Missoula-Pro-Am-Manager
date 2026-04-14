@@ -85,7 +85,7 @@ routes/
     api.py              # Public read-only REST API (/api/public prefix)
     woodboss.py         # Virtual Woodboss — material planning (/woodboss prefix)
                         #   woodboss_bp (protected) + woodboss_public_bp (HMAC share link)
-    strathmark.py       # STRATHMARK sync status page (/strathmark prefix); no auth required
+    strathmark.py       # STRATHMARK sync status page (/strathmark prefix); requires is_judge (in MANAGEMENT_BLUEPRINTS)
 
 services/
     __init__.py
@@ -692,7 +692,7 @@ This app handles tournament logistics only: registration, heats, flights, result
 
 5. **`services/strathmark_sync.py`:** Non-blocking STRATHMARK integration layer. `enroll_pro_competitor()` generates a deterministic ID (`{FirstInitial}{LastName}{GenderCode}`, collision-safe) and calls `push_competitors()`. `push_pro_event_results()` pushes finalized pro SB/UH results via `push_results()`. `push_college_event_results()` resolves college competitor IDs via `pull_competitors()` name match and pushes SB Speed / UH Speed results. `is_college_sb_uh_speed()` identifies eligible college events by name (case-insensitive; matches Standing Block Speed, Underhand Speed, SB Speed, UH Speed). Wood species and diameter are looked up from `WoodConfig` using the existing key convention; inches are converted to mm. Local state files: `instance/strathmark_sync_cache.json` (last push timestamp/count), `instance/strathmark_skipped.json` (college competitors skipped due to no global profile). All functions: catch all exceptions, log as warning/error, return False/None — STRATHMARK outages never block app operations.
 
-6. **`routes/strathmark.py` — `GET /strathmark/status`:** Director-only status page showing env-var config state, last push timestamp, global result count for `Missoula Pro-Am` (via `pull_results()` filtered by `show_name`), and a table of skipped college competitors. Self-contained minimal HTML; no Jinja template; no auth required (localhost use). Registered at `/strathmark` prefix in `app.py`; not in `MANAGEMENT_BLUEPRINTS`.
+6. **`routes/strathmark.py` — `GET /strathmark/status`:** Director-only status page showing env-var config state, last push timestamp, global result count for `Missoula Pro-Am` (via `pull_results()` filtered by `show_name`), and a table of skipped college competitors. Rendered via `templates/strathmark/status.html` (V2.5.0). Registered at `/strathmark` prefix in `app.py`; listed in `MANAGEMENT_BLUEPRINTS` and requires `is_judge` — unauthenticated requests redirect to `/auth/login?next=...`.
 
 7. **Hook points in existing routes:** `routes/registration.py` `new_pro_competitor` calls `enroll_pro_competitor()` after `db.session.commit()`. `routes/scoring.py` `finalize_event` calls `_push_strathmark_results()` after `invalidate_tournament_caches()` on the success path. `_push_strathmark_results()` dispatches to pro or college push based on `event.event_type` and `event.stand_type`/name.
 
