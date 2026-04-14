@@ -39,6 +39,11 @@ TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
 @pytest.fixture()
 def smoke_env(monkeypatch):
     """Return a fresh app/client pair backed by a copied real database."""
+    if not SOURCE_DB.exists():
+        pytest.skip(
+            f"route-smoke fixture requires a local {SOURCE_DB.name} with real data; "
+            "not available in CI"
+        )
     TMP_ROOT.mkdir(exist_ok=True)
     temp_dir = TMP_ROOT / f"route-smoke-{uuid.uuid4().hex}"
     temp_dir.mkdir()
