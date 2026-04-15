@@ -1,7 +1,11 @@
 ---
-type: bug
-problem_type: data-integrity
+module: scoring
+date: 2026-04-15
+problem_type: logic_error
+component: service_object
 severity: medium
+root_cause: wrong_api
+resolution_type: code_fix
 symptoms:
   - "500 error when two judges edit same heat simultaneously"
   - "User sees raw IntegrityError traceback"
@@ -11,9 +15,6 @@ tags:
   - "concurrency"
   - "version-id"
   - "scoring"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Split `StaleDataError` vs `IntegrityError` handling in scoring

@@ -1,14 +1,14 @@
 ---
-type: knowledge
-problem_type: architecture-decision
+module: data-model
+date: 2026-04-15
+problem_type: best_practice
+component: database
 severity: medium
 tags:
   - "data-model"
   - "sqlalchemy"
   - "json"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
+  - "architecture"
 ---
 
 # JSON fields for lists/dicts, repurposed for complex state

@@ -1,15 +1,14 @@
 ---
-type: knowledge
-problem_type: best-practice
+module: routes
+date: 2026-04-15
+problem_type: best_practice
+component: service_object
 severity: medium
 tags:
   - "flask"
   - "forms"
   - "validation"
   - "csrf"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Form input conversion, CSRF, and auth conventions

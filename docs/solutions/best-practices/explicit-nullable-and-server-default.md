@@ -1,15 +1,14 @@
 ---
-type: knowledge
-problem_type: best-practice
+module: models
+date: 2026-04-15
+problem_type: best_practice
+component: database
 severity: high
 tags:
   - "sqlalchemy"
   - "models"
   - "alembic"
   - "schema"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Explicit `nullable` + `server_default` on every column

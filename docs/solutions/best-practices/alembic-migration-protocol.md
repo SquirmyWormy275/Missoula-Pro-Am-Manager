@@ -1,15 +1,14 @@
 ---
-type: knowledge
-problem_type: best-practice
+module: migrations
+date: 2026-04-15
+problem_type: best_practice
+component: development_workflow
 severity: critical
 tags:
   - "alembic"
   - "flask-migrate"
   - "migrations"
   - "schema"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Mandatory Migration Review Protocol

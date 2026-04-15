@@ -1,7 +1,11 @@
 ---
-type: bug
-problem_type: data-integrity
+module: woodboss
+date: 2026-04-15
+problem_type: logic_error
+component: service_object
 severity: critical
+root_cause: wrong_api
+resolution_type: code_fix
 symptoms:
   - "Wood Count Report shows zero college blocks the day before the show"
   - "closed_event_count returns 0 for every athlete"
@@ -12,9 +16,6 @@ tags:
   - "college"
   - "events-entered"
   - "data-model"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # `events_entered` JSON stores event NAMES, not IDs

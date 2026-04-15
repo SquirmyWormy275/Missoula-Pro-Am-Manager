@@ -1,7 +1,11 @@
 ---
-type: bug
-problem_type: test-failure
+module: ci
+date: 2026-04-15
+problem_type: test_failure
+component: testing_framework
 severity: medium
+root_cause: test_isolation
+resolution_type: test_fix
 symptoms:
   - "Single test fails on every CI run but passes locally"
   - "Test mocks flask_migrate.upgrade but CI uses db.create_all()"
@@ -10,9 +14,6 @@ tags:
   - "pytest"
   - "ci"
   - "test-hygiene"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Tests that assert self-contradictory behavior under CI env

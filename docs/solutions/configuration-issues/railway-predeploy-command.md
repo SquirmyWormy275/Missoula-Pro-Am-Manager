@@ -1,19 +1,20 @@
 ---
-type: bug
-problem_type: configuration-issue
+module: deploy
+date: 2026-04-15
+problem_type: integration_issue
+component: tooling
 severity: critical
+root_cause: config_error
+resolution_type: config_change
 symptoms:
   - "Railway deploys succeed but migrations never run"
   - "Production schema stuck at an old head for weeks"
-  - "Deploy logs show no output from `flask db upgrade`"
+  - "Deploy logs show no output from flask db upgrade"
 tags:
   - "railway"
   - "deploy"
   - "flask-migrate"
   - "postgres"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Railway silently ignores `releaseCommand` in railway.toml

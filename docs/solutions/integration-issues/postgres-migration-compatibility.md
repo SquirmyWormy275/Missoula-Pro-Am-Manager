@@ -1,11 +1,15 @@
 ---
-type: bug
-problem_type: integration-issue
+module: migrations
+date: 2026-04-15
+problem_type: database_issue
+component: database
 severity: critical
+root_cause: wrong_api
+resolution_type: migration
 symptoms:
   - "flask db upgrade fails on Railway PostgreSQL"
   - "500 errors on every route after deploy"
-  - "PG error: column type 0 does not exist (from server_default='0' on Boolean)"
+  - "PG error: column type 0 does not exist (from boolean server_default='0')"
   - "PRAGMA table_info syntax error on PostgreSQL"
   - "batch_alter_table fails on PG tables with FKs or indexes"
 tags:
@@ -14,9 +18,6 @@ tags:
   - "alembic"
   - "flask-migrate"
   - "railway"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # SQLite-specific migration patterns break PostgreSQL deploys

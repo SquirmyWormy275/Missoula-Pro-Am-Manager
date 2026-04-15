@@ -1,14 +1,13 @@
 ---
-type: knowledge
-problem_type: best-practice
+module: heat-generation
+date: 2026-04-15
+problem_type: best_practice
+component: service_object
 severity: high
 tags:
   - "heat-generator"
   - "flight-builder"
   - "domain-rule"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Cookie Stack and Standing Block share physical stands — mutual exclusion required

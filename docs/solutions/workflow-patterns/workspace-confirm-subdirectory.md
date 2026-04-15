@@ -1,14 +1,13 @@
 ---
-type: knowledge
-problem_type: workflow-pattern
+module: dev-workflow
+date: 2026-04-15
+problem_type: developer_experience
+component: development_workflow
 severity: medium
 tags:
   - "workspace"
   - "multi-project"
   - "strathex"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Confirm target project before making changes in the STRATHEX workspace

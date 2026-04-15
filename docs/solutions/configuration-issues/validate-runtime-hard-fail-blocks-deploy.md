@@ -1,7 +1,11 @@
 ---
-type: bug
-problem_type: configuration-issue
+module: deploy
+date: 2026-04-15
+problem_type: integration_issue
+component: tooling
 severity: high
+root_cause: config_error
+resolution_type: code_fix
 symptoms:
   - "Railway email: Deployment crashed for run-flask-db-upgrade"
   - "App refuses to start when STRATHMARK_SUPABASE_* env vars missing"
@@ -10,9 +14,6 @@ tags:
   - "deploy"
   - "runtime-validation"
   - "strathmark"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # `validate_runtime()` hard-fail on optional env vars blocks deploys

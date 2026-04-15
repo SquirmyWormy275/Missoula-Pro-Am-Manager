@@ -1,7 +1,11 @@
 ---
-type: bug
-problem_type: build-error
+module: migrations
+date: 2026-04-15
+problem_type: build_error
+component: tooling
 severity: high
+root_cause: wrong_api
+resolution_type: code_fix
 symptoms:
   - "TypeError: _compare_server_default() takes 5 positional arguments but 6 were given"
   - "flask db migrate crashes before writing any file"
@@ -9,9 +13,6 @@ tags:
   - "alembic"
   - "flask-migrate"
   - "migrations"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Alembic `_compare_server_default` hook broke on Alembic >=1.5

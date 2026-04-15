@@ -1,7 +1,11 @@
 ---
-type: bug
-problem_type: data-integrity
+module: models
+date: 2026-04-15
+problem_type: runtime_error
+component: database
 severity: medium
+root_cause: missing_validation
+resolution_type: code_fix
 symptoms:
   - "500 error: json.decoder.JSONDecodeError on /dashboard or /portal/*"
   - "Single corrupt JSON cell breaks the whole page"
@@ -9,9 +13,6 @@ tags:
   - "json"
   - "models"
   - "resilience"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Corrupt JSON in a single row cascades to 500 across every list view

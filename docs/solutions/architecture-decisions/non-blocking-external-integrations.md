@@ -1,15 +1,15 @@
 ---
-type: knowledge
-problem_type: architecture-decision
+module: integrations
+date: 2026-04-15
+problem_type: best_practice
+component: service_object
 severity: high
 tags:
   - "strathmark"
   - "sms"
   - "backup"
   - "integrations"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
+  - "architecture"
 ---
 
 # Optional external integrations must be non-blocking and graceful no-op

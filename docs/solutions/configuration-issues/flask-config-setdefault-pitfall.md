@@ -1,7 +1,11 @@
 ---
-type: bug
-problem_type: configuration-issue
+module: app-factory
+date: 2026-04-15
+problem_type: logic_error
+component: authentication
 severity: high
+root_cause: wrong_api
+resolution_type: code_fix
 symptoms:
   - "SESSION_COOKIE_SECURE=False in production despite being set in create_app()"
   - "SESSION_COOKIE_SAMESITE=None despite being set"
@@ -10,9 +14,6 @@ tags:
   - "flask"
   - "security"
   - "session-cookies"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # `app.config.setdefault()` silently skips Flask-preseeded keys

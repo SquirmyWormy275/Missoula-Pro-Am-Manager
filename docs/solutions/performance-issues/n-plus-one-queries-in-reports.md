@@ -1,7 +1,11 @@
 ---
-type: bug
-problem_type: performance-issue
+module: api
+date: 2026-04-15
+problem_type: performance_issue
+component: database
 severity: medium
+root_cause: missing_include
+resolution_type: code_fix
 symptoms:
   - "Public API /api/public/schedule takes multiple seconds"
   - "Flight builder slow on tournaments with many events"
@@ -10,9 +14,6 @@ tags:
   - "sqlalchemy"
   - "performance"
   - "n-plus-one"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # N+1 queries on event → heats lookups

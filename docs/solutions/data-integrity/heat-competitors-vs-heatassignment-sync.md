@@ -1,17 +1,18 @@
 ---
-type: bug
-problem_type: data-integrity
+module: heat-generation
+date: 2026-04-15
+problem_type: logic_error
+component: database
 severity: high
+root_cause: missing_workflow_step
+resolution_type: code_fix
 symptoms:
   - "Validation service reports missing competitors that are actually in the heat"
-  - "Heat.competitors and HeatAssignment rows diverge"
+  - "Heat.competitors JSON and HeatAssignment rows diverge"
 tags:
   - "heats"
   - "data-model"
   - "validation"
-confidence: high
-created: 2026-04-15
-source: "knowledge-seed from CLAUDE.md and git history"
 ---
 
 # Dual heat representations (JSON + rows) drift without explicit sync
