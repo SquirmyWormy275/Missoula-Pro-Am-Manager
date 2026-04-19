@@ -17,7 +17,14 @@ from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
-_CATEGORY_KEYS = {'category:crosscut', 'category:chainsaw', 'category:springboard'}
+_CATEGORY_KEYS = {
+    'category:crosscut',
+    'category:chainsaw',
+    'category:springboard',
+    'category:op_saw',
+    'category:cookie_stack',
+    'category:climbing',
+}
 
 # Generational/ordinal suffixes that distinguish otherwise-identical names
 # (e.g. "David Moses" vs "David Moses Jr."). Two people sharing a stem but
@@ -299,6 +306,12 @@ def infer_equipment_categories(text: str) -> set[str]:
         categories.add('chainsaw')
     if any(token in normalized for token in ['springboard', 'board']):
         categories.add('springboard')
+    if any(token in normalized for token in ['obstacle pole', 'op saw', 'opsaw', 'obstaclepole']):
+        categories.add('op_saw')
+    if any(token in normalized for token in ['cookie stack', 'cookie saw', 'cookiestack', 'cookiesaw']):
+        categories.add('cookie_stack')
+    if any(token in normalized for token in ['speed climb', 'pole climb', 'speedclimb', 'poleclimb', 'spurs', 'climbing rope', 'caulks', 'corks']):
+        categories.add('climbing')
     return categories
 
 
@@ -328,6 +341,12 @@ def _event_name_aliases(event) -> set[str]:
         aliases.update({'hotsaw', 'chainsaw', 'powersaw'})
     elif stand_type == 'springboard':
         aliases.update({'springboard', '1boardspringboard', 'pro1board'})
+    elif stand_type == 'cookie_stack':
+        aliases.update({'cookiestack', 'cookiesaw'})
+    elif stand_type == 'obstacle_pole':
+        aliases.update({'obstaclepole', 'opsaw'})
+    elif stand_type == 'speed_climb':
+        aliases.update({'speedclimb', 'poleclimb', 'climbingrope', 'climbingspurs'})
 
     return {a for a in aliases if a}
 
@@ -379,6 +398,12 @@ def event_matches_gear_key(event, raw_key: str) -> bool:
             return stand_type == 'hot_saw' or any(token in event_text for token in ['hotsaw', 'powersaw', 'chainsaw'])
         if key == 'category:springboard':
             return stand_type == 'springboard' or 'springboard' in event_text or '1board' in event_text
+        if key == 'category:op_saw':
+            return stand_type == 'obstacle_pole' or 'obstaclepole' in event_text or 'opsaw' in event_text
+        if key == 'category:cookie_stack':
+            return stand_type == 'cookie_stack' or 'cookiestack' in event_text or 'cookiesaw' in event_text
+        if key == 'category:climbing':
+            return stand_type == 'speed_climb' or any(token in event_text for token in ['speedclimb', 'poleclimb'])
         return False
 
     norm_key = normalize_event_text(key)
@@ -443,10 +468,18 @@ def parse_gear_sharing_details(
     if not partner_name:
         first_segment = re.split(r'[-—:;,]', text, maxsplit=1)[0].strip()
         # Strip generic and equipment-related words that bleed into partner names.
+        # Includes the new-form keywords USING/SHARING and the previously-missing
+        # Cookie Stack / Obstacle Pole / Speed Climb / climbing-gear vocabulary
+        # so dirty input like "SHARING OP Saw with Cody Labahn" reduces to
+        # "Cody Labahn" instead of leaving "OP Cody Labahn" (3 tokens that no
+        # fuzzy fallback can resolve).
         first_segment = re.sub(
-            r'\b(sharing|with|gear|events?|springboard|crosscut|underhand|standing\s*block|'
+            r'\b(using|sharing|with|gear|events?|springboard|crosscut|underhand|standing\s*block|'
             r'single\s*buck|double\s*buck|jack\s*(?:&|and)\s*jill|hot\s*saw|stock\s*saw|'
-            r'chainsaw|power\s*saw|hand\s*saw|board|axe|saw|speed|hard\s*hit)\b',
+            r'chainsaw|power\s*saw|hand\s*saw|board|axe|saw|speed|hard\s*hit|'
+            r'cookie\s*stack|cookie|obstacle\s*pole|obstacle|op\s*saw|op|'
+            r'pole\s*climb|speed\s*climb|spurs|climbing\s*rope|climbing|'
+            r'caulks|corks|rope)\b',
             '', first_segment, flags=re.IGNORECASE
         ).strip()
         # Collapse extra whitespace after stripping.

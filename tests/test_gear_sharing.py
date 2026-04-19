@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from services.gear_sharing import (
+    _event_name_aliases,
     build_name_index,
     competitors_share_gear_for_event,
     event_matches_gear_key,
@@ -709,3 +710,90 @@ class TestCascadeConflictDetection:
         # And Charlie should NOT conflict in chopping events
         assert competitors_share_gear_for_event(
             'Alice', gear_a, 'Charlie', {}, self.uh, all_events=self.all) is False
+
+
+# ---------------------------------------------------------------------------
+# OP Saw / Cookie Stack / Speed Climb vocabulary fix
+# Regression coverage for the reported "OP Saw and Cookie Stack SHARING entries
+# from the entry form do not appear in the gear-sharing module" bug. The actual
+# silent-drop path was the partner-segment scrub regex not stripping equipment
+# words for these three events, so dirty input bled into the partner candidate
+# (3+ tokens) and resolve_partner_name's two-token fallback could not match.
+# ---------------------------------------------------------------------------
+
+class TestVocabularyFix:
+    def setup_method(self):
+        self.events = [
+            _event(id=10, name='Obstacle Pole', stand_type='obstacle_pole', event_type='pro'),
+            _event(id=20, name='Cookie Stack', stand_type='cookie_stack', event_type='pro'),
+            _event(id=30, name='Speed Climb', stand_type='speed_climb', event_type='pro'),
+            _event(id=40, name='Single Buck', display_name="Men's Single Buck", stand_type='saw_hand', event_type='pro'),
+        ]
+        self.name_index = build_name_index(['Cody Labahn', 'Karson Wilson'])
+
+    def test_op_saw_no_separator_resolves(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        # Reported failure mode: no comma/colon — first-segment fallback runs.
+        gear_map, warnings = parse_gear_sharing_details(
+            'SHARING OP Saw with Cody Labahn', self.events, self.name_index, self_name='Alex')
+        assert '10' in gear_map
+        assert gear_map['10'] == 'Cody Labahn'
+        assert 'partner_not_resolved' not in warnings
+
+    def test_cookie_stack_no_separator_resolves(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, warnings = parse_gear_sharing_details(
+            'SHARING Cookie Stack saw with Cody Labahn', self.events, self.name_index, self_name='Alex')
+        assert '20' in gear_map
+        assert gear_map['20'] == 'Cody Labahn'
+        assert 'partner_not_resolved' not in warnings
+
+    def test_obstacle_pole_typo_partner_resolves_via_fuzzy(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        # Cody Lebahn → Cody Labahn (one-char typo, same last-name fuzzy).
+        gear_map, warnings = parse_gear_sharing_details(
+            'SHARING obstacle pole with Cody Lebahn', self.events, self.name_index, self_name='Alex')
+        assert '10' in gear_map
+        assert gear_map['10'] == 'Cody Labahn'
+
+    def test_cookie_saw_short_phrase_resolves(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, warnings = parse_gear_sharing_details(
+            'SHARING cookie saw with Cody Labahn', self.events, self.name_index, self_name='Alex')
+        assert '20' in gear_map
+        assert gear_map['20'] == 'Cody Labahn'
+
+    def test_op_saw_alias_via_stand_type(self):
+        # Stand-type branch added in this fix: obstacle_pole emits opsaw + obstaclepole.
+        ev = _event(id=10, name='Obstacle Pole', stand_type='obstacle_pole', event_type='pro')
+        aliases = _event_name_aliases(ev)
+        assert 'obstaclepole' in aliases
+        assert 'opsaw' in aliases
+
+    def test_cookie_stack_alias_via_stand_type(self):
+        ev = _event(id=20, name='Cookie Stack', stand_type='cookie_stack', event_type='pro')
+        aliases = _event_name_aliases(ev)
+        assert 'cookiestack' in aliases
+        assert 'cookiesaw' in aliases
+
+    def test_speed_climb_alias_via_stand_type(self):
+        ev = _event(id=30, name='Speed Climb', stand_type='speed_climb', event_type='pro')
+        aliases = _event_name_aliases(ev)
+        assert 'speedclimb' in aliases
+        assert 'poleclimb' in aliases
+
+    def test_op_saw_category_matches_obstacle_pole_event(self):
+        ev = _event(id=10, name='Obstacle Pole', stand_type='obstacle_pole', event_type='pro')
+        assert event_matches_gear_key(ev, 'category:op_saw') is True
+
+    def test_cookie_stack_category_matches_cookie_stack_event(self):
+        ev = _event(id=20, name='Cookie Stack', stand_type='cookie_stack', event_type='pro')
+        assert event_matches_gear_key(ev, 'category:cookie_stack') is True
+
+    def test_climbing_category_matches_speed_climb_event(self):
+        ev = _event(id=30, name='Speed Climb', stand_type='speed_climb', event_type='pro')
+        assert event_matches_gear_key(ev, 'category:climbing') is True
+
+    def test_op_saw_category_does_not_match_chopping_event(self):
+        ev = _event(id=99, name='Underhand', stand_type='underhand', event_type='pro')
+        assert event_matches_gear_key(ev, 'category:op_saw') is False
