@@ -1527,13 +1527,16 @@
         /* ═══════════════════════════════════════════════════════════
            IMPROVEMENT 5 — SMOOTH PAGE TRANSITIONS
         ═══════════════════════════════════════════════════════════ */
-        @keyframes page-fade-in {
-            from { opacity: 0; transform: translateY(7px); }
-            to   { opacity: 1; transform: translateY(0); }
-        }
-        #main-content {
-            animation: page-fade-in 0.2s ease-out both;
-        }
+        /* Page fade-in animation REMOVED 2026-04-19. Even an opacity-only
+           CSS animation on #main-content keeps the element on its own
+           composited layer in Chrome (the compositor promotes animated
+           elements). That implicit layer acts as a stacking context, which
+           traps Bootstrap modals (z-index 1055) below the modal-backdrop
+           (z-index 1050, attached to body) — so every modal in the app was
+           unclickable on every page. The 0.2s fade was cosmetic polish;
+           clickable modals are not. Both `#main-content { animation: ... }`
+           rules in this file are now no-ops because the page-fade-in
+           keyframes are removed. */
 
         /* ═══════════════════════════════════════════════════════════
            IMPROVEMENT 6 — SIDEBAR COLLAPSED: LARGER SECTION ICONS
@@ -1967,8 +1970,9 @@
             font-size: 0.78rem;
         }
 
-        /* ── Smooth Page Fade — override previous if present ─────────── */
-        #main-content { animation: page-fade-in 0.18s ease-out both; }
+        /* Page fade-in REMOVED 2026-04-19 — see comment at the original
+           rule above. Even an opacity-only animation kept #main-content
+           on its own composited layer, trapping Bootstrap modals. */
 
         /* ── Competition Identity Banner ──────────────────────────────── */
         .comp-identity-bar {

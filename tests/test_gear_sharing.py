@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from services.gear_sharing import (
+    _event_name_aliases,
     build_name_index,
     competitors_share_gear_for_event,
     event_matches_gear_key,
@@ -17,9 +18,11 @@ from services.gear_sharing import (
     get_gear_family,
     infer_equipment_categories,
     is_no_constraint_event,
+    is_using_value,
     normalize_event_text,
     normalize_person_name,
     resolve_partner_name,
+    strip_using_prefix,
 )
 
 # ---------------------------------------------------------------------------
@@ -709,3 +712,328 @@ class TestCascadeConflictDetection:
         # And Charlie should NOT conflict in chopping events
         assert competitors_share_gear_for_event(
             'Alice', gear_a, 'Charlie', {}, self.uh, all_events=self.all) is False
+
+
+# ---------------------------------------------------------------------------
+# OP Saw / Cookie Stack / Speed Climb vocabulary fix
+# Regression coverage for the reported "OP Saw and Cookie Stack SHARING entries
+# from the entry form do not appear in the gear-sharing module" bug. The actual
+# silent-drop path was the partner-segment scrub regex not stripping equipment
+# words for these three events, so dirty input bled into the partner candidate
+# (3+ tokens) and resolve_partner_name's two-token fallback could not match.
+# ---------------------------------------------------------------------------
+
+class TestVocabularyFix:
+    def setup_method(self):
+        self.events = [
+            _event(id=10, name='Obstacle Pole', stand_type='obstacle_pole', event_type='pro'),
+            _event(id=20, name='Cookie Stack', stand_type='cookie_stack', event_type='pro'),
+            _event(id=30, name='Speed Climb', stand_type='speed_climb', event_type='pro'),
+            _event(id=40, name='Single Buck', display_name="Men's Single Buck", stand_type='saw_hand', event_type='pro'),
+        ]
+        self.name_index = build_name_index(['Cody Labahn', 'Karson Wilson'])
+
+    def test_op_saw_no_separator_resolves(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        # Reported failure mode: no comma/colon — first-segment fallback runs.
+        gear_map, warnings = parse_gear_sharing_details(
+            'SHARING OP Saw with Cody Labahn', self.events, self.name_index, self_name='Alex')
+        assert '10' in gear_map
+        assert gear_map['10'] == 'Cody Labahn'
+        assert 'partner_not_resolved' not in warnings
+
+    def test_cookie_stack_no_separator_resolves(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, warnings = parse_gear_sharing_details(
+            'SHARING Cookie Stack saw with Cody Labahn', self.events, self.name_index, self_name='Alex')
+        assert '20' in gear_map
+        assert gear_map['20'] == 'Cody Labahn'
+        assert 'partner_not_resolved' not in warnings
+
+    def test_obstacle_pole_typo_partner_resolves_via_fuzzy(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        # Cody Lebahn → Cody Labahn (one-char typo, same last-name fuzzy).
+        gear_map, warnings = parse_gear_sharing_details(
+            'SHARING obstacle pole with Cody Lebahn', self.events, self.name_index, self_name='Alex')
+        assert '10' in gear_map
+        assert gear_map['10'] == 'Cody Labahn'
+
+    def test_cookie_saw_short_phrase_resolves(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, warnings = parse_gear_sharing_details(
+            'SHARING cookie saw with Cody Labahn', self.events, self.name_index, self_name='Alex')
+        assert '20' in gear_map
+        assert gear_map['20'] == 'Cody Labahn'
+
+    def test_op_saw_alias_via_stand_type(self):
+        # Stand-type branch added in this fix: obstacle_pole emits opsaw + obstaclepole.
+        ev = _event(id=10, name='Obstacle Pole', stand_type='obstacle_pole', event_type='pro')
+        aliases = _event_name_aliases(ev)
+        assert 'obstaclepole' in aliases
+        assert 'opsaw' in aliases
+
+    def test_cookie_stack_alias_via_stand_type(self):
+        ev = _event(id=20, name='Cookie Stack', stand_type='cookie_stack', event_type='pro')
+        aliases = _event_name_aliases(ev)
+        assert 'cookiestack' in aliases
+        assert 'cookiesaw' in aliases
+
+    def test_speed_climb_alias_via_stand_type(self):
+        ev = _event(id=30, name='Speed Climb', stand_type='speed_climb', event_type='pro')
+        aliases = _event_name_aliases(ev)
+        assert 'speedclimb' in aliases
+        assert 'poleclimb' in aliases
+
+    def test_op_saw_category_matches_obstacle_pole_event(self):
+        ev = _event(id=10, name='Obstacle Pole', stand_type='obstacle_pole', event_type='pro')
+        assert event_matches_gear_key(ev, 'category:op_saw') is True
+
+    def test_cookie_stack_category_matches_cookie_stack_event(self):
+        ev = _event(id=20, name='Cookie Stack', stand_type='cookie_stack', event_type='pro')
+        assert event_matches_gear_key(ev, 'category:cookie_stack') is True
+
+    def test_climbing_category_matches_speed_climb_event(self):
+        ev = _event(id=30, name='Speed Climb', stand_type='speed_climb', event_type='pro')
+        assert event_matches_gear_key(ev, 'category:climbing') is True
+
+    def test_op_saw_category_does_not_match_chopping_event(self):
+        ev = _event(id=99, name='Underhand', stand_type='underhand', event_type='pro')
+        assert event_matches_gear_key(ev, 'category:op_saw') is False
+
+
+# ---------------------------------------------------------------------------
+# USING vs SHARING semantic distinction (2026 form keyword)
+#
+# USING   = partnered-event gear confirmation — two competitors are already
+#           paired for the partnered event by registration. The entry is
+#           redundancy/confirmation only and MUST NOT become a heat constraint
+#           (Jack & Jill partners belong in the same heat together).
+# SHARING = cross-competitor gear dependency outside a partnered event.
+#           Two competitors share one physical piece of gear and CANNOT be in
+#           the same heat. Standard heat constraint.
+#
+# Storage: USING entries have the partner-name value prefixed with 'using:'.
+# Existing entries (no prefix) stay as SHARING for backward compatibility.
+# ---------------------------------------------------------------------------
+
+class TestUsingSharingDistinction:
+    def setup_method(self):
+        # Jack & Jill is partnered (is_partnered=True); Single Buck and Cookie
+        # Stack are not. Single Buck shares the saw_hand cascade family with
+        # Jack & Jill, so a real shared physical saw IS a heat constraint for
+        # Single Buck even when the J&J entry is USING.
+        self.jj = _event(
+            id=20, name='Jack Jill Sawing', display_name='Jack & Jill',
+            stand_type='saw_hand', event_type='pro',
+        )
+        self.jj.is_partnered = True
+        self.single = _event(
+            id=10, name='Single Buck', display_name="Men's Single Buck",
+            stand_type='saw_hand', event_type='pro',
+        )
+        self.single.is_partnered = False
+        self.cookie = _event(
+            id=30, name='Cookie Stack', stand_type='cookie_stack', event_type='pro',
+        )
+        self.cookie.is_partnered = False
+        self.events = [self.single, self.jj, self.cookie]
+        self.name_index = build_name_index(['Karson Wilson', 'Cody Labahn'])
+
+    # --- helper smoke ---
+
+    def test_is_using_value_recognizes_prefix(self):
+        assert is_using_value('using:Karson Wilson') is True
+        assert is_using_value('Karson Wilson') is False
+        assert is_using_value('') is False
+        assert is_using_value(None) is False
+
+    def test_strip_using_prefix(self):
+        assert strip_using_prefix('using:Karson Wilson') == 'Karson Wilson'
+        assert strip_using_prefix('Karson Wilson') == 'Karson Wilson'
+        assert strip_using_prefix('') == ''
+        assert strip_using_prefix(None) == ''
+
+    # --- parser behaviour ---
+
+    def test_using_keyword_marks_partnered_event_only(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'USING Jack and Jill saw with Karson Wilson',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        # J&J is partnered → USING prefix
+        assert gear_map['20'] == 'using:Karson Wilson'
+        # Single Buck is non-partnered cascade sibling → plain SHARING
+        # (the underlying saw IS shared even though J&J is partnered)
+        assert gear_map.get('10') == 'Karson Wilson'
+
+    def test_using_keyword_on_non_partnered_event_falls_back_to_sharing(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        # Misuse: USING on a non-partnered event. Must be treated as SHARING
+        # (constraint) because the keyword's partnered-confirmation semantics
+        # do not apply to a non-partnered event.
+        gear_map, _ = parse_gear_sharing_details(
+            'USING Cookie Stack saw with Cody Labahn',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert gear_map['30'] == 'Cody Labahn'
+        assert not is_using_value(gear_map['30'])
+
+    def test_sharing_keyword_emits_plain_partner(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'SHARING Cookie Stack saw with Cody Labahn',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert gear_map['30'] == 'Cody Labahn'
+
+    def test_no_keyword_defaults_to_sharing(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'Cookie Stack with Cody Labahn',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert gear_map['30'] == 'Cody Labahn'
+
+    def test_using_keyword_skips_category_emission(self):
+        # Categories are family-wide SHARING buckets — emitting category:crosscut
+        # alongside a USING entry would re-introduce the conflict the USING
+        # keyword is meant to suppress.
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'USING Jack and Jill saw with Karson Wilson',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert 'category:crosscut' not in gear_map
+
+    # --- conflict-check behaviour ---
+
+    def test_using_entry_does_not_trigger_heat_conflict_on_partnered_event(self):
+        gear_alex = {'20': 'using:Karson Wilson'}
+        # USING on partnered event → no conflict (they belong together)
+        assert competitors_share_gear_for_event(
+            'Alex Kaper', gear_alex, 'Karson Wilson', {}, self.jj) is False
+
+    def test_sharing_entry_triggers_heat_conflict(self):
+        gear_alex = {'30': 'Cody Labahn'}
+        # SHARING on Cookie Stack → conflict (must split heats)
+        assert competitors_share_gear_for_event(
+            'Alex Kaper', gear_alex, 'Cody Labahn', {}, self.cookie) is True
+
+    def test_using_reciprocal_also_skipped(self):
+        gear_alex = {'20': 'using:Karson Wilson'}
+        gear_karson = {'20': 'using:Alex Kaper'}
+        # Both sides USING → no conflict
+        assert competitors_share_gear_for_event(
+            'Alex Kaper', gear_alex, 'Karson Wilson', gear_karson, self.jj) is False
+
+    def test_event_none_walk_skips_using(self):
+        gear_alex = {'20': 'using:Karson Wilson'}
+        # Event-blind sweep (event=None) also respects USING
+        assert competitors_share_gear_for_event(
+            'Alex Kaper', gear_alex, 'Karson Wilson', {}, None) is False
+
+
+# ---------------------------------------------------------------------------
+# resolve_partner_name fallbacks (audit gaps #5, #6)
+#
+# Audit gap #5: no 3+ token fallback. Three-or-more tokens (common after
+# scrub-regex bleed) skipped every fallback and returned raw.
+# Audit gap #6: first-name-only fallback existed only in registration_import.py,
+# not in gear_sharing.py — so "Cody" silently dropped in the auto-parse and
+# manager-batch parsers even when only one Cody was on the roster.
+#
+# Both fixes preserve the safety guards: ambiguous inputs (multiple matches
+# pointing at different people) still return raw rather than guessing.
+# ---------------------------------------------------------------------------
+
+class TestSingleTokenFallback:
+    def test_first_name_resolves_when_unambiguous(self):
+        ni = build_name_index(['Cody Labahn', 'Karson Wilson'])
+        assert resolve_partner_name('Cody', ni) == 'Cody Labahn'
+
+    def test_last_name_resolves_when_unambiguous(self):
+        ni = build_name_index(['Tom Cody', 'Karson Wilson'])
+        assert resolve_partner_name('Cody', ni) == 'Tom Cody'
+
+    def test_ambiguous_first_and_last_returns_raw(self):
+        # "Cody" matches "Cody Labahn" (first) AND "Tom Cody" (last) — two
+        # different people. Must return raw rather than guess.
+        ni = build_name_index(['Cody Labahn', 'Tom Cody'])
+        assert resolve_partner_name('Cody', ni) == 'Cody'
+
+    def test_two_first_name_matches_returns_raw(self):
+        ni = build_name_index(['Cody Labahn', 'Cody Smith'])
+        assert resolve_partner_name('Cody', ni) == 'Cody'
+
+    def test_first_name_prefix_match_via_two_token_form(self):
+        # "Bri Kvinge" → "Brianna Kvinge" via two-token initial+last fallback.
+        # Single-token "Bri" alone is genuinely ambiguous (3 chars; could
+        # also be a fragment of an English word) and intentionally returns
+        # raw — too aggressive a single-token prefix match would resolve
+        # "she" → "Shea Warren". The two-token form provides the surname
+        # disambiguator.
+        ni = build_name_index(['Brianna Kvinge', 'Karson Wilson'])
+        assert resolve_partner_name('Bri Kvinge', ni) == 'Brianna Kvinge'
+
+    def test_three_letter_first_name_not_resolved(self):
+        # 3-letter single-token input does NOT trigger first-name fallback.
+        # Avoids the "she" → "Shea Warren" false positive.
+        ni = build_name_index(['Brianna Kvinge', 'Shea Warren'])
+        assert resolve_partner_name('Bri', ni) == 'Bri'
+        assert resolve_partner_name('She', ni) == 'She'
+
+    def test_two_letter_input_skipped(self):
+        # 2-char input is too short — no false positive on "Co" → Cody Labahn.
+        ni = build_name_index(['Cody Labahn'])
+        assert resolve_partner_name('Co', ni) == 'Co'
+
+
+class TestMultiTokenSliceFallback:
+    def test_three_tokens_with_one_clean_pair(self):
+        # Scrub-regex bleed leaves "OP Cody Labahn"; sliding window finds
+        # "Cody Labahn" → resolves.
+        ni = build_name_index(['Cody Labahn', 'Karson Wilson'])
+        assert resolve_partner_name('OP Cody Labahn', ni) == 'Cody Labahn'
+
+    def test_three_tokens_no_clean_pair_returns_raw(self):
+        ni = build_name_index(['Cody Labahn'])
+        assert resolve_partner_name('lorem ipsum dolor', ni) == 'lorem ipsum dolor'
+
+    def test_four_tokens_with_two_different_resolutions_returns_raw(self):
+        # Both "Cody Labahn" and "Karson Wilson" appear → ambiguous.
+        ni = build_name_index(['Cody Labahn', 'Karson Wilson'])
+        assert resolve_partner_name('Cody Labahn Karson Wilson', ni) in (
+            'Cody Labahn Karson Wilson',  # raw because ambiguous
+        )
+
+
+class TestMultiSegmentParser:
+    def setup_method(self):
+        self.events = [
+            _event(id=10, name='Single Buck', stand_type='saw_hand', event_type='pro'),
+            _event(id=20, name='Obstacle Pole', stand_type='obstacle_pole', event_type='pro'),
+        ]
+        for e in self.events:
+            e.is_partnered = False
+        self.name_index = build_name_index(['Cody Labahn', 'Karson Wilson'])
+
+    def test_partner_in_second_segment_resolves(self):
+        # Originally failing: first segment had no partner, second segment did.
+        # Old parser only tried the first segment and silently dropped.
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, w = parse_gear_sharing_details(
+            'SHARING Op saw, single saw with Cody',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        # Partner resolves via first-name fallback in second segment.
+        assert 'Cody Labahn' in gear_map.values() or 'category:op_saw' in gear_map
+        assert 'partner_not_resolved' not in w
+
+    def test_partner_in_third_segment_resolves(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'Hot saw; Cookie stack; with Cody Labahn',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert 'Cody Labahn' in gear_map.values()

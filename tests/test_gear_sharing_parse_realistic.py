@@ -252,7 +252,26 @@ class TestCategoryInference:
         assert infer_equipment_categories('') == set()
 
     def test_no_match_returns_empty(self):
-        assert infer_equipment_categories('obstacle pole') == set()
+        # "axe throw" maps to no equipment category (axes are personal, not shared).
+        assert infer_equipment_categories('axe throw') == set()
+
+    def test_obstacle_pole_emits_op_saw(self):
+        assert infer_equipment_categories('obstacle pole') == {'op_saw'}
+
+    def test_op_saw_emits_op_saw(self):
+        assert infer_equipment_categories('OP Saw') == {'op_saw'}
+
+    def test_cookie_stack_emits_cookie_stack(self):
+        assert infer_equipment_categories('cookie stack') == {'cookie_stack'}
+
+    def test_cookie_saw_emits_cookie_stack(self):
+        assert infer_equipment_categories('cookie saw') == {'cookie_stack'}
+
+    def test_speed_climb_emits_climbing(self):
+        assert infer_equipment_categories('speed climb') == {'climbing'}
+
+    def test_pole_climb_emits_climbing(self):
+        assert infer_equipment_categories('pole climb') == {'climbing'}
 
     def test_multiple_categories(self):
         cats = infer_equipment_categories('single buck and hot saw and springboard')

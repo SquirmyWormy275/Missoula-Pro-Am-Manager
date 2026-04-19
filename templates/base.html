@@ -16,7 +16,7 @@
     <!-- Bootstrap Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
     <!-- Pro-Am design system -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}?v={{ STATIC_VERSION }}">
     <!-- Resolve Jinja2 URL dependency used by the Arapaho language mode CSS variable -->
     <style>:root { --arp-flag-url: url("{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}"); }</style>
 

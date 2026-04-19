@@ -450,8 +450,16 @@ class TestInferEquipmentCategoriesFuzz:
         cats = self._infer('single buck, hot saw, springboard')
         assert cats == {'crosscut', 'chainsaw', 'springboard'}
 
-    def test_no_match(self):
+    def test_obstacle_pole_emits_op_saw(self):
+        # Behaviour change 2026-04-19: 'obstacle pole' now correctly emits
+        # the op_saw category (audit gap #2 fix on fix/race-day-ui-fixes).
+        # Previously this returned set() and the entry silently dropped.
         cats = self._infer('obstacle pole speed climb')
+        assert cats == {'op_saw', 'climbing'}
+
+    def test_no_match(self):
+        # An input with no equipment vocabulary still returns an empty set.
+        cats = self._infer('axe throw')
         assert cats == set()
 
     def test_case_insensitive(self):
