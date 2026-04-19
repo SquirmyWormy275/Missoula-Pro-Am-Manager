@@ -525,7 +525,16 @@ def test_delete_scored_competitor_and_regenerate_scored_event(qa_env):
 
 
 def test_pro_scratch_removes_competitor_from_generated_heat(qa_env):
-    """Scratching a pro competitor should remove them from generated heats and mark their result scratched."""
+    """Scratching a pro competitor should remove them from generated heats and
+    mark their result scratched.
+
+    The scratch flow is a two-step cascade-preview:
+      1. GET  /scoring/<tid>/competitor/<cid>/scratch-preview → JSON of effects.
+      2. POST /scoring/<tid>/competitor/<cid>/scratch-confirm with effect_count
+         + checked effects → commit.
+
+    This test exercises both steps and verifies heat roster + EventResult.
+    """
     app = qa_env["app"]
     client = qa_env["client"]
     tournament_id, event_id = _seed_boundary_event(app, competitor_count=3, max_stands=2)
@@ -538,7 +547,7 @@ def test_pro_scratch_removes_competitor_from_generated_heat(qa_env):
     assert generate.status_code == 302
 
     with app.app_context():
-        from models import EventResult, Heat
+        from models import Heat
         from models.competitor import ProCompetitor
 
         competitor = (
@@ -555,15 +564,35 @@ def test_pro_scratch_removes_competitor_from_generated_heat(qa_env):
         assert heat is not None
         competitor_id = competitor.id
 
-    scratch = client.post(
-        f"/registration/{tournament_id}/pro/{competitor_id}/scratch",
-        data={},
+    # Step 1: preview — discover effects.
+    preview = client.get(
+        f"/scoring/{tournament_id}/competitor/{competitor_id}/scratch-preview"
+    )
+    assert preview.status_code == 200
+    payload = preview.get_json()
+    effects = payload["effects"]
+
+    # Step 2: confirm — send every effect back as "checked".
+    form = {"effect_count": str(len(effects))}
+    for i, e in enumerate(effects):
+        form[f"effect_type_{i}"] = e["effect_type"]
+        form[f"affected_entity_id_{i}"] = str(e["affected_entity_id"])
+        form[f"affected_entity_type_{i}"] = e["affected_entity_type"]
+        form[f"effect_checked_{i}"] = "on"
+
+    confirm = client.post(
+        f"/scoring/{tournament_id}/competitor/{competitor_id}/scratch-confirm",
+        data=form,
         follow_redirects=False,
     )
-    assert scratch.status_code == 302
+    assert confirm.status_code == 302
 
     with app.app_context():
         from models import EventResult, Heat
+        from models.competitor import ProCompetitor
+
+        comp = ProCompetitor.query.get(competitor_id)
+        assert comp is not None and comp.status == "scratched"
 
         heat = (
             Heat.query.filter_by(event_id=event_id, run_number=1)

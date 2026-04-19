@@ -395,6 +395,28 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                     _rebuild_individual_points(list(affected_college_competitor_ids))
                 effects_applied += 1
 
+        # --- Remove competitor from unfinished heats -------------------------
+        # Scratching means the competitor shouldn't appear on upcoming heat
+        # sheets. Only touch non-completed heats so past heats stay intact.
+        from models.heat import Heat
+        heat_type = "college" if isinstance(competitor, _CC) else "pro"
+        heats_q = (
+            Heat.query.join(Event)
+            .filter(
+                Event.tournament_id == tournament.id,
+                Event.event_type == heat_type,
+                Heat.status != "completed",
+            )
+        )
+        for heat in heats_q.all():
+            comp_ids = heat.get_competitors()
+            if competitor.id in comp_ids:
+                heat.remove_competitor(competitor.id)
+                assignments = heat.get_stand_assignments()
+                if str(competitor.id) in assignments:
+                    del assignments[str(competitor.id)]
+                    heat.stand_assignments = json.dumps(assignments)
+
         # --- Audit log -------------------------------------------------------
         log_action(
             "competitor_scratched",
