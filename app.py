@@ -38,6 +38,26 @@ _SCRIPT_OPEN_RE = re.compile(r'<script\b([^>]*)>', re.IGNORECASE)
 _STYLE_OPEN_RE = re.compile(r'<style\b([^>]*)>', re.IGNORECASE)
 
 
+def _static_version_token(app) -> str:
+    """Cache-bust token derived from theme.css mtime.
+
+    Returned as an int seconds-since-epoch so the same token survives within a
+    request and across requests until the file is touched. Used as ``?v=TOKEN``
+    on every static asset URL in base.html so a CSS deploy invalidates every
+    user's browser cache on the next request — without this, a CSS-only fix
+    requires every user to hard-refresh before they see it.
+
+    Falls back to a constant if the file is missing (development noise; not
+    worth crashing for).
+    """
+    import os
+    try:
+        path = os.path.join(app.root_path, 'static', 'css', 'theme.css')
+        return str(int(os.path.getmtime(path)))
+    except OSError:
+        return '0'
+
+
 def _inject_csp_nonce(body: str, nonce: str) -> str:
     """Stamp nonce="<nonce>" onto every inline <script> and <style> open tag.
 
@@ -282,6 +302,13 @@ def _create_app_inner():
             'ARAPAHO_LOCK_REMAINING': remaining,
             'ui': text.ui,
             'unscored_heats': unscored_heats,
+            # Cache-bust token for static asset URLs. Uses theme.css mtime so
+            # any CSS edit forces every browser to fetch the new file on the
+            # next request — without this, deploying a CSS fix only takes
+            # effect after each user does a hard-refresh. The token is read
+            # at request time (not app init) so it picks up edits during
+            # `flask run` reloads.
+            'STATIC_VERSION': _static_version_token(app),
         }
 
     # Custom Jinja test: `search` — regex search used by templates with
