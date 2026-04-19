@@ -662,6 +662,21 @@ This workspace contains multiple projects in subdirectories (e.g., KYTHEREX/, ST
 
 When debugging Python import errors or unexpected behavior where source code looks correct, check for stale `__pycache__`/`.pyc` files first. Run `find . -type d -name __pycache__ -exec rm -rf {} +` as an early diagnostic step.
 
+### CSS Verification Protocol (MANDATORY)
+
+A CSS-only fix shipped twice on this branch (commits c50ceb2 + 488d912) reporting DONE while still broken in production. The mistake was using a JavaScript link reload to verify the new CSS in DevTools, then claiming the modal was fixed. Hot-swapping a stylesheet via `link.href = ...` triggers a full style recompute that destroys Chrome's compositor-layer state — so the verification accidentally fixes the bug for that one in-memory session, while real users with cached CSS stay broken.
+
+**When verifying any CSS fix, follow this protocol exactly:**
+
+1. **Edit the source CSS file.** Save.
+2. **Restart the dev server** (or wait for the auto-reload) so the new CSS is served.
+3. **Hard-navigate to a fresh URL** with cache-busting at the request level. Use `goto http://localhost:5000/path?cb=$(date +%s)` or open in a new browser context. Do NOT navigate via in-page links from a session that already loaded the old CSS.
+4. **Verify the rendered HTML actually references the new CSS.** `curl -s URL | grep theme.css` should show the `?v=` cache-bust token. If it doesn't, the page is still using cached CSS — your verification is invalid.
+5. **NEVER use `link.href = '/static/css/theme.css?v='+Date.now()` to force a stylesheet swap as verification.** It falsifies stacking-context and compositor state. Use it only for diagnostic exploration, never as a final check.
+6. **Run the static guard test.** `pytest tests/test_css_modal_safety.py` catches the specific class of stacking bug that broke modals on this branch. If you change a rule on a modal-ancestor selector and that test fails, do NOT silence it — the rule WILL ship a broken modal to real users.
+
+The cache-bust on theme.css (`base.html` references `?v={{ STATIC_VERSION }}` from `_static_version_token` in app.py) only protects users from stale CSS after a deploy. It does NOT make in-page link reloads valid as developer-side verification.
+
 ### Git Workflow
 
 Always check the current branch before running release/deploy workflows. Feature branches are required for PRs and /document-release. Never assume we're on a feature branch.
