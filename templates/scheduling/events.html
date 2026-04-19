@@ -744,7 +744,11 @@
                                     </td>
                                     <td class="text-center">{{ entrant_counts.get(e.id, 0) }}</td>
                                     <td class="text-center">
-                                        {% if progress.heat_count %}
+                                        {% if e.has_prelims %}
+                                        <a href="{{ url_for('partnered_axe.dashboard', tournament_id=tournament.id) }}"
+                                           class="text-decoration-none small text-info"
+                                           title="Prelim/Final state machine — not standard heats">Prelims/Finals</a>
+                                        {% elif progress.heat_count %}
                                         <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
                                            class="text-decoration-none fw-semibold">{{ progress.heat_count }}</a>
                                         {% else %}—{% endif %}
@@ -774,15 +778,22 @@
                                     </td>
                                     <td class="text-end pe-3">
                                         <div class="btn-group btn-group-sm">
+                                            {% if e.has_prelims %}
+                                            <a href="{{ url_for('partnered_axe.dashboard', tournament_id=tournament.id) }}"
+                                               class="btn btn-outline-info" title="Manage Prelims & Finals">
+                                                <i class="bi bi-bullseye"></i> Prelims/Finals
+                                            </a>
+                                            {% else %}
                                             <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=e.id) }}"
                                                class="btn btn-outline-primary" title="View / Manage Heats">
                                                 <i class="bi bi-layers"></i> Heats
                                             </a>
+                                            {% endif %}
                                             <a href="{{ url_for('scoring.configure_payouts', tournament_id=tournament.id, event_id=e.id) }}"
                                                class="btn btn-outline-warning" title="Configure Payouts">
                                                 <i class="bi bi-cash"></i>
                                             </a>
-                                            {% if progress.heat_count and progress.heat_count > 0 and e.status != 'completed' %}
+                                            {% if not e.has_prelims and progress.heat_count and progress.heat_count > 0 and e.status != 'completed' %}
                                             <a href="{{ url_for('scoring.next_unscored_heat', tournament_id=tournament.id, event_id=e.id) }}"
                                                class="btn btn-warning" title="Score Next Heat">
                                                 <i class="bi bi-pencil-fill"></i> Score

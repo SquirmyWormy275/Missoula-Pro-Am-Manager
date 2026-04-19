@@ -21,7 +21,11 @@ import pytest
 
 os.environ.setdefault("SECRET_KEY", "test-scratch-routes")
 os.environ.setdefault("WTF_CSRF_ENABLED", "False")
-os.environ.setdefault("TEST_USE_CREATE_ALL", "1")
+# NOTE: `TEST_USE_CREATE_ALL` is set inside the `app` fixture, NOT at module
+# import, because pytest collects (imports) every test file before running any
+# tests — a module-level `os.environ[...] = "1"` would leak to every test that
+# runs before this module's teardown fixture fires, breaking tests in
+# test_api_endpoints and test_model_json_safety which expect `flask db upgrade`.
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +40,9 @@ def app():
     tmp.close()
 
     old_url = os.environ.get("DATABASE_URL")
+    old_create_all = os.environ.get("TEST_USE_CREATE_ALL")
     os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
+    os.environ["TEST_USE_CREATE_ALL"] = "1"
 
     try:
         from app import create_app
@@ -63,6 +69,10 @@ def app():
             os.environ.pop("DATABASE_URL", None)
         else:
             os.environ["DATABASE_URL"] = old_url
+        if old_create_all is None:
+            os.environ.pop("TEST_USE_CREATE_ALL", None)
+        else:
+            os.environ["TEST_USE_CREATE_ALL"] = old_create_all
         try:
             os.unlink(db_path)
         except OSError:

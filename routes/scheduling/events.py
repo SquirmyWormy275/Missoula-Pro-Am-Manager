@@ -272,7 +272,11 @@ def _create_college_events(tournament, form_data, college_open_events, college_c
             and event_config.get('scoring_type') != 'hits'
             else False
         )
-        if event_config.get('is_gendered', True):
+        if event_config.get('is_partnered') and event_config.get('partner_gender') == 'mixed':
+            # Mixed-gender partnered events (Jack & Jill) are ONE event, not split by gender.
+            event = _upsert_event(tournament, event_config, 'college', None, False, max_stands_override, is_handicap)
+            selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
+        elif event_config.get('is_gendered', True):
             # Create men's and women's versions
             event_m = _upsert_event(tournament, event_config, 'college', 'M', False, max_stands_override, is_handicap)
             event_f = _upsert_event(tournament, event_config, 'college', 'F', False, max_stands_override, is_handicap)

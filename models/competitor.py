@@ -63,13 +63,27 @@ class CollegeCompetitor(db.Model):
 
     @property
     def display_name(self):
-        """Name with team designator, e.g. 'Alex Kaper (UM-A)'."""
-        if self.team:
-            return f'{self.name} ({self.team.team_code})'
+        """Name with team designator, e.g. 'Alex Kaper (UM-A)'.
+
+        Guarded against DetachedInstanceError: when this competitor is read
+        from a cached report payload (session-less), lazy-loading `team`
+        would crash the template render. Falling back to the bare name keeps
+        the page usable.
+        """
+        try:
+            team = self.team
+        except Exception:
+            return self.name
+        if team:
+            return f'{self.name} ({team.team_code})'
         return self.name
 
     def __repr__(self):
-        return f'<CollegeCompetitor {self.name} ({self.team.team_code if self.team else "no team"})>'
+        try:
+            team_code = self.team.team_code if self.team else "no team"
+        except Exception:
+            team_code = "detached"
+        return f'<CollegeCompetitor {self.name} ({team_code})>'
 
     @validates('name')
     def validate_name(self, key, value):
