@@ -355,9 +355,10 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
         slice_resolutions: set[str] = set()
         for i in range(len(candidate_tokens) - 1):
             slice_text = ' '.join(candidate_tokens[i:i + 2])
-            # Recurse with cutoff slightly relaxed so a typo inside a sliced
-            # window still has a chance, but keep the original cutoff path
-            # available for clean exact pairs.
+            # Recurse with the same cutoff (0.86 default). The two-token
+            # fallback inside the recursive call has its own ambiguity guards
+            # (last-name exact match, first-name prefix rule) which prevent
+            # divergent-first-name false positives like Eric/Erin Lavoie.
             resolved = resolve_partner_name(slice_text, name_index, cutoff)
             if resolved and normalize_person_name(resolved) != normalize_person_name(slice_text):
                 # Only count slices that actually resolved to a roster name.
