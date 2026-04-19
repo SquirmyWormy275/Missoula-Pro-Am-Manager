@@ -506,6 +506,10 @@ def new_pro_competitor(tournament_id):
             flash('Gear sharing details saved — open competitor profile to resolve partners.', 'info')
 
         # Auto-parse gear-sharing details into structured map (non-blocking).
+        # Audit gap #11 fix: previously a bare except: pass swallowed crashes
+        # silently, leaving the gear field unparsed with no flash and no log.
+        # We still allow registration to succeed (gear parsing is non-blocking),
+        # but every failure now hits the audit log so a judge can investigate.
         try:
             from services.gear_sharing import auto_parse_and_warn
             gear_msgs = auto_parse_and_warn(competitor, tournament)
@@ -513,8 +517,21 @@ def new_pro_competitor(tournament_id):
                 db.session.commit()
             for msg in gear_msgs:
                 flash(msg, 'info')
-        except Exception:
-            pass  # Gear parse failure should never block registration
+        except Exception as gear_exc:
+            current_app.logger.warning(
+                'auto_parse_and_warn failed for competitor %s (id=%s): %s',
+                getattr(competitor, 'name', '?'),
+                getattr(competitor, 'id', '?'),
+                gear_exc,
+                exc_info=True,
+            )
+            try:
+                log_action(
+                    'gear_parse_error', 'pro_competitor', competitor.id,
+                    {'error_class': type(gear_exc).__name__, 'error_msg': str(gear_exc)[:500]},
+                )
+            except Exception:
+                pass  # audit log failure must never block registration
 
         flash(text.FLASH['competitor_added'].format(name=competitor.name), 'success')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))

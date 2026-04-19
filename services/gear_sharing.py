@@ -587,6 +587,13 @@ def parse_gear_sharing_details(
 
     if not partner_name:
         warnings.append('partner_not_resolved')
+        # Audit gap #12: log silently-dropped entries so a judge reviewing the
+        # logs can see which competitors had unparseable gear text. Truncate
+        # the source text so a runaway field never blows up the log line.
+        logger.info(
+            "Gear parse failure (partner_not_resolved): self=%r text=%r",
+            self_name, text[:200],
+        )
         return {}, warnings
 
     # Event-specific extraction from known event aliases.
@@ -640,6 +647,13 @@ def parse_gear_sharing_details(
 
     if not matched_any_event and not categories:
         warnings.append('events_not_resolved')
+        # Audit gap #12: surface the unresolved-event case in logs so a judge
+        # can spot competitors whose partner was identified but whose
+        # equipment intent was unparseable.
+        logger.info(
+            "Gear parse failure (events_not_resolved): self=%r partner=%r text=%r",
+            self_name, partner_name, text[:200],
+        )
 
     return parsed, warnings
 

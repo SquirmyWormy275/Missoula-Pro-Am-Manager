@@ -235,6 +235,7 @@ def confirm_pro_entries(tournament_id):
     updated  = 0
     errors   = []
     gear_parse_warnings = 0
+    gear_q27_inconsistencies: list = []
     # Competitors whose gear_sharing was just written and need to be mirrored
     # to their partners after the main commit (gear audit fix G5 — 2026-04-07).
     gear_synced_competitors: list = []
@@ -312,9 +313,17 @@ def confirm_pro_entries(tournament_id):
                     competitor.set_partner(key, canonical_partner)
 
             # ---- Gear sharing JSON (parsed from free-text details) ----
-            if entry.get('gear_sharing'):
+            # Audit gap #7: previously this only ran when Q27 ("Are you sharing
+            # gear?") was True. Competitors who answered No but typed sharing
+            # text had their text saved to gear_sharing_details and never parsed
+            # — silently invisible to the manager UI. Always parse if there is
+            # text. Track Q27/text inconsistency separately so the judge sees
+            # mismatches in the import summary.
+            details_text = (entry.get('gear_sharing_details') or '').strip()
+            q27_answer = bool(entry.get('gear_sharing'))
+            if details_text:
                 parsed_gear, warnings = parse_gear_sharing_details(
-                    details_text=entry.get('gear_sharing_details') or '',
+                    details_text=details_text,
                     event_pool=pro_events,
                     name_index=name_index,
                     self_name=entry.get('name') or '',
@@ -326,6 +335,16 @@ def confirm_pro_entries(tournament_id):
                     gear_synced_competitors.append(competitor)
                 if warnings:
                     gear_parse_warnings += 1
+                if not q27_answer:
+                    # Q27 says No but text is present — judge should reconcile.
+                    gear_q27_inconsistencies.append(
+                        f"{competitor.name}: answered No to Q27 but provided gear-sharing text"
+                    )
+            elif q27_answer:
+                # Q27 says Yes but no text — incomplete entry.
+                gear_q27_inconsistencies.append(
+                    f"{competitor.name}: answered Yes to Q27 but provided no gear-sharing text"
+                )
 
             if is_new:
                 db.session.add(competitor)
@@ -425,12 +444,17 @@ def confirm_pro_entries(tournament_id):
     summary = f'Import complete: {imported} added, {updated} updated.'
     if gear_parse_warnings:
         summary += f' Gear-sharing parse warnings on {gear_parse_warnings} row(s); review competitor detail pages.'
+    if gear_q27_inconsistencies:
+        n = len(gear_q27_inconsistencies)
+        summary += f' Q27/text mismatch on {n} row(s) — judge should reconcile in the Gear Sharing Manager.'
     summary += post_parsed_msg
     log_action('pro_import_confirmed', 'tournament', tournament_id, {
         'imported': imported,
         'updated': updated,
         'errors': len(errors),
         'gear_post_parsed': gear_post['parsed'],
+        'gear_q27_inconsistencies': len(gear_q27_inconsistencies),
+        'gear_q27_inconsistency_examples': gear_q27_inconsistencies[:5],
     })
     db.session.commit()
     if errors:
