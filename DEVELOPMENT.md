@@ -592,7 +592,58 @@ STAND_CONFIGS = {
 
 ## Changelog
 
-### 2026-04-13 (V2.9.0)
+### 2026-04-19 (V2.9.1)
+
+**Patch — gear-sharing parser overhaul + modal stacking fix + race-day UI hardening**
+
+Closes the reported bug ("OP Saw and Cookie Stack SHARING entries don't appear in the gear-sharing module") and a BLOCKER-class domain bug (USING vs SHARING semantically conflated, splitting partnered pairs across heats).
+
+**Reported bug fix — Cookie Stack / OP Saw populate (services/gear_sharing.py):**
+- Partner-segment scrub regex (`parse_gear_sharing_details`) now strips USING/SHARING and the previously-missing Cookie Stack / Obstacle Pole / Speed Climb / climbing-gear vocabulary. Dirty form input like `SHARING OP Saw with Cody Labahn` now reduces to `Cody Labahn` instead of leaving `OP Cody Labahn` (3 tokens that no fuzzy fallback could resolve).
+- `_event_name_aliases` gains stand_type branches for `cookie_stack`, `obstacle_pole`, and `speed_climb`, matching the existing pattern for `saw_hand`/`hot_saw`/`springboard`.
+- `infer_equipment_categories` emits new categories `op_saw`, `cookie_stack`, `climbing` alongside crosscut/chainsaw/springboard. `_CATEGORY_KEYS` and `event_matches_gear_key` updated coherently.
+
+**USING vs SHARING distinction (services/gear_sharing.py):**
+- New form keyword `USING` (e.g. `USING Jack and Jill saw with Karson Wilson`) is now recognized as partnered-event confirmation, NOT a heat constraint. Stored with `using:` prefix on the partner-name value (`{"20": "using:Karson Wilson"}`); fully backward-compatible with existing entries (no DB migration needed).
+- `competitors_share_gear_for_event`, `build_gear_conflict_pairs`, and `sync_all_gear_for_competitor` all skip USING-prefixed values so the flight builder no longer splits Jack & Jill partners across heats they should be in together.
+- Misuse like `USING Hot Saw with X` falls back to SHARING because Hot Saw is non-partnered.
+- Two new helpers: `is_using_value(v)` and `strip_using_prefix(v)`.
+
+**Name resolver fallbacks for dirty form data (services/gear_sharing.py::resolve_partner_name):**
+- Single-token fallback now combines last-name and first-name candidates into one ambiguity check. `Cody` with one Cody on the roster resolves; `Cody` with two Codys (or `Cody` + `Tom Cody`) returns raw. First-name path requires 4+ chars to avoid resolving short English-word collisions like `she` → `Shea Warren`.
+- New 3+ token sliding-window fallback. Dirty leftovers like `OP Cody Labahn` (where the partner-segment scrub missed a word) now slide a 2-token window across the input and re-run the resolver. Accepts only when every successful slice resolves to the same canonical.
+- `parse_gear_sharing_details` now iterates EVERY comma/semicolon segment instead of only the first, closing `SHARING Op saw, single saw with Cody` (partner in second segment).
+
+**Q27 reconciliation + parser visibility (routes/import_routes.py, routes/registration.py, services/gear_sharing.py):**
+- The xlsx import now always parses `gear_sharing_details` when text is present, regardless of Q27 ("Are you sharing gear?"). Q27/text mismatches (Yes-but-empty AND No-but-text) get tracked separately and surfaced in the import summary flash and audit log.
+- `auto_parse_and_warn` exception handler in `new_pro_competitor` no longer swallows crashes silently; logs at WARNING with `exc_info=True` and writes a `gear_parse_error` audit log entry. Gear parsing remains non-blocking.
+- `parse_gear_sharing_details` now logs at INFO when emitting `partner_not_resolved` or `events_not_resolved` warnings. Source text truncated to 200 chars.
+
+**Modal stacking bug — every modal in the app was unclickable (static/css/theme.css):**
+- The page-fade-in animation on `#main-content` kept the element on its own composited GPU layer in Chrome (the compositor promotes animated elements). That implicit layer acted as a stacking context, trapping Bootstrap modals at z-index 1055 BELOW the modal-backdrop at z-index 1050 attached to body. The X / Cancel / Save buttons on EVERY modal in the app were unclickable for real users (only Escape worked).
+- Hit-test before: `elementFromPoint(X-button center)` → `DIV.modal-backdrop`. Hit-test after: `BUTTON.btn-close`. Verified live on the gear sharing edit modal, the delete tournament modal, and the confirm modal.
+- Fix: removed the `@keyframes page-fade-in` block AND both `#main-content { animation: page-fade-in ... }` rules entirely. The 0.18-0.2s fade was cosmetic polish; clickable modals are not.
+- Initial fix in `c50ceb2` was incomplete (only removed `transform` from keyframes); QA caught the residual issue and the final fix landed in `488d912`.
+
+**Static asset cache-busting (templates/base.html, app.py):**
+- `theme.css` link now appends `?v={mtime}` cache-bust token via new `_static_version_token(app)` helper exposed as `STATIC_VERSION` to all templates. Without this, every CSS-only fix on this app would have the same trap for real users (browser keeps cached CSS, fix appears to work for the developer who hard-refreshed during testing, production users stay broken).
+
+**Regression guards (tests/test_css_modal_safety.py, CLAUDE.md):**
+- New `tests/test_css_modal_safety.py` parses `theme.css` and asserts no rule on a Bootstrap-modal-ancestor selector (`#main-content`, `main`, `html`, `body`, `.d-flex`) declares any compositor-promoting property (animation, transform, filter, opacity, etc.) with a non-safe value. Verified the test catches the regression by injecting both the original transform and the keyframes-with-transform pattern.
+- CLAUDE.md gains a `### CSS Verification Protocol (MANDATORY)` section that names the failure mode in plain language, gives a 6-step verification procedure, and explicitly bans `link.href = '...?v='+Date.now()` reloads as final verification.
+
+**Test suite fixes (tests/test_fuzz_scoring.py, tests/test_registration_import.py):**
+- Three pre-existing tests asserted the old (broken) behaviour; updated to reflect the fix:
+  - `TestInferEquipmentCategoriesFuzz::test_no_match` now uses `axe throw` (no equipment vocab) for the empty-categories case; `obstacle pole` correctly emits `op_saw` now.
+  - `TestFuzzyMatching::test_first_name_only` accepts either `FIRST-NAME` or `FUZZY MATCH` log entry — the upstream `gear_sharing.resolve_partner_name` now resolves "Henry" earlier via fuzzy match.
+  - `TestFuzzyMatching::test_short_name_no_match` continues to pass after bumping the single-token first-name threshold from 3 to 4 chars.
+
+**Gear-sharing audit document (docs/GEAR_SHARING_AUDIT.md):**
+- New 828-line read-only audit covering parser anatomy, event/gear mapping, name-matching algorithms, Q27 interaction, degenerate input handling, and a numbered list of 25 bugs/gaps. Items #9 and #17 withdrawn after re-verification (audit was wrong); item #20 downgraded after the fixes shipped on this branch made the alternate parser largely redundant.
+
+**Test coverage:** 2730 passed, 9 skipped, 1 xpassed. 235 gear-sharing tests including 13 new USING/SHARING cases, 11 vocabulary-fix cases, plus the 3 new modal-safety guards.
+
+
 
 **Minor release — race-day integrity, birling rebuild, judge sheet, day-schedule audit**
 
