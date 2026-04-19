@@ -26,6 +26,35 @@ _CATEGORY_KEYS = {
     'category:climbing',
 }
 
+# Two form keywords distinguish two different domain meanings:
+#   USING   = partnered-event gear confirmation (e.g. "USING Jack and Jill saw
+#             with Karson Wilson"). The two competitors are already paired for
+#             the event by registration; this is redundancy/confirmation only,
+#             not a heat constraint.
+#   SHARING = cross-competitor gear dependency outside a partnered event (e.g.
+#             "SHARING Cookie Stack saw with Cody Labahn"). Two competitors
+#             share one physical piece of gear and CANNOT be in the same heat.
+#
+# USING entries are stored with this prefix on the partner-name value:
+#     "1027": "using:Karson Wilson"
+# competitors_share_gear_for_event and build_gear_conflict_pairs skip values
+# that carry this prefix, so they never become heat constraints.
+_USING_VALUE_PREFIX = 'using:'
+
+
+def is_using_value(value) -> bool:
+    """True if a gear_sharing value is a partnered-event USING confirmation."""
+    return isinstance(value, str) and value.lower().startswith(_USING_VALUE_PREFIX)
+
+
+def strip_using_prefix(value) -> str:
+    """Return the canonical partner name with any 'using:' prefix removed."""
+    if not isinstance(value, str):
+        return ''
+    if value.lower().startswith(_USING_VALUE_PREFIX):
+        return value[len(_USING_VALUE_PREFIX):].strip()
+    return value
+
 # Generational/ordinal suffixes that distinguish otherwise-identical names
 # (e.g. "David Moses" vs "David Moses Jr."). Two people sharing a stem but
 # differing only by a suffix are DIFFERENT people — never fuzzy-merge them.
@@ -434,6 +463,17 @@ def parse_gear_sharing_details(
     self_norm = normalize_person_name(self_name)
     entered_norm = {normalize_event_text(v) for v in (entered_event_names or []) if str(v or '').strip()}
 
+    # USING vs SHARING domain distinction (2026 form). USING means partnered-event
+    # confirmation (no heat constraint); SHARING means cross-competitor heat
+    # constraint. We detect the leading keyword token here; per-event logic below
+    # applies the 'using:' value prefix only to events that are actually
+    # partnered (is_partnered=True), so a misuse like "USING Hot Saw with X"
+    # falls back to SHARING semantics for the non-partnered event.
+    leading_token_match = re.match(r'\s*([A-Za-z]+)', text)
+    leading_keyword_using = bool(
+        leading_token_match and leading_token_match.group(1).lower() == 'using'
+    )
+
     # Detect partner name from known competitor names mentioned in details.
     # Token-sequence match (not normalized substring) so that "David Moses Jr."
     # in the text never silently matches a separate "David Moses" entry — if
@@ -518,11 +558,25 @@ def parse_gear_sharing_details(
             short_match = False
 
         if alias_match or short_match:
-            parsed[str(event.id)] = partner_name
+            # Apply USING prefix only when the leading keyword was USING AND
+            # this event is partnered (Jack & Jill, Double Buck partner, etc).
+            # Misuse like "USING Hot Saw with X" stays as a SHARING constraint
+            # because Hot Saw is not partnered.
+            event_is_partnered = bool(getattr(event, 'is_partnered', False))
+            if leading_keyword_using and event_is_partnered:
+                parsed[str(event.id)] = f'{_USING_VALUE_PREFIX}{partner_name}'
+            else:
+                parsed[str(event.id)] = partner_name
             matched_any_event = True
 
     # Equipment category extraction when explicit event names are absent/incomplete.
-    categories = infer_equipment_categories(text)
+    # Categories are family-wide SHARING buckets (crosscut, chainsaw, ...) — by
+    # construction they cannot carry USING semantics. When the leading keyword
+    # was USING, the user's intent was partnered confirmation; emitting a
+    # broad category SHARING entry would override the USING flag we just set
+    # and put the partnered pair into the flight-builder conflict pairs, which
+    # is exactly the bug we are fixing. Skip categories in that case.
+    categories = set() if leading_keyword_using else infer_equipment_categories(text)
     for category in categories:
         parsed[f'category:{category}'] = partner_name
 
@@ -547,10 +601,14 @@ def competitors_share_gear_for_event(comp1_name: str, comp1_gear: dict, comp2_na
 
     if event is None:
         for value in sharing1.values():
+            if is_using_value(value):
+                continue  # USING is partnered confirmation, not a constraint
             partner1 = normalize_person_name(str(value or '').strip())
             if partner1 and partner1 == name2:
                 return True
         for value in sharing2.values():
+            if is_using_value(value):
+                continue
             partner2 = normalize_person_name(str(value or '').strip())
             if partner2 and partner2 == name1:
                 return True
@@ -564,6 +622,8 @@ def competitors_share_gear_for_event(comp1_name: str, comp1_gear: dict, comp2_na
         for key1, value1 in sharing1.items():
             if not event_matches_gear_key(check_event, key1):
                 continue
+            if is_using_value(value1):
+                continue  # USING is partnered confirmation, not a constraint
             partner1 = normalize_person_name(str(value1 or '').strip())
             if not partner1:
                 continue
@@ -571,12 +631,16 @@ def competitors_share_gear_for_event(comp1_name: str, comp1_gear: dict, comp2_na
                 return True
             if partner1.startswith('group:'):
                 for key2, value2 in sharing2.items():
+                    if is_using_value(value2):
+                        continue
                     if event_matches_gear_key(check_event, key2) and str(value2 or '').strip() == str(value1 or '').strip():
                         return True
 
         for key2, value2 in sharing2.items():
             if not event_matches_gear_key(check_event, key2):
                 continue
+            if is_using_value(value2):
+                continue  # USING is partnered confirmation, not a constraint
             partner2 = normalize_person_name(str(value2 or '').strip())
             if partner2 == name1:
                 return True
@@ -631,15 +695,21 @@ def sync_all_gear_for_competitor(comp, pro_comps_by_norm: dict, old_gear: dict |
 
     # Write reciprocals for current entries.
     for key, partner_text in gear.items():
-        pt = str(partner_text or '').strip()
+        # Resolve partner name (strip USING prefix for the lookup, but propagate
+        # USING semantics to the reciprocal so both sides stay consistent).
+        is_using = is_using_value(partner_text)
+        pt = strip_using_prefix(partner_text).strip() if is_using else str(partner_text or '').strip()
         if not pt or pt.startswith('group:'):
             continue
         partner_comp = pro_comps_by_norm.get(normalize_person_name(pt))
         if not partner_comp or partner_comp.id == comp.id:
             continue
         partner_gear = partner_comp.get_gear_sharing()
-        if normalize_person_name(str(partner_gear.get(key, ''))) != comp_norm:
-            partner_gear[key] = comp.name
+        existing = partner_gear.get(key, '')
+        existing_partner = strip_using_prefix(existing) if is_using_value(existing) else str(existing or '')
+        if normalize_person_name(existing_partner) != comp_norm:
+            new_value = f'{_USING_VALUE_PREFIX}{comp.name}' if is_using else comp.name
+            partner_gear[key] = new_value
             partner_comp.gear_sharing = json.dumps(partner_gear)
 
     # Clear removed entries from partners.
@@ -649,9 +719,12 @@ def sync_all_gear_for_competitor(comp, pro_comps_by_norm: dict, old_gear: dict |
                 if partner_comp.id == comp.id:
                     continue
                 partner_gear = partner_comp.get_gear_sharing()
-                if key in partner_gear and normalize_person_name(str(partner_gear.get(key, ''))) == comp_norm:
-                    del partner_gear[key]
-                    partner_comp.gear_sharing = json.dumps(partner_gear)
+                if key in partner_gear:
+                    existing = partner_gear.get(key, '')
+                    existing_partner = strip_using_prefix(existing) if is_using_value(existing) else str(existing or '')
+                    if normalize_person_name(existing_partner) == comp_norm:
+                        del partner_gear[key]
+                        partner_comp.gear_sharing = json.dumps(partner_gear)
 
 
 # ---------------------------------------------------------------------------
@@ -960,6 +1033,12 @@ def build_gear_conflict_pairs(tournament) -> dict[int, set[int]]:
         if not isinstance(gear, dict):
             continue
         for _key, raw_partner in gear.items():
+            # USING entries are partnered-event confirmations, NOT cross-competitor
+            # heat constraints. Skip them so the flight builder does not penalize
+            # a Jack & Jill pair for being placed in the same heat (which is
+            # exactly where they belong).
+            if is_using_value(raw_partner):
+                continue
             pt = str(raw_partner or '').strip()
             if not pt or pt.startswith('group:'):
                 # For group keys, find all group members.
@@ -968,7 +1047,8 @@ def build_gear_conflict_pairs(tournament) -> dict[int, set[int]]:
                         if other.id == comp.id:
                             continue
                         other_gear = other.get_gear_sharing()
-                        if any(str(v or '').strip() == pt for v in other_gear.values()):
+                        if any(str(v or '').strip() == pt for v in other_gear.values()
+                               if not is_using_value(v)):
                             conflicts.setdefault(comp.id, set()).add(other.id)
                             conflicts.setdefault(other.id, set()).add(comp.id)
                 continue
@@ -1018,6 +1098,8 @@ def build_gear_conflict_pairs(tournament) -> dict[int, set[int]]:
             if not declares_cascade:
                 continue
             for raw_partner in gear.values():
+                if is_using_value(raw_partner):
+                    continue  # USING is partnered confirmation, not a constraint
                 pt = str(raw_partner or '').strip()
                 if not pt or pt.startswith('group:'):
                     continue
@@ -1202,7 +1284,12 @@ def build_gear_report(tournament) -> dict:
 
         for key, raw_partner in gear.items():
             event_label = _resolve_pro_event_label(key)
-            partner_text = str(raw_partner or '').strip()
+            # USING entries are partnered-event confirmations. Strip the
+            # 'using:' prefix for display and resolution; remember the flag so
+            # the manager UI can show a "Confirmation" badge instead of the
+            # default "Sharing" treatment.
+            entry_is_using = is_using_value(raw_partner)
+            partner_text = strip_using_prefix(raw_partner).strip() if entry_is_using else str(raw_partner or '').strip()
             partner_norm = normalize_person_name(partner_text)
             partner_comp = pro_by_norm.get(partner_norm)
 
@@ -1219,10 +1306,11 @@ def build_gear_report(tournament) -> dict:
                 status = 'unknown_partner'
                 issues.append(f'"{partner_text}" is not on the active roster')
             else:
-                # Check for reciprocal entry on partner's side.
+                # Check for reciprocal entry on partner's side. Reciprocals can
+                # also carry the USING prefix; strip before comparing.
                 partner_gear = partner_comp.get_gear_sharing()
                 reciprocal = any(
-                    normalize_person_name(str(v or '')) == normalize_person_name(comp.name)
+                    normalize_person_name(strip_using_prefix(v) if is_using_value(v) else str(v or '')) == normalize_person_name(comp.name)
                     for k, v in partner_gear.items()
                 )
                 if not reciprocal:
@@ -1242,8 +1330,12 @@ def build_gear_report(tournament) -> dict:
                         'event_label': event_label,
                         'heat_conflict': False,
                         # 'mutual' = both sides explicitly recorded;
-                        # 'inferred' = only one side recorded but treated as mutual.
-                        'paired_by': 'mutual' if status == 'ok' else 'inferred',
+                        # 'inferred' = only one side recorded but treated as mutual;
+                        # 'using' = partnered-event confirmation, NOT a constraint.
+                        'paired_by': (
+                            'using' if entry_is_using
+                            else ('mutual' if status == 'ok' else 'inferred')
+                        ),
                     })
             elif status not in ('ok', 'one_sided'):
                 pro_unresolved.append({
@@ -1254,6 +1346,7 @@ def build_gear_report(tournament) -> dict:
                     'partner_comp': partner_comp,
                     'status': status,
                     'issues': issues,
+                    'is_using': entry_is_using,
                 })
 
     # --- Heat conflict detection ---

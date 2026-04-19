@@ -18,9 +18,11 @@ from services.gear_sharing import (
     get_gear_family,
     infer_equipment_categories,
     is_no_constraint_event,
+    is_using_value,
     normalize_event_text,
     normalize_person_name,
     resolve_partner_name,
+    strip_using_prefix,
 )
 
 # ---------------------------------------------------------------------------
@@ -797,3 +799,136 @@ class TestVocabularyFix:
     def test_op_saw_category_does_not_match_chopping_event(self):
         ev = _event(id=99, name='Underhand', stand_type='underhand', event_type='pro')
         assert event_matches_gear_key(ev, 'category:op_saw') is False
+
+
+# ---------------------------------------------------------------------------
+# USING vs SHARING semantic distinction (2026 form keyword)
+#
+# USING   = partnered-event gear confirmation — two competitors are already
+#           paired for the partnered event by registration. The entry is
+#           redundancy/confirmation only and MUST NOT become a heat constraint
+#           (Jack & Jill partners belong in the same heat together).
+# SHARING = cross-competitor gear dependency outside a partnered event.
+#           Two competitors share one physical piece of gear and CANNOT be in
+#           the same heat. Standard heat constraint.
+#
+# Storage: USING entries have the partner-name value prefixed with 'using:'.
+# Existing entries (no prefix) stay as SHARING for backward compatibility.
+# ---------------------------------------------------------------------------
+
+class TestUsingSharingDistinction:
+    def setup_method(self):
+        # Jack & Jill is partnered (is_partnered=True); Single Buck and Cookie
+        # Stack are not. Single Buck shares the saw_hand cascade family with
+        # Jack & Jill, so a real shared physical saw IS a heat constraint for
+        # Single Buck even when the J&J entry is USING.
+        self.jj = _event(
+            id=20, name='Jack Jill Sawing', display_name='Jack & Jill',
+            stand_type='saw_hand', event_type='pro',
+        )
+        self.jj.is_partnered = True
+        self.single = _event(
+            id=10, name='Single Buck', display_name="Men's Single Buck",
+            stand_type='saw_hand', event_type='pro',
+        )
+        self.single.is_partnered = False
+        self.cookie = _event(
+            id=30, name='Cookie Stack', stand_type='cookie_stack', event_type='pro',
+        )
+        self.cookie.is_partnered = False
+        self.events = [self.single, self.jj, self.cookie]
+        self.name_index = build_name_index(['Karson Wilson', 'Cody Labahn'])
+
+    # --- helper smoke ---
+
+    def test_is_using_value_recognizes_prefix(self):
+        assert is_using_value('using:Karson Wilson') is True
+        assert is_using_value('Karson Wilson') is False
+        assert is_using_value('') is False
+        assert is_using_value(None) is False
+
+    def test_strip_using_prefix(self):
+        assert strip_using_prefix('using:Karson Wilson') == 'Karson Wilson'
+        assert strip_using_prefix('Karson Wilson') == 'Karson Wilson'
+        assert strip_using_prefix('') == ''
+        assert strip_using_prefix(None) == ''
+
+    # --- parser behaviour ---
+
+    def test_using_keyword_marks_partnered_event_only(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'USING Jack and Jill saw with Karson Wilson',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        # J&J is partnered → USING prefix
+        assert gear_map['20'] == 'using:Karson Wilson'
+        # Single Buck is non-partnered cascade sibling → plain SHARING
+        # (the underlying saw IS shared even though J&J is partnered)
+        assert gear_map.get('10') == 'Karson Wilson'
+
+    def test_using_keyword_on_non_partnered_event_falls_back_to_sharing(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        # Misuse: USING on a non-partnered event. Must be treated as SHARING
+        # (constraint) because the keyword's partnered-confirmation semantics
+        # do not apply to a non-partnered event.
+        gear_map, _ = parse_gear_sharing_details(
+            'USING Cookie Stack saw with Cody Labahn',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert gear_map['30'] == 'Cody Labahn'
+        assert not is_using_value(gear_map['30'])
+
+    def test_sharing_keyword_emits_plain_partner(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'SHARING Cookie Stack saw with Cody Labahn',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert gear_map['30'] == 'Cody Labahn'
+
+    def test_no_keyword_defaults_to_sharing(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'Cookie Stack with Cody Labahn',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert gear_map['30'] == 'Cody Labahn'
+
+    def test_using_keyword_skips_category_emission(self):
+        # Categories are family-wide SHARING buckets — emitting category:crosscut
+        # alongside a USING entry would re-introduce the conflict the USING
+        # keyword is meant to suppress.
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'USING Jack and Jill saw with Karson Wilson',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert 'category:crosscut' not in gear_map
+
+    # --- conflict-check behaviour ---
+
+    def test_using_entry_does_not_trigger_heat_conflict_on_partnered_event(self):
+        gear_alex = {'20': 'using:Karson Wilson'}
+        # USING on partnered event → no conflict (they belong together)
+        assert competitors_share_gear_for_event(
+            'Alex Kaper', gear_alex, 'Karson Wilson', {}, self.jj) is False
+
+    def test_sharing_entry_triggers_heat_conflict(self):
+        gear_alex = {'30': 'Cody Labahn'}
+        # SHARING on Cookie Stack → conflict (must split heats)
+        assert competitors_share_gear_for_event(
+            'Alex Kaper', gear_alex, 'Cody Labahn', {}, self.cookie) is True
+
+    def test_using_reciprocal_also_skipped(self):
+        gear_alex = {'20': 'using:Karson Wilson'}
+        gear_karson = {'20': 'using:Alex Kaper'}
+        # Both sides USING → no conflict
+        assert competitors_share_gear_for_event(
+            'Alex Kaper', gear_alex, 'Karson Wilson', gear_karson, self.jj) is False
+
+    def test_event_none_walk_skips_using(self):
+        gear_alex = {'20': 'using:Karson Wilson'}
+        # Event-blind sweep (event=None) also respects USING
+        assert competitors_share_gear_for_event(
+            'Alex Kaper', gear_alex, 'Karson Wilson', {}, None) is False
