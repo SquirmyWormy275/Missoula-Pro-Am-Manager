@@ -559,6 +559,4 @@ COLLEGE_SATURDAY_PRIORITY_DEFAULT = [
     ('Double Buck', 'M'),
     ('Double Buck', 'F'),
     ('Jack & Jill Sawing', None),
-    ('Jack & Jill Sawing', 'M'),
-    ('Jack & Jill Sawing', 'F'),
 ]

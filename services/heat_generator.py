@@ -101,6 +101,16 @@ def generate_event_heats(event: Event) -> int:
         db.session.flush()  # Caller is responsible for commit — preserves atomic transactions.
         return 0
 
+    # Prelim-based events (Partnered Axe Throw) are managed by a dedicated
+    # state machine (services.partnered_axe.PartneredAxeThrow), not the
+    # standard snake-draft generator. Skip so we don't produce one-pair-per-heat
+    # output that bypasses the prelim/final flow.
+    if getattr(event, 'has_prelims', False):
+        _delete_event_heats(event.id)
+        event.status = 'pending'
+        db.session.flush()
+        return 0
+
     # Get stand configuration; event.max_stands is authoritative when set
     stand_config = config.STAND_CONFIGS.get(event.stand_type, {})
     max_per_heat = event.max_stands if event.max_stands is not None else stand_config.get('total', 4)
@@ -143,6 +153,7 @@ def generate_event_heats(event: Event) -> int:
 
     # Create Heat objects
     stand_numbers = _stand_numbers_for_event(event, max_per_heat, stand_config)
+    is_partnered = bool(getattr(event, 'is_partnered', False))
     created_heats = []
     for heat_num, heat_competitors in enumerate(heats, start=1):
         heat = Heat(
@@ -152,10 +163,21 @@ def generate_event_heats(event: Event) -> int:
         )
         heat.set_competitors([c['id'] for c in heat_competitors])
 
-        # Assign stands (slice stand_numbers to actual heat size)
-        for i, comp in enumerate(heat_competitors):
-            stand_num = stand_numbers[i] if i < len(stand_numbers) else i + 1
-            heat.set_stand_assignment(comp['id'], stand_num)
+        # Assign stands.  For partnered events each PAIR shares one stand —
+        # both partners receive the same stand number.  Non-partnered events
+        # are one competitor per stand as before.
+        if is_partnered:
+            pair_units = _rebuild_pair_units(heat_competitors, event)
+            stand_idx = 0
+            for unit in pair_units:
+                stand_num = stand_numbers[stand_idx] if stand_idx < len(stand_numbers) else stand_idx + 1
+                for comp in unit:
+                    heat.set_stand_assignment(comp['id'], stand_num)
+                stand_idx += 1
+        else:
+            for i, comp in enumerate(heat_competitors):
+                stand_num = stand_numbers[i] if i < len(stand_numbers) else i + 1
+                heat.set_stand_assignment(comp['id'], stand_num)
 
         db.session.add(heat)
         created_heats.append(heat)
@@ -172,6 +194,17 @@ def generate_event_heats(event: Event) -> int:
 
             # Swap stand assignments for run 2 (e.g., Course 1 <-> Course 2).
             # Reverse only the stands actually used by THIS heat, not the full list.
+            if is_partnered:
+                pair_units = _rebuild_pair_units(heat_competitors, event)
+                stands_needed = len(pair_units)
+                run2_stands = list(reversed(stand_numbers[:stands_needed]))
+                for unit_idx, unit in enumerate(pair_units):
+                    s = run2_stands[unit_idx] if unit_idx < len(run2_stands) else unit_idx + 1
+                    for comp in unit:
+                        heat.set_stand_assignment(comp['id'], s)
+                db.session.add(heat)
+                created_heats.append(heat)
+                continue
             heat_size = len(heat_competitors)
             run2_stands = list(reversed(stand_numbers[:heat_size]))
             for i, comp in enumerate(heat_competitors):
@@ -270,6 +303,10 @@ def _get_event_competitors(event: Event) -> list:
         comp_data = {
             'id': comp.id,
             'name': comp.display_name,
+            # Bare name (no team-code suffix) used for partner pairing —
+            # partner_name on the competitor side stores just "First Last",
+            # so we must match against the bare name, not display_name.
+            'base_name': getattr(comp, 'name', comp.display_name),
             'gender': comp.gender,
             'is_left_handed': getattr(comp, 'is_left_handed_springboard', False),
             'gear_sharing': comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {},
@@ -290,13 +327,27 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
     Generate heats using snake draft distribution.
 
     Snake draft ensures each heat has a mix of skill levels.
+
+    For partnered events, each unit (a pair) occupies ONE stand. `max_per_heat`
+    therefore counts STANDS, not individual competitors, and num_heats is
+    recomputed from unit count so we don't over-allocate empty heats.
     """
-    heats = [[] for _ in range(num_heats)]
     competitors = _sort_by_ability(competitors, event)
     units = _build_partner_units(competitors, event)
     # Re-sort partner units by composite rank so paired competitors enter the
     # snake draft in the right ability order (#22).
     units = _sort_units_by_ability(units, event)
+
+    is_partnered = bool(event and getattr(event, 'is_partnered', False))
+
+    # For partnered events, num_heats must be recomputed from unit count:
+    # each pair takes 1 stand (not 2 competitor slots).  For solo events, the
+    # unit count equals the competitor count so this is a no-op.
+    if is_partnered:
+        num_heats = max(1, math.ceil(len(units) / max_per_heat))
+
+    heats = [[] for _ in range(num_heats)]
+    stands_used = [0] * num_heats  # count of stands (units) per heat
 
     # Snake draft distribution
     direction = 1
@@ -308,10 +359,11 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
         # First pass: look for a heat with capacity and no gear-sharing conflict.
         for _ in range(num_heats):
             if (
-                (len(heats[heat_idx]) + len(unit)) <= max_per_heat and
+                (stands_used[heat_idx] + 1) <= max_per_heat and
                 not any(_has_gear_sharing_conflict(comp, heats[heat_idx], event) for comp in unit)
             ):
                 heats[heat_idx].extend(unit)
+                stands_used[heat_idx] += 1
                 placed = True
                 break
             heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
@@ -321,7 +373,7 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
         # surface a warning to the judge (gear audit fix G2 — 2026-04-07).
         if not placed:
             for _ in range(num_heats):
-                if (len(heats[heat_idx]) + len(unit)) <= max_per_heat:
+                if (stands_used[heat_idx] + 1) <= max_per_heat:
                     if gear_violations is not None:
                         for comp in unit:
                             if _has_gear_sharing_conflict(comp, heats[heat_idx], event):
@@ -331,6 +383,7 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
                                     'heat_index': heat_idx,
                                 })
                     heats[heat_idx].extend(unit)
+                    stands_used[heat_idx] += 1
                     placed = True
                     break
                 heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
@@ -340,12 +393,89 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
     return heats
 
 
+def _first_token(value: str) -> str:
+    """Return the first whitespace-separated token of a normalized name."""
+    value = _norm_name(value or '')
+    return value.split(' ', 1)[0] if value else ''
+
+
+def _find_partner(partner_name: str, pool: list, self_comp: dict) -> dict | None:
+    """Best-effort partner match against a pool of competitors.
+
+    1. Exact full-name (normalized) match.
+    2. First-name fuzzy match, but only if exactly ONE pool competitor shares
+       that first name (ambiguous first names do NOT pair — avoids wrong pairs).
+
+    `self_comp` is excluded from the match pool. Returns the matched competitor
+    dict or None.
+    """
+    if not partner_name:
+        return None
+    norm_partner = _norm_name(partner_name)
+    if not norm_partner:
+        return None
+    self_id = self_comp.get('id')
+
+    def _key(c):
+        return _norm_name(c.get('base_name') or c.get('name'))
+
+    # Exact match first.
+    for c in pool:
+        if c.get('id') == self_id:
+            continue
+        if _key(c) == norm_partner:
+            return c
+
+    # First-name fallback. Partner string is often "TOBY" or "Greer" — match to
+    # exactly one competitor whose first name matches, else give up (ambiguous).
+    partner_first = _first_token(partner_name)
+    if not partner_first:
+        return None
+    first_matches = [c for c in pool
+                     if c.get('id') != self_id
+                     and _first_token(c.get('base_name') or c.get('name')) == partner_first]
+    if len(first_matches) == 1:
+        return first_matches[0]
+    return None
+
+
+def _rebuild_pair_units(heat_competitors: list, event: Event) -> list:
+    """Recover pair units from a flat heat competitor list.
+
+    Partners are stored per-competitor as `partner_name`; this walks the heat's
+    comps, pairs up anyone whose partner is also in the heat, and emits one unit
+    per stand: `[[c1, c2], [c3, c4], [solo], ...]`.  Stand assignment uses this
+    so both halves of a pair share a stand number.
+    """
+    if not event or not event.is_partnered:
+        return [[c] for c in heat_competitors]
+
+    used = set()
+    units = []
+    for comp in heat_competitors:
+        if comp['id'] in used:
+            continue
+        partner_name = comp.get('partner_name')
+        partner = _find_partner(partner_name, heat_competitors, comp)
+        if partner and partner['id'] not in used:
+            units.append([comp, partner])
+            used.add(comp['id'])
+            used.add(partner['id'])
+            continue
+        units.append([comp])
+        used.add(comp['id'])
+    return units
+
+
 def _build_partner_units(competitors: list, event: Event) -> list:
-    """Build assignment units; partnered events keep recognized pairs together."""
+    """Build assignment units; partnered events keep recognized pairs together.
+
+    Uses `_find_partner` so nicknames and first-name-only partner strings pair
+    correctly when unambiguous within the event pool.
+    """
     if not event or not event.is_partnered:
         return [[c] for c in competitors]
 
-    by_name = {_norm_name(c.get('name')): c for c in competitors}
     used = set()
     units = []
 
@@ -354,17 +484,12 @@ def _build_partner_units(competitors: list, event: Event) -> list:
         if comp_id in used:
             continue
 
-        partner_name = _norm_name(comp.get('partner_name'))
-        partner = by_name.get(partner_name) if partner_name else None
-
+        partner = _find_partner(comp.get('partner_name'), competitors, comp)
         if partner and partner['id'] not in used:
-            # Pair if either side references the other.
-            partner_ref = _norm_name(partner.get('partner_name'))
-            if partner_ref == _norm_name(comp.get('name')) or partner_name == _norm_name(partner.get('name')):
-                units.append([comp, partner])
-                used.add(comp_id)
-                used.add(partner['id'])
-                continue
+            units.append([comp, partner])
+            used.add(comp_id)
+            used.add(partner['id'])
+            continue
 
         units.append([comp])
         used.add(comp_id)
