@@ -1527,9 +1527,13 @@
         /* ═══════════════════════════════════════════════════════════
            IMPROVEMENT 5 — SMOOTH PAGE TRANSITIONS
         ═══════════════════════════════════════════════════════════ */
+        /* Opacity-only fade: a non-`none` transform on #main-content creates a
+           stacking context, which traps Bootstrap modals (z-index 1055) below the
+           modal-backdrop (z-index 1050, attached to body), making the modal
+           unclickable. Keep the fade, drop the slide. */
         @keyframes page-fade-in {
-            from { opacity: 0; transform: translateY(7px); }
-            to   { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; }
+            to   { opacity: 1; }
         }
         #main-content {
             animation: page-fade-in 0.2s ease-out both;
