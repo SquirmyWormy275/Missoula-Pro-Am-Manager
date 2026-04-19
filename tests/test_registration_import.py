@@ -173,11 +173,22 @@ class TestFuzzyMatching:
         assert any("FUZZY" in f for f in result.fuzzy_matches)
 
     def test_first_name_only(self):
-        """Single first name resolves when unambiguous."""
+        """Single first name resolves when unambiguous.
+
+        Implementation note: as of fix/race-day-ui-fixes (commit 770ccf0),
+        services/gear_sharing.resolve_partner_name has its own first-name
+        fallback, so single-token inputs may resolve at the FUZZY MATCH layer
+        before reaching the FIRST-NAME MATCH layer in _fuzzy_resolve. The
+        functional contract that matters is `resolved == 'Henry Norwood'`
+        and that some match log entry was emitted.
+        """
         result = ImportResult()
         resolved = _fuzzy_resolve("Henry", _NAME_INDEX, result)
         assert resolved == "Henry Norwood"
-        assert any("FIRST-NAME" in f for f in result.fuzzy_matches)
+        assert any(
+            "FIRST-NAME" in f or "FUZZY MATCH" in f
+            for f in result.fuzzy_matches
+        )
 
     def test_first_name_joey(self):
         result = ImportResult()

@@ -966,10 +966,22 @@ class TestSingleTokenFallback:
         ni = build_name_index(['Cody Labahn', 'Cody Smith'])
         assert resolve_partner_name('Cody', ni) == 'Cody'
 
-    def test_first_name_prefix_match(self):
-        # "Bri" → "Brianna Kvinge" (prefix relationship).
+    def test_first_name_prefix_match_via_two_token_form(self):
+        # "Bri Kvinge" → "Brianna Kvinge" via two-token initial+last fallback.
+        # Single-token "Bri" alone is genuinely ambiguous (3 chars; could
+        # also be a fragment of an English word) and intentionally returns
+        # raw — too aggressive a single-token prefix match would resolve
+        # "she" → "Shea Warren". The two-token form provides the surname
+        # disambiguator.
         ni = build_name_index(['Brianna Kvinge', 'Karson Wilson'])
-        assert resolve_partner_name('Bri', ni) == 'Brianna Kvinge'
+        assert resolve_partner_name('Bri Kvinge', ni) == 'Brianna Kvinge'
+
+    def test_three_letter_first_name_not_resolved(self):
+        # 3-letter single-token input does NOT trigger first-name fallback.
+        # Avoids the "she" → "Shea Warren" false positive.
+        ni = build_name_index(['Brianna Kvinge', 'Shea Warren'])
+        assert resolve_partner_name('Bri', ni) == 'Bri'
+        assert resolve_partner_name('She', ni) == 'She'
 
     def test_two_letter_input_skipped(self):
         # 2-char input is too short — no false positive on "Co" → Cody Labahn.

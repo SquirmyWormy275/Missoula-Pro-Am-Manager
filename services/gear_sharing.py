@@ -272,17 +272,21 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
         single_norm = normalize_person_name(candidate_tokens[-1])
         if len(single_norm) >= 3:
             last_matches = [name_index[k] for k in keys if k.endswith(single_norm)]
+            # First-name fallback requires 4+ chars to avoid resolving short
+            # English-word collisions like "she" → "Shea Warren". The last-name
+            # path keeps its existing 3-char threshold because last-name suffix
+            # matches are already constrained by the `endswith` check.
             first_name_matches: list[str] = []
-            for canonical in name_index.values():
-                canon_tokens = _strip_name_suffix_tokens(_name_tokens(canonical))
-                if len(canon_tokens) < 2:
-                    continue
-                canon_first = canon_tokens[0]
-                # First-name matching (audit gap #6): exact OR prefix
-                # ("Bri" → "Brianna"). Mirrors the prefix rule used by the
-                # two-token initial+last fallback below for consistency.
-                if canon_first == single_norm or canon_first.startswith(single_norm):
-                    first_name_matches.append(canonical)
+            if len(single_norm) >= 4:
+                for canonical in name_index.values():
+                    canon_tokens = _strip_name_suffix_tokens(_name_tokens(canonical))
+                    if len(canon_tokens) < 2:
+                        continue
+                    canon_first = canon_tokens[0]
+                    # Exact OR prefix ("Bri" → "Brianna"). Mirrors the prefix
+                    # rule used by the two-token initial+last fallback below.
+                    if canon_first == single_norm or canon_first.startswith(single_norm):
+                        first_name_matches.append(canonical)
             all_matches = set(last_matches) | set(first_name_matches)
             if len(all_matches) == 1:
                 resolved = next(iter(all_matches))
