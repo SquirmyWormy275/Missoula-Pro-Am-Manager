@@ -932,3 +932,96 @@ class TestUsingSharingDistinction:
         # Event-blind sweep (event=None) also respects USING
         assert competitors_share_gear_for_event(
             'Alex Kaper', gear_alex, 'Karson Wilson', {}, None) is False
+
+
+# ---------------------------------------------------------------------------
+# resolve_partner_name fallbacks (audit gaps #5, #6)
+#
+# Audit gap #5: no 3+ token fallback. Three-or-more tokens (common after
+# scrub-regex bleed) skipped every fallback and returned raw.
+# Audit gap #6: first-name-only fallback existed only in registration_import.py,
+# not in gear_sharing.py — so "Cody" silently dropped in the auto-parse and
+# manager-batch parsers even when only one Cody was on the roster.
+#
+# Both fixes preserve the safety guards: ambiguous inputs (multiple matches
+# pointing at different people) still return raw rather than guessing.
+# ---------------------------------------------------------------------------
+
+class TestSingleTokenFallback:
+    def test_first_name_resolves_when_unambiguous(self):
+        ni = build_name_index(['Cody Labahn', 'Karson Wilson'])
+        assert resolve_partner_name('Cody', ni) == 'Cody Labahn'
+
+    def test_last_name_resolves_when_unambiguous(self):
+        ni = build_name_index(['Tom Cody', 'Karson Wilson'])
+        assert resolve_partner_name('Cody', ni) == 'Tom Cody'
+
+    def test_ambiguous_first_and_last_returns_raw(self):
+        # "Cody" matches "Cody Labahn" (first) AND "Tom Cody" (last) — two
+        # different people. Must return raw rather than guess.
+        ni = build_name_index(['Cody Labahn', 'Tom Cody'])
+        assert resolve_partner_name('Cody', ni) == 'Cody'
+
+    def test_two_first_name_matches_returns_raw(self):
+        ni = build_name_index(['Cody Labahn', 'Cody Smith'])
+        assert resolve_partner_name('Cody', ni) == 'Cody'
+
+    def test_first_name_prefix_match(self):
+        # "Bri" → "Brianna Kvinge" (prefix relationship).
+        ni = build_name_index(['Brianna Kvinge', 'Karson Wilson'])
+        assert resolve_partner_name('Bri', ni) == 'Brianna Kvinge'
+
+    def test_two_letter_input_skipped(self):
+        # 2-char input is too short — no false positive on "Co" → Cody Labahn.
+        ni = build_name_index(['Cody Labahn'])
+        assert resolve_partner_name('Co', ni) == 'Co'
+
+
+class TestMultiTokenSliceFallback:
+    def test_three_tokens_with_one_clean_pair(self):
+        # Scrub-regex bleed leaves "OP Cody Labahn"; sliding window finds
+        # "Cody Labahn" → resolves.
+        ni = build_name_index(['Cody Labahn', 'Karson Wilson'])
+        assert resolve_partner_name('OP Cody Labahn', ni) == 'Cody Labahn'
+
+    def test_three_tokens_no_clean_pair_returns_raw(self):
+        ni = build_name_index(['Cody Labahn'])
+        assert resolve_partner_name('lorem ipsum dolor', ni) == 'lorem ipsum dolor'
+
+    def test_four_tokens_with_two_different_resolutions_returns_raw(self):
+        # Both "Cody Labahn" and "Karson Wilson" appear → ambiguous.
+        ni = build_name_index(['Cody Labahn', 'Karson Wilson'])
+        assert resolve_partner_name('Cody Labahn Karson Wilson', ni) in (
+            'Cody Labahn Karson Wilson',  # raw because ambiguous
+        )
+
+
+class TestMultiSegmentParser:
+    def setup_method(self):
+        self.events = [
+            _event(id=10, name='Single Buck', stand_type='saw_hand', event_type='pro'),
+            _event(id=20, name='Obstacle Pole', stand_type='obstacle_pole', event_type='pro'),
+        ]
+        for e in self.events:
+            e.is_partnered = False
+        self.name_index = build_name_index(['Cody Labahn', 'Karson Wilson'])
+
+    def test_partner_in_second_segment_resolves(self):
+        # Originally failing: first segment had no partner, second segment did.
+        # Old parser only tried the first segment and silently dropped.
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, w = parse_gear_sharing_details(
+            'SHARING Op saw, single saw with Cody',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        # Partner resolves via first-name fallback in second segment.
+        assert 'Cody Labahn' in gear_map.values() or 'category:op_saw' in gear_map
+        assert 'partner_not_resolved' not in w
+
+    def test_partner_in_third_segment_resolves(self):
+        from services.gear_sharing import parse_gear_sharing_details
+        gear_map, _ = parse_gear_sharing_details(
+            'Hot saw; Cookie stack; with Cody Labahn',
+            self.events, self.name_index, self_name='Alex Kaper',
+        )
+        assert 'Cody Labahn' in gear_map.values()

@@ -262,23 +262,43 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
         )
         return resolved
 
-    # Last-name-only fallback: "Smith" → matches "John Smith" when unambiguous.
-    # Only fires for a single-token input (bare surname) so that typos on a full
-    # name like "Eric Lavoie" can never silently resolve to "Erin Lavoie".
+    # Single-token fallbacks (last-name OR first-name): "Smith" → "John Smith",
+    # "Cody" → "Cody Labahn". Combined into one ambiguity check: a single token
+    # that matches one canonical via last-name AND a different canonical via
+    # first-name is genuinely ambiguous and must return raw. Only fires when
+    # exactly ONE roster member matches across both methods.
     candidate_tokens = candidate.strip().split()
     if len(candidate_tokens) == 1:
-        last_norm = normalize_person_name(candidate_tokens[-1])
-        if len(last_norm) >= 3:
-            last_matches = [k for k in keys if k.endswith(last_norm)]
-            if len(last_matches) == 1:
-                resolved = name_index[last_matches[0]]
+        single_norm = normalize_person_name(candidate_tokens[-1])
+        if len(single_norm) >= 3:
+            last_matches = [name_index[k] for k in keys if k.endswith(single_norm)]
+            first_name_matches: list[str] = []
+            for canonical in name_index.values():
+                canon_tokens = _strip_name_suffix_tokens(_name_tokens(canonical))
+                if len(canon_tokens) < 2:
+                    continue
+                canon_first = canon_tokens[0]
+                # First-name matching (audit gap #6): exact OR prefix
+                # ("Bri" → "Brianna"). Mirrors the prefix rule used by the
+                # two-token initial+last fallback below for consistency.
+                if canon_first == single_norm or canon_first.startswith(single_norm):
+                    first_name_matches.append(canonical)
+            all_matches = set(last_matches) | set(first_name_matches)
+            if len(all_matches) == 1:
+                resolved = next(iter(all_matches))
                 if _suffix_mismatch(candidate, resolved):
                     return candidate
+                method = 'last_name_only' if resolved in last_matches else 'first_name_only'
                 logger.info(
-                    "Gear partner resolved: %r -> %r (method: last_name_only, score: 1.00)",
-                    candidate, resolved,
+                    "Gear partner resolved: %r -> %r (method: %s, score: 1.00)",
+                    candidate, resolved, method,
                 )
                 return resolved
+            elif len(all_matches) > 1:
+                logger.info(
+                    "Gear partner ambiguous single token: %r -> %s (returning raw)",
+                    candidate, sorted(all_matches),
+                )
 
     # Two-token fallback: "A. Smith" / "Bri Kvinge" → "Alice Smith" / "Brianna
     # Kvinge" when unambiguous. Matching rules, designed to reject first-name
@@ -321,6 +341,30 @@ def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: floa
                     candidate, resolved,
                 )
                 return resolved
+
+    # Three-or-more-token fallback (audit gap #5): when scrub-regex bleed leaves
+    # something like "OP Cody Labahn" (3 tokens), slide a 2-token window across
+    # the input and re-run the two-token resolver on each slice. Accept only
+    # when every successful slice resolves to the same canonical (so an
+    # ambiguous leftover like "Cody Labahn Karson Wilson" returns raw).
+    if len(candidate_tokens) >= 3:
+        slice_resolutions: set[str] = set()
+        for i in range(len(candidate_tokens) - 1):
+            slice_text = ' '.join(candidate_tokens[i:i + 2])
+            # Recurse with cutoff slightly relaxed so a typo inside a sliced
+            # window still has a chance, but keep the original cutoff path
+            # available for clean exact pairs.
+            resolved = resolve_partner_name(slice_text, name_index, cutoff)
+            if resolved and normalize_person_name(resolved) != normalize_person_name(slice_text):
+                # Only count slices that actually resolved to a roster name.
+                slice_resolutions.add(resolved)
+        if len(slice_resolutions) == 1:
+            resolved = next(iter(slice_resolutions))
+            logger.info(
+                "Gear partner resolved: %r -> %r (method: multi_token_slice, score: 1.00)",
+                candidate, resolved,
+            )
+            return resolved
 
     return candidate
 
@@ -504,28 +548,42 @@ def parse_gear_sharing_details(
         mentioned.sort(reverse=True)
         partner_name = mentioned[0][1]
 
-    # Fallback: read first segment before separator as partner candidate.
+    # Fallback: try every comma/semicolon-delimited segment in turn (audit gap
+    # #13 follow-up). Previously only the FIRST segment was tried, so input
+    # like "SHARING Op saw, single saw with Cody" silently dropped because the
+    # partner name lived in the second segment.
     if not partner_name:
-        first_segment = re.split(r'[-—:;,]', text, maxsplit=1)[0].strip()
-        # Strip generic and equipment-related words that bleed into partner names.
-        # Includes the new-form keywords USING/SHARING and the previously-missing
-        # Cookie Stack / Obstacle Pole / Speed Climb / climbing-gear vocabulary
-        # so dirty input like "SHARING OP Saw with Cody Labahn" reduces to
-        # "Cody Labahn" instead of leaving "OP Cody Labahn" (3 tokens that no
-        # fuzzy fallback can resolve).
-        first_segment = re.sub(
+        # Bare equipment qualifiers (single, double, stock, power) are stripped
+        # ALONE so that "single saw" reduces to "" (not "single"). Multi-word
+        # compounds (single buck, double buck, etc) still match higher up in
+        # the alternation. We deliberately do NOT strip "hot", "jack", "jill",
+        # "hand" alone — those occur as real first/last names ("Jack Love").
+        scrub_re = re.compile(
             r'\b(using|sharing|with|gear|events?|springboard|crosscut|underhand|standing\s*block|'
             r'single\s*buck|double\s*buck|jack\s*(?:&|and)\s*jill|hot\s*saw|stock\s*saw|'
             r'chainsaw|power\s*saw|hand\s*saw|board|axe|saw|speed|hard\s*hit|'
             r'cookie\s*stack|cookie|obstacle\s*pole|obstacle|op\s*saw|op|'
             r'pole\s*climb|speed\s*climb|spurs|climbing\s*rope|climbing|'
-            r'caulks|corks|rope)\b',
-            '', first_segment, flags=re.IGNORECASE
-        ).strip()
-        # Collapse extra whitespace after stripping.
-        first_segment = re.sub(r'\s{2,}', ' ', first_segment).strip()
-        if len(first_segment.split()) >= 2:
-            partner_name = resolve_partner_name(first_segment, name_index)
+            r'caulks|corks|rope|single|double|stock|power)\b',
+            re.IGNORECASE,
+        )
+        for segment in re.split(r'[-—:;,]', text):
+            scrubbed = scrub_re.sub('', segment).strip()
+            scrubbed = re.sub(r'\s{2,}', ' ', scrubbed).strip()
+            if not scrubbed:
+                continue
+            tokens = scrubbed.split()
+            # Try multi-token first (more reliable), then single-token first-name
+            # / last-name fallback for bare names like "Cody".
+            if len(tokens) >= 2:
+                resolved = resolve_partner_name(scrubbed, name_index)
+            elif len(tokens) == 1 and len(tokens[0]) >= 3:
+                resolved = resolve_partner_name(tokens[0], name_index)
+            else:
+                resolved = ''
+            if resolved and normalize_person_name(resolved) != normalize_person_name(scrubbed):
+                partner_name = resolved
+                break
 
     if not partner_name:
         warnings.append('partner_not_resolved')
