@@ -21,6 +21,7 @@ def init_db(app):
     # Import all models to register them with SQLAlchemy
     from models import (
         AuditLog,
+        BackgroundJob,
         CollegeCompetitor,
         Event,
         EventResult,

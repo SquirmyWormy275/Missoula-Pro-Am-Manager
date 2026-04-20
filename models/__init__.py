@@ -2,6 +2,7 @@
 SQLAlchemy models for the Missoula Pro Am Tournament Manager.
 """
 from .audit_log import AuditLog
+from .background_job import BackgroundJob
 from .competitor import CollegeCompetitor, ProCompetitor
 from .event import Event, EventResult
 from .heat import Flight, Heat, HeatAssignment
@@ -25,6 +26,7 @@ __all__ = [
     'Flight',
     'User',
     'AuditLog',
+    'BackgroundJob',
     'SchoolCaptain',
     'WoodConfig',
     'ProEventRank',

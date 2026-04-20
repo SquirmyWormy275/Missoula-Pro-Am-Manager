@@ -250,6 +250,12 @@ class TestBackgroundJobs:
         from services import background_jobs
         with background_jobs._lock:
             background_jobs._jobs.clear()
+        app = getattr(background_jobs, '_app', None)
+        if app is not None:
+            from models.background_job import BackgroundJob
+            with app.app_context():
+                BackgroundJob.query.delete()
+                background_jobs.db.session.commit()
 
     def test_submit_returns_job_id_string(self):
         from services.background_jobs import submit
@@ -348,6 +354,19 @@ class TestBackgroundJobs:
         assert rows[0]['id'] == second_id
         assert rows[1]['id'] == first_id
         assert rows[0]['metadata']['tournament_id'] == 1
+
+    def test_jobs_are_persisted_to_database(self, app):
+        from models.background_job import BackgroundJob
+        from services.background_jobs import submit
+
+        job_id = submit('persisted-job', lambda: 'stored', metadata={'tournament_id': 7})
+        time.sleep(0.1)
+
+        with app.app_context():
+            row = _db.session.get(BackgroundJob, job_id)
+            assert row is not None
+            assert row.label == 'persisted-job'
+            assert row.tournament_id == 7
 
 
 # ===================================================================
