@@ -254,6 +254,11 @@ def toggle_user_active(user_id):
 
     user = User.query.get_or_404(user_id)
     if user.id == current_user.id:
+        log_action('user_toggle_active_denied', 'user', user.id, {
+            'reason': 'self_disable_attempt',
+            'active': user.is_active_user,
+        })
+        db.session.commit()
         flash('You cannot disable your own account.', 'error')
         return redirect(url_for('auth.manage_users'))
 

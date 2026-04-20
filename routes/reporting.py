@@ -289,6 +289,12 @@ def export_results(tournament_id):
     fd, path = tempfile.mkstemp(prefix=f'proam_{tournament_id}_', suffix='.xlsx')
     os.close(fd)
     export_results_to_excel(tournament, path)
+    log_action('report_export_downloaded', 'tournament', tournament.id, {
+        'tournament_id': tournament.id,
+        'format': 'xlsx',
+        'kind': 'all_results',
+    })
+    db.session.commit()
 
     @after_this_request
     def cleanup_file(response):
@@ -313,11 +319,23 @@ def export_chopping_results(tournament_id):
             'tournament': {'id': tournament.id, 'name': tournament.name, 'year': tournament.year},
             'rows': build_chopping_rows(tournament),
         }
+        log_action('report_export_downloaded', 'tournament', tournament.id, {
+            'tournament_id': tournament.id,
+            'format': 'json',
+            'kind': 'chopping_results',
+        })
+        db.session.commit()
         return Response(json.dumps(payload), mimetype='application/json')
 
     fd, path = tempfile.mkstemp(prefix=f'proam_{tournament_id}_chopping_', suffix='.xlsx')
     os.close(fd)
     export_chopping_results_to_excel(tournament, path)
+    log_action('report_export_downloaded', 'tournament', tournament.id, {
+        'tournament_id': tournament.id,
+        'format': 'xlsx',
+        'kind': 'chopping_results',
+    })
+    db.session.commit()
 
     @after_this_request
     def cleanup_file(response):
@@ -483,6 +501,13 @@ def restore_database(tournament_id):
         db.session.commit()
         flash('Database restore complete.', 'success')
     except Exception as exc:
+        db.session.rollback()
+        log_action('database_restore_failed', 'tournament', tournament_id, {
+            'tournament_id': tournament_id,
+            'filename': f.filename,
+            'error': str(exc),
+        })
+        db.session.commit()
         flash(f'Database restore failed: {exc}', 'error')
     finally:
         try:
@@ -760,6 +785,11 @@ def ala_membership_report_pdf(tournament_id):
         return response
 
     from datetime import datetime
+    log_action('ala_report_downloaded', 'tournament', tournament.id, {
+        'tournament_id': tournament.id,
+        'format': 'pdf',
+    })
+    db.session.commit()
     download_name = f'ala_report_{datetime.now().strftime("%Y%m%d")}.pdf'
     return send_file(path, as_attachment=True, download_name=download_name)
 
@@ -786,8 +816,20 @@ def ala_email_report(tournament_id):
 
     try:
         _send_ala_email(path, tournament, report)
+        log_action('ala_report_emailed', 'tournament', tournament.id, {
+            'tournament_id': tournament.id,
+            'recipient': ALA_EMAIL,
+        })
+        db.session.commit()
         flash(f'ALA report emailed to {ALA_EMAIL}.', 'success')
     except Exception as exc:
+        db.session.rollback()
+        log_action('ala_report_email_failed', 'tournament', tournament.id, {
+            'tournament_id': tournament.id,
+            'recipient': ALA_EMAIL,
+            'error': str(exc),
+        })
+        db.session.commit()
         flash(f'Email failed: {exc}', 'error')
     finally:
         try:
