@@ -1,8 +1,4 @@
-"""
-Friday Night Feature scheduling route.
-"""
-import json
-import os
+"""Friday Night Feature scheduling route."""
 
 from flask import flash, redirect, render_template, request, session, url_for
 
@@ -16,13 +12,17 @@ from . import scheduling_bp
 
 def _fnf_config_path(tournament_id: int) -> str:
     """Return path to the per-tournament Friday Night Feature JSON config."""
+    import os
     instance_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'instance')
     os.makedirs(instance_dir, exist_ok=True)
     return os.path.join(instance_dir, f'friday_feature_{tournament_id}.json')
 
 
-def _load_fnf_config(tournament_id: int) -> dict:
-    """Load persisted Friday Night Feature selections for a tournament."""
+def _load_legacy_fnf_config(tournament_id: int) -> dict:
+    """Load old file-based Friday Feature selections for compatibility."""
+    import json
+    import os
+
     path = _fnf_config_path(tournament_id)
     if not os.path.exists(path):
         return {'event_ids': [], 'notes': ''}
@@ -33,11 +33,45 @@ def _load_fnf_config(tournament_id: int) -> dict:
         return {'event_ids': [], 'notes': ''}
 
 
-def _save_fnf_config(tournament_id: int, data: dict) -> None:
-    """Persist Friday Night Feature selections."""
-    path = _fnf_config_path(tournament_id)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f)
+def _load_fnf_config(tournament: Tournament) -> dict:
+    """Load Friday Feature selections from DB-backed schedule_config."""
+    schedule_config = tournament.get_schedule_config()
+    event_ids = [
+        int(event_id)
+        for event_id in schedule_config.get('friday_pro_event_ids', [])
+        if str(event_id).strip()
+    ]
+    notes = str(schedule_config.get('friday_feature_notes', '') or '')
+    if event_ids or notes:
+        return {'event_ids': event_ids, 'notes': notes}
+
+    legacy = _load_legacy_fnf_config(tournament.id)
+    if legacy.get('event_ids') or legacy.get('notes'):
+        schedule_config['friday_pro_event_ids'] = [
+            int(event_id)
+            for event_id in legacy.get('event_ids', [])
+            if str(event_id).strip()
+        ]
+        schedule_config['friday_feature_notes'] = str(legacy.get('notes', '') or '')
+        tournament.set_schedule_config(schedule_config)
+        db.session.commit()
+        return {
+            'event_ids': schedule_config['friday_pro_event_ids'],
+            'notes': schedule_config['friday_feature_notes'],
+        }
+    return {'event_ids': [], 'notes': ''}
+
+
+def _save_fnf_config(tournament: Tournament, data: dict) -> None:
+    """Persist Friday Night Feature selections in schedule_config."""
+    schedule_config = tournament.get_schedule_config()
+    schedule_config['friday_pro_event_ids'] = [
+        int(event_id)
+        for event_id in data.get('event_ids', [])
+        if str(event_id).strip()
+    ]
+    schedule_config['friday_feature_notes'] = str(data.get('notes', '') or '')
+    tournament.set_schedule_config(schedule_config)
 
 
 @scheduling_bp.route('/<int:tournament_id>/friday-night', methods=['GET', 'POST'])
@@ -60,16 +94,16 @@ def friday_feature(tournament_id):
         key=lambda e: priority_index[(e.name, e.gender)]
     )
 
-    fnf_config = _load_fnf_config(tournament_id)
+    fnf_config = _load_fnf_config(tournament)
     session_key = f'schedule_options_{tournament_id}'
-    saved_opts = session.get(session_key, {})
+    saved_opts = tournament.get_schedule_config() or session.get(session_key, {})
 
     if request.method == 'POST':
         action = request.form.get('action', 'save')
         selected_ids = [int(x) for x in request.form.getlist('event_ids') if x.isdigit()]
         notes = (request.form.get('notes') or '').strip()
 
-        _save_fnf_config(tournament_id, {'event_ids': selected_ids, 'notes': notes})
+        _save_fnf_config(tournament, {'event_ids': selected_ids, 'notes': notes})
 
         # Save Saturday spillover selections into the shared schedule session
         try:

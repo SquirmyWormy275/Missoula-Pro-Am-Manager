@@ -174,6 +174,7 @@ def generate_async(tournament_id):
         f'generate_all:{tournament_id}',
         _async_generate_all,
         tournament_id,
+        metadata={'tournament_id': tournament_id, 'kind': 'generate_all'},
     )
     return json.dumps({'job_id': job_id}), 202, {'Content-Type': 'application/json'}
 
@@ -183,7 +184,7 @@ def generation_job_status(tournament_id, job_id):
     """Poll background job status. Returns JSON with status/result."""
     from services.background_jobs import get as get_job
     job = get_job(job_id)
-    if not job:
+    if not job or int((job.get('metadata') or {}).get('tournament_id', -1)) != tournament_id:
         return json.dumps({'error': 'Job not found.'}), 404, {'Content-Type': 'application/json'}
     return json.dumps({
         'job_id': job['id'],

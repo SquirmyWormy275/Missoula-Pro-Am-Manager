@@ -244,8 +244,9 @@ class TestPublicRoutes:
         assert "status" in r.get_json()
 
     def test_smoke_main_health_diag(self, client):
-        """GET /health/diag returns diagnostic info."""
-        _ok(client.get("/health/diag"))
+        """GET /health/diag is now auth-protected."""
+        r = client.get("/health/diag")
+        assert r.status_code in (302, 401, 403)
 
     def test_smoke_main_set_language(self, client):
         """GET /language/en redirects."""
@@ -417,8 +418,8 @@ class TestMainRoutes:
         _ok(auth_client.get(f'/tournament/{seed["tid"]}/pro'))
 
     def test_smoke_main_activate_competition(self, auth_client, seed):
-        """GET /tournament/<tid>/activate/college redirects."""
-        r = auth_client.get(f'/tournament/{seed["tid"]}/activate/college')
+        """POST /tournament/<tid>/activate/college redirects."""
+        r = auth_client.post(f'/tournament/{seed["tid"]}/activate/college')
         assert r.status_code in (200, 302)
 
     def test_smoke_main_export_config(self, auth_client, seed):

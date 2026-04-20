@@ -416,7 +416,7 @@ def save_tournament_settings(tournament_id):
     return redirect(url_for('main.tournament_setup', tournament_id=tournament_id, tab='settings'))
 
 
-@main_bp.route('/tournament/<int:tournament_id>/activate/<competition_type>')
+@main_bp.route('/tournament/<int:tournament_id>/activate/<competition_type>', methods=['POST'])
 def activate_competition(tournament_id, competition_type):
     """Activate college or pro competition for a tournament."""
     tournament = Tournament.query.get_or_404(tournament_id)

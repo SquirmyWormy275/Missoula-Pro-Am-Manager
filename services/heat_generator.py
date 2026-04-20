@@ -114,6 +114,12 @@ def generate_event_heats(event: Event) -> int:
     # Get stand configuration; event.max_stands is authoritative when set
     stand_config = config.STAND_CONFIGS.get(event.stand_type, {})
     max_per_heat = event.max_stands if event.max_stands is not None else stand_config.get('total', 4)
+    if max_per_heat is None or int(max_per_heat) <= 0:
+        raise ValueError(
+            f"{event.display_name} has invalid max_stands={max_per_heat}. "
+            'Set max_stands to at least 1 before generating heats.'
+        )
+    max_per_heat = int(max_per_heat)
 
     # Calculate number of heats needed
     num_heats = math.ceil(len(competitors) / max_per_heat)

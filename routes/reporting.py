@@ -3,6 +3,7 @@ Reporting routes for standings, results, and exports.
 """
 import json
 import os
+import sqlite3
 import tempfile
 
 from flask import (
@@ -39,6 +40,23 @@ from services.report_cache import set as cache_set
 from services.upload_security import malware_scan
 
 reporting_bp = Blueprint('reporting', __name__)
+
+
+def _sqlite_schema_info(path: str) -> dict:
+    """Read lightweight schema metadata from a SQLite database file."""
+    conn = sqlite3.connect(path)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        revision = None
+        if 'alembic_version' in tables:
+            row = conn.execute('SELECT version_num FROM alembic_version LIMIT 1').fetchone()
+            revision = row[0] if row else None
+        return {'tables': tables, 'revision': revision}
+    finally:
+        conn.close()
 
 
 def _cached_payload(key: str, builder):
@@ -318,13 +336,21 @@ def export_results_async(tournament_id):
     """Start export generation as a background job for larger tournaments."""
     tournament = Tournament.query.get_or_404(tournament_id)
 
-    def _build_export() -> str:
+    def _build_export(target_tournament_id: int) -> str:
+        export_tournament = Tournament.query.get(target_tournament_id)
+        if not export_tournament:
+            raise RuntimeError(f'Tournament {target_tournament_id} not found.')
         fd, path = tempfile.mkstemp(prefix=f'proam_{tournament_id}_', suffix='.xlsx')
         os.close(fd)
-        export_results_to_excel(tournament, path)
+        export_results_to_excel(export_tournament, path)
         return path
 
-    job_id = submit_job(f'export_results_{tournament_id}', _build_export)
+    job_id = submit_job(
+        f'export_results_{tournament_id}',
+        _build_export,
+        tournament_id,
+        metadata={'tournament_id': tournament_id, 'kind': 'export_results'},
+    )
     log_action('report_export_job_started', 'tournament', tournament.id, {'job_id': job_id})
     db.session.commit()
     return redirect(url_for('reporting.export_results_job_status', tournament_id=tournament_id, job_id=job_id))
@@ -334,15 +360,24 @@ def export_results_async(tournament_id):
 def export_results_job_status(tournament_id, job_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     job = get_job(job_id)
-    if not job:
+    job_meta = job.get('metadata') if job else {}
+    if not job or int((job_meta or {}).get('tournament_id', -1)) != tournament_id:
         abort(404)
+    job_kind = (job_meta or {}).get('kind') or ''
 
     if job['status'] != 'completed':
         if job['status'] == 'failed':
             flash(f"Export job failed: {job.get('error', 'Unknown error')}", 'error')
+            if job_kind == 'build_pro_flights':
+                return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
             return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
         flash('Export is still running. Refresh in a moment.', 'warning')
         return render_template('reports/export_status.html', tournament=tournament, job=job)
+
+    if job_kind == 'build_pro_flights':
+        flights_built = int(job.get('result') or 0)
+        flash(f'Built {flights_built} flight(s).', 'success')
+        return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 
     path = job.get('result')
     if not path or not os.path.exists(path):
@@ -426,6 +461,21 @@ def restore_database(tournament_id):
         db_path = uri.replace('sqlite:///', '', 1)
         if not os.path.isabs(db_path):
             db_path = os.path.join(current_app.instance_path, db_path)
+        current_info = _sqlite_schema_info(db_path)
+        uploaded_info = _sqlite_schema_info(temp_path)
+        required_tables = {'tournaments', 'events', 'event_results', 'heats', 'users'}
+        missing_tables = sorted(required_tables - set(uploaded_info['tables']))
+        if missing_tables:
+            raise RuntimeError(
+                f'Restore file is missing required tables: {", ".join(missing_tables)}'
+            )
+        if not uploaded_info.get('revision'):
+            raise RuntimeError('Restore file is missing Alembic migration metadata.')
+        if current_info.get('revision') and uploaded_info['revision'] != current_info['revision']:
+            raise RuntimeError(
+                'Restore file schema revision does not match the current application schema. '
+                f"Expected {current_info['revision']}, got {uploaded_info['revision']}."
+            )
         db.session.remove()
         db.engine.dispose()
         os.replace(temp_path, db_path)
@@ -642,7 +692,11 @@ def cloud_backup(tournament_id):
     def _run_backup():
         return backup_database(uri, tournament_id, instance_path)
 
-    job_id = submit_job(f'backup:t{tournament_id}', _run_backup)
+    job_id = submit_job(
+        f'backup:t{tournament_id}',
+        _run_backup,
+        metadata={'tournament_id': tournament_id, 'kind': 'backup'},
+    )
 
     log_action('cloud_backup_triggered', 'tournament', tournament_id, {'job_id': job_id})
     db.session.commit()

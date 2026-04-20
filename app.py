@@ -136,7 +136,6 @@ PUBLIC_MAIN_ENDPOINTS = {
     'main.index',
     'main.set_language',
     'main.health',
-    'main.health_diag',
 }
 
 
@@ -232,7 +231,7 @@ def _create_app_inner():
     configure_logging(bool(app.config.get('STRUCTURED_LOGGING', True)))
     configure_error_monitoring(app.config.get('SENTRY_DSN', ''))
     request_id_middleware(app)
-    configure_jobs(int(app.config.get('JOB_MAX_WORKERS', 2)))
+    configure_jobs(int(app.config.get('JOB_MAX_WORKERS', 2)), app=app)
 
     # Session cookie hardening.  Use direct assignment — Flask pre-seeds
     # these keys with its own defaults (SECURE=False, SAMESITE=None), so
