@@ -3,6 +3,8 @@ Tournament model for managing overall tournament state.
 """
 from datetime import datetime
 
+import sqlalchemy as sa
+
 from config import TournamentStatus  # noqa: F401 — re-exported for convenience
 from database import db
 
@@ -25,7 +27,9 @@ class Tournament(db.Model):
     status = db.Column(db.String(50), nullable=False, default=TournamentStatus.SETUP)
 
     # Shirt logistics — True when the show provides shirts; controls shirt-size collection on pro entry
-    providing_shirts = db.Column(db.Boolean, nullable=False, default=False)
+    providing_shirts = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
 
     # Schedule config — persists friday_pro_event_ids / saturday_college_event_ids across sessions
     schedule_config = db.Column(db.Text, nullable=True)

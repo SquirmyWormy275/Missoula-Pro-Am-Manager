@@ -4,6 +4,8 @@ Heat and Flight models for scheduling competition runs.
 import json
 from datetime import datetime, timezone
 
+import sqlalchemy as sa
+
 from config import HEAT_LOCK_TTL_SECONDS  # noqa: F401 — single source in config.py
 from database import db
 
@@ -46,7 +48,9 @@ class Heat(db.Model):
 
     # Status
     status = db.Column(db.String(20), nullable=False, default='pending')  # pending, in_progress, completed
-    version_id = db.Column(db.Integer, nullable=False, default=1)
+    version_id = db.Column(
+        db.Integer, nullable=False, default=1, server_default=sa.text("'1'")
+    )
 
     __mapper_args__ = {
         'version_id_col': version_id,

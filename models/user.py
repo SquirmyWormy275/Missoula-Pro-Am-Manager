@@ -3,6 +3,8 @@ User model for role-based authentication.
 """
 from datetime import datetime
 
+import sqlalchemy as sa
+
 try:
     from flask_login import UserMixin
 except ModuleNotFoundError:
@@ -45,7 +47,9 @@ class User(UserMixin, db.Model):
     competitor_id = db.Column(db.Integer, nullable=True)
 
     display_name = db.Column(db.String(200), nullable=True)
-    is_active_user = db.Column(db.Boolean, nullable=False, default=True)
+    is_active_user = db.Column(
+        db.Boolean, nullable=False, default=True, server_default=sa.true()
+    )
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
