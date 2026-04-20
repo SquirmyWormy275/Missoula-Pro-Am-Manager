@@ -80,9 +80,19 @@ def build_flights(tournament_id):
             return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
         if request.form.get('run_async') == '1':
-            from functools import partial
-            fn = partial(build_pro_flights, num_flights=num_flights)
-            job_id = submit_job('build_pro_flights', fn, tournament)
+            def _build_flights_async(target_tournament_id: int, requested_num_flights: int | None):
+                target = Tournament.query.get(target_tournament_id)
+                if not target:
+                    raise RuntimeError(f'Tournament {target_tournament_id} not found.')
+                return build_pro_flights(target, num_flights=requested_num_flights)
+
+            job_id = submit_job(
+                'build_pro_flights',
+                _build_flights_async,
+                tournament_id,
+                num_flights,
+                metadata={'tournament_id': tournament_id, 'kind': 'build_pro_flights'},
+            )
             log_action('flight_build_job_started', 'tournament', tournament_id, {'job_id': job_id})
             db.session.commit()
             flash('Flight build started in the background.', 'success')

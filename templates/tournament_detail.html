@@ -345,12 +345,16 @@
                    title="Blank judge scoring sheets for every event that has heats — one document, one click before the day starts.">
                     <i class="bi bi-pencil-square me-1"></i>Print All Judge Sheets
                 </a>
-                <a href="{{ url_for('main.activate_competition', tournament_id=tournament.id, competition_type='college') }}"
-                   class="btn btn-success btn-sm"
-                   data-confirm="Start college day? This will set the tournament to College Active."
-                   data-confirm-title="Start College Day">
-                    <i class="bi bi-play-fill me-1"></i>Start College Day
-                </a>
+                <form method="post"
+                      action="{{ url_for('main.activate_competition', tournament_id=tournament.id, competition_type='college') }}"
+                      class="d-inline">
+                    <button type="submit"
+                            class="btn btn-success btn-sm"
+                            data-confirm="Start college day? This will set the tournament to College Active."
+                            data-confirm-title="Start College Day">
+                        <i class="bi bi-play-fill me-1"></i>Start College Day
+                    </button>
+                </form>
             </div>
         </div>
         {% endif %}
@@ -365,12 +369,16 @@
         <div class="d-flex gap-2 flex-shrink-0 flex-wrap">
             <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
                class="btn btn-outline-primary btn-sm">Score Events</a>
-            <a href="{{ url_for('main.activate_competition', tournament_id=tournament.id, competition_type='pro') }}"
-               class="btn btn-primary btn-sm"
-               data-confirm="Advance to Pro Day? College results will be locked."
-               data-confirm-title="Advance to Pro Day">
-                <i class="bi bi-skip-forward-fill me-1"></i>Advance to Pro Day
-            </a>
+            <form method="post"
+                  action="{{ url_for('main.activate_competition', tournament_id=tournament.id, competition_type='pro') }}"
+                  class="d-inline">
+                <button type="submit"
+                        class="btn btn-primary btn-sm"
+                        data-confirm="Advance to Pro Day? College results will be locked."
+                        data-confirm-title="Advance to Pro Day">
+                    <i class="bi bi-skip-forward-fill me-1"></i>Advance to Pro Day
+                </button>
+            </form>
         </div>
     </div>
     {% elif tournament.status == 'pro_active' %}

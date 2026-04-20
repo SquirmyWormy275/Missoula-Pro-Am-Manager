@@ -1054,6 +1054,8 @@ def _process_partners(competitor: CollegeCompetitor, partners_str):
 def export_results_to_excel(tournament: Tournament, filepath: str):
     """Export all tournament results to an Excel file."""
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+        sheets_written = 0
+
         # College team standings
         teams = tournament.get_team_standings()
         team_data = [{
@@ -1066,6 +1068,7 @@ def export_results_to_excel(tournament: Tournament, filepath: str):
 
         if team_data:
             pd.DataFrame(team_data).to_excel(writer, sheet_name='Team Standings', index=False)
+            sheets_written += 1
 
         # Individual standings
         bull = tournament.get_bull_of_woods(20)
@@ -1087,8 +1090,10 @@ def export_results_to_excel(tournament: Tournament, filepath: str):
 
         if bull_data:
             pd.DataFrame(bull_data).to_excel(writer, sheet_name='Bull of Woods', index=False)
+            sheets_written += 1
         if belle_data:
             pd.DataFrame(belle_data).to_excel(writer, sheet_name='Belle of Woods', index=False)
+            sheets_written += 1
 
         # Event results
         for event in tournament.events.all():
@@ -1106,3 +1111,10 @@ def export_results_to_excel(tournament: Tournament, filepath: str):
 
             sheet_name = event.display_name[:31]  # Excel sheet name limit
             pd.DataFrame(result_data).to_excel(writer, sheet_name=sheet_name, index=False)
+            sheets_written += 1
+
+        if sheets_written == 0:
+            pd.DataFrame([{
+                'Tournament': f'{tournament.name} {tournament.year}',
+                'Status': 'No standings or completed event results are available yet.',
+            }]).to_excel(writer, sheet_name='Overview', index=False)

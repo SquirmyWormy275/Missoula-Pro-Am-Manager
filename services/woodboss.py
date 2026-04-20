@@ -956,10 +956,10 @@ def get_lottery_view(tournament_id):
 
 
 def _detect_friday_feature_springboard(tournament_id):
-    """Return (pro_one_board_is_friday, three_board_is_friday) by reading
-    the Friday Feature config file for this tournament. Isolates the file
-    IO + DB lookup that used to live inside `calculate_springboard_dummies`
-    so the math function is pure(r) and unit-testable without disk state.
+    """Return (pro_one_board_is_friday, three_board_is_friday) from schedule config.
+
+    Prefers DB-backed schedule_config and falls back to the legacy Friday
+    Feature JSON file only for compatibility with older saved state.
     """
     if tournament_id is None:
         return (False, False)
@@ -967,18 +967,36 @@ def _detect_friday_feature_springboard(tournament_id):
     import os
     pro_one_board_is_friday = False
     three_board_is_friday = False
+    fnf_event_ids = set()
+
     try:
-        instance_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance'
-        )
-        fnf_path = os.path.join(instance_dir, f'friday_feature_{tournament_id}.json')
-        if not os.path.exists(fnf_path):
-            return (False, False)
-        with open(fnf_path, 'r') as f:
-            fnf_data = json.load(f)
-        fnf_event_ids = set(fnf_data.get('event_ids', []))
+        from models.tournament import Tournament
+        tournament = Tournament.query.get(tournament_id)
+        if tournament:
+            fnf_event_ids = {
+                int(event_id)
+                for event_id in tournament.get_schedule_config().get('friday_pro_event_ids', [])
+                if str(event_id).strip()
+            }
     except Exception:
-        return (False, False)
+        fnf_event_ids = set()
+
+    if not fnf_event_ids:
+        try:
+            instance_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'instance'
+            )
+            fnf_path = os.path.join(instance_dir, f'friday_feature_{tournament_id}.json')
+            if os.path.exists(fnf_path):
+                with open(fnf_path, 'r', encoding='utf-8') as f:
+                    fnf_data = json.load(f)
+                fnf_event_ids = {
+                    int(event_id)
+                    for event_id in fnf_data.get('event_ids', [])
+                    if str(event_id).strip()
+                }
+        except Exception:
+            return (False, False)
 
     if not fnf_event_ids:
         return (False, False)

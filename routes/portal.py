@@ -1215,8 +1215,18 @@ def competitor_my_results(tournament_id, competitor_type, competitor_id):
             val = str(raw).strip()
             if val.isdigit() and int(val) in event_by_id:
                 entered_event_ids.add(int(val))
-    except Exception:
-        pass
+    except Exception as exc:
+        current_app.logger.exception(
+            'Competitor portal could not parse events_entered for %s competitor %s/%s: %s',
+            competitor_type,
+            tournament_id,
+            competitor_id,
+            exc,
+        )
+        flash(
+            'Your event entry data could not be read. A judge needs to review this competitor record.',
+            'warning',
+        )
 
     entered_events = [event_by_id[eid] for eid in sorted(entered_event_ids) if eid in event_by_id]
 

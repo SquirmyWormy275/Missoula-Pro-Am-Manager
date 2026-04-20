@@ -9,16 +9,29 @@ from datetime import datetime
 _executor = ThreadPoolExecutor(max_workers=2)
 _jobs = {}
 _lock = threading.Lock()
+_app = None
 
 
-def configure(max_workers: int) -> None:
-    global _executor
+def configure(max_workers: int, app=None) -> None:
+    global _app, _executor
     if max_workers < 1:
         max_workers = 1
+    try:
+        _executor.shutdown(wait=False, cancel_futures=True)
+    except TypeError:
+        _executor.shutdown(wait=False)
     _executor = ThreadPoolExecutor(max_workers=max_workers)
+    _app = app
 
 
-def submit(label: str, fn, *args, **kwargs) -> str:
+def _run_with_app_context(fn, *args, **kwargs):
+    if _app is None:
+        return fn(*args, **kwargs)
+    with _app.app_context():
+        return fn(*args, **kwargs)
+
+
+def submit(label: str, fn, *args, metadata: dict | None = None, **kwargs) -> str:
     job_id = uuid.uuid4().hex
     with _lock:
         _jobs[job_id] = {
@@ -29,9 +42,10 @@ def submit(label: str, fn, *args, **kwargs) -> str:
             'finished_at': None,
             'result': None,
             'error': None,
+            'metadata': dict(metadata or {}),
         }
 
-    future = _executor.submit(fn, *args, **kwargs)
+    future = _executor.submit(_run_with_app_context, fn, *args, **kwargs)
 
     def _done_callback(done_future):
         with _lock:
@@ -67,5 +81,6 @@ def get(job_id: str) -> dict | None:
             'finished_at': job['finished_at'],
             'result': job['result'],
             'error': job['error'],
+            'metadata': dict(job.get('metadata') or {}),
         }
 
