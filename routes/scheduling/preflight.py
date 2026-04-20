@@ -7,11 +7,15 @@ from flask import flash, jsonify, redirect, render_template, request, session, u
 
 import config
 from database import db
-from models import Event, Heat, HeatAssignment, Tournament
+from models import Tournament
 from services.audit import log_action
 from services.background_jobs import submit as submit_job
+from services.schedule_generation import (
+    generate_tournament_schedule_artifacts,
+    run_preflight_autofix,
+)
 
-from . import _build_pro_flights_if_possible, _generate_all_heats, scheduling_bp
+from . import scheduling_bp
 
 
 @scheduling_bp.route('/<int:tournament_id>/preflight', methods=['GET', 'POST'])
@@ -29,56 +33,24 @@ def preflight_check(tournament_id):
     if request.method == 'POST':
         action = request.form.get('action', 'autofix')
         if action == 'autofix':
-            from services.gear_sharing import complete_one_sided_pairs, parse_all_gear_details
-
-            # 1) Heat assignment sync for all events
-            heats_fixed = 0
-            for event in tournament.events.all():
-                for heat in event.heats.all():
-                    json_ids = heat.get_competitors()
-                    HeatAssignment.query.filter_by(heat_id=heat.id).delete()
-                    assignments = heat.get_stand_assignments()
-                    for comp_id in json_ids:
-                        db.session.add(HeatAssignment(
-                            heat_id=heat.id,
-                            competitor_id=comp_id,
-                            competitor_type=event.event_type,
-                            stand_number=assignments.get(str(comp_id)),
-                        ))
-                    heats_fixed += 1
-
-            # 2) Parse unstructured gear-sharing details into structured maps
-            gear_parse_result = parse_all_gear_details(tournament)
-
-            # 3) Write reciprocals for all one-sided gear pairs
-            pairs_result = complete_one_sided_pairs(tournament)
-
-            # 4) Auto-partner assignments
-            partner_summary = auto_assign_pro_partners(tournament)
-
-            # 5) Saturday spillover integration
-            integration = integrate_college_spillover_into_flights(tournament, saturday_ids)
-
+            result = run_preflight_autofix(tournament, saturday_ids)
             db.session.commit()
             log_action('preflight_autofix_applied', 'tournament', tournament_id, {
-                'heats_fixed': heats_fixed,
-                'gear_parsed': gear_parse_result,
-                'gear_pairs_completed': pairs_result['completed'],
-                'partner_summary': partner_summary,
-                'spillover': integration,
+                **result,
+                'tournament_id': tournament_id,
             })
             gear_msg = (
-                f" parsed {gear_parse_result['parsed']} gear detail(s),"
-                if gear_parse_result['parsed'] else ''
+                f" parsed {result['gear_parsed']['parsed']} gear detail(s),"
+                if result['gear_parsed']['parsed'] else ''
             )
             pairs_msg = (
-                f" completed {pairs_result['completed']} one-sided gear pair(s),"
-                if pairs_result['completed'] else ''
+                f" completed {result['gear_pairs_completed']} one-sided gear pair(s),"
+                if result['gear_pairs_completed'] else ''
             )
             flash(
-                f"Auto-fix complete: synced {heats_fixed} heats,{gear_msg}{pairs_msg} "
-                f"assigned {partner_summary['assigned_pairs']} pairs, "
-                f"integrated {integration['integrated_heats']} spillover heats.",
+                f"Auto-fix complete: synced {result['heats_fixed']} heats,{gear_msg}{pairs_msg} "
+                f"assigned {result['partner_summary']['assigned_pairs']} pairs, "
+                f"integrated {result['spillover']['integrated_heats']} spillover heats.",
                 'success'
             )
             return redirect(url_for('scheduling.preflight_check', tournament_id=tournament_id))
@@ -120,51 +92,6 @@ def preflight_json(tournament_id):
     })
 
 
-# ---------------------------------------------------------------------------
-# #4 — Async heat / flight generation  (#4)
-# ---------------------------------------------------------------------------
-
-def _async_generate_all(tournament_id: int) -> dict:
-    """Background task: generate all heats + pro flights for a tournament.
-
-    Runs inside a new application context so the ThreadPoolExecutor worker
-    has access to the DB session and Flask app.
-    """
-    from flask import current_app
-    app = current_app._get_current_object()
-    with app.app_context():
-        from models import Event as _Event
-        from models import Tournament as _Tournament
-        from services.flight_builder import build_pro_flights
-        from services.heat_generator import generate_event_heats
-
-        tournament = _Tournament.query.get(tournament_id)
-        if not tournament:
-            return {'ok': False, 'error': f'Tournament {tournament_id} not found.'}
-
-        generated, skipped, errors = 0, 0, []
-        for event in tournament.events.order_by(_Event.event_type, _Event.name, _Event.gender).all():
-            try:
-                generate_event_heats(event)
-                generated += 1
-            except Exception as exc:
-                if 'No competitors entered' in str(exc):
-                    skipped += 1
-                else:
-                    errors.append(str(exc))
-
-        db.session.commit()  # Persist heats before building flights
-
-        pro_flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
-        return {
-            'ok': True,
-            'generated': generated,
-            'skipped': skipped,
-            'errors': errors,
-            'flights': pro_flights,
-        }
-
-
 @scheduling_bp.route('/<int:tournament_id>/events/generate-async', methods=['POST'])
 def generate_async(tournament_id):
     """Submit heat + flight generation as a background job and return a job_id."""
@@ -172,7 +99,7 @@ def generate_async(tournament_id):
 
     job_id = submit_job(
         f'generate_all:{tournament_id}',
-        _async_generate_all,
+        generate_tournament_schedule_artifacts,
         tournament_id,
         metadata={'tournament_id': tournament_id, 'kind': 'generate_all'},
     )
