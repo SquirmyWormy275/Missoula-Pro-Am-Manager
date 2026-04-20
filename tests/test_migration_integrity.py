@@ -347,6 +347,7 @@ class TestMigrationIntegrity:
         ('tournaments', 'created_at'),
         ('tournaments', 'updated_at'),
     }
+    KNOWN_NULLABLE_DRIFT = set()
 
     def test_nullable_parity(self):
         """If a model column is NOT NULL, the migration must also be NOT NULL.
