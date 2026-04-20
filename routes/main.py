@@ -821,6 +821,22 @@ def ops_dashboard(tid):
     # ------------------------------------------------------------------
     events = all_events
 
+    # ------------------------------------------------------------------
+    # Section 6: Async jobs — recent background work touching this tournament
+    # ------------------------------------------------------------------
+    from services.background_jobs import list_recent as list_recent_jobs
+
+    recent_jobs = [
+        job
+        for job in list_recent_jobs(limit=30)
+        if int((job.get('metadata') or {}).get('tournament_id', -1)) == tid
+    ]
+    job_summary = {
+        'queued': sum(1 for job in recent_jobs if job['status'] == 'queued'),
+        'running': sum(1 for job in recent_jobs if job['status'] == 'running'),
+        'failed': sum(1 for job in recent_jobs if job['status'] == 'failed'),
+    }
+
     return render_template(
         'ops_dashboard.html',
         tournament=tournament,
@@ -830,6 +846,8 @@ def ops_dashboard(tid):
         integrity_warnings=integrity_warnings,
         payout_summary=payout_summary,
         events=events,
+        recent_jobs=recent_jobs,
+        job_summary=job_summary,
     )
 
 

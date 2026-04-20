@@ -296,6 +296,82 @@
 
     </div>{# /row 2 #}
 
+    {# ================================================================
+       ROW 3: Background Jobs
+    ================================================================ #}
+    <div class="row g-3">
+        <div class="col-12">
+            <div class="ops-card">
+                <div class="ops-card-header">
+                    <span><i class="bi bi-cpu me-1 text-info"></i>Recent Background Jobs</span>
+                    <span class="small">
+                        {% if job_summary.running %}
+                            <span class="badge bg-primary">{{ job_summary.running }} running</span>
+                        {% endif %}
+                        {% if job_summary.failed %}
+                            <span class="badge bg-danger">{{ job_summary.failed }} failed</span>
+                        {% endif %}
+                        {% if not job_summary.running and not job_summary.failed %}
+                            <span class="badge bg-success">healthy</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="ops-card-body p-0">
+                    {% if recent_jobs %}
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0" style="font-size:0.80rem;">
+                            <thead>
+                                <tr>
+                                    <th class="ps-3">Submitted</th>
+                                    <th>Job</th>
+                                    <th>Status</th>
+                                    <th>Kind</th>
+                                    <th>Finished</th>
+                                    <th class="pe-3">Error</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for job in recent_jobs %}
+                                <tr>
+                                    <td class="ps-3 text-muted" style="white-space:nowrap;">
+                                        {{ job.submitted_at.strftime('%H:%M:%S') if job.submitted_at else '—' }}
+                                    </td>
+                                    <td>{{ job.label }}</td>
+                                    <td>
+                                        {% if job.status == 'failed' %}
+                                            <span class="badge bg-danger">failed</span>
+                                        {% elif job.status == 'running' %}
+                                            <span class="badge bg-primary">running</span>
+                                        {% elif job.status == 'queued' %}
+                                            <span class="badge bg-secondary">queued</span>
+                                        {% else %}
+                                            <span class="badge bg-success">completed</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-muted">
+                                        {{ job.metadata.get('kind', '—') }}
+                                    </td>
+                                    <td class="text-muted" style="white-space:nowrap;">
+                                        {{ job.finished_at.strftime('%H:%M:%S') if job.finished_at else '—' }}
+                                    </td>
+                                    <td class="pe-3 text-danger">
+                                        {{ job.error or '—' }}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="ops-card-body text-muted small">
+                        <i class="bi bi-check-circle text-success me-1"></i>No tracked background jobs for this tournament.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>{# /row 3 #}
+
 </div>
 {% endblock %}
 
