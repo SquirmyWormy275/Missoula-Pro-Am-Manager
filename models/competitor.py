@@ -19,6 +19,11 @@ class CollegeCompetitor(db.Model):
     """Represents a college competitor."""
 
     __tablename__ = 'college_competitors'
+    __table_args__ = (
+        db.CheckConstraint("gender IN ('M', 'F')", name='ck_college_competitors_gender_valid'),
+        db.CheckConstraint("status IN ('active', 'scratched')", name='ck_college_competitors_status_valid'),
+        db.CheckConstraint('individual_points >= 0', name='ck_college_competitors_points_nonnegative'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     tournament_id = db.Column(db.Integer, db.ForeignKey('tournaments.id'), nullable=False)
@@ -208,6 +213,12 @@ class ProCompetitor(db.Model):
     """Represents a professional competitor."""
 
     __tablename__ = 'pro_competitors'
+    __table_args__ = (
+        db.CheckConstraint("gender IN ('M', 'F')", name='ck_pro_competitors_gender_valid'),
+        db.CheckConstraint("status IN ('active', 'scratched')", name='ck_pro_competitors_status_valid'),
+        db.CheckConstraint('total_earnings >= 0', name='ck_pro_competitors_earnings_nonnegative'),
+        db.CheckConstraint('total_fees >= 0', name='ck_pro_competitors_total_fees_nonnegative'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     tournament_id = db.Column(db.Integer, db.ForeignKey('tournaments.id'), nullable=False)

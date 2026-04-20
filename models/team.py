@@ -42,6 +42,8 @@ class Team(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('tournament_id', 'team_code', name='unique_team_code_per_tournament'),
+        db.CheckConstraint("status IN ('active', 'scratched', 'invalid')", name='ck_teams_status_valid'),
+        db.CheckConstraint('total_points >= 0', name='ck_teams_total_points_nonnegative'),
     )
 
     def __repr__(self):

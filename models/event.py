@@ -14,6 +14,16 @@ class Event(db.Model):
     __tablename__ = 'events'
     __table_args__ = (
         db.Index('ix_events_tournament_type_status', 'tournament_id', 'event_type', 'status'),
+        db.CheckConstraint("event_type IN ('college', 'pro')", name='ck_events_event_type_valid'),
+        db.CheckConstraint(
+            "scoring_order IN ('lowest_wins', 'highest_wins')",
+            name='ck_events_scoring_order_valid',
+        ),
+        db.CheckConstraint(
+            "status IN ('pending', 'in_progress', 'completed')",
+            name='ck_events_status_valid',
+        ),
+        db.CheckConstraint('(max_stands IS NULL) OR (max_stands >= 1)', name='ck_events_max_stands_valid'),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -146,6 +156,17 @@ class EventResult(db.Model):
     __table_args__ = (
         db.UniqueConstraint('event_id', 'competitor_id', 'competitor_type', name='uq_event_result_competitor'),
         db.Index('ix_event_results_event_status', 'event_id', 'status'),
+        db.CheckConstraint("competitor_type IN ('college', 'pro')", name='ck_event_results_competitor_type_valid'),
+        db.CheckConstraint(
+            "status IN ('pending', 'completed', 'scratched', 'dnf', 'dq', 'partial')",
+            name='ck_event_results_status_valid',
+        ),
+        db.CheckConstraint(
+            '(final_position IS NULL) OR (final_position >= 1)',
+            name='ck_event_results_final_position_valid',
+        ),
+        db.CheckConstraint('points_awarded >= 0', name='ck_event_results_points_nonnegative'),
+        db.CheckConstraint('payout_amount >= 0', name='ck_event_results_payout_nonnegative'),
     )
 
     id = db.Column(db.Integer, primary_key=True)

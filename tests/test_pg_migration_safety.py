@@ -103,7 +103,7 @@ class TestNoBatchAlterTableInUpgrades:
 
     # Operations that REQUIRE batch mode on SQLite
     _BATCH_REQUIRED_OPS = {
-        'create_foreign_key', 'create_unique_constraint',
+        'create_foreign_key', 'create_unique_constraint', 'create_check_constraint',
         'drop_constraint', 'alter_column',
     }
 

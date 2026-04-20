@@ -33,6 +33,12 @@ class Heat(db.Model):
         db.UniqueConstraint('event_id', 'heat_number', 'run_number', name='uq_event_heat_run'),
         db.Index('ix_heats_event_status', 'event_id', 'status'),
         db.Index('ix_heats_flight_id', 'flight_id'),
+        db.CheckConstraint('heat_number >= 1', name='ck_heats_heat_number_positive'),
+        db.CheckConstraint('run_number >= 1', name='ck_heats_run_number_positive'),
+        db.CheckConstraint(
+            "status IN ('pending', 'in_progress', 'completed')",
+            name='ck_heats_status_valid',
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -162,6 +168,13 @@ class Flight(db.Model):
     """Represents a flight in pro competition (group of heats from different events)."""
 
     __tablename__ = 'flights'
+    __table_args__ = (
+        db.CheckConstraint('flight_number >= 1', name='ck_flights_flight_number_positive'),
+        db.CheckConstraint(
+            "status IN ('pending', 'in_progress', 'completed')",
+            name='ck_flights_status_valid',
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     tournament_id = db.Column(db.Integer, db.ForeignKey('tournaments.id'), nullable=False)
