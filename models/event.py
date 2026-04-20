@@ -32,7 +32,9 @@ class Event(db.Model):
     is_open = db.Column(db.Boolean, nullable=False, default=False)  # True = OPEN event, False = CLOSED
 
     # Competition format (underhand, standing block, springboard only)
-    is_handicap = db.Column(db.Boolean, nullable=False, default=False)  # False = Championship, True = Handicap
+    is_handicap = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )  # False = Championship, True = Handicap
 
     # Event characteristics
     is_partnered = db.Column(db.Boolean, nullable=False, default=False)
@@ -44,7 +46,9 @@ class Event(db.Model):
     requires_dual_runs = db.Column(db.Boolean, nullable=False, default=False)
     # requires_triple_runs: three throw inputs in a single heat; sum counts.
     #   Used by: Axe Throw, Partnered Axe Throw. Tie detected → throw-off required.
-    requires_triple_runs = db.Column(db.Boolean, nullable=False, default=False)
+    requires_triple_runs = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
 
     # Stand configuration
     stand_type = db.Column(db.String(50), nullable=True)
@@ -67,7 +71,9 @@ class Event(db.Model):
 
     # Explicit finalization lock — set True after _calculate_positions() succeeds.
     # Editing a result on a finalized event resets this to False, requiring re-finalization.
-    is_finalized = db.Column(db.Boolean, nullable=False, default=False)
+    is_finalized = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
 
     # Relationships
     heats = db.relationship('Heat', backref='event', lazy='dynamic', cascade='all, delete-orphan')
@@ -194,13 +200,17 @@ class EventResult(db.Model):
 
     # Throw-off flag — set True when the system detects a cumulative-score tie on axe throw.
     # Judge must record throw-off positions before is_finalized can be set True.
-    throwoff_pending = db.Column(db.Boolean, nullable=False, default=False)
+    throwoff_pending = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
 
     # STRATHMARK handicap start mark in seconds.
     # _metric() in scoring_engine subtracts this from raw time when event.is_handicap is True
     # and scoring_type == 'time'.  Default 0.0 means scratch (no start mark).
     # Populated by services/mark_assignment.py → assign_handicap_marks().
-    handicap_factor = db.Column(db.Float, nullable=False, default=0.0)
+    handicap_factor = db.Column(
+        db.Float, nullable=False, default=0.0, server_default=sa.text("'0.0'")
+    )
 
     # STRATHMARK predicted completion time in seconds — the raw time HandicapCalculator
     # expected this competitor to post.  Stored here so that after the event runs,
@@ -238,7 +248,9 @@ class EventResult(db.Model):
     )
 
     # Score discrepancy flag
-    is_flagged = db.Column(db.Boolean, nullable=False, default=False)
+    is_flagged = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
 
     # Status — allowed values: pending, completed, scratched, dnf, dq, partial
     # 'dq' (disqualified) was added alongside 'status_reason' so judges can record
@@ -247,7 +259,9 @@ class EventResult(db.Model):
     # explanation for any non-completion state.
     status = db.Column(db.String(20), nullable=False, default='pending')
     status_reason = db.Column(db.Text, nullable=True)
-    version_id = db.Column(db.Integer, nullable=False, default=1)
+    version_id = db.Column(
+        db.Integer, nullable=False, default=1, server_default=sa.text("'1'")
+    )
 
     __mapper_args__ = {
         'version_id_col': version_id,

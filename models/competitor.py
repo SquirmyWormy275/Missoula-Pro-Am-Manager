@@ -49,7 +49,9 @@ class CollegeCompetitor(db.Model):
 
     # Headshot and SMS (#14, #2)
     headshot_filename = db.Column(db.Text, nullable=True)
-    phone_opted_in = db.Column(db.Boolean, nullable=False, default=False)
+    phone_opted_in = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
 
     # Status
     status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched
@@ -226,7 +228,9 @@ class ProCompetitor(db.Model):
 
     # Springboard specific
     is_left_handed_springboard = db.Column(db.Boolean, nullable=False, default=False)
-    springboard_slow_heat = db.Column(db.Boolean, nullable=False, default=False)
+    springboard_slow_heat = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
 
     # Event and fee tracking - stored as JSON
     events_entered = db.Column(db.Text, nullable=False, default='[]')  # List of event IDs
@@ -238,11 +242,15 @@ class ProCompetitor(db.Model):
 
     # Earnings
     total_earnings = db.Column(db.Float, nullable=False, default=0.0)
-    payout_settled = db.Column(db.Boolean, nullable=False, default=False)  # #21 payout settlement checklist
+    payout_settled = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )  # #21 payout settlement checklist
 
     # Headshot and SMS (#14, #2)
     headshot_filename = db.Column(db.Text, nullable=True)
-    phone_opted_in = db.Column(db.Boolean, nullable=False, default=False)
+    phone_opted_in = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
 
     # Status
     status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched

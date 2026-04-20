@@ -369,8 +369,6 @@ class TestMigrationIntegrity:
                     continue
                 if mod_info['pk']:
                     continue  # PK is always NOT NULL
-                if (table, col) in self.KNOWN_NULLABLE_DRIFT:
-                    continue  # historical drift, tracked separately
                 mig_info = self.migration_detail[table][col]
                 model_notnull = mod_info['notnull']
                 mig_notnull = mig_info['notnull']
@@ -416,6 +414,7 @@ class TestMigrationIntegrity:
         ('users', 'is_active_user'),
         ('wood_configs', 'size_unit'),
     }
+    KNOWN_SERVER_DEFAULT_DRIFT = set()
 
     def test_server_default_parity(self):
         """Server defaults from migrations must match those from db.create_all().
@@ -435,8 +434,6 @@ class TestMigrationIntegrity:
                     continue
                 if mod_info['pk']:
                     continue
-                if (table, col) in self.KNOWN_SERVER_DEFAULT_DRIFT:
-                    continue  # historical drift, tracked separately
                 mig_info = self.migration_detail[table][col]
                 mod_default = mod_info['default']
                 mig_default = mig_info['default']
