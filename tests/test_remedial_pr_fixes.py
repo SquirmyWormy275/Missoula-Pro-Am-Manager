@@ -223,9 +223,10 @@ def test_restore_rejects_schema_mismatch(app, admin_client):
 
 
 def test_export_results_creates_placeholder_sheet_for_empty_tournament(app):
+    from openpyxl import load_workbook
+
     from database import db
     from models import Tournament
-    from openpyxl import load_workbook
     from services.excel_io import export_results_to_excel
 
     fd, out = tempfile.mkstemp(
