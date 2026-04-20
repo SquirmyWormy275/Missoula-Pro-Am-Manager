@@ -285,3 +285,61 @@ class TestDataIntegrity:
 
         assert f.heat_count == 2
         assert f.event_variety == 1  # same event
+
+
+class TestCheckConstraints:
+    """Verify DB-level check constraints reject impossible states."""
+
+    def test_college_competitor_invalid_gender_rejected(self, db_session):
+        t = make_tournament(db_session)
+        team = make_team(db_session, t)
+
+        with pytest.raises(IntegrityError):
+            make_college_competitor(db_session, t, team, 'Invalid Gender', gender='X')
+            db_session.flush()
+        db_session.rollback()
+
+    def test_pro_competitor_negative_earnings_rejected(self, db_session):
+        t = make_tournament(db_session)
+        competitor = make_pro_competitor(db_session, t, 'Negative Earner', 'M')
+        competitor.total_earnings = -5.0
+
+        with pytest.raises(IntegrityError):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_event_invalid_status_rejected(self, db_session):
+        t = make_tournament(db_session)
+        event = make_event(db_session, t, 'Bad Status', event_type='pro')
+        event.status = 'broken'
+
+        with pytest.raises(IntegrityError):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_event_result_negative_payout_rejected(self, db_session):
+        t = make_tournament(db_session)
+        competitor = make_pro_competitor(db_session, t, 'Negative Payout', 'M')
+        event = make_event(db_session, t, 'Payout Event', event_type='pro')
+        result = make_event_result(
+            db_session,
+            event,
+            competitor,
+            competitor_type='pro',
+            result_value=20.0,
+            status='completed',
+        )
+        result.payout_amount = -10.0
+
+        with pytest.raises(IntegrityError):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_heat_run_number_must_be_positive(self, db_session):
+        t = make_tournament(db_session)
+        event = make_event(db_session, t, 'Run Guard', event_type='pro')
+
+        with pytest.raises(IntegrityError):
+            make_heat(db_session, event, heat_number=1, run_number=0)
+            db_session.flush()
+        db_session.rollback()
