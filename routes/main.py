@@ -14,6 +14,7 @@ from config import TournamentStatus
 from database import db
 from models import Event, Flight, Heat, HeatAssignment, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
+from services.audit import log_action
 
 try:
     from flask_login import current_user
@@ -28,6 +29,13 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for stripped environm
 logger = logging.getLogger(__name__)
 
 main_bp = Blueprint('main', __name__)
+
+
+def _date_value(value):
+    """Return an ISO date string for audit payloads."""
+    if value is None:
+        return None
+    return value.isoformat()
 
 
 @main_bp.route('/health')
@@ -265,6 +273,13 @@ def new_tournament():
             status='setup'
         )
         db.session.add(tournament)
+        db.session.flush()
+        log_action('tournament_created', 'tournament', tournament.id, {
+            'tournament_id': tournament.id,
+            'name': tournament.name,
+            'year': tournament.year,
+            'status': tournament.status,
+        })
         db.session.commit()
 
         flash(text.FLASH['tournament_created'].format(name=name, year=year), 'success')
@@ -411,6 +426,15 @@ def save_tournament_settings(tournament_id):
     # Shirt logistics checkbox — present in form means True
     tournament.providing_shirts = bool(request.form.get('providing_shirts'))
 
+    log_action('tournament_settings_updated', 'tournament', tournament.id, {
+        'tournament_id': tournament.id,
+        'name': tournament.name,
+        'year': tournament.year,
+        'college_date': _date_value(tournament.college_date),
+        'pro_date': _date_value(tournament.pro_date),
+        'friday_feature_date': _date_value(tournament.friday_feature_date),
+        'providing_shirts': tournament.providing_shirts,
+    })
     db.session.commit()
     flash('Tournament settings saved.', 'success')
     return redirect(url_for('main.tournament_setup', tournament_id=tournament_id, tab='settings'))
@@ -423,11 +447,26 @@ def activate_competition(tournament_id, competition_type):
 
     if competition_type == 'college':
         tournament.status = TournamentStatus.COLLEGE_ACTIVE
+        log_action('competition_activated', 'tournament', tournament.id, {
+            'tournament_id': tournament.id,
+            'competition_type': competition_type,
+            'status': tournament.status,
+        })
         flash(text.FLASH['college_active'], 'success')
     elif competition_type == 'pro':
         tournament.status = TournamentStatus.PRO_ACTIVE
+        log_action('competition_activated', 'tournament', tournament.id, {
+            'tournament_id': tournament.id,
+            'competition_type': competition_type,
+            'status': tournament.status,
+        })
         flash(text.FLASH['pro_active'], 'success')
     else:
+        log_action('competition_activation_rejected', 'tournament', tournament.id, {
+            'tournament_id': tournament.id,
+            'competition_type': competition_type,
+            'reason': 'invalid_competition_type',
+        })
         flash(text.FLASH['invalid_comp_type'], 'error')
 
     db.session.commit()
@@ -442,6 +481,12 @@ def delete_tournament(tournament_id):
     confirmation = request.form.get('confirm_delete', '').strip()
 
     if confirmation != 'DELETE':
+        log_action('tournament_delete_denied', 'tournament', tournament.id, {
+            'tournament_id': tournament.id,
+            'name': tournament_name,
+            'reason': 'confirmation_mismatch',
+        })
+        db.session.commit()
         flash(f'Deletion cancelled for "{tournament_name}". Type DELETE to confirm.', 'warning')
         return redirect(url_for('main.judge_dashboard'))
 
@@ -462,11 +507,21 @@ def delete_tournament(tournament_id):
             )
             Flight.query.filter(Flight.id.in_(flight_ids)).delete(synchronize_session=False)
 
+        log_action('tournament_deleted', 'tournament', tournament.id, {
+            'tournament_id': tournament.id,
+            'name': tournament_name,
+        })
         db.session.delete(tournament)
         db.session.commit()
         flash(f'Deleted tournament: {tournament_name}', 'success')
     except Exception as exc:
         db.session.rollback()
+        log_action('tournament_delete_failed', 'tournament', tournament_id, {
+            'tournament_id': tournament_id,
+            'name': tournament_name,
+            'error': str(exc),
+        })
+        db.session.commit()
         flash(f'Could not delete tournament "{tournament_name}": {exc}', 'error')
 
     return redirect(url_for('main.judge_dashboard'))
@@ -647,12 +702,12 @@ def clone_tournament(tournament_id):
         )
         db.session.add(new_event)
 
-    db.session.commit()
-    from services.audit import log_action
     log_action('tournament_cloned', 'tournament', new_tournament.id, {
+        'tournament_id': new_tournament.id,
         'source_id': source.id,
         'source_name': source.name,
     })
+    db.session.commit()
     flash(f'Tournament cloned as "{new_tournament.name}". Update the name and dates before use.', 'success')
     return redirect(url_for('main.tournament_detail', tournament_id=new_tournament.id))
 
