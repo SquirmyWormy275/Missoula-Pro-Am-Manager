@@ -510,10 +510,19 @@ GitHub Actions runs three jobs on every push and PR to `main` (see
    for pre-existing failing test files)
 3. **postgres-smoke** — spins up PostgreSQL 15, applies migrations via
    `flask db upgrade`, runs `tests/test_postgres_runtime_smoke.py`
+4. **migration-safety** — runs migration integrity and PostgreSQL migration
+   safety checks that guard release-time schema failures
 
 Production deploy is handled by Railway, which auto-deploys from `main`
 on push. There is no GitHub Actions deploy step. The Railway release
-command is `flask db upgrade` (configured in `railway.toml`).
+command is `flask db upgrade` via Railway `preDeployCommand`
+(configured in `railway.toml`).
+
+Operational docs:
+
+- [Release Checklist](docs/RELEASE_CHECKLIST.md)
+- [Rollback SOP](docs/ROLLBACK_SOP.md)
+- [GitHub Required Settings](docs/GITHUB_REQUIRED_SETTINGS.md)
 
 ---
 

@@ -336,6 +336,19 @@ class TestBackgroundJobs:
         # Restore default
         background_jobs.configure(2)
 
+    def test_list_recent_returns_newest_first(self):
+        from services.background_jobs import list_recent, submit
+
+        first_id = submit('first-job', lambda: 'first', metadata={'tournament_id': 1})
+        second_id = submit('second-job', lambda: 'second', metadata={'tournament_id': 1})
+        time.sleep(0.1)
+
+        rows = list_recent(limit=2)
+        assert len(rows) == 2
+        assert rows[0]['id'] == second_id
+        assert rows[1]['id'] == first_id
+        assert rows[0]['metadata']['tournament_id'] == 1
+
 
 # ===================================================================
 # CacheInvalidation tests  (services/cache_invalidation.py)

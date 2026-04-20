@@ -417,6 +417,10 @@ class TestMainRoutes:
         """GET /tournament/<tid>/pro returns pro dashboard."""
         _ok(auth_client.get(f'/tournament/{seed["tid"]}/pro'))
 
+    def test_smoke_main_ops_dashboard(self, auth_client, seed):
+        """GET /tournament/<tid>/ops-dashboard returns the race-day ops dashboard."""
+        _ok(auth_client.get(f'/tournament/{seed["tid"]}/ops-dashboard'))
+
     def test_smoke_main_activate_competition(self, auth_client, seed):
         """POST /tournament/<tid>/activate/college redirects."""
         r = auth_client.post(f'/tournament/{seed["tid"]}/activate/college')

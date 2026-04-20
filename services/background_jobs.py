@@ -84,3 +84,28 @@ def get(job_id: str) -> dict | None:
             'metadata': dict(job.get('metadata') or {}),
         }
 
+
+def list_recent(limit: int = 20) -> list[dict]:
+    """Return the most recent jobs first for operator diagnostics."""
+    if limit < 1:
+        return []
+    with _lock:
+        rows = [
+            {
+                'id': job['id'],
+                'label': job['label'],
+                'status': job['status'],
+                'submitted_at': job['submitted_at'],
+                'finished_at': job['finished_at'],
+                'result': job['result'],
+                'error': job['error'],
+                'metadata': dict(job.get('metadata') or {}),
+            }
+            for job in _jobs.values()
+        ]
+    rows.sort(
+        key=lambda job: job.get('submitted_at') or datetime.min,
+        reverse=True,
+    )
+    return rows[:limit]
+
