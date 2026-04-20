@@ -36,6 +36,12 @@ from models.payout_template import PayoutTemplate
 from routes.api import write_limit
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
+from services.scoring_workflow import (
+    competitor_lookup_for_event,
+    existing_results_for_event,
+    finalize_event_results,
+    save_heat_results_submission,
+)
 
 scoring_bp = Blueprint('scoring', __name__)
 
@@ -68,6 +74,17 @@ def _current_user_id() -> int | None:
     return None
 
 
+def _normalized_heat_competitor_ids(heat: Heat) -> list[int]:
+    competitor_ids: list[int] = []
+    for entry in heat.get_competitors():
+        if isinstance(entry, dict):
+            entry = entry.get('id')
+        if entry in (None, ''):
+            continue
+        competitor_ids.append(int(entry))
+    return competitor_ids
+
+
 def _push_strathmark_results(event: Event, tournament_id: int) -> None:
     """
     Attempt to push finalized results to STRATHMARK for eligible event types.
@@ -94,20 +111,11 @@ def _push_strathmark_results(event: Event, tournament_id: int) -> None:
 
 
 def _competitor_lookup(event: Event, competitor_ids: list[int]) -> dict:
-    if event.event_type == 'college':
-        comps = CollegeCompetitor.query.filter(CollegeCompetitor.id.in_(competitor_ids)).all()
-    else:
-        comps = ProCompetitor.query.filter(ProCompetitor.id.in_(competitor_ids)).all()
-    return {c.id: c for c in comps}
+    return competitor_lookup_for_event(event, competitor_ids)
 
 
 def _existing_results(event: Event, competitor_ids: list[int]) -> dict:
-    rows = EventResult.query.filter(
-        EventResult.event_id == event.id,
-        EventResult.competitor_id.in_(competitor_ids),
-        EventResult.competitor_type == event.event_type
-    ).all()
-    return {r.competitor_id: r for r in rows}
+    return existing_results_for_event(event, competitor_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -472,6 +480,36 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
     }
 
 
+# Route-level shim: keep HTTP details here while the scoring workflow lives in
+# services.scoring_workflow for direct testing outside request handlers.
+def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) -> dict:
+    outcome = save_heat_results_submission(
+        tournament_id=tournament_id,
+        heat=heat,
+        event=event,
+        form_data=request.form,
+        judge_user_id=_current_user_id(),
+    )
+    redirect_kind = outcome.pop('redirect_kind')
+    redirect_event_id = outcome.pop('redirect_event_id')
+    redirect_heat_id = outcome.pop('redirect_heat_id')
+    if redirect_kind == 'heat_entry':
+        outcome['redirect_url'] = url_for(
+            'scoring.enter_heat_results',
+            tournament_id=tournament_id,
+            heat_id=redirect_heat_id,
+        )
+    else:
+        outcome['redirect_url'] = url_for(
+            'scoring.event_results',
+            tournament_id=tournament_id,
+            event_id=redirect_event_id,
+        )
+    if outcome.get('undo_token'):
+        session[f'undo_heat_{heat.id}'] = outcome.pop('undo_token')
+    return outcome
+
+
 # ---------------------------------------------------------------------------
 # Routes: navigation helpers
 # ---------------------------------------------------------------------------
@@ -567,9 +605,29 @@ def finalize_preview(tournament_id, event_id):
 
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/finalize', methods=['POST'])
+@login_required
 @write_limit('10 per minute')
 def finalize_event(tournament_id, event_id):
     event = _event_for_tournament_or_404(tournament_id, event_id)
+    outcome = finalize_event_results(
+        event=event,
+        tournament_id=tournament_id,
+        judge_user_id=_current_user_id(),
+    )
+    for issue in outcome['warnings']:
+        flash(issue['message'], 'warning')
+    if not outcome['ok']:
+        if _is_async():
+            return jsonify({'ok': False, 'message': outcome['message']}), outcome['status_code']
+        flash(outcome['message'], 'warning')
+        return redirect(url_for('scoring.event_results',
+                                tournament_id=tournament_id, event_id=event_id))
+    _push_strathmark_results(event, tournament_id)
+    if _is_async():
+        return jsonify({'ok': True, 'message': outcome['message']})
+    flash(text.FLASH['event_finalized'].format(event_name=event.display_name), 'success')
+    return redirect(url_for('scoring.event_results',
+                            tournament_id=tournament_id, event_id=event_id))
 
     # Pre-finalization validation — surface warnings so the judge knows what's off.
     # These are warnings, not blockers, because there are legitimate reasons to
@@ -620,6 +678,7 @@ def finalize_event(tournament_id, event_id):
 # ---------------------------------------------------------------------------
 
 @scoring_bp.route('/<int:tournament_id>/heat/<int:heat_id>/enter', methods=['GET', 'POST'])
+@login_required
 @write_limit('60 per minute')
 def enter_heat_results(tournament_id, heat_id):
     tournament = Tournament.query.get_or_404(tournament_id)
@@ -668,7 +727,7 @@ def enter_heat_results(tournament_id, heat_id):
             heat.acquire_lock(user_id)
             db.session.commit()
 
-    competitor_ids = heat.get_competitors()
+    competitor_ids = _normalized_heat_competitor_ids(heat)
     comp_lookup = _competitor_lookup(event, competitor_ids)
     result_lookup = _existing_results(event, competitor_ids)
 
@@ -727,6 +786,7 @@ def enter_heat_results(tournament_id, heat_id):
 # ---------------------------------------------------------------------------
 
 @scoring_bp.route('/<int:tournament_id>/heat/<int:heat_id>/release-lock', methods=['POST'])
+@login_required
 def release_heat_lock(tournament_id, heat_id):
     heat = _heat_for_tournament_or_404(tournament_id, heat_id)
     user_id = _current_user_id()
@@ -744,6 +804,7 @@ def release_heat_lock(tournament_id, heat_id):
 # ---------------------------------------------------------------------------
 
 @scoring_bp.route('/<int:tournament_id>/heat/<int:heat_id>/undo', methods=['POST'])
+@login_required
 def undo_heat_save(tournament_id, heat_id):
     """Revert a heat to pending and delete its EventResult rows (within 30-second window)."""
     token = session.get(f'undo_heat_{heat_id}')
@@ -774,7 +835,7 @@ def undo_heat_save(tournament_id, heat_id):
 
     heat = _heat_for_tournament_or_404(tournament_id, heat_id)
     event = heat.event
-    competitor_ids = heat.get_competitors()
+    competitor_ids = _normalized_heat_competitor_ids(heat)
 
     # Phase 4 (V2.8.0) — strip points before delete (PLAN_REVIEW.md A6/C2/C7).
     #
@@ -1397,7 +1458,7 @@ def heat_sheet_pdf(tournament_id, heat_id):
     heat = _heat_for_tournament_or_404(tournament_id, heat_id)
     event = heat.event
 
-    competitor_ids = heat.get_competitors()
+    competitor_ids = _normalized_heat_competitor_ids(heat)
     comp_lookup = _competitor_lookup(event, competitor_ids)
     result_lookup = _existing_results(event, competitor_ids)
     assignments = heat.get_stand_assignments()
