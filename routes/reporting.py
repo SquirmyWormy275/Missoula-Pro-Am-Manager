@@ -31,9 +31,9 @@ from database import db
 from models import Event, Tournament
 from services.audit import log_action
 from services.background_jobs import get as get_job
-from services.background_jobs import submit as submit_job
 from services.report_cache import get as cache_get
 from services.report_cache import set as cache_set
+from services.reporting_backup import sqlite_backup_download_plan, submit_database_backup_job
 from services.reporting_export import (
     build_chopping_export,
     build_chopping_json_payload,
@@ -392,18 +392,13 @@ def backup_database(tournament_id):
         abort(403)
 
     uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
-    if not uri.startswith('sqlite:///'):
-        flash('Database backup download is only available for SQLite in this environment.', 'warning')
+    backup_plan = sqlite_backup_download_plan(uri, current_app.instance_path)
+    if not backup_plan['ok']:
+        category = 'warning' if backup_plan['reason'] == 'unsupported' else 'error'
+        flash(backup_plan['message'], category)
         return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
 
-    db_path = uri.replace('sqlite:///', '', 1)
-    if not os.path.isabs(db_path):
-        db_path = os.path.join(current_app.instance_path, db_path)
-
-    if not os.path.exists(db_path):
-        flash('Database file not found.', 'error')
-        return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
-
+    db_path = backup_plan['path']
     log_action('database_backup_downloaded', 'tournament', tournament_id, {'path': db_path})
     db.session.commit()
     return send_file(db_path, as_attachment=True, download_name=f'proam_backup_{tournament_id}.db')
@@ -667,16 +662,7 @@ def cloud_backup(tournament_id):
 
     uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
     instance_path = current_app.instance_path
-    from services.backup import backup_database
-
-    def _run_backup():
-        return backup_database(uri, tournament_id, instance_path)
-
-    job_id = submit_job(
-        f'backup:t{tournament_id}',
-        _run_backup,
-        metadata={'tournament_id': tournament_id, 'kind': 'backup'},
-    )
+    job_id = submit_database_backup_job(uri, tournament_id, instance_path)
 
     log_action('cloud_backup_triggered', 'tournament', tournament_id, {'job_id': job_id})
     db.session.commit()
