@@ -11,6 +11,8 @@ from database import db
 from models import Event, EventResult, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
+from services.birling_print import build_birling_print_context
+from services.print_response import weasyprint_or_html
 
 from . import _signed_up_competitors, scheduling_bp
 
@@ -375,3 +377,108 @@ def birling_finalize(tournament_id, event_id):
     flash(f'Bracket finalized with {len(placements)} placements.', 'success')
     return redirect(url_for('scheduling.birling_manage',
                             tournament_id=tournament_id, event_id=event_id))
+
+
+# ---------------------------------------------------------------------------
+# Blank bracket print (show-prep)
+# ---------------------------------------------------------------------------
+
+
+def _safe_filename_part(name: str) -> str:
+    """Strip characters that break Content-Disposition filenames."""
+    return ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in name)
+
+
+@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/print-blank',
+                      methods=['GET'])
+def birling_print_blank(tournament_id, event_id):
+    """Printable blank bracket for one birling event.
+
+    Round-1 matchups are shown (so the judge knows who faces whom first);
+    everything beyond is blank so the judge can hand-fill advancement as
+    matches play out.  If the bracket has not been generated yet, flash
+    a redirect back to the seeding page.
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    event = Event.query.get_or_404(event_id)
+    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
+        abort(404)
+
+    ctx = build_birling_print_context(event)
+    if ctx is None:
+        flash('Seed the bracket first, then come back to print it.', 'warning')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
+
+    html = render_template(
+        'scoring/birling_bracket_print.html',
+        brackets=[{'event': event, 'ctx': ctx}],
+        year=tournament.year,
+    )
+    filename = f'birling_blank_{_safe_filename_part(event.display_name)}'
+    log_action('birling_blank_bracket_printed', 'event', event_id, {
+        'event_name': event.display_name,
+    })
+    db.session.commit()
+    return weasyprint_or_html(html, filename)
+
+
+@scheduling_bp.route('/<int:tournament_id>/birling/print-all', methods=['GET'])
+def birling_print_all(tournament_id):
+    """Combined blank-bracket print for every birling event in the tournament.
+
+    Skips any bracket event that has not been generated yet and flashes
+    the list of skipped event names so the admin can seed them.  Matches
+    the ``judge_sheets_all`` idiom: one click, one document, show-prep
+    ready.
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    events = (
+        Event.query
+        .filter_by(tournament_id=tournament_id)
+        .filter(Event.scoring_type == 'bracket')
+        .order_by(Event.event_type, Event.name, Event.gender)
+        .all()
+    )
+    if not events:
+        flash('No birling events configured for this tournament.', 'warning')
+        return redirect(url_for('main.tournament_detail',
+                                tournament_id=tournament_id))
+
+    rendered: list = []
+    skipped_names: list = []
+    for event in events:
+        ctx = build_birling_print_context(event)
+        if ctx is None:
+            skipped_names.append(event.display_name)
+            continue
+        rendered.append({'event': event, 'ctx': ctx})
+
+    if not rendered:
+        flash(
+            'No birling brackets have been seeded yet: {}.  Seed at least one to print.'
+            .format(', '.join(skipped_names)),
+            'warning',
+        )
+        return redirect(url_for('main.tournament_detail',
+                                tournament_id=tournament_id))
+
+    if skipped_names:
+        flash(
+            'Skipped {} birling event(s) without a generated bracket: {}.'
+            .format(len(skipped_names), ', '.join(skipped_names)),
+            'info',
+        )
+
+    html = render_template(
+        'scoring/birling_bracket_print.html',
+        brackets=rendered,
+        year=tournament.year,
+    )
+    filename = f'birling_blank_all_tournament_{tournament.id}'
+    log_action('birling_blank_bracket_printed_all', 'tournament', tournament_id, {
+        'rendered_count': len(rendered),
+        'skipped': skipped_names,
+    })
+    db.session.commit()
+    return weasyprint_or_html(html, filename)

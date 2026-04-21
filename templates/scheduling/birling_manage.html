@@ -489,6 +489,11 @@
             <i class="bi bi-lock-fill me-1"></i> Results Finalized
         </span>
         {% endif %}
+        <a href="{{ url_for('scheduling.birling_print_blank', tournament_id=tournament.id, event_id=event.id) }}"
+           class="btn btn-outline-secondary btn-sm" target="_blank"
+           title="Blank printable bracket with round-1 matchups filled in — judge hand-fills advancement.">
+            <i class="bi bi-printer me-1"></i> Print Blank Bracket
+        </a>
         <form method="POST" action="{{ url_for('scheduling.birling_reset', tournament_id=tournament.id, event_id=event.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-danger btn-sm"

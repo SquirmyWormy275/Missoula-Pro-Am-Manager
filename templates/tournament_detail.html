@@ -345,6 +345,11 @@
                    title="Blank judge scoring sheets for every event that has heats — one document, one click before the day starts.">
                     <i class="bi bi-pencil-square me-1"></i>Print All Judge Sheets
                 </a>
+                <a href="{{ url_for('scheduling.birling_print_all', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-info btn-sm" target="_blank"
+                   title="Printable seeded birling brackets — round-1 matchups filled in, advancement slots blank.">
+                    <i class="bi bi-diagram-3 me-1"></i>Print Birling Brackets
+                </a>
                 <form method="post"
                       action="{{ url_for('main.activate_competition', tournament_id=tournament.id, competition_type='college') }}"
                       class="d-inline">
@@ -494,6 +499,13 @@
                         <span>
                             <span class="pl-title">Print Heat Sheets</span>
                             <span class="pl-desc">Printable heat assignments for judges</span>
+                        </span>
+                    </a>
+                    <a class="phase-link" href="{{ url_for('scheduling.birling_print_all', tournament_id=tournament.id) }}" target="_blank">
+                        <i class="bi bi-diagram-3 pl-icon" style="color:#6cb6f5;"></i>
+                        <span>
+                            <span class="pl-title">Birling Blank Brackets</span>
+                            <span class="pl-desc">Printable seeded brackets for the birling judge</span>
                         </span>
                     </a>
                 </div>
