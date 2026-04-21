@@ -592,6 +592,30 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-21 (V2.11.3)
+
+**Patch — design review fixes: touch targets, root font-family, print-mode brand fonts**
+
+Three findings from a `/design-review` pass against V2.11.2. No functional changes; CSS + one template edit.
+
+**F-001 — Touch targets below WCAG 2.2 SC 2.5.8 on secondary navbar + table buttons (HIGH):**
+- `static/css/theme.css`: new `min-height: 44px` + `inline-flex` centering on `.navbar-proam .btn` (covers Help / Language / Users / Logout rendered as `.btn-outline-light.btn-sm` at ~31px previously). Also `.table .btn.btn-sm, table .btn.btn-sm` for inline row actions (View buttons, etc.).
+- DESIGN.md §17.2 previously enforced 44px on `.btn-proam` and `.navbar-proam .nav-link` only. Product context §0 explicitly targets field-side tablets — the secondary toolbar buttons were outside that rule and failing on tablet taps. Six of seven flagged targets now at 44px; the seventh (Load Demo Data in dashboard card header) is an admin-only convenience, deferred.
+
+**F-003 — Print stylesheets fall back to browser default serif (MEDIUM):**
+- `static/css/theme.css` `@media print`: `body` font-family forced to Inter, `h1-h6` forced to Fraunces. DESIGN.md §18 reset the dark theme for print but left fonts unspecified, so printable outputs (heat sheets, schedules) rendered Times New Roman on judge/spectator handouts. Brand identity now carries into printed artifacts.
+- `templates/scheduling/friday_feature_print.html`: standalone template (not using base.html), gets its own `<link>` to Google Fonts for Fraunces + Inter. Arial kept as fallback when offline.
+
+**F-004 — `<html>` element inherited browser default serif (LOW):**
+- `static/css/theme.css`: `html { font-family: "Inter", ... }` added alongside the existing `body` rule. No rendered elements affected today, but closes a design-system purity gap and protects against future edge cases where text lands outside `<body>`.
+
+**Deferred to future work:** F-002 heading hierarchy sweep (H5 used for section headers across ~20 templates); F-005 `.data-label` bump in hero context; F-006 tournament detail stepper-vs-stats visual ambiguity.
+
+**Data model:** No schema changes.
+**Tests:** No tests added — CSS-only changes are caught by `/design-review` reruns per skill convention. Regression guard in `tests/test_css_modal_safety.py` continues to apply.
+
+---
+
 ### 2026-04-21 (V2.11.2)
 
 **Patch — Pro event fee configuration surfaced + tested**

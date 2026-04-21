@@ -54,6 +54,11 @@
         html { color-scheme: dark; }
         *, *::before, *::after { box-sizing: border-box; }
 
+        /* Also apply the body font at the html level so non-rendered root elements
+           (<html>, <head>, etc.) don't inherit the browser's default serif.
+           Design review F-004 (2026-04-21). */
+        html { font-family: "Inter", "Segoe UI", sans-serif; }
+
         body {
             min-height: 100vh;
             font-family: "Inter", "Segoe UI", sans-serif;
@@ -609,6 +614,28 @@
             align-items: center;
             border-radius: 7px;
             transition: color 0.15s, background 0.15s;
+        }
+
+        /* WCAG 2.2 SC 2.5.8 for tablet field-side use.
+           Secondary toolbar buttons inside the navbar (Help, Language,
+           Users, Logout) rendered at ~31px as .btn-outline-light.btn-sm.
+           Enforce 44px on any .btn inside .navbar-proam regardless of
+           bootstrap size modifier. Design review F-001 (2026-04-21). */
+        .navbar-proam .btn {
+            min-height: 44px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        /* Same guarantee for action buttons in data tables (View, Load Demo Data,
+           inline row actions) which are the primary tap targets on tournament
+           lists. */
+        .table .btn.btn-sm,
+        table .btn.btn-sm {
+            min-height: 44px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
         }
         .navbar-proam .nav-link:hover {
             color: var(--sx-text) !important;
@@ -1413,6 +1440,13 @@
                 color: #000 !important;
                 font-size: 11pt !important;
                 line-height: 1.35 !important;
+                font-family: "Inter", "Segoe UI", sans-serif !important;
+            }
+            /* Keep Fraunces for headings on printed artifacts so brand identity
+               carries into schedules/heat sheets judges and spectators hold.
+               Design review F-003 (2026-04-21). */
+            h1, h2, h3, h4, h5, h6 {
+                font-family: "Fraunces", Georgia, serif !important;
             }
             .container,
             .container-fluid {
