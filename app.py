@@ -10,14 +10,16 @@ from flask import (
     Flask,
     Response,
     abort,
+    flash,
     g,
     jsonify,
+    redirect,
     render_template,
     request,
     send_from_directory,
     session,
 )
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFError, CSRFProtect
 from sqlalchemy import event as sa_event
 from sqlalchemy.engine import Engine
 
@@ -538,6 +540,18 @@ def _create_app_inner():
         if request.path.startswith('/api/'):
             return jsonify({'error': 'Internal server error', 'status': 500}), 500
         return render_template('errors/500.html'), 500
+
+    @app.errorhandler(CSRFError)
+    def handle_csrf_error(error):
+        # Long-open forms (>WTF_CSRF_TIME_LIMIT seconds) submit a stale token and
+        # get a raw "Bad Request" page. On page-load-driven forms (events page,
+        # scheduling actions, etc.) this silently eats clicks. Redirect back to
+        # the referrer with a flash so the next GET loads a fresh token.
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'CSRF token missing or expired', 'status': 400}), 400
+        flash('Your session expired for security. Please try that action again.', 'warning')
+        target = request.referrer or request.path or '/'
+        return redirect(target)
 
     return app
 
