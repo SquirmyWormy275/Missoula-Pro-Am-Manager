@@ -404,6 +404,7 @@ PayoutTemplate  (tournament-independent, standalone)
 - College standings: Bull/Belle of the Woods, team standings; live 30s polling in spectator portal
 - Pro payout summary with integrated settlement (Paid/Pending toggle, settlement stats)
 - All-results report (screen and printable); event-level result reports (screen and printable)
+- Excel results export direct-download: `GET /reporting/<tid>/export-results` — synchronous download via `build_results_export()` in `services/excel_io.py`; returns multi-sheet XLSX (competitors, events, results, standings) with auto-cleaned temp file; complements the existing async job path `/reporting/<tid>/export-results/async` for large exports
 - Pro-Am Relay lottery (opt-in, gender-balanced draw, result entry, standings)
 - Partnered Axe Throw state machine (prelim registration, prelim scoring, top-4 advance, finals, full standings)
 - Birling bracket: full double-elimination bracket generation with advance logic (`_advance_winner`, `_drop_to_losers`, `_advance_loser_winner`); bracket viewer route + `birling_bracket.html`
@@ -494,8 +495,6 @@ PayoutTemplate  (tournament-independent, standalone)
 - Scoring engine throwoff fix (V2.8.0): `record_throwoff_result()` uses canonical `PLACEMENT_POINTS_DECIMAL` lookup
 
 ### Known Gaps and Incomplete Features
-
-**Excel results export route (direct download):** `export_results_to_excel()` exists in `services/excel_io.py`. An async background export job route exists at `/reporting/<tid>/export-results/async`, but no route triggers a direct synchronous Excel download. The async job approach is the recommended path forward — completing the status/download endpoint would close this gap.
 
 **Friday Night Feature schedule view (V2.11.0):** The Friday Night Feature now has a heat-by-heat schedule view on the Friday Showcase page plus a printable view at `/scheduling/<tid>/friday-night/print`. FNF events selected into `schedule_config['friday_pro_event_ids']` are excluded from Saturday pro flights (their heats exist in the DB with `flight_id=NULL`). Heats are ordered Springboard → Pro 1-Board → 3-Board Jigger via `_fnf_event_order()` in `routes/scheduling/friday_feature.py`. FNF still runs as a straight heat-by-heat schedule, not flights — intentional, matching college day format.
 
@@ -733,7 +732,6 @@ The broader vision: STRATHMARK calculates start marks and predicted times, feeds
 The following features remain as planned or implied by the codebase and requirements:
 
 **Remaining gaps (from Section 5):**
-- Excel results export direct download route
 - Pro event fee configuration UI
 - Pro entry form redesign (scope pending; current import handled by `registration_import.py` enhanced pipeline)
 
