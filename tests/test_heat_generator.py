@@ -368,7 +368,33 @@ class TestGenerateStandardHeats:
 # ---------------------------------------------------------------------------
 
 class TestGenerateSpringboardHeats:
-    def test_left_handed_grouped_in_first_heat(self):
+    """
+    LH cutter placement rule (2026-04-20):
+      - Only one physical LH springboard dummy on site.
+      - At most one LH cutter per heat.
+      - Spread LH cutters one per heat 0..N-1.
+      - If more LH cutters than heats, overflow goes to the FINAL heat with
+        a warning (emitted via lh_warnings list).
+      - Slow-heat cutters still cluster into the final heat (unchanged).
+    """
+
+    def test_one_lh_cutter_placed_in_heat_0(self):
+        ev = _event(event_type='college', stand_type='springboard')
+        comps = [
+            _comp(1, name='A', is_left_handed=True),
+            _comp(2, name='B'),
+            _comp(3, name='C'),
+            _comp(4, name='D'),
+            _comp(5, name='E'),
+            _comp(6, name='F'),
+        ]
+        heats = _generate_springboard_heats(comps, 2, 4, {}, event=ev)
+        heat0_ids = {c['id'] for c in heats[0]}
+        heat1_ids = {c['id'] for c in heats[1]}
+        assert 1 in heat0_ids
+        assert 1 not in heat1_ids
+
+    def test_two_lh_cutters_spread_not_clustered(self):
         ev = _event(event_type='college', stand_type='springboard')
         comps = [
             _comp(1, name='A', is_left_handed=True),
@@ -379,10 +405,139 @@ class TestGenerateSpringboardHeats:
             _comp(6, name='F'),
         ]
         heats = _generate_springboard_heats(comps, 2, 4, {}, event=ev)
-        lh_ids = {1, 2}
-        # Both left-handers should be in heat 0 (left_heat_idx=0)
         heat0_ids = {c['id'] for c in heats[0]}
-        assert lh_ids.issubset(heat0_ids)
+        heat1_ids = {c['id'] for c in heats[1]}
+        # LH 1 should be in heat 0, LH 2 in heat 1 — NOT both in heat 0.
+        assert 1 in heat0_ids and 2 in heat1_ids
+        # Defensive: if both were clustered, the test would have caught the old bug.
+        assert not ({1, 2}.issubset(heat0_ids))
+
+    def test_four_lh_cutters_four_heats_one_per_heat(self):
+        ev = _event(event_type='college', stand_type='springboard')
+        comps = [
+            _comp(1, name='A', is_left_handed=True),
+            _comp(2, name='B', is_left_handed=True),
+            _comp(3, name='C', is_left_handed=True),
+            _comp(4, name='D', is_left_handed=True),
+            _comp(5, name='E'),
+            _comp(6, name='F'),
+            _comp(7, name='G'),
+            _comp(8, name='H'),
+            _comp(9, name='I'),
+            _comp(10, name='J'),
+            _comp(11, name='K'),
+            _comp(12, name='L'),
+        ]
+        heats = _generate_springboard_heats(comps, 4, 3, {}, event=ev)
+        lh_per_heat = [
+            sum(1 for c in heat if c['id'] in {1, 2, 3, 4})
+            for heat in heats
+        ]
+        assert lh_per_heat == [1, 1, 1, 1]
+
+    def test_overflow_lh_goes_to_final_heat_with_warning(self):
+        """5 LH cutters across 4 heats: 4 spread, 1 overflows to final heat."""
+        ev = _event(event_type='college', stand_type='springboard')
+        comps = [
+            _comp(1, name='A', is_left_handed=True),
+            _comp(2, name='B', is_left_handed=True),
+            _comp(3, name='C', is_left_handed=True),
+            _comp(4, name='D', is_left_handed=True),
+            _comp(5, name='E', is_left_handed=True),
+            _comp(6, name='F'),
+            _comp(7, name='G'),
+            _comp(8, name='H'),
+        ]
+        lh_warnings: list = []
+        heats = _generate_springboard_heats(
+            comps, 4, 4, {}, event=ev, lh_warnings=lh_warnings,
+        )
+        # Heat 0..2 each have exactly 1 LH; final heat has 2 LH.
+        lh_per_heat = [
+            sum(1 for c in heat if c['id'] in {1, 2, 3, 4, 5})
+            for heat in heats
+        ]
+        assert lh_per_heat == [1, 1, 1, 2]
+        # Overflow warning emitted for heat 3.
+        assert len(lh_warnings) == 1
+        assert lh_warnings[0]['type'] == 'lh_overflow'
+        assert lh_warnings[0]['heat_index'] == 3
+        assert lh_warnings[0]['overflow_count'] == 1
+
+    def test_overflow_unplaceable_when_final_heat_full(self):
+        """LH overflow exceeds max_per_heat of final heat — gear_violations records it."""
+        ev = _event(event_type='college', stand_type='springboard')
+        # 3 heats of max 2 cutters each = 6 slots.
+        # 4 LH cutters: 3 spread to heats 0/1/2 (one each), 4th overflow to final
+        # heat 2.  Final heat now has 1 LH from spread + 1 LH overflow = 2/2 capacity.
+        # Add a 5th LH: overflow unplaceable.
+        comps = [
+            _comp(1, name='A', is_left_handed=True),
+            _comp(2, name='B', is_left_handed=True),
+            _comp(3, name='C', is_left_handed=True),
+            _comp(4, name='D', is_left_handed=True),
+            _comp(5, name='E', is_left_handed=True),
+        ]
+        lh_warnings: list = []
+        gear_violations: list = []
+        _generate_springboard_heats(
+            comps, 3, 2, {}, event=ev,
+            gear_violations=gear_violations, lh_warnings=lh_warnings,
+        )
+        # E (id=5) can't fit anywhere — all heats at max 2 after spread + 1 overflow.
+        unplaceable = [v for v in gear_violations if 'unplaced' in v.get('reason', '').lower()]
+        assert len(unplaceable) == 1
+        assert unplaceable[0]['comp_name'] == 'E'
+
+    def test_no_left_handers_no_warning_and_no_grouping(self):
+        ev = _event(event_type='college', stand_type='springboard')
+        comps = [_comp(i, name=f'C{i}') for i in range(1, 9)]
+        lh_warnings: list = []
+        heats = _generate_springboard_heats(
+            comps, 2, 4, {}, event=ev, lh_warnings=lh_warnings,
+        )
+        assert sum(len(h) for h in heats) == 8
+        assert lh_warnings == []
+
+    def test_slow_heat_clusters_into_final_heat_unchanged(self):
+        """Slow-heat behavior preserved: cluster into final heat."""
+        ev = _event(event_type='college', stand_type='springboard')
+        comps = [
+            _comp(1, name='A', is_slow_springboard=True),
+            _comp(2, name='B', is_slow_springboard=True),
+            _comp(3, name='C'),
+            _comp(4, name='D'),
+            _comp(5, name='E'),
+            _comp(6, name='F'),
+            _comp(7, name='G'),
+            _comp(8, name='H'),
+        ]
+        heats = _generate_springboard_heats(comps, 2, 4, {}, event=ev)
+        # Slow cutters should both be in the final heat (idx 1).
+        final_ids = {c['id'] for c in heats[1]}
+        assert {1, 2}.issubset(final_ids)
+
+    def test_lh_and_slow_heat_both_land_in_final_heat(self):
+        """Interaction: 1 LH cutter alone fits heat 0; 1 slow-heat cutter in final.
+        With only 2 heats, final heat hosts the slow cutter AND (eventually) overflow
+        LH would go there too.  Smoke test that both mechanisms coexist without crash.
+        """
+        ev = _event(event_type='college', stand_type='springboard')
+        comps = [
+            _comp(1, name='A', is_left_handed=True),
+            _comp(2, name='B', is_slow_springboard=True),
+            _comp(3, name='C'),
+            _comp(4, name='D'),
+            _comp(5, name='E'),
+            _comp(6, name='F'),
+        ]
+        heats = _generate_springboard_heats(comps, 2, 4, {}, event=ev)
+        heat0_ids = {c['id'] for c in heats[0]}
+        heat1_ids = {c['id'] for c in heats[1]}
+        assert 1 in heat0_ids      # LH spread to heat 0
+        assert 2 in heat1_ids      # slow in final
+        # All six placed.
+        assert len(heat0_ids | heat1_ids) == 6
 
     def test_all_placed(self):
         ev = _event(event_type='college', stand_type='springboard')
@@ -390,12 +545,6 @@ class TestGenerateSpringboardHeats:
         heats = _generate_springboard_heats(comps, 2, 4, {}, event=ev)
         placed = [c for heat in heats for c in heat]
         assert len(placed) == 8
-
-    def test_no_left_handers_no_grouping(self):
-        ev = _event(event_type='college', stand_type='springboard')
-        comps = [_comp(i, name=f'C{i}') for i in range(1, 9)]
-        heats = _generate_springboard_heats(comps, 2, 4, {}, event=ev)
-        assert sum(len(h) for h in heats) == 8
 
 
 # ---------------------------------------------------------------------------

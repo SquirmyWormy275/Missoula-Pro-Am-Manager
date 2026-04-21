@@ -157,13 +157,39 @@ def parse_pro_entries(filepath: str) -> list:
 
         ala_member = _yes(_get(row, hmap.get('Are you a current ALA member?')))
 
+        # --- Handedness capture (BEFORE canonical dedup — raw L/R columns).
+        # _EVENT_MAP collapses 'Springboard (L)' and 'Springboard (R)' to the
+        # canonical 'Springboard', but the L/R checkbox is the admin's only
+        # signal for which springboard dummy this cutter uses. Capture it here
+        # so compute_review_flags() can flag the "both checked" conflict.
+        has_l_col = 'Springboard (L)' in hmap
+        has_r_col = 'Springboard (R)' in hmap
+        raw_sb_l  = _yes(_get(row, hmap.get('Springboard (L)'))) if has_l_col else False
+        raw_sb_r  = _yes(_get(row, hmap.get('Springboard (R)'))) if has_r_col else False
+        if has_l_col or has_r_col:
+            # Form has at least one column → we have a signal. L wins on conflict.
+            is_left_handed_springboard = raw_sb_l
+        else:
+            # Form has neither column (legacy import or non-springboard-form).
+            # Use None sentinel so confirm_pro_entries() preserves any manual
+            # flag already set on an existing competitor instead of wiping it.
+            is_left_handed_springboard = None
+
         # --- Events and fees ---
-        events        = []
-        chopping_fees = 0
-        other_fees    = 0
+        # Dedup by canonical event name so double-checked aliases (e.g. both
+        # Springboard (L) and Springboard (R), or Jack & Jill + Jack & Jill
+        # Sawing) don't double-enter or double-charge. seen_canonical_events
+        # is reset per row.
+        events                  = []
+        chopping_fees           = 0
+        other_fees              = 0
+        seen_canonical_events: set = set()
 
         for form_header, (event_name, fee) in _EVENT_MAP.items():
             if _yes(_get(row, hmap.get(form_header))):
+                if event_name in seen_canonical_events:
+                    continue
+                seen_canonical_events.add(event_name)
                 events.append(event_name)
                 if fee == 10:
                     chopping_fees += 10
@@ -226,6 +252,12 @@ def parse_pro_entries(filepath: str) -> list:
             'waiver_signature':     waiver_signature,
             'notes':                notes,
             'springboard_slow_heat': springboard_slow_heat,
+            'is_left_handed_springboard': is_left_handed_springboard,
+            # Raw L/R signals preserved so compute_review_flags() can warn on
+            # the impossible both-checked state. Consumers should NOT write these
+            # to the DB — underscore-prefix marks them as import-internal only.
+            '_raw_springboard_l':   raw_sb_l,
+            '_raw_springboard_r':   raw_sb_r,
             'chopping_fees':        chopping_fees,
             'other_fees':           other_fees,
             'relay_fee':            relay_fee,
@@ -263,6 +295,14 @@ def compute_review_flags(entries: list, existing_names: list = None) -> list:
         if not entry['waiver_accepted']:
             flags.append('NO WAIVER')
             flag_class = 'table-danger'
+
+        # Both Springboard (L) AND Springboard (R) boxes checked — physically
+        # impossible, the admin needs to resolve which dummy this cutter uses.
+        # Reads raw pre-dedup checkbox state, not the canonicalised events list.
+        if entry.get('_raw_springboard_l') and entry.get('_raw_springboard_r'):
+            flags.append('CONFLICT: BOTH L AND R SPRINGBOARD CHECKED')
+            if not flag_class:
+                flag_class = 'table-warning'
 
         for event_name, partner_name in entry.get('partners', {}).items():
             if partner_name and partner_name.strip().lower() not in all_names:
