@@ -43,5 +43,9 @@ build/
 .coverage
 htmlcov/
 
+# gstack skill artifacts (retros, QA reports, checkpoints — local tooling output)
+.context/
+.gstack/
+
 # Logs
 *.log

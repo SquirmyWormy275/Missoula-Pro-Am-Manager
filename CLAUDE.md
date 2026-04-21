@@ -282,7 +282,9 @@ Saturday overflow college events are judged and scored as normal college events 
 
 ### Friday Night Feature
 
-The Friday Night Feature is an optional overflow or special events session run after the college day concludes on Friday. It is built separately from both the main college and pro schedules. Typical events are Collegiate 1-Board, Pro 1-Board, and Pro 3-Board Jigger. The `Tournament` model has a `friday_feature_date` field to record when this session is held, but no dedicated scheduling UI, heat generation logic, or flight structure exists for it. Flag as a known gap (see Section 5).
+The Friday Night Feature is an optional overflow or special events session run after the college day concludes on Friday. It is built separately from both the main college and pro schedules. Typical events are Collegiate 1-Board, Pro 1-Board, and Pro 3-Board Jigger. The `Tournament` model has a `friday_feature_date` field to record when this session is held.
+
+As of V2.11.0, FNF has full scheduling: events selected via the Friday Showcase page are saved to `schedule_config['friday_pro_event_ids']`. The flight builder excludes those event IDs from Saturday pro flights (their heats stay in the DB with `flight_id=NULL`). The Friday Showcase page renders a heat-by-heat schedule table in Springboard → Pro 1-Board → 3-Board Jigger order (see `_fnf_event_order()` in `routes/scheduling/friday_feature.py`). A printable view lives at `/scheduling/<tid>/friday-night/print`. FNF intentionally runs as a straight heat-by-heat schedule (like college day), not as flight blocks — there is nothing to interleave with only 1-3 events.
 
 ---
 
@@ -408,7 +410,8 @@ PayoutTemplate  (tournament-independent, standalone)
 - Validation service for teams, college competitors, pro competitors, heat constraints; validation API (JSON) endpoints
 - Saturday priority route (`/scheduling/<tid>/college/saturday-priority`) for college overflow event flagging
 - College Saturday overflow flight integration: `integrate_college_spillover_into_flights()` places Chokerman's Race Run 2 at the end of the last flight in heat-number order; other overflow events distributed round-robin; wired to `event_list` POST actions
-- Friday Night Feature: route, config (JSON in `instance/`), and template (`/scheduling/<tid>/friday-feature`) — UI exists, no heat generation or flight integration
+- Friday Night Feature (V2.11.0): full heat-by-heat schedule at `/scheduling/<tid>/friday-night` with event-ordered table (Springboard → Pro 1-Board → 3-Board Jigger), inline Score links, and `schedule_config['friday_pro_event_ids']` persistence. Flight builder (`build_pro_flights`) excludes these event IDs from Saturday flights — heats stay in DB with `flight_id=NULL`. Printable view at `/scheduling/<tid>/friday-night/print`; CSP-compliant (script block with nonce-injected `addEventListener`, not inline `onclick`)
+- One-click Saturday show build (V2.11.0): `POST /scheduling/<tid>/flights/one-click-generate` runs `_generate_all_heats` → `build_pro_flights` → `integrate_college_spillover_into_flights` in a single transaction; flashes per-step progress; redirects to Flights. Button uses `data-confirm` + `data-confirm-danger` attributes (base.html delegated handler) instead of blocked inline `onsubmit`
 - Flask-Login authentication: 7 roles (admin, judge, scorer, registrar, competitor, spectator, viewer); login/logout/bootstrap/user-management; audit log viewer (`/auth/audit`, admin-only, paginated, filterable)
 - `require_judge_for_management_routes` before_request hook; portal and auth routes are public
 - Portal — spectator: college standings (live), pro standings, event results, relay results; mobile/desktop view toggle; kiosk TV display (`/portal/kiosk/<tid>`, 4-panel 15s rotation)
@@ -494,7 +497,7 @@ PayoutTemplate  (tournament-independent, standalone)
 
 **Excel results export route (direct download):** `export_results_to_excel()` exists in `services/excel_io.py`. An async background export job route exists at `/reporting/<tid>/export-results/async`, but no route triggers a direct synchronous Excel download. The async job approach is the recommended path forward — completing the status/download endpoint would close this gap.
 
-**Friday Night Feature heat generation and flight integration:** The Friday Night Feature has a route, config storage, and UI template. However, no heat generation logic or flight integration exists for it. Heats and flights for Friday Night Feature events must be managed manually or via the standard event/heat flow.
+**Friday Night Feature schedule view (V2.11.0):** The Friday Night Feature now has a heat-by-heat schedule view on the Friday Showcase page plus a printable view at `/scheduling/<tid>/friday-night/print`. FNF events selected into `schedule_config['friday_pro_event_ids']` are excluded from Saturday pro flights (their heats exist in the DB with `flight_id=NULL`). Heats are ordered Springboard → Pro 1-Board → 3-Board Jigger via `_fnf_event_order()` in `routes/scheduling/friday_feature.py`. FNF still runs as a straight heat-by-heat schedule, not flights — intentional, matching college day format.
 
 **Pro event fee configuration UI:** No route or template exists for setting fee amounts per event per tournament. `entry_fees` and `fees_paid` fields exist on `ProCompetitor` but fees must currently be set directly in the database or via the edit competitor form.
 
@@ -730,7 +733,6 @@ The broader vision: STRATHMARK calculates start marks and predicted times, feeds
 The following features remain as planned or implied by the codebase and requirements:
 
 **Remaining gaps (from Section 5):**
-- Friday Night Feature heat generation and flight integration
 - Excel results export direct download route
 - Pro event fee configuration UI
 - Pro entry form redesign (scope pending; current import handled by `registration_import.py` enhanced pipeline)

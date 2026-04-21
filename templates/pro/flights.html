@@ -198,20 +198,28 @@
                     </h1>
                     <p class="text-muted mb-0">{{ tournament.name }} {{ tournament.year }} — Saturday Show Schedule</p>
                 </div>
-                <div class="d-flex gap-2">
+                <div class="d-flex gap-2 align-items-center">
                     <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
                        class="btn btn-outline-secondary btn-sm" target="_blank">
                         <i class="bi bi-printer"></i> Print Heat Sheets
                     </a>
-                    {% if not flights %}
+                    <form method="POST"
+                          action="{{ url_for('scheduling.one_click_generate', tournament_id=tournament.id) }}"
+                          class="d-inline"
+                          data-confirm="Generate heats for every event and build pro flights? This will replace any existing heats and flights."
+                          data-confirm-title="Generate All Heats &amp; Build Flights"
+                          data-confirm-danger>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-warning">
+                            <i class="bi bi-lightning-charge-fill"></i>
+                            Generate All Heats &amp; Build Flights
+                        </button>
+                    </form>
+                    {% if flights %}
                     <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
-                       class="btn btn-warning">
-                        <i class="bi bi-plus-circle"></i> Build Flights
-                    </a>
-                    {% else %}
-                    <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
-                       class="btn btn-outline-warning btn-sm">
-                        <i class="bi bi-arrow-repeat"></i> Rebuild Flights
+                       class="btn btn-outline-warning btn-sm"
+                       title="Rebuild flights only (heats must already exist)">
+                        <i class="bi bi-arrow-repeat"></i> Rebuild Flights Only
                     </a>
                     {% endif %}
                 </div>
@@ -321,10 +329,17 @@
                 <br>Flights mix events for crowd variety and engagement.
             </p>
             <div class="d-flex justify-content-center gap-3">
-                <a href="{{ url_for('scheduling.build_flights', tournament_id=tournament.id) }}"
-                   class="btn btn-warning btn-lg">
-                    <i class="bi bi-plus-circle"></i> Build Flights Now
-                </a>
+                <form method="POST"
+                      action="{{ url_for('scheduling.one_click_generate', tournament_id=tournament.id) }}"
+                      data-confirm="Generate heats for every event and build pro flights?"
+                      data-confirm-title="Generate All Heats &amp; Build Flights"
+                      data-confirm-danger>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-warning btn-lg">
+                        <i class="bi bi-lightning-charge-fill"></i>
+                        Generate All Heats &amp; Build Flights
+                    </button>
+                </form>
                 <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
                    class="btn btn-outline-secondary btn-lg">
                     <i class="bi bi-arrow-left"></i> Back to Schedule

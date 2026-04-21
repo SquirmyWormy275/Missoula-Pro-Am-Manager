@@ -200,12 +200,14 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
         if not team:
             continue
         team_errors = errors_by_team.get(team_id, [])
-        if team_errors:
-            team.set_validation_errors(team_errors)
+        # set_validation_errors handles all three cases uniformly:
+        #   errors=[]       -> status='active', is_override auto-cleared (vestigial)
+        #   errors, override -> status='active' (preserved), errors written for display
+        #   errors, no ovr  -> status='invalid', errors written
+        team.set_validation_errors(team_errors)
+        if team.status == 'invalid':
             invalid_count += 1
         else:
-            team.validation_errors = '[]'
-            team.status = 'active'
             valid_count += 1
 
     db.session.commit()

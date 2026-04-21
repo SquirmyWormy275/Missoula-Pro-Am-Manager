@@ -94,10 +94,26 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
     )
     partnered_axe_heats = _prepare_partnered_axe_show_heats(partnered_axe_event)
 
+    # Exclude Friday Night Feature events from Saturday flight building.
+    # FNF events (e.g. Pro 1-Board, 3-Board Jigger) run Friday evening as a separate
+    # showcase and must NOT appear in Saturday pro flights.
+    fnf_event_ids: set[int] = set()
+    try:
+        schedule_config = tournament.get_schedule_config() or {}
+        fnf_event_ids = {
+            int(eid) for eid in schedule_config.get('friday_pro_event_ids', [])
+            if str(eid).strip()
+        }
+    except Exception:
+        logger.warning('flight_builder: could not read friday_pro_event_ids', exc_info=True)
+
     # Collect all non-axe heats with their competitor information.
     # Batch-load all heats for non-axe events in a single query to avoid N+1.
-    non_axe_events = [e for e in pro_events
-                      if not (partnered_axe_event and e.id == partnered_axe_event.id)]
+    non_axe_events = [
+        e for e in pro_events
+        if not (partnered_axe_event and e.id == partnered_axe_event.id)
+        and e.id not in fnf_event_ids
+    ]
     non_axe_event_ids = [e.id for e in non_axe_events]
     event_by_id = {e.id: e for e in non_axe_events}
 
@@ -139,7 +155,11 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
         event = event_by_id.get(heat.event_id)
         if event:
             comps = set(heat.get_competitors())
-            contains_lh = any(lh_flags.get(cid, False) for cid in comps)
+            # contains_lh is only meaningful for springboard heats — that is the
+            # only event type that physically uses the LH dummy. A LH competitor
+            # racing obstacle pole or cookie stack has no bearing on the dummy.
+            is_springboard = getattr(event, 'stand_type', None) == 'springboard'
+            contains_lh = is_springboard and any(lh_flags.get(cid, False) for cid in comps)
             all_heats.append({
                 'heat': heat,
                 'event': event,
@@ -151,10 +171,22 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
         return 0
 
     # Derive heats_per_flight from caller-supplied num_flights, or fall back to default of 8.
+    # A flight is a grouping of heats from different events for crowd variety, so enforce a
+    # minimum of 2 heats per flight — otherwise "flights" are just heats in a wrapper.
     total_non_axe = len(all_heats)
+    MIN_HEATS_PER_FLIGHT = 2
     if num_flights and num_flights > 0 and total_non_axe > 0:
         target_flights = int(num_flights)
         heats_per_flight = math.ceil(total_non_axe / target_flights)
+        if heats_per_flight < MIN_HEATS_PER_FLIGHT and total_non_axe >= MIN_HEATS_PER_FLIGHT:
+            heats_per_flight = MIN_HEATS_PER_FLIGHT
+            clamped = math.ceil(total_non_axe / heats_per_flight)
+            logger.warning(
+                'flight_builder: requested %d flights for %d heats would give <%d per flight; '
+                'clamped to %d flights (%d heats each)',
+                num_flights, total_non_axe, MIN_HEATS_PER_FLIGHT, clamped, heats_per_flight,
+            )
+            target_flights = clamped
     else:
         heats_per_flight = 8
         target_flights = math.ceil(total_non_axe / heats_per_flight) if total_non_axe else 0
