@@ -25,7 +25,13 @@
                     <p class="text-muted mb-0">{{ team.school_name }}</p>
                 </div>
                 <div>
-                    {% if team.status == 'invalid' %}
+                    {% if team.is_override %}
+                        <span class="badge bg-warning text-dark fs-6"
+                              title="A judge has manually accepted this roster despite {{ validation_errors|length }} validation error(s). The team competes normally.">
+                            <i class="bi bi-shield-exclamation"></i>
+                            Admin Override — {{ validation_errors|length }} Error{% if validation_errors|length != 1 %}s{% endif %} Ignored
+                        </span>
+                    {% elif team.status == 'invalid' %}
                         <span class="badge bg-danger fs-6">
                             <i class="bi bi-exclamation-triangle-fill"></i>
                             Invalid — {{ validation_errors|length }} Error{% if validation_errors|length != 1 %}s{% endif %}
@@ -49,6 +55,24 @@
             Use the fix forms below to correct each error, then click <strong>Re-validate Team</strong>.
             This team is <em>not counted</em> in standings or scheduling until all errors are resolved.
         </div>
+    </div>
+    {% endif %}
+
+    <!-- Override banner — team has accepted errors but competes normally -->
+    {% if team.is_override %}
+    <div class="alert alert-warning d-flex align-items-start gap-2" role="alert">
+        <i class="bi bi-shield-exclamation fs-5 mt-1 flex-shrink-0"></i>
+        <div class="flex-grow-1">
+            <strong>Admin override active — {{ validation_errors|length }} validation error{% if validation_errors|length != 1 %}s{% endif %} ignored.</strong>
+            This team competes normally: members appear in heats, earn points, and show in standings. The override persists through re-validation and Excel re-imports. Review the ignored errors below.
+        </div>
+        <form action="{{ url_for('registration.remove_team_override', tournament_id=tournament.id, team_id=team.id) }}" method="POST" class="ms-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-dark"
+                    onclick="return confirm('Remove the override and re-run validation? The team will flip back to invalid if errors remain.')">
+                <i class="bi bi-x-circle"></i> Remove Override
+            </button>
+        </form>
     </div>
     {% endif %}
 
@@ -316,14 +340,14 @@
                 </div>
             </div>
 
-            <!-- Errors & Fixes section (invalid teams only) -->
-            {% if team.status == 'invalid' and validation_errors %}
-            <div class="card mt-4 border-danger">
-                <div class="card-header bg-danger bg-opacity-10">
-                    <h6 class="mb-0 text-danger">
+            <!-- Errors & Fixes section — shown for invalid OR overridden teams -->
+            {% if validation_errors and (team.status == 'invalid' or team.is_override) %}
+            <div class="card mt-4 {% if team.is_override %}border-warning{% else %}border-danger{% endif %}">
+                <div class="card-header {% if team.is_override %}bg-warning bg-opacity-10{% else %}bg-danger bg-opacity-10{% endif %}">
+                    <h6 class="mb-0 {% if team.is_override %}text-warning-emphasis{% else %}text-danger{% endif %}">
                         <i class="bi bi-tools"></i>
-                        Errors &amp; Fixes
-                        <span class="badge bg-danger ms-1">{{ validation_errors|length }}</span>
+                        {% if team.is_override %}Errors (Overridden — Informational){% else %}Errors &amp; Fixes{% endif %}
+                        <span class="badge {% if team.is_override %}bg-warning text-dark{% else %}bg-danger{% endif %} ms-1">{{ validation_errors|length }}</span>
                     </h6>
                 </div>
                 <div class="card-body p-0">

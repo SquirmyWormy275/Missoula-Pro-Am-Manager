@@ -37,6 +37,15 @@ class Team(db.Model):
     # Validation error tracking (JSON list of structured error dicts; None = no errors recorded)
     validation_errors = db.Column(db.Text, nullable=True)
 
+    # Admin override — when True, validation errors are recorded for display but do NOT
+    # flip the team to 'invalid' status. Used for edge-case small rosters (e.g., 5 men + 0
+    # women) where a judge has manually decided the team may still compete. Re-validation
+    # and Excel re-imports preserve this flag; only an explicit "remove override" action
+    # clears it. If re-validation finds zero errors the flag auto-clears (vestigial).
+    is_override = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text('false')
+    )
+
     # Relationships
     members = db.relationship('CollegeCompetitor', backref='team', lazy='dynamic')
 
@@ -93,7 +102,22 @@ class Team(db.Model):
             return []
 
     def set_validation_errors(self, errors: list):
-        """Store structured errors and update team status accordingly."""
+        """Store structured errors and update team status.
+
+        Normal path: errors → status='invalid', no errors → status='active'.
+
+        Override path: if is_override is True, errors are still written for UI
+        display but status stays 'active' — a judge has manually accepted the
+        roster despite the violations. If the team becomes genuinely clean
+        (errors=[]) the override flag auto-clears since it's vestigial.
+        """
         import json
         self.validation_errors = json.dumps(errors)
-        self.status = 'invalid' if errors else 'active'
+        if not errors:
+            self.status = 'active'
+            self.is_override = False
+            return
+        if self.is_override:
+            self.status = 'active'
+            return
+        self.status = 'invalid'

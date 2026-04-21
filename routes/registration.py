@@ -318,12 +318,22 @@ def revalidate_team(tournament_id, team_id):
 
     errors_by_team = _validate_college_entry_constraints({team_id})
     team_errors = errors_by_team.get(team_id, [])
+    was_override = team.is_override
     team.set_validation_errors(team_errors)
     db.session.commit()
     invalidate_tournament_caches(tournament_id)
 
     if not team_errors:
-        flash(f'Team {team.team_code} passed validation and is now active.', 'success')
+        if was_override:
+            flash(f'Team {team.team_code} now passes validation cleanly. Admin override cleared.', 'success')
+        else:
+            flash(f'Team {team.team_code} passed validation and is now active.', 'success')
+    elif team.is_override:
+        flash(
+            f'Team {team.team_code} still has {len(team_errors)} error(s) but admin override keeps it active. '
+            f'Click "Remove override" to drop the override.',
+            'warning',
+        )
     else:
         flash(f'Team {team.team_code} still has {len(team_errors)} error(s). Fix them and re-validate.', 'warning')
     return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
@@ -337,12 +347,68 @@ def override_team_validation(tournament_id, team_id):
         flash('Team not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
-    team.status = 'active'
-    team.validation_errors = '[]'
+    # Capture the failing errors so they survive on the team record for display
+    # (the UI shows them as informational warnings under the override badge).
+    from services.excel_io import _validate_college_entry_constraints
+    errors_by_team = _validate_college_entry_constraints({team_id})
+    team_errors = errors_by_team.get(team_id, [])
+
+    team.is_override = True
+    # set_validation_errors respects is_override: status stays 'active', errors
+    # are preserved for display. If the team actually passes cleanly, the flag
+    # auto-clears (harmless — override was vestigial anyway).
+    team.set_validation_errors(team_errors)
     db.session.commit()
     invalidate_tournament_caches(tournament_id)
-    log_action('team_validation_override', 'team', team.id, {'team_code': team.team_code})
-    flash(f'Team {team.team_code} forced to valid via admin override.', 'warning')
+    log_action(
+        'team_validation_override',
+        'team',
+        team.id,
+        {'team_code': team.team_code, 'error_count': len(team_errors)},
+    )
+    flash(
+        f'Team {team.team_code} forced to valid via admin override '
+        f'({len(team_errors)} validation error(s) ignored). '
+        f'Override persists through re-validation and Excel re-imports.',
+        'warning',
+    )
+    return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
+
+
+@registration_bp.route('/<int:tournament_id>/college/team/<int:team_id>/remove-override', methods=['POST'])
+def remove_team_override(tournament_id, team_id):
+    """Drop the admin override on a team and re-run validation.
+
+    If the team passes cleanly afterwards, it stays active. If it still has
+    errors, it flips back to 'invalid' and the user must fix the roster or
+    re-apply the override.
+    """
+    from services.excel_io import _validate_college_entry_constraints
+    team = Team.query.get_or_404(team_id)
+    if team.tournament_id != tournament_id:
+        flash('Team not found in this tournament.', 'error')
+        return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    if not team.is_override:
+        flash(f'Team {team.team_code} is not currently overridden.', 'info')
+        return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
+
+    team.is_override = False
+    errors_by_team = _validate_college_entry_constraints({team_id})
+    team_errors = errors_by_team.get(team_id, [])
+    team.set_validation_errors(team_errors)
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    log_action('team_validation_override_removed', 'team', team.id, {'team_code': team.team_code})
+
+    if team_errors:
+        flash(
+            f'Override removed. Team {team.team_code} now has {len(team_errors)} validation '
+            f'error(s) and is marked invalid. Fix the roster or re-apply the override.',
+            'warning',
+        )
+    else:
+        flash(f'Override removed. Team {team.team_code} passes validation cleanly.', 'success')
     return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
 
 

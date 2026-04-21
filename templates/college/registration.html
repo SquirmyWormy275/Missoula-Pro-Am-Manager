@@ -92,7 +92,8 @@
                             <tbody>
                                 {% for t in all_teams %}
                                 {% set is_invalid = (t.status == 'invalid') %}
-                                {% set errs = t.get_validation_errors() if is_invalid else [] %}
+                                {% set is_override = t.is_override %}
+                                {% set errs = t.get_validation_errors() if (is_invalid or is_override) else [] %}
                                 <tr data-validity="{{ 'invalid' if is_invalid else 'valid' }}">
                                     <td><strong>{{ t.team_code }}</strong></td>
                                     <td>{{ t.school_name }}</td>
@@ -100,14 +101,22 @@
                                     <td>{{ t.female_count }}</td>
                                     <td>{{ t.member_count }}</td>
                                     <td>
-                                        {% if is_invalid %}
+                                        {% if is_override %}
+                                        <span class="badge bg-warning text-dark" title="Admin override — {{ errs|length }} error(s) ignored, team competes normally">
+                                            <i class="bi bi-shield-exclamation"></i> Override
+                                        </span>
+                                        {% elif is_invalid %}
                                         <span class="badge bg-danger">Invalid</span>
                                         {% else %}
                                         <span class="badge bg-success">Valid</span>
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if is_invalid %}
+                                        {% if is_override %}
+                                        <span class="badge bg-warning text-dark" title="{{ errs|map(attribute='message')|join('; ') }}">
+                                            {{ errs|length }} ignored
+                                        </span>
+                                        {% elif is_invalid %}
                                         <span class="badge bg-danger" title="{{ errs|map(attribute='message')|join('; ') }}">
                                             {{ errs|length }} error{% if errs|length != 1 %}s{% endif %}
                                         </span>
