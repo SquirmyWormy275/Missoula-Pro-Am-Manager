@@ -592,6 +592,44 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-21 (V2.11.0)
+
+**Minor — one-click Saturday show build + Friday Night Feature schedule**
+
+Single button on the Pro Flights page that builds the entire Saturday show, plus a complete Friday Night Feature schedule view and printable layout.
+
+**New — `POST /scheduling/<tid>/flights/one-click-generate`:**
+- Runs `_generate_all_heats` → `build_pro_flights` → `integrate_college_spillover_into_flights` in one transaction.
+- Flashes per-step progress, redirects back to the Flights page.
+- Button uses the app's `data-confirm` / `data-confirm-danger` attribute pattern (Bootstrap modal via `base.html` delegated handler) — NOT inline `onsubmit`, which the app's strict CSP blocks.
+
+**New — Friday Night Feature schedule view:**
+- Friday Showcase page (`/scheduling/<tid>/friday-night`) now renders a heat-by-heat schedule table below the config form. Each row: slot, event, heat + run, competitors with stand assignments, inline Score link. FNF runs as a straight schedule like college day, not flights.
+- Events ordered Springboard → Pro 1-Board → 3-Board Jigger via `_fnf_event_order()`.
+- `_build_fnf_schedule(tournament, eligible_events, fnf_config)` builds the data; shared between the page and print view.
+
+**New — printable FNF schedule:**
+- `GET /scheduling/<tid>/friday-night/print` renders `templates/scheduling/friday_feature_print.html`: event blocks, rowspan-merged heat cells, competitor-by-stand rows, optional notes banner, header/footer with generation timestamp.
+- Print button uses `id="fnf-print-btn"` + inline `<script>` block (auto-nonced by `app.py:_inject_csp_nonce`) with `addEventListener('click', window.print)` — CSP-compliant.
+
+**`services/flight_builder.py` changes:**
+- `build_pro_flights()` reads `tournament.get_schedule_config()['friday_pro_event_ids']` and excludes those event IDs from Saturday flight building. Their heats stay in the DB with `flight_id=NULL` so the FNF schedule view can find them. Handles malformed config gracefully.
+- `MIN_HEATS_PER_FLIGHT = 2` clamp: if caller-supplied `num_flights` would produce fewer than 2 heats per flight, `target_flights` is reduced to `ceil(total_heats / 2)`.
+- `contains_lh` flag scoped to springboard heats only. Prior code flagged ANY heat containing a left-handed-springboard competitor (including Obstacle Pole, Cookie Stack, etc.) as "LH-containing," producing false-positive `LH DUMMY CONTENTION` warnings. The LH dummy is a physical springboard stand; only springboard heats contend for it.
+
+**Regression tests — `tests/test_one_click_and_fnf.py` (12 tests):**
+- `TestFNFExclusion` — 3 tests
+- `TestMinHeatsPerFlightClamp` — 2 tests
+- `TestOneClickGenerateRoute` — 2 tests
+- `TestBuildFnfSchedule` — 4 tests
+- `TestFridayFeaturePrintRoute` — 1 test (includes CSP regression guard — asserts no `onclick=` or `onsubmit=` in rendered body)
+
+All 95 flight-builder + FNF tests pass.
+
+**Data model:** No schema changes. Uses existing `schedule_config` JSON column on `Tournament`.
+
+---
+
 ### 2026-04-21 (V2.10.0)
 
 **Minor — hand-saw stand block alternation**

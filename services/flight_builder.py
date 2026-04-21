@@ -155,7 +155,11 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
         event = event_by_id.get(heat.event_id)
         if event:
             comps = set(heat.get_competitors())
-            contains_lh = any(lh_flags.get(cid, False) for cid in comps)
+            # contains_lh is only meaningful for springboard heats — that is the
+            # only event type that physically uses the LH dummy. A LH competitor
+            # racing obstacle pole or cookie stack has no bearing on the dummy.
+            is_springboard = getattr(event, 'stand_type', None) == 'springboard'
+            contains_lh = is_springboard and any(lh_flags.get(cid, False) for cid in comps)
             all_heats.append({
                 'heat': heat,
                 'event': event,
