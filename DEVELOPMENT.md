@@ -592,6 +592,27 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-21 (V2.11.1)
+
+**Patch — Friday Night Feature PDF export**
+
+Adds a PDF download alongside the existing HTML-print view for the FNF schedule. Uses the shared `services/print_response.py::weasyprint_or_html` helper so the route returns a real PDF when WeasyPrint is installed, or falls back to HTML (with `Content-Type: text/html`) on environments without cairo/pango — which includes Railway.
+
+**New route — `routes/scheduling/friday_feature.py`:**
+- `GET /scheduling/<tid>/friday-night/pdf` renders the same `scheduling/friday_feature_print.html` template as `/friday-night/print` and pipes it through `weasyprint_or_html()`. Same schedule data, same template, just different response wrapping — print and PDF stay in sync automatically.
+- Download filename derived from tournament name + year: `{name}_{year}_friday_night_feature.pdf`.
+
+**Template — `templates/scheduling/friday_feature.html`:**
+- New "PDF" button next to the existing "Print FNF Schedule" button on the Friday Showcase page, visible only when `fnf_schedule` has content. Uses `bi-file-earmark-pdf` icon.
+
+**Tests — 2 new in `tests/test_one_click_and_fnf.py::TestFridayFeaturePdfRoute`:**
+- `test_pdf_route_renders_200` — asserts 200 with Content-Type either `application/pdf` or `text/html` (matches both the WeasyPrint branch and the fallback).
+- `test_pdf_route_pdf_branch_sets_download_header` — `monkeypatch`es a fake `weasyprint` module to force the PDF branch, then asserts `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="..._friday_night_feature.pdf"`, and that the response body is the fake PDF bytes. This guarantees the PDF branch is actually exercised by CI even without WeasyPrint installed.
+
+**Data model:** No schema changes.
+
+---
+
 ### 2026-04-21 (V2.11.0)
 
 **Minor — one-click Saturday show build + Friday Night Feature schedule**
