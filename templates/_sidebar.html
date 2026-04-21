@@ -200,6 +200,15 @@
                 <i class="bi bi-file-earmark-spreadsheet sb-icon"></i>
                 <span class="sb-text ms-2">Video Judge Workbook</span>
             </a>
+            {% if tournament.events.filter_by(stand_type='saw_hand').first() %}
+            <a href="{{ url_for('scheduling.saw_blocks_status', tournament_id=tournament.id) }}"
+               class="nav-link sidebar-child {{ 'active' if request.endpoint == 'scheduling.saw_blocks_status' else '' }}"
+               {% if request.endpoint == 'scheduling.saw_blocks_status' %}aria-current="page"{% endif %}
+               title="Saw Block Status">
+                <i class="bi bi-grid-3x3 sb-icon"></i>
+                <span class="sb-text ms-2">Saw Block Status</span>
+            </a>
+            {% endif %}
             <a href="{{ url_for('scheduling.birling_print_all', tournament_id=tournament.id) }}"
                class="nav-link sidebar-child" target="_blank" rel="noopener"
                title="Birling Brackets (seeded, printable)">

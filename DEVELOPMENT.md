@@ -592,6 +592,46 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-21 (V2.10.0)
+
+**Minor — hand-saw stand block alternation**
+
+Alternates the two physical saw-stand blocks (A = stands 1-4, B = stands 5-8) across consecutive hand-saw heats in each day's run order. The next team can set in on the opposite block while the current team runs. Applies to Single Buck, Double Buck, and Jack & Jill Sawing — all pro and college, all genders. Friday and Saturday each start fresh on Block A.
+
+**New service — services/saw_block_assignment.py:**
+- `assign_saw_blocks(tournament)` iterates Friday then Saturday in authoritative run order, flips Block A↔B on every heat with `stand_type=='saw_hand'`, skips non-saw heats while preserving alternation state. Idempotent — commits on success, rolls back and re-raises on failure.
+- `remap_heat_to_block(heat, target_block)` remaps a heat's `stand_assignments` JSON onto the 4 target-block stand numbers, preserving pair-sharing structure for partnered events (both partners keep the same stand number). Never changes heat composition.
+- `trigger_saw_block_recompute(tournament)` shared hook wrapper — calls `assign_saw_blocks`, logs result, flashes a warning on exception. Hook failures never roll back primary commits.
+
+**Authoritative run-order helpers — services/schedule_builder.py:**
+- `get_friday_ordered_heats(tournament)` returns all Friday college heats (run_number=1) in authoritative order: respects `schedule_config['friday_event_order']` when set, else falls back to `_college_friday_sort_key`. Excludes Saturday spillover events and Friday-Feature events.
+- `get_saturday_ordered_heats(tournament)` returns Saturday heats: iterates `Flight.flight_number` ascending then `flight.get_heats_ordered()` when flights exist, else falls back to pro events by event_id + heat_number. Includes day-split Run 2 heats (Chokerman, Speed Climb).
+- Both are pure reads with no side effects.
+
+**Route hooks — routes/scheduling/{heats,events,flights}.py:**
+- Wired into 9 mutation endpoints: `generate_heats` (single event), `generate_college_heats` (bulk), `event_list` POST actions (`generate_all` / `rebuild_flights` / `integrate_spillover`), `build_flights` POST, `reorder_flight_heats`, `reorder_friday_events`, `reset_event_order`. Hooks run AFTER the route's primary commit; exceptions inside the hook log a warning and flash but never roll back the primary mutation.
+
+**Admin safety valve + status page — routes/scheduling/heats.py, templates/scheduling/saw_blocks_status.html:**
+- `POST /scheduling/<tid>/heats/recompute-saw-blocks` manually re-runs `assign_saw_blocks` with flash feedback (`N heats updated (X Friday, Y Saturday)`). Redirects to `request.referrer` or the events page.
+- `GET /scheduling/<tid>/saw-blocks-status` renders two tables (Friday + Saturday) showing every hand-saw heat in run order with Block A/B badge, stands used, and competitor names. Empty-state message per day when no saw heats.
+
+**Sidebar — templates/_sidebar.html:**
+- New "Saw Block Status" entry under Run Show section, visible only when the tournament has at least one event with `stand_type=='saw_hand'`.
+
+**Tests — 29 new tests, zero regressions:**
+- `tests/test_schedule_builder_ordering.py` (10): custom + default Friday order, heat_number within event, Saturday spillover exclusion, Run 2 exclusion on Friday, Saturday flights-mode + fallback + custom-order + dual-run Run 2 inclusion, pure-reads guarantee.
+- `tests/test_saw_block_assignment.py` (10): within-event alternation, cross-event Friday continuity, non-saw gap preservation, day-boundary reset, partnered pair preservation, Jack & Jill mixed-gender, idempotency, flight-reshuffle recompute, Stock Saw untouched, HeatAssignment sync after remap.
+- `tests/test_saw_block_integration.py` (5): generate_heats triggers recompute, build_flights triggers recompute, reorder_flight_heats triggers recompute, reorder_friday_events triggers recompute, hook failure does not break primary mutation.
+- `tests/test_saw_blocks_admin.py` (4): recompute POST route, status page render, empty-state rendering, sidebar conditional visibility.
+
+**Data model:**
+- Zero schema changes. `Heat.stand_assignments` JSON remains authoritative; `HeatAssignment` rows synced via `heat.sync_assignments()` after every remap. `STAND_CONFIGS['saw_hand']['labels']` unchanged — heat sheets, judge sheets, and the kiosk continue to render raw stand numbers.
+
+**Design docs — docs/SAW_STAND_ALTERNATION_RECON.md, docs/SHOWPREP_WORKFLOW_RECON.md:**
+- Full recon on existing stand-assignment mutation points, the show-prep workflow, and authoritative run-order sources. Documents the 9 hook locations and open design questions answered before implementation.
+
+---
+
 ### 2026-04-19 (V2.9.1)
 
 **Patch — gear-sharing parser overhaul + modal stacking fix + race-day UI hardening**
