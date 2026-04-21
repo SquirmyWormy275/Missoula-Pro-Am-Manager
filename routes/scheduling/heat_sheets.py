@@ -9,7 +9,6 @@ from config import DAY_SPLIT_EVENT_NAMES
 from database import db
 from models import Event, EventResult, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
-
 from services.partner_resolver import pair_competitors_for_heat
 
 from . import _load_competitor_lookup, scheduling_bp
