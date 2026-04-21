@@ -182,9 +182,31 @@ def build_flights(tournament_id):
             log_action('flights_built', 'tournament', tournament_id, {'count': built})
             db.session.commit()
             flash(text.FLASH['flights_built'].format(num_flights=built), 'success')
+
+            # build_pro_flights wipes every Heat.flight_id (including college
+            # spillover that was previously integrated). Chain the spillover
+            # integration so "Rebuild Flights Only" doesn't silently orphan
+            # Saturday-spillover heats. Mirrors one_click_generate.
+            from services.flight_builder import integrate_college_spillover_into_flights
+            db_config = tournament.get_schedule_config() or {}
+            saturday_college_event_ids = [
+                int(i) for i in db_config.get('saturday_college_event_ids', [])
+            ]
+            integration = integrate_college_spillover_into_flights(
+                tournament, saturday_college_event_ids,
+            )
+            if integration.get('integrated_heats'):
+                db.session.commit()
+                flash(
+                    f"Integrated {integration['integrated_heats']} college spillover "
+                    f"heat(s) into Saturday flights.",
+                    'success',
+                )
+
             from services.saw_block_assignment import trigger_saw_block_recompute
             trigger_saw_block_recompute(tournament)
         except Exception as e:
+            db.session.rollback()
             flash(text.FLASH['flights_error'].format(error=str(e)), 'error')
 
         return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))

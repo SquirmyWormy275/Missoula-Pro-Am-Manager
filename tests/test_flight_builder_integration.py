@@ -790,6 +790,70 @@ class TestFlightBuilderEdgeCases:
                 f'All-underhand-in-one-flight regression.'
             )
 
+    def test_no_same_stand_type_adjacency(self, db_session):
+        """Regression test (2026-04-21): heats of the same stand_type must not
+        be placed back-to-back. Men's Underhand + Women's Underhand share 5
+        physical underhand stands; Single Buck + Double Buck + Jack & Jill
+        share 8 hand-saw stands. Adjacent placement reuses the same stands
+        with no reset time and no crowd-variety break.
+
+        This test seeds a tournament where the ONLY way to place heats is with
+        same-stand-type adjacencies unless the greedy actively avoids them.
+        The penalty should push the algorithm to interleave other stand types
+        between same-stand-type heats whenever possible.
+        """
+        from models import Flight, Heat
+        from services.flight_builder import FlightBuilder
+
+        t = _make_tournament(db_session)
+
+        # 3 underhand events (share stand_type='underhand') + 3 other events.
+        # 12 total heats, all independent competitor pools.
+        event_specs = [
+            ("Men's Underhand", 'underhand', 'M'),
+            ("Women's Underhand", 'underhand', 'F'),
+            ("Obstacle Pole", 'obstacle_pole', None),
+            ("Cookie Stack", 'cookie_stack', None),
+            ("Pole Climb", 'obstacle_pole', 'M'),
+            ("Hot Saw", 'hot_saw', None),
+        ]
+        next_comp = 1
+        for name, stand, gender in event_specs:
+            ev = _make_pro_event(db_session, t, name, stand, gender=gender, max_stands=3)
+            for hn in range(1, 3):  # 2 heats per event → 12 total heats
+                ids = [next_comp, next_comp + 1]
+                next_comp += 2
+                _make_heat(db_session, ev, hn, ids)
+
+        fb = FlightBuilder(t)
+        fb.build(num_flights=2)  # 2 flights of 6
+
+        # Build global ordered list and inspect same-stand-type gaps.
+        flights = Flight.query.filter_by(tournament_id=t.id).order_by(
+            Flight.flight_number
+        ).all()
+        ordered = []
+        for f in flights:
+            for h in Heat.query.filter_by(flight_id=f.id).order_by(Heat.flight_position).all():
+                ordered.append(h)
+
+        # Count back-to-back same-stand-type pairs (gap=1)
+        adjacent_pairs = 0
+        for i in range(1, len(ordered)):
+            prev = ordered[i - 1].event.stand_type
+            curr = ordered[i].event.stand_type
+            if prev and curr and prev == curr:
+                adjacent_pairs += 1
+
+        # With 12 heats across 6 stand types (2 each of underhand, obstacle_pole,
+        # then cookie_stack/hot_saw singletons), a perfect interleave is possible.
+        # Allow at most 1 adjacent pair (worst case if cap + sequence forces it).
+        assert adjacent_pairs <= 1, (
+            f'Found {adjacent_pairs} same-stand-type back-to-back pairs. '
+            f'Expected <= 1. Order: '
+            f'{[(h.event.name, h.event.stand_type) for h in ordered]}'
+        )
+
     def test_run2_heats_excluded_from_flights(self, db_session):
         """Run 2 heats (dual-run events) should not be placed into flights."""
         from models import Heat
