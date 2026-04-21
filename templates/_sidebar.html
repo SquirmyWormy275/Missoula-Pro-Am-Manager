@@ -101,6 +101,13 @@
                 <i class="bi bi-person-plus sb-icon"></i>
                 <span class="sb-text ms-2">Pro Operations</span>
             </a>
+            <a href="{{ url_for('reporting.pro_event_fees', tournament_id=tournament.id) }}"
+               class="nav-link sidebar-child {{ 'active' if request.endpoint == 'reporting.pro_event_fees' else '' }}"
+               {% if request.endpoint == 'reporting.pro_event_fees' %}aria-current="page"{% endif %}
+               title="Event Fees">
+                <i class="bi bi-cash-stack sb-icon"></i>
+                <span class="sb-text ms-2">Event Fees</span>
+            </a>
             <a href="{{ url_for('reporting.fee_tracker', tournament_id=tournament.id) }}"
                class="nav-link sidebar-child {{ 'active' if request.endpoint == 'reporting.fee_tracker' else '' }}"
                {% if request.endpoint == 'reporting.fee_tracker' %}aria-current="page"{% endif %}
