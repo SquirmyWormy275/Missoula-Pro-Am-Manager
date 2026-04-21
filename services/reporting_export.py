@@ -83,6 +83,39 @@ def submit_results_export_job(tournament_id: int) -> str:
     )
 
 
+def build_video_judge_export(tournament: Tournament) -> dict:
+    """Create a Video Judge Excel workbook for the tournament."""
+    from services.video_judge_export import build_video_judge_rows, write_workbook
+
+    path = _reserve_export_path(tournament.id, suffix='.xlsx', label='video_judge')
+    sheets = build_video_judge_rows(tournament)
+    write_workbook(sheets, path)
+    return {
+        'path': path,
+        'download_name': safe_download_name(tournament, 'video_judge_sheets.xlsx'),
+        'format': 'xlsx',
+        'kind': 'video_judge_sheets',
+    }
+
+
+def build_video_judge_export_for_job(tournament_id: int) -> str:
+    """Background-job entry point for the Video Judge workbook."""
+    tournament = db.session.get(Tournament, tournament_id)
+    if not tournament:
+        raise RuntimeError(f'Tournament {tournament_id} not found.')
+    return build_video_judge_export(tournament)['path']
+
+
+def submit_video_judge_export_job(tournament_id: int) -> str:
+    """Submit a tournament-bound background Video Judge workbook export."""
+    return submit_job(
+        f'export_video_judge_{tournament_id}',
+        build_video_judge_export_for_job,
+        tournament_id,
+        metadata={'tournament_id': tournament_id, 'kind': 'video_judge_sheets'},
+    )
+
+
 def resolve_completed_export_path(tournament_id: int, job_id: str, job_getter) -> dict | None:
     """Return a validated export job snapshot or ``None`` for wrong tournament/missing jobs."""
     job = job_getter(job_id)
