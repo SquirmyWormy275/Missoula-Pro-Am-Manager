@@ -30,14 +30,12 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 
-from config import LIST_ONLY_EVENT_NAMES
+# Events whose run 1 and run 2 live on different days — emit as two sheets so
+# the Friday video-judge crew and the Saturday crew each get a clean tab.
+from config import DAY_SPLIT_EVENT_NAMES, LIST_ONLY_EVENT_NAMES
 from models import Event, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.partner_resolver import pair_competitors_for_heat
-
-# Events whose run 1 and run 2 live on different days — emit as two sheets so
-# the Friday video-judge crew and the Saturday crew each get a clean tab.
-from config import DAY_SPLIT_EVENT_NAMES
 
 # Excel sheet name constraints (openpyxl)
 _SHEET_NAME_INVALID = re.compile(r"[\[\]\:\*\?/\\]")
