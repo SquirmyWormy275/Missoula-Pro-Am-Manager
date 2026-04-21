@@ -731,6 +731,65 @@ class TestFlightBuilderEdgeCases:
         flights = fb.build()
         assert flights > 0
 
+    def test_even_event_distribution_across_flights(self, db_session):
+        """Regression test (2026-04-21): heats of each event must be spread
+        across flights as evenly as possible, not stacked into one flight.
+
+        Prior behavior: when a heat's competitors appeared in no other event,
+        the greedy scored that heat at +1000 (first-appearance) and stacked
+        every same-event heat in a row. On a 3-flight, 53-heat show the whole
+        women's underhand field (4 heats) and most of men's underhand ended
+        up in flight 1, violating the crowd-variety first principle.
+
+        This test uses disjoint competitor pools per event so the pre-fix
+        algorithm is forced to clump. Per-flight-per-event cap = ceil(N_e/F).
+        """
+        from models import Flight, Heat
+        from services.flight_builder import FlightBuilder
+
+        t = _make_tournament(db_session)
+
+        # 3 events, each with 4 heats, each heat's 3 competitors unique across
+        # the whole show — no spacing pressure links the events. With 3 flights
+        # (12 heats, 4 per flight) the fair distribution is roughly 1-2 heats
+        # of each event per flight; cap = ceil(4/3) = 2.
+        event_specs = [
+            ("Women's Underhand", 'underhand', 'F'),
+            ("Men's Underhand", 'underhand', 'M'),
+            ('Obstacle Pole', 'obstacle_pole', None),
+        ]
+        next_comp = 1
+        events = []
+        for name, stand, gender in event_specs:
+            ev = _make_pro_event(db_session, t, name, stand, gender=gender, max_stands=5)
+            for hn in range(1, 5):
+                ids = [next_comp, next_comp + 1, next_comp + 2]
+                next_comp += 3
+                _make_heat(db_session, ev, hn, ids)
+            events.append(ev)
+
+        fb = FlightBuilder(t)
+        fb.build(num_flights=3)
+
+        flights = Flight.query.filter_by(tournament_id=t.id).order_by(
+            Flight.flight_number
+        ).all()
+        assert len(flights) == 3
+
+        import math as _math
+        cap = _math.ceil(4 / 3)  # 2 heats per event per flight
+
+        for ev in events:
+            counts_per_flight = []
+            for f in flights:
+                c = Heat.query.filter_by(flight_id=f.id, event_id=ev.id).count()
+                counts_per_flight.append(c)
+            assert max(counts_per_flight) <= cap, (
+                f'Event {ev.name} distribution across 3 flights was '
+                f'{counts_per_flight}; expected each flight <= {cap} heats. '
+                f'All-underhand-in-one-flight regression.'
+            )
+
     def test_run2_heats_excluded_from_flights(self, db_session):
         """Run 2 heats (dual-run events) should not be placed into flights."""
         from models import Heat
