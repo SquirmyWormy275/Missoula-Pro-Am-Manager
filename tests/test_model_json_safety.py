@@ -69,8 +69,11 @@ class TestCollegeCompetitorJsonSafety:
     def test_none_events_entered_returns_empty_list(self, db_session, tournament):
         team = make_team(db_session, tournament)
         c = make_college_competitor(db_session, tournament, team, 'NoneEvt', 'M')
+        # Set attribute to None in-memory only. The DB column is NOT NULL so
+        # flushing would fail, but the getter reads the Python attribute and
+        # must handle None (e.g. from a freshly-built instance before defaults
+        # kick in, or from legacy rows loaded before the constraint was added).
         c.events_entered = None
-        db_session.flush()
 
         assert c.get_events_entered() == []
 
@@ -120,8 +123,8 @@ class TestEventJsonSafety:
 
     def test_none_payouts(self, db_session, tournament):
         e = make_event(db_session, tournament, 'Null Payouts')
+        # In-memory only — DB column is NOT NULL. Getter must tolerate None.
         e.payouts = None
-        db_session.flush()
         assert e.get_payouts() == {}
 
 
@@ -145,8 +148,8 @@ class TestHeatJsonSafety:
     def test_none_competitors(self, db_session, tournament):
         e = make_event(db_session, tournament, 'None Comps')
         h = make_heat(db_session, e)
+        # In-memory only — DB column is NOT NULL. Getter must tolerate None.
         h.competitors = None
-        db_session.flush()
         assert h.get_competitors() == []
 
 
