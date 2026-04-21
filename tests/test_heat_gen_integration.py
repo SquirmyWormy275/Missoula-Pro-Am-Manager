@@ -352,9 +352,14 @@ class TestGeneratePartneredEvent:
 # ---------------------------------------------------------------------------
 
 class TestGenerateSpringboardHeats:
-    """Springboard: 4 dummies, left-handed cutters grouped together."""
+    """Springboard: 4 dummies, left-handed cutters spread ONE per heat.
 
-    def test_left_handed_grouped_together(self, db_session):
+    Rule (2026-04-20): only one physical LH springboard dummy on site, so at
+    most one LH cutter per heat.  Spread LH cutters one per heat 0..N-1.
+    Overflow (more LH than heats) goes into the final heat with a warning.
+    """
+
+    def test_left_handed_spread_one_per_heat(self, db_session):
         t = _make_tournament(db_session)
         ev = _make_event(db_session, t, name='Springboard', stand_type='springboard',
                          max_stands=4, gender=None)
@@ -373,7 +378,7 @@ class TestGenerateSpringboardHeats:
         generate_event_heats(ev)
 
         heats = _all_heats_for_event(ev.id, run_number=1)
-        # Both lefties should be in the same heat
+        # Each lefty should land in a DIFFERENT heat (spread, not clustered).
         lefty_heats = set()
         for h in heats:
             comps = set(h.get_competitors())
@@ -381,8 +386,10 @@ class TestGenerateSpringboardHeats:
                 if lid in comps:
                     lefty_heats.add(h.heat_number)
 
-        assert len(lefty_heats) == 1, \
-            f'Left-handed cutters spread across heats {lefty_heats}, expected 1'
+        assert len(lefty_heats) == 2, (
+            f'Left-handed cutters clustered in heats {lefty_heats}; '
+            'each LH cutter should land in its own heat.'
+        )
 
     def test_stand_assignments_within_4_dummies(self, db_session):
         t = _make_tournament(db_session)

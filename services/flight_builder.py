@@ -110,14 +110,41 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
     logger.debug('flight_builder: loaded %d non-axe heats for %d events',
                  len(batched_heats), len(non_axe_event_ids))
 
+    # Batch-load left-handed-springboard flags for all springboard-heat
+    # competitors so the optimizer can penalize >1 LH heat per flight
+    # (domain rule: only one physical LH dummy on site, so one LH cutter
+    # per flight time-slot).  Single .in_() query — no N+1.
+    lh_comp_ids: set[int] = set()
+    for heat in batched_heats:
+        event = event_by_id.get(heat.event_id)
+        if event and getattr(event, 'stand_type', None) == 'springboard':
+            lh_comp_ids.update(heat.get_competitors())
+
+    lh_flags: dict[int, bool] = {}
+    if lh_comp_ids:
+        from models.competitor import ProCompetitor
+        lh_rows = (
+            ProCompetitor.query
+            .filter(
+                ProCompetitor.id.in_(lh_comp_ids),
+                ProCompetitor.is_left_handed_springboard.is_(True),
+            )
+            .with_entities(ProCompetitor.id)
+            .all()
+        )
+        lh_flags = {row.id: True for row in lh_rows}
+
     all_heats = []
     for heat in batched_heats:
         event = event_by_id.get(heat.event_id)
         if event:
+            comps = set(heat.get_competitors())
+            contains_lh = any(lh_flags.get(cid, False) for cid in comps)
             all_heats.append({
                 'heat': heat,
                 'event': event,
-                'competitors': set(heat.get_competitors()),
+                'competitors': comps,
+                'contains_lh': contains_lh,
             })
 
     if not all_heats and not partnered_axe_heats:
@@ -154,6 +181,7 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
     flights_created = 0
     heat_index = 0
     created_flights: list[Flight] = []
+    lh_count_per_flight: dict[int, int] = {}  # flight_number -> LH heat count
 
     for flight_num in range(1, target_flights + 1):
         flight = Flight(
@@ -169,10 +197,24 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
             heat_data = ordered_heats[heat_index]
             heat_data['heat'].flight_id = flight.id
             heat_data['heat'].flight_position = heats_in_flight + 1
+            if heat_data.get('contains_lh'):
+                lh_count_per_flight[flight_num] = lh_count_per_flight.get(flight_num, 0) + 1
             heat_index += 1
             heats_in_flight += 1
 
         flights_created += 1
+
+    # Post-slice sanity check: if any flight ended up with >1 LH-containing heat,
+    # the scoring penalty was dominated by spacing constraints.  Log a warning so
+    # the admin knows the LH dummy will be over-subscribed in those flights.
+    for fnum, count in lh_count_per_flight.items():
+        if count > 1:
+            logger.warning(
+                'LH DUMMY CONTENTION: flight %d has %d LH-containing heats. '
+                'Only one physical LH springboard dummy exists. '
+                'Manual review recommended.',
+                fnum, count,
+            )
 
     # Insert partnered axe heats with deterministic flight placement.
     _insert_partnered_axe_heats(created_flights, partnered_axe_heats)
@@ -482,6 +524,21 @@ def _score_ordering(ordered: list, heats_per_flight: int,
                     overlap = partner_ids & prev_comps
                     if overlap:
                         total -= 200 * len(overlap)
+
+    # Left-handed springboard flight constraint: at most one LH-containing
+    # heat per flight block.  Only one physical LH dummy on site, so two
+    # LH heats in the same flight would need simultaneous use.  Penalty must
+    # outweigh typical spacing bonuses across a flight (~20 × 8 = 160 max)
+    # so the optimizer always prefers spreading LH heats across flights.
+    if heats_per_flight > 0:
+        lh_per_block: dict[int, int] = {}
+        for pos, hd in enumerate(ordered):
+            if hd.get('contains_lh'):
+                block = pos // heats_per_flight
+                lh_per_block[block] = lh_per_block.get(block, 0) + 1
+        for count in lh_per_block.values():
+            if count > 1:
+                total -= 1000 * (count - 1)
 
     return total
 

@@ -272,6 +272,12 @@ def confirm_pro_entries(tournament_id):
             competitor.gear_sharing_details = entry.get('gear_sharing_details')
             competitor.notes          = entry.get('notes')
             competitor.springboard_slow_heat = bool(entry.get('springboard_slow_heat', False))
+            # Handedness: None sentinel from parser means the xlsx form lacked
+            # both Springboard (L) and Springboard (R) columns, so we have no
+            # signal and must preserve any existing manual value on the row.
+            lh_flag = entry.get('is_left_handed_springboard')
+            if lh_flag is not None:
+                competitor.is_left_handed_springboard = bool(lh_flag)
             competitor.total_fees     = entry.get('total_fees', 0)
             competitor.import_timestamp = now
 

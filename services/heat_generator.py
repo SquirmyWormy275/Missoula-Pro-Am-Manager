@@ -21,11 +21,25 @@ logger = logging.getLogger(__name__)
 # surface a warning flash to the judge (gear audit fix G2/G3 — 2026-04-07).
 _last_gear_violations: dict[int, list[dict]] = {}
 
+# Per-event left-handed springboard overflow log, populated by
+# _generate_springboard_heats() when LH cutter count exceeds heat count.
+# Separate from gear violations because the remediation is different
+# (reconfigure field sizes vs. rebuild gear pairs).
+_last_lh_overflow_warnings: dict[int, list[dict]] = {}
+
 
 def get_last_gear_violations(event_id: int) -> list[dict]:
     """Return the gear-sharing violations recorded by the most recent
     generate_event_heats(event) call for this event_id, or an empty list."""
     return list(_last_gear_violations.get(event_id, []))
+
+
+def get_last_lh_overflow_warnings(event_id: int) -> list[dict]:
+    """Return the left-handed springboard overflow warnings recorded by the
+    most recent generate_event_heats(event) call for this event_id, or an
+    empty list.  Each entry is a dict with keys type, heat_index,
+    overflow_count, overflow_names."""
+    return list(_last_lh_overflow_warnings.get(event_id, []))
 
 
 def _sort_by_ability(competitors: list, event: Event) -> list:
@@ -133,10 +147,16 @@ def generate_event_heats(event: Event) -> int:
     gear_violations: list[dict] = []
     _last_gear_violations.pop(event.id, None)
 
+    # Per-event left-handed springboard overflow warnings recorded by
+    # _generate_springboard_heats when LH count > heat count.
+    lh_warnings: list[dict] = []
+    _last_lh_overflow_warnings.pop(event.id, None)
+
     # Apply special constraints
     if event.stand_type == 'springboard':
         heats = _generate_springboard_heats(competitors, num_heats, max_per_heat, stand_config, event=event,
-                                            gear_violations=gear_violations)
+                                            gear_violations=gear_violations,
+                                            lh_warnings=lh_warnings)
     elif event.stand_type in ['saw_hand']:
         heats = _generate_saw_heats(competitors, num_heats, max_per_heat, stand_config, event=event,
                                     gear_violations=gear_violations)
@@ -250,6 +270,29 @@ def generate_event_heats(event: Event) -> int:
                 v.get('comp_name', ''), heat_id,
             )
         _last_gear_violations[event.id] = resolved
+
+    # Promote LH overflow warnings for springboard events, same pattern.
+    if lh_warnings:
+        resolved_lh: list[dict] = []
+        for w in lh_warnings:
+            idx = w.get('heat_index')
+            heat_id = None
+            heat_number = None
+            if isinstance(idx, int) and 0 <= idx < len(created_heats):
+                heat_id = created_heats[idx].id
+                heat_number = created_heats[idx].heat_number
+            resolved_lh.append({
+                'type': w.get('type'),
+                'heat_id': heat_id,
+                'heat_number': heat_number,
+                'overflow_count': w.get('overflow_count'),
+                'overflow_names': w.get('overflow_names', []),
+            })
+            logger.warning(
+                'LH SPRINGBOARD OVERFLOW: %d cutter(s) overflowed into heat %s — LH dummy contention expected',
+                w.get('overflow_count', 0), heat_id,
+            )
+        _last_lh_overflow_warnings[event.id] = resolved_lh
 
     # Flush but do NOT commit — the calling route owns the transaction boundary and
     # will commit (or roll back) after all scheduling actions are complete.  This
@@ -565,27 +608,76 @@ def _get_partner_name_for_event(competitor, event: Event) -> str:
 
 def _generate_springboard_heats(competitors: list, num_heats: int,
                                  max_per_heat: int, stand_config: dict, event: Event = None,
-                                 gear_violations: list | None = None) -> list:
+                                 gear_violations: list | None = None,
+                                 lh_warnings: list | None = None) -> list:
     """
-    Generate springboard heats with left-handed cutter grouping.
+    Generate springboard heats with left-handed cutter spreading.
 
-    Left-handed cutters need to be grouped into the same heat.
+    Only one physical left-handed springboard dummy exists on site, so at most
+    ONE left-handed cutter can be in a single heat at a time.  Spread LH cutters
+    one per heat across heats 0..N-1.  If more LH cutters than heats exist,
+    overflow into the FINAL heat (per user rule, 2026-04-20) and log a warning
+    via lh_warnings so the admin knows there is dummy contention.
+
+    Slow-heat cutters still cluster starting at the final heat (unchanged).
     """
     heats = [[] for _ in range(num_heats)]
 
     # Dedicated springboard buckets:
-    # - Left-handed cutters must stay together in one heat.
-    # - Slow-heat cutters should be grouped into the dedicated slow heat.
+    # - LH cutters: one per heat (spread), overflow to final heat with warning.
+    # - Slow-heat cutters: cluster into the dedicated slow heat.
     left_handed = [c for c in competitors if c.get('is_left_handed', False)]
     slow_heat = [c for c in competitors if c.get('is_slow_springboard', False)]
 
-    left_heat_idx = 0 if left_handed else None
     slow_heat_idx = (num_heats - 1) if slow_heat else None
-    if left_heat_idx is not None and slow_heat_idx is not None and num_heats == 1:
-        slow_heat_idx = left_heat_idx
 
     assigned_ids = set()
 
+    # --- LH spread ---
+    # One LH cutter per heat, heats 0..N-1.  Overflow spills into the final
+    # heat (heats[num_heats-1]), mixed with RH cutters there.  If the final
+    # heat also hits max_per_heat, any further LH cutters are unplaceable —
+    # surface them via gear_violations as a hard warning so the admin reacts.
+    if left_handed and num_heats > 0:
+        spread = left_handed[:num_heats]
+        overflow = left_handed[num_heats:]
+
+        for i, lh in enumerate(spread):
+            if len(heats[i]) < max_per_heat:
+                heats[i].append(lh)
+                assigned_ids.add(lh['id'])
+
+        if overflow:
+            final_idx = num_heats - 1
+            placed_overflow: list[str] = []
+            unplaced_overflow: list[str] = []
+            for lh in overflow:
+                if lh['id'] in assigned_ids:
+                    continue
+                if len(heats[final_idx]) < max_per_heat:
+                    heats[final_idx].append(lh)
+                    assigned_ids.add(lh['id'])
+                    placed_overflow.append(lh.get('name', ''))
+                else:
+                    unplaced_overflow.append(lh.get('name', ''))
+
+            if placed_overflow and lh_warnings is not None:
+                lh_warnings.append({
+                    'type': 'lh_overflow',
+                    'heat_index': final_idx,
+                    'overflow_count': len(placed_overflow),
+                    'overflow_names': placed_overflow,
+                })
+            if unplaced_overflow and gear_violations is not None:
+                for name in unplaced_overflow:
+                    gear_violations.append({
+                        'comp_id': None,
+                        'comp_name': name,
+                        'heat_index': final_idx,
+                        'reason': 'LH cutter unplaced — all heats at capacity',
+                    })
+
+    # --- Slow-heat cluster (unchanged behavior) ---
     def _place_group(group: list, preferred_idx: int | None):
         if not group:
             return
@@ -612,7 +704,6 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
             remaining = remaining[len(take):]
             idx += 1
 
-    _place_group(left_handed, left_heat_idx)
     _place_group(slow_heat, slow_heat_idx)
 
     # Fill the remaining cutters with snake draft while respecting capacity.
