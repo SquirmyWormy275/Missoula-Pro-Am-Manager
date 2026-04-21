@@ -103,6 +103,8 @@ def build_flights(tournament_id):
             log_action('flights_built', 'tournament', tournament_id, {'count': built})
             db.session.commit()
             flash(text.FLASH['flights_built'].format(num_flights=built), 'success')
+            from services.saw_block_assignment import trigger_saw_block_recompute
+            trigger_saw_block_recompute(tournament)
         except Exception as e:
             flash(text.FLASH['flights_error'].format(error=str(e)), 'error')
 
@@ -129,7 +131,7 @@ def build_flights(tournament_id):
 @scheduling_bp.route('/<int:tournament_id>/flights/<int:flight_id>/reorder', methods=['POST'])
 def reorder_flight_heats(tournament_id, flight_id):
     """Reorder heats within a flight. Expects JSON {heat_ids: [int, ...]}."""
-    Tournament.query.get_or_404(tournament_id)
+    tournament = Tournament.query.get_or_404(tournament_id)
     flight = Flight.query.filter_by(id=flight_id, tournament_id=tournament_id).first_or_404()
     try:
         data = request.get_json(force=True)
@@ -145,6 +147,10 @@ def reorder_flight_heats(tournament_id, flight_id):
         existing[hid].flight_position = position
     db.session.commit()
     log_action('flight_heats_reordered', 'flight', flight_id, {'order': heat_ids})
+
+    from services.saw_block_assignment import trigger_saw_block_recompute
+    trigger_saw_block_recompute(tournament)
+
     return jsonify({'ok': True})
 
 

@@ -150,6 +150,7 @@ def generate_heats(tournament_id, event_id):
 
     # Import heat generation service
     from services.heat_generator import generate_event_heats, get_last_gear_violations
+    from services.saw_block_assignment import trigger_saw_block_recompute
 
     try:
         num_heats = generate_event_heats(event)
@@ -166,6 +167,10 @@ def generate_heats(tournament_id, event_id):
                 f'during heat generation. Review the gear manager before running the show.',
                 'warning'
             )
+        # Recompute hand-saw stand block alternation after heat gen commits.
+        tournament = Tournament.query.get(tournament_id)
+        if tournament is not None:
+            trigger_saw_block_recompute(tournament)
     except Exception as e:
         db.session.rollback()
         flash(text.FLASH['heats_error'].format(error=str(e)), 'error')
@@ -211,6 +216,10 @@ def generate_college_heats(tournament_id):
                 flash(f'Error generating heats for {event.display_name}: {exc}', 'error')
 
     db.session.commit()
+
+    # Recompute hand-saw stand block alternation after bulk college gen.
+    from services.saw_block_assignment import trigger_saw_block_recompute
+    trigger_saw_block_recompute(tournament)
 
     parts = []
     if generated:
@@ -817,3 +826,103 @@ def heat_sync_fix(tournament_id, event_id):
     log_action('heat_assignments_synced', 'event', event_id, {'heats_fixed': fixed})
     flash(f'HeatAssignment table synced for {fixed} heats.', 'success')
     return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+
+# ---------------------------------------------------------------------------
+# Hand-saw stand block alternation — admin safety valve + status page
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/heats/recompute-saw-blocks', methods=['POST'])
+def recompute_saw_blocks(tournament_id):
+    """Manually recompute hand-saw stand block assignments for the tournament."""
+    from services.saw_block_assignment import assign_saw_blocks
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    try:
+        summary = assign_saw_blocks(tournament)
+        flash(
+            f"Saw block assignments recomputed: {summary['heats_updated']} heats updated "
+            f"({summary['friday_saw_heats']} Friday, {summary['saturday_saw_heats']} Saturday).",
+            'success',
+        )
+        log_action('saw_blocks_recomputed', 'tournament', tournament_id, summary)
+    except Exception as exc:
+        flash(f'Saw block recompute failed: {exc}', 'error')
+
+    return redirect(
+        request.referrer
+        or url_for('scheduling.event_list', tournament_id=tournament_id)
+    )
+
+
+@scheduling_bp.route('/<int:tournament_id>/saw-blocks-status')
+def saw_blocks_status(tournament_id):
+    """Per-day status page showing block assignment for every hand-saw heat."""
+    from services.saw_block_assignment import BLOCK_A, SAW_STAND_TYPE
+    from services.schedule_builder import (
+        get_friday_ordered_heats,
+        get_saturday_ordered_heats,
+    )
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    def _rows(ordered_heats):
+        rows = []
+        for heat in ordered_heats:
+            event = heat.event
+            if not event or event.stand_type != SAW_STAND_TYPE:
+                continue
+            assignments = heat.get_stand_assignments()
+            used_stands = sorted({
+                int(v) for v in assignments.values()
+                if v is not None and int(v) > 0
+            })
+            if not used_stands:
+                block_label = '?'
+            else:
+                block_label = 'A' if used_stands[0] in BLOCK_A else 'B'
+            comp_ids = heat.get_competitors()
+            if comp_ids:
+                if event.event_type == 'college':
+                    name_map = {
+                        c.id: c.display_name
+                        for c in CollegeCompetitor.query.filter(
+                            CollegeCompetitor.id.in_(comp_ids)
+                        ).all()
+                    }
+                else:
+                    name_map = {
+                        c.id: c.display_name
+                        for c in ProCompetitor.query.filter(
+                            ProCompetitor.id.in_(comp_ids)
+                        ).all()
+                    }
+            else:
+                name_map = {}
+            names = [name_map.get(int(cid), f'ID:{cid}') for cid in comp_ids]
+            rows.append({
+                'heat_id': heat.id,
+                'event_name': event.display_name,
+                'heat_number': heat.heat_number,
+                'block': block_label,
+                'stands': used_stands,
+                'competitors': names,
+            })
+        return rows
+
+    friday_rows = _rows(get_friday_ordered_heats(tournament))
+    saturday_rows = _rows(get_saturday_ordered_heats(tournament))
+
+    # Re-number run order within each day so the page shows the saw-heat
+    # sequence (1, 2, 3, ...) rather than raw Heat.id or original heat_number.
+    for idx, row in enumerate(friday_rows, start=1):
+        row['run_order'] = idx
+    for idx, row in enumerate(saturday_rows, start=1):
+        row['run_order'] = idx
+
+    return render_template(
+        'scheduling/saw_blocks_status.html',
+        tournament=tournament,
+        friday_rows=friday_rows,
+        saturday_rows=saturday_rows,
+    )

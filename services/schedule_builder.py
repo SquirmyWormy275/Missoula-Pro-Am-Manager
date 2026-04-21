@@ -370,3 +370,118 @@ def _add_mandatory_day_split_run2(schedule_entries: list[dict], college_events: 
             'is_run2': True,
         })
     return updated
+
+
+# ---------------------------------------------------------------------------
+# Ordered-heats helpers — authoritative per-day run order as Heat rows.
+# Pure reads, no side effects. Consumed by services.saw_block_assignment
+# and safe to call from any route-time context.
+# ---------------------------------------------------------------------------
+
+def get_friday_ordered_heats(tournament: Tournament) -> list:
+    """Return all Friday heats in the authoritative run order.
+
+    Respects schedule_config['friday_event_order'] when present, else falls
+    back to _college_friday_sort_key default. Within each event, heats are
+    ordered by heat_number ascending, run_number=1 only. Excludes dual-run
+    run_number=2 heats (those run Saturday).
+
+    Events selected for Saturday spillover (schedule_config
+    ['saturday_college_event_ids']) or moved to the Friday Night Feature
+    (_extract_collegiate_feature_events) are excluded from the Friday day
+    block, matching the existing _build_friday_day_block() scope.
+    """
+    from models import Heat
+
+    sched_cfg = tournament.get_schedule_config()
+    friday_custom = sched_cfg.get('friday_event_order')
+    saturday_college_ids = set(sched_cfg.get('saturday_college_event_ids') or [])
+
+    college_events = tournament.events.filter_by(event_type='college').all()
+    friday_college = [e for e in college_events if e.id not in saturday_college_ids]
+    friday_college, _ = _extract_collegiate_feature_events(friday_college)
+
+    if friday_custom:
+        ordered_events = _apply_custom_order(friday_college, friday_custom)
+    else:
+        ordered_events = sorted(friday_college, key=_college_friday_sort_key)
+
+    heats: list = []
+    for event in ordered_events:
+        event_heats = (
+            Heat.query
+            .filter_by(event_id=event.id, run_number=1)
+            .order_by(Heat.heat_number)
+            .all()
+        )
+        heats.extend(event_heats)
+    return heats
+
+
+def get_saturday_ordered_heats(tournament: Tournament) -> list:
+    """Return all Saturday heats in the authoritative run order.
+
+    When Flight rows exist: iterates flights by flight_number ascending,
+    calling flight.get_heats_ordered() within each flight. Day-split
+    Run 2 heats are assumed to be attached to flights via the spillover
+    integration; any that are not get appended defensively at the end.
+
+    When no flights exist: falls back to pro heats ordered by event_id +
+    heat_number (run_number=1), using schedule_config['saturday_event_order']
+    when set. Day-split college Run 2 heats are appended at the end
+    (mandatory Saturday placement per CLAUDE.md).
+    """
+    from models import Heat
+
+    flights = (
+        Flight.query
+        .filter_by(tournament_id=tournament.id)
+        .order_by(Flight.flight_number)
+        .all()
+    )
+
+    heats: list = []
+    seen_ids: set[int] = set()
+
+    if flights:
+        for flight in flights:
+            for heat in flight.get_heats_ordered():
+                heats.append(heat)
+                seen_ids.add(heat.id)
+    else:
+        sched_cfg = tournament.get_schedule_config()
+        saturday_custom = sched_cfg.get('saturday_event_order')
+        pro_events = tournament.events.filter_by(event_type='pro').all()
+        if saturday_custom:
+            ordered_events = _apply_custom_order(pro_events, saturday_custom)
+        else:
+            ordered_events = sorted(pro_events, key=lambda e: e.id)
+        for event in ordered_events:
+            event_heats = (
+                Heat.query
+                .filter_by(event_id=event.id, run_number=1)
+                .order_by(Heat.heat_number)
+                .all()
+            )
+            for h in event_heats:
+                heats.append(h)
+                seen_ids.add(h.id)
+
+    # Include dual-run Run 2 heats for day-split college events
+    # (Chokerman's Race, Speed Climb) — their Run 2 is always Saturday.
+    college_events = tournament.events.filter_by(event_type='college').all()
+    for event in college_events:
+        if event.name not in DAY_SPLIT_EVENT_NAMES:
+            continue
+        run2_heats = (
+            Heat.query
+            .filter_by(event_id=event.id, run_number=2)
+            .order_by(Heat.heat_number)
+            .all()
+        )
+        for h in run2_heats:
+            if h.id not in seen_ids:
+                heats.append(h)
+                seen_ids.add(h.id)
+
+    return heats

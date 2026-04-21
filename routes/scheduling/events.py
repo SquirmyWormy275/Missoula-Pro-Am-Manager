@@ -45,6 +45,8 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
     back that step without corrupting the whole session (heat generation already
     commits per-event; flight building commits at the end of build_pro_flights).
     """
+    from services.saw_block_assignment import trigger_saw_block_recompute
+
     action = request.form.get('action', '')
     tournament_id = tournament.id
 
@@ -66,6 +68,7 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
                     'total_heats': sum(post_snap.values()),
                 }
                 session.modified = True
+            trigger_saw_block_recompute(tournament)
         except Exception as exc:
             db.session.rollback()
             flash(f'Heat/flight generation failed and was rolled back: {exc}', 'error')
@@ -87,6 +90,7 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
                     'total_heats': sum(post_snap.values()),
                 }
                 session.modified = True
+            trigger_saw_block_recompute(tournament)
         except Exception as exc:
             db.session.rollback()
             flash(f'Flight rebuild failed and was rolled back: {exc}', 'error')
@@ -98,6 +102,7 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
             flash(integration['message'], 'info')
             if integration['integrated_heats'] > 0:
                 flash(f"Integrated {integration['integrated_heats']} heat(s) into flights.", 'success')
+            trigger_saw_block_recompute(tournament)
         except Exception as exc:
             db.session.rollback()
             flash(f'Spillover integration failed: {exc}', 'error')
@@ -485,6 +490,10 @@ def reorder_friday_events(tournament_id):
     tournament.set_schedule_config(cfg)
     db.session.commit()
     log_action('friday_event_order_set', 'tournament', tournament_id, {'order': event_ids})
+
+    from services.saw_block_assignment import trigger_saw_block_recompute
+    trigger_saw_block_recompute(tournament)
+
     return jsonify({'ok': True})
 
 
@@ -532,6 +541,10 @@ def reset_event_order(tournament_id):
     tournament.set_schedule_config(cfg)
     db.session.commit()
     log_action('event_order_reset', 'tournament', tournament_id, {'day': day or 'both'})
+
+    from services.saw_block_assignment import trigger_saw_block_recompute
+    trigger_saw_block_recompute(tournament)
+
     return jsonify({'ok': True})
 
 
