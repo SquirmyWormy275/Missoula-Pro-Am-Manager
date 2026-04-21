@@ -115,12 +115,27 @@ the pair to `_CONFLICTING_STANDS` in `flight_builder.py` and update this documen
 
 ### 3.4 Event Order and Variety
 
-The flight builder does **not** explicitly enforce a minimum number of events per flight. Variety
-emerges naturally from the competitor spacing algorithm: because competitors appear in multiple
-events, spacing them out inherently mixes events across flights.
+**First principle: each event's heats spread across flights as evenly as possible.** No flight
+may be dominated by one event.
 
-If a tournament has very few competitors spread across many events, some flights may be
-event-heavy. This is acceptable and does not need to be corrected automatically.
+The flight builder enforces a per-event per-flight cap:
+
+| Quantity | Value |
+|---|---|
+| Cap per flight per event | `ceil(N_e / target_flights)` where `N_e` is that event's heat count |
+| Step penalty | `EVENT_FLIGHT_CAP_PENALTY = 2000` per heat that would exceed the cap, applied in `_calculate_heat_score` |
+| Ordering penalty | `EVENT_FLIGHT_CAP_SCORE_PENALTY = 500` per heat over cap, applied in `_score_ordering` for multi-pass comparison |
+
+The cap is large enough to override the `+1000` first-appearance bonus and `+500` springboard
+opener bonus — without it, a heat whose competitors appear in no other event always scored `1000`
+(nothing forces spacing), so the greedy stacked all same-event heats together. Observed 2026-04-21
+on a 3-flight show where all women's underhand + most of men's underhand landed in flight 1.
+
+`ceil(N_e / F)` satisfies `F * cap >= N_e` always, so a feasible distribution exists. The per-event
+queue still guarantees heats within an event appear in ascending `heat_number` order.
+
+Events whose heats don't saturate a flight (e.g. 1 heat, or `N_e < F`) will still appear in only
+some flights — the cap is an upper bound, not a floor. In that case there is nothing to spread.
 
 ### 3.5 Partnered Axe Throw
 
@@ -419,6 +434,8 @@ this document.
 | `MIN_HEAT_SPACING` | 4 | Absolute minimum heats between a competitor's appearances |
 | `TARGET_HEAT_SPACING` | 5 | Preferred spacing; bonus applied at this level |
 | `_STAND_CONFLICT_GAP` | 8 | Minimum heats between conflicting stand types (approx. one full flight) |
+| `EVENT_FLIGHT_CAP_PENALTY` | 2000 | Per-candidate penalty per heat over a flight's per-event cap |
+| `EVENT_FLIGHT_CAP_SCORE_PENALTY` | 500 | Per-ordering penalty per heat over cap (multi-pass comparison) |
 | `PARTNERED_AXE_SHOW_TEAM_COUNT` | 4 | Number of pairs that advance from prelims to the show |
 | Default `heats_per_flight` | 8 | Target heats per flight (passed as argument to `build_pro_flights`) |
 

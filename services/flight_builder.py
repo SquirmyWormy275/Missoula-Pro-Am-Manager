@@ -49,6 +49,16 @@ _CONFLICTING_STANDS: dict[str, str] = {
 # Minimum gap between conflicting stand types (approximately one flight block)
 _STAND_CONFLICT_GAP = 8
 
+# Per-event per-flight distribution: each event's heats are targeted to spread
+# evenly across flights as ceil(N_e / target_flights) per flight. Penalty per
+# heat over that cap must outweigh first-appearance (+1000) and springboard
+# opener (+500) so crowd variety wins over local spacing optimization when a
+# heat's competitors never appear in any other event.
+EVENT_FLIGHT_CAP_PENALTY = 2000.0
+# Scoring-pass penalty is smaller (per-excess-heat) because it's summed across
+# the whole ordering rather than applied at a single candidate step.
+EVENT_FLIGHT_CAP_SCORE_PENALTY = 500.0
+
 
 def _get_spacing(event: Event | None) -> tuple[int, int]:
     """Return (min_spacing, target_spacing) for this event's stand type."""
@@ -395,6 +405,20 @@ def _optimize_heat_order(all_heats: list, heats_per_flight: int = 8,
         )
     event_ids = list(event_queues.keys())
 
+    # First principle: each event's heats spread evenly across flights.
+    # Cap = ceil(N_e / target_flights). Mathematically F * cap >= N_e always,
+    # so a feasible distribution exists. The algorithm still honors the
+    # sequential-heat-number guarantee because event queues are FIFO.
+    total_heats = len(all_heats)
+    target_flights = (
+        max(1, math.ceil(total_heats / heats_per_flight))
+        if heats_per_flight > 0 else 1
+    )
+    event_per_flight_cap: dict[int, int] = {
+        eid: max(1, math.ceil(len(queue) / target_flights))
+        for eid, queue in event_queues.items()
+    }
+
     best_ordered: list = []
     best_score = float('-inf')
 
@@ -402,10 +426,16 @@ def _optimize_heat_order(all_heats: list, heats_per_flight: int = 8,
     for pass_num in range(actual_passes):
         # Rotate event_ids to create different greedy starting conditions.
         rotated = event_ids[pass_num:] + event_ids[:pass_num]
-        candidate = _single_pass_optimize(event_queues, rotated, heats_per_flight,
-                                          gear_conflict_pairs=gear_conflict_pairs)
-        score = _score_ordering(candidate, heats_per_flight,
-                                gear_conflict_pairs=gear_conflict_pairs)
+        candidate = _single_pass_optimize(
+            event_queues, rotated, heats_per_flight,
+            gear_conflict_pairs=gear_conflict_pairs,
+            event_per_flight_cap=event_per_flight_cap,
+        )
+        score = _score_ordering(
+            candidate, heats_per_flight,
+            gear_conflict_pairs=gear_conflict_pairs,
+            event_per_flight_cap=event_per_flight_cap,
+        )
         if score > best_score:
             best_score = score
             best_ordered = candidate
@@ -415,7 +445,8 @@ def _optimize_heat_order(all_heats: list, heats_per_flight: int = 8,
 
 def _single_pass_optimize(event_queues: dict, event_id_order: list,
                            heats_per_flight: int,
-                           gear_conflict_pairs: dict[int, set[int]] | None = None) -> list:
+                           gear_conflict_pairs: dict[int, set[int]] | None = None,
+                           event_per_flight_cap: dict[int, int] | None = None) -> list:
     """
     Execute a single greedy pass through the event queues.
 
@@ -429,6 +460,9 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
     stand_type_last_position: dict[str, int] = {}
     # Track which flight block each event last appeared in (for recency bonus).
     event_last_block: dict[int, int] = {}
+    # Count of this event's heats already placed in the current flight block,
+    # used to enforce the even-distribution cap. Key: (block, event_id).
+    event_heats_in_block: dict[tuple[int, int], int] = {}
 
     while True:
         candidates = [
@@ -458,6 +492,8 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
                     event_last_block,
                     gear_conflict_pairs=gear_conflict_pairs,
                     previous_heat_comps=ordered[-1]['competitors'] if ordered else set(),
+                    event_per_flight_cap=event_per_flight_cap,
+                    event_heats_in_block=event_heats_in_block,
                 ),
                 remaining_counts[eid],   # tie-break: more remaining = preferred
                 eid,
@@ -480,6 +516,8 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
                         None,  # disable stand conflict check
                         heats_per_flight,
                         event_last_block,
+                        event_per_flight_cap=event_per_flight_cap,
+                        event_heats_in_block=event_heats_in_block,
                     ),
                     remaining_counts[eid],
                     eid,
@@ -501,12 +539,16 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
         event_id = best_heat_data['heat'].event_id
         current_block = pos // heats_per_flight if heats_per_flight > 0 else 0
         event_last_block[event_id] = current_block
+        event_heats_in_block[(current_block, event_id)] = (
+            event_heats_in_block.get((current_block, event_id), 0) + 1
+        )
 
     return ordered
 
 
 def _score_ordering(ordered: list, heats_per_flight: int,
-                    gear_conflict_pairs: dict[int, set[int]] | None = None) -> float:
+                    gear_conflict_pairs: dict[int, set[int]] | None = None,
+                    event_per_flight_cap: dict[int, int] | None = None) -> float:
     """
     Compute a quality score for a complete heat ordering. Higher is better.
 
@@ -572,6 +614,22 @@ def _score_ordering(ordered: list, heats_per_flight: int,
             if count > 1:
                 total -= 1000 * (count - 1)
 
+    # Per-event per-flight distribution penalty: mirrors the per-step cap
+    # used during greedy placement so multi-pass comparison rewards the
+    # pass that best spreads each event's heats across flights.
+    if event_per_flight_cap and heats_per_flight > 0:
+        event_heats_per_block: dict[tuple[int, int], int] = {}
+        for pos, hd in enumerate(ordered):
+            block = pos // heats_per_flight
+            eid = hd['heat'].event_id
+            event_heats_per_block[(block, eid)] = (
+                event_heats_per_block.get((block, eid), 0) + 1
+            )
+        for (_block, eid), count in event_heats_per_block.items():
+            cap = event_per_flight_cap.get(eid)
+            if cap is not None and count > cap:
+                total -= EVENT_FLIGHT_CAP_SCORE_PENALTY * (count - cap)
+
     return total
 
 
@@ -581,7 +639,9 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
                            heats_per_flight: int = 8,
                            event_last_block: dict | None = None,
                            gear_conflict_pairs: dict[int, set[int]] | None = None,
-                           previous_heat_comps: set | None = None) -> float:
+                           previous_heat_comps: set | None = None,
+                           event_per_flight_cap: dict[int, int] | None = None,
+                           event_heats_in_block: dict | None = None) -> float:
     """
     Calculate a score for placing a heat at the current position.
 
@@ -679,6 +739,23 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
                 overlap = partner_ids & previous_heat_comps
                 if overlap:
                     score -= 200 * len(overlap)
+
+    # Per-event per-flight distribution cap. Without this, heats whose
+    # competitors never appear in any other event all score 1000
+    # (first-appearance) and greedily stack into one flight — which is the
+    # opposite of the crowd-variety first principle flights exist to serve.
+    # Penalty scales with how far over the cap the placement would go and is
+    # large enough to override the first-appearance bonus.
+    if (event_per_flight_cap is not None and event_heats_in_block is not None
+            and heats_per_flight > 0):
+        event_id = getattr(event, 'id', None)
+        if event_id is not None:
+            current_block = current_position // heats_per_flight
+            cap = event_per_flight_cap.get(event_id)
+            if cap is not None:
+                already = event_heats_in_block.get((current_block, event_id), 0)
+                if already >= cap:
+                    score -= EVENT_FLIGHT_CAP_PENALTY * (already - cap + 1)
 
     return score
 

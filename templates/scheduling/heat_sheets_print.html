@@ -142,16 +142,23 @@
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
-    .heat-card { border: 1.5px solid #444 !important; margin-bottom: 5px !important; }
+    /* Bold black borders around heat divisions — every heat card is an
+       unambiguous block on paper, survives photocopy + fax. */
+    .heat-card {
+        border: 2.5px solid #000 !important;
+        margin-bottom: 6px !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
     .heat-card-head {
         background: #e4e4e4 !important;
-        border-bottom: 1.5px solid #555 !important;
+        border-bottom: 2.5px solid #000 !important;
         padding: 3px 8px !important;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
-    .heat-card-head.head-pro     { border-left: 4px solid #1a3a5c !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .heat-card-head.head-college { border-left: 4px solid #8d3a6e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .heat-card-head.head-pro     { border-left: 6px solid #1a3a5c !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .heat-card-head.head-college { border-left: 6px solid #8d3a6e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .heat-card-event { color: #000 !important; font-size: 0.85rem !important; }
     .heat-card-sub   { color: #333 !important; }
     .heat-tbl { font-size: 0.80rem !important; }

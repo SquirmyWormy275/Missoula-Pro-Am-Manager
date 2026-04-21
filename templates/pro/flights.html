@@ -149,6 +149,24 @@
 }
 .heat-tile.bg-light:hover { background: rgba(45,168,94,0.09) !important; }
 
+/* ── Drag-drop ────────────────────────────────────────────── */
+.heat-drag-handle {
+    cursor: grab;
+    color: var(--sx-text-2);
+    font-size: 0.9rem;
+    padding: 2px 4px;
+    margin-right: 2px;
+    border-radius: 3px;
+    user-select: none;
+}
+.heat-drag-handle:hover {
+    background: var(--sx-surface-3);
+    color: var(--sx-text);
+}
+.heat-tile.sortable-ghost { opacity: 0.3; }
+.heat-tile.sortable-drag { opacity: 0.9; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+.heat-grid.drag-over { background: rgba(232,144,18,0.06); }
+
 /* ── Type labels ──────────────────────────────────────────── */
 .badge-college-label {
     display: inline-block;
@@ -273,13 +291,17 @@
             {% endif %}
         </div>
 
-        {# Heat tiles grid #}
-        <div class="heat-grid">
+        {# Heat tiles grid — drag-drop: within-flight reorder + cross-flight move #}
+        <div class="heat-grid flight-drag-grid" data-flight-id="{{ flight.id }}">
             {% for row in fd.heats %}
             {% set is_college = row.event.event_type == 'college' %}
-            <div class="heat-tile {{ 'heat-tile-college' if is_college else '' }} {% if row.heat.status == 'completed' %}bg-light{% endif %}">
+            <div class="heat-tile {{ 'heat-tile-college' if is_college else '' }} {% if row.heat.status == 'completed' %}bg-light{% endif %}"
+                 data-heat-id="{{ row.heat.id }}">
                 <div class="heat-tile-header">
                     <span class="heat-tile-event">
+                        <span class="heat-drag-handle" title="Drag to reorder or move to another flight">
+                            <i class="bi bi-grip-vertical"></i>
+                        </span>
                         {% if is_college %}
                         <span class="badge-college-label">COLLEGE</span>
                         {% else %}
@@ -349,4 +371,77 @@
     </div>
     {% endif %}
 </div>
+
+{% if flight_data %}
+<div class="d-none d-md-block text-muted small text-center mt-2 mb-4">
+    <i class="bi bi-grip-vertical"></i>
+    Drag heats by the handle to reorder within a flight, or drop into another flight to move.
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if flight_data %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+(function () {
+    var tournamentId = {{ tournament.id }};
+    var csrfEl = document.querySelector('meta[name="csrf-token"]');
+    var csrfToken = csrfEl ? csrfEl.getAttribute('content') : '';
+
+    function snapshotAllFlights() {
+        var out = [];
+        document.querySelectorAll('.flight-drag-grid').forEach(function (grid) {
+            var fid = parseInt(grid.dataset.flightId, 10);
+            var ids = Array.from(grid.querySelectorAll('[data-heat-id]'))
+                .map(function (el) { return parseInt(el.dataset.heatId, 10); });
+            out.push({flight_id: fid, heat_ids: ids});
+        });
+        return out;
+    }
+
+    function persistChange() {
+        fetch('/scheduling/' + tournamentId + '/flights/bulk-reorder', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({flights: snapshotAllFlights()})
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (!data || !data.ok) {
+                var msg = (data && data.error) || 'unknown error';
+                alert('Move failed: ' + msg + '. The page will refresh to show the saved order.');
+                window.location.reload();
+            }
+        }).catch(function () {
+            alert('Move request failed. Check your connection and refresh.');
+            window.location.reload();
+        });
+    }
+
+    document.querySelectorAll('.flight-drag-grid').forEach(function (grid) {
+        new Sortable(grid, {
+            group: 'flight-heats',
+            animation: 150,
+            handle: '.heat-drag-handle',
+            ghostClass: 'sortable-ghost',
+            dragClass: 'sortable-drag',
+            onAdd: function () { grid.classList.remove('drag-over'); },
+            onStart: function () {
+                document.querySelectorAll('.flight-drag-grid').forEach(function (g) {
+                    if (g !== grid) g.classList.add('drag-over');
+                });
+            },
+            onEnd: function () {
+                document.querySelectorAll('.flight-drag-grid').forEach(function (g) {
+                    g.classList.remove('drag-over');
+                });
+                persistChange();
+            }
+        });
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

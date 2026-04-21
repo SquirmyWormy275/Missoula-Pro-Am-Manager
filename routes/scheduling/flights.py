@@ -233,6 +233,68 @@ def reorder_flight_heats(tournament_id, flight_id):
     return jsonify({'ok': True})
 
 
+@scheduling_bp.route('/<int:tournament_id>/flights/bulk-reorder', methods=['POST'])
+def bulk_reorder_flights(tournament_id):
+    """Apply a full DOM snapshot of flight heat order — handles both within-flight
+    reordering and cross-flight moves in one atomic update.
+
+    Expects JSON: {flights: [{flight_id: int, heat_ids: [int, ...]}, ...]}.
+    The union of all heat_ids across flights MUST equal the set of all heats
+    currently assigned to any of those flights — otherwise refuse to prevent
+    an incomplete drag from wiping state.
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    try:
+        data = request.get_json(force=True)
+        entries = data.get('flights', [])
+        payload: list[tuple[int, list[int]]] = []
+        for entry in entries:
+            fid = int(entry['flight_id'])
+            hids = [int(h) for h in entry.get('heat_ids', [])]
+            payload.append((fid, hids))
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return jsonify({'ok': False, 'error': 'Invalid payload'}), 400
+
+    if not payload:
+        return jsonify({'ok': False, 'error': 'No flights in payload'}), 400
+
+    flight_ids = [fid for fid, _ in payload]
+    flights = Flight.query.filter(
+        Flight.id.in_(flight_ids),
+        Flight.tournament_id == tournament_id,
+    ).all()
+    if len(flights) != len(flight_ids):
+        return jsonify({'ok': False, 'error': 'Unknown flight id'}), 400
+
+    # Heat set check: every heat currently in these flights must still be
+    # present in the payload. Prevents a half-loaded DOM from dropping heats.
+    existing_heats = Heat.query.filter(Heat.flight_id.in_(flight_ids)).all()
+    existing_heat_ids = {h.id for h in existing_heats}
+    payload_heat_ids = {hid for _, hids in payload for hid in hids}
+    if existing_heat_ids != payload_heat_ids:
+        return jsonify({
+            'ok': False,
+            'error': 'Heat set mismatch — refresh and try again',
+        }), 400
+
+    heats_by_id = {h.id: h for h in existing_heats}
+    for fid, hids in payload:
+        for position, hid in enumerate(hids, start=1):
+            heat = heats_by_id[hid]
+            heat.flight_id = fid
+            heat.flight_position = position
+    db.session.commit()
+
+    log_action('flights_bulk_reordered', 'tournament', tournament_id,
+               {'flights': [{'flight_id': fid, 'count': len(hids)} for fid, hids in payload]})
+
+    from services.saw_block_assignment import trigger_saw_block_recompute
+    trigger_saw_block_recompute(tournament)
+
+    return jsonify({'ok': True})
+
+
 # ---------------------------------------------------------------------------
 # #2 — Flight start + SMS notification trigger
 # ---------------------------------------------------------------------------

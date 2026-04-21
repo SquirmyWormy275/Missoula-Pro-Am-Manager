@@ -383,6 +383,82 @@ def test_reorder_flight_heats_triggers_recompute(app, auth_client):
         assert _used_stands(h_a) == BLOCK_B
 
 
+def test_bulk_reorder_moves_heat_between_flights(app, auth_client):
+    """Bulk reorder endpoint moves a heat from one flight to another,
+    updates flight_id and flight_position correctly for every heat in the
+    payload."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        sb = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        f1 = _seed_flight(_db, t, flight_number=1)
+        f2 = _seed_flight(_db, t, flight_number=2)
+        h_a = _seed_heat(_db, sb, 1, competitors=[1, 2, 3, 4],
+                        stand_assignments={"1": 1, "2": 2, "3": 3, "4": 4},
+                        flight=f1, flight_position=1)
+        h_b = _seed_heat(_db, sb, 2, competitors=[5, 6, 7, 8],
+                        stand_assignments={"5": 5, "6": 6, "7": 7, "8": 8},
+                        flight=f1, flight_position=2)
+        h_c = _seed_heat(_db, sb, 3, competitors=[9, 10, 11, 12],
+                        stand_assignments={"9": 1, "10": 2, "11": 3, "12": 4},
+                        flight=f2, flight_position=1)
+        _db.session.commit()
+        tid, f1_id, f2_id = t.id, f1.id, f2.id
+        h_a_id, h_b_id, h_c_id = h_a.id, h_b.id, h_c.id
+
+    # Move h_b from flight 1 to flight 2, keep h_a alone in flight 1,
+    # put h_b at position 1 of flight 2 (before h_c).
+    resp = auth_client.post(
+        f"/scheduling/{tid}/flights/bulk-reorder",
+        json={
+            "flights": [
+                {"flight_id": f1_id, "heat_ids": [h_a_id]},
+                {"flight_id": f2_id, "heat_ids": [h_b_id, h_c_id]},
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.data
+    assert resp.get_json().get("ok") is True
+
+    with app.app_context():
+        from models import Heat
+        h_a = Heat.query.get(h_a_id)
+        h_b = Heat.query.get(h_b_id)
+        h_c = Heat.query.get(h_c_id)
+        assert h_a.flight_id == f1_id and h_a.flight_position == 1
+        assert h_b.flight_id == f2_id and h_b.flight_position == 1
+        assert h_c.flight_id == f2_id and h_c.flight_position == 2
+
+
+def test_bulk_reorder_rejects_mismatched_heat_set(app, auth_client):
+    """Bulk reorder must refuse a payload that drops or invents heats so a
+    half-loaded DOM can't wipe state."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        sb = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        f1 = _seed_flight(_db, t, flight_number=1)
+        h_a = _seed_heat(_db, sb, 1, competitors=[1, 2],
+                        stand_assignments={"1": 1, "2": 2},
+                        flight=f1, flight_position=1)
+        h_b = _seed_heat(_db, sb, 2, competitors=[3, 4],
+                        stand_assignments={"3": 1, "4": 2},
+                        flight=f1, flight_position=2)
+        _db.session.commit()
+        tid, f1_id = t.id, f1.id
+        h_a_id = h_a.id  # intentionally omit h_b from the payload
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/flights/bulk-reorder",
+        json={"flights": [{"flight_id": f1_id, "heat_ids": [h_a_id]}]},
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body and body.get("ok") is False
+
+
 def test_reorder_friday_events_triggers_recompute(app, auth_client):
     """Reordering Friday events reassigns blocks to match new event order."""
     from database import db as _db
