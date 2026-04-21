@@ -126,7 +126,7 @@ def _assignments(heat):
 
 
 def test_within_event_alternation_single_buck(db_session, tournament):
-    from services.saw_block_assignment import assign_saw_blocks, BLOCK_A, BLOCK_B
+    from services.saw_block_assignment import BLOCK_A, BLOCK_B, assign_saw_blocks
 
     sb = _make_event(db_session, tournament, "Single Buck", "college", "M")
 
@@ -169,7 +169,7 @@ def test_within_event_alternation_single_buck(db_session, tournament):
 
 def test_cross_event_continuation_friday(db_session, tournament):
     """Single Buck ends on Block B (odd heat count) -> next saw event starts Block A."""
-    from services.saw_block_assignment import assign_saw_blocks, BLOCK_A, BLOCK_B
+    from services.saw_block_assignment import BLOCK_A, BLOCK_B, assign_saw_blocks
 
     sb = _make_event(db_session, tournament, "Single Buck", "college", "M")
     jj = _make_event(
@@ -237,7 +237,7 @@ def test_cross_event_continuation_friday(db_session, tournament):
 
 def test_non_saw_gap_preserves_continuity(db_session, tournament):
     """Saw heat N+1 still flips from saw heat N even with non-saw heats between."""
-    from services.saw_block_assignment import assign_saw_blocks, BLOCK_A, BLOCK_B
+    from services.saw_block_assignment import BLOCK_A, BLOCK_B, assign_saw_blocks
 
     sb = _make_event(db_session, tournament, "Single Buck", "college", "M")
     underhand = _make_event(
@@ -299,7 +299,7 @@ def test_non_saw_gap_preserves_continuity(db_session, tournament):
 
 def test_day_boundary_resets(db_session, tournament):
     """Saturday saw heats restart from Block A regardless of Friday's end state."""
-    from services.saw_block_assignment import assign_saw_blocks, BLOCK_A
+    from services.saw_block_assignment import BLOCK_A, assign_saw_blocks
 
     # Friday: 1 college SB heat (ends on Block A, so Friday ends mid-cycle)
     sb_coll = _make_event(db_session, tournament, "Single Buck", "college", "M")
@@ -456,7 +456,7 @@ def test_idempotent_rerun(db_session, tournament):
 def test_flight_builder_reshuffle_recomputes_correctly(db_session, tournament):
     """Pre-flight assignment differs from post-flight. Re-running after flight
     build gives correct blocks for the new run order."""
-    from services.saw_block_assignment import assign_saw_blocks, BLOCK_A, BLOCK_B
+    from services.saw_block_assignment import BLOCK_A, BLOCK_B, assign_saw_blocks
 
     sb = _make_event(db_session, tournament, "Single Buck", "pro", "M")
 
