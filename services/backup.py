@@ -19,8 +19,9 @@ import os
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime
 from urllib.parse import urlparse
+
+from services.time_utils import utc_timestamp_for_filename
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _timestamp() -> str:
-    return datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return utc_timestamp_for_filename()
 
 
 def is_postgres(uri: str) -> bool:
