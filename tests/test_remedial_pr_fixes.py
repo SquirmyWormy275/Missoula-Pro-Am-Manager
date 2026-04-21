@@ -153,33 +153,26 @@ def test_health_diag_requires_auth(app):
 
 
 def test_heat_generation_rejects_zero_max_stands(app):
-    from database import db
-    from models import Event, Tournament
-    from models.competitor import ProCompetitor
+    from types import SimpleNamespace
+
     from services.heat_generator import generate_event_heats
 
-    with app.app_context():
-        tournament = Tournament(name='ZeroStand', year=2026, status='setup')
-        db.session.add(tournament)
-        db.session.flush()
-        event = Event(
-            tournament_id=tournament.id,
-            name='Underhand',
-            event_type='pro',
-            gender='M',
-            scoring_type='time',
-            scoring_order='lowest_wins',
-            stand_type='underhand',
-            max_stands=0,
-            status='pending',
-        )
-        db.session.add(event)
-        db.session.flush()
-        competitor = ProCompetitor(tournament_id=tournament.id, name='A', gender='M', status='active')
-        competitor.set_events_entered([str(event.id)])
-        db.session.add(competitor)
-        db.session.commit()
+    event = SimpleNamespace(
+        id=999,
+        name='Underhand',
+        display_name='Underhand',
+        tournament_id=1,
+        event_type='pro',
+        stand_type='underhand',
+        max_stands=0,
+        has_prelims=False,
+    )
 
+    with app.app_context(), pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            'services.heat_generator._get_event_competitors',
+            lambda _event: [{'id': 1, 'name': 'A'}],
+        )
         with pytest.raises(ValueError, match='invalid max_stands'):
             generate_event_heats(event)
 

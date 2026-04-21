@@ -162,7 +162,7 @@ def _seed_rich_db(app):
         competitor_name=pro.name,
         result_value=25.5,
         run1_value=25.5,
-        status="scored",
+        status="completed",
     )
     _db.session.add(result)
     _db.session.flush()
