@@ -630,6 +630,26 @@ All 95 flight-builder + FNF tests pass.
 
 ---
 
+### 2026-04-21 (V2.10.1)
+
+**Patch — friendly redirect on expired CSRF tokens**
+
+Fixes a silent-failure bug where long-open forms (CSRF time limit defaults to 1 hour) submitted a stale token, got a raw `400 Bad Request` page, and left the user thinking the button was broken. The "Integrate Spillover" button on the scheduling page was the first reported case, but the bug affected every CSRF-protected form in the app.
+
+**New error handler — app.py:**
+- `@app.errorhandler(CSRFError)` catches missing/expired CSRF tokens from Flask-WTF.
+- HTML routes: flash `"Your session expired for security. Please try that action again."` and 302-redirect to `request.referrer` (or `request.path` as fallback). The next GET picks up a fresh token, so one more click works.
+- `/api/` routes: return `{"error":"CSRF token missing or expired","status":400}` JSON for programmatic clients.
+
+**Regression tests — tests/test_csrf_error_handler.py (2 new):**
+- Verifies HTML route redirects to referrer with the correct warning flash.
+- Verifies the fallback when the browser omits `Referer` (redirects to `request.path`).
+- Uses a fixture that re-enables CSRF protection for the test app (the global `conftest.py` disables it for every other test).
+
+**Data model:** No schema changes.
+
+---
+
 ### 2026-04-21 (V2.10.0)
 
 **Minor — hand-saw stand block alternation**
