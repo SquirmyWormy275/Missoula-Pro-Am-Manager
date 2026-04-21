@@ -421,3 +421,67 @@ class TestFridayFeaturePrintRoute:
         assert "onsubmit=" not in body, "Inline onsubmit= detected; CSP regression"
         # The CSP-compliant pattern (id + script with addEventListener)
         assert "fnf-print-btn" in body
+
+
+# ---------------------------------------------------------------------------
+# FNF PDF route — WeasyPrint if installed, HTML fallback on Railway
+# ---------------------------------------------------------------------------
+
+
+class TestFridayFeaturePdfRoute:
+    """GET /scheduling/<tid>/friday-night/pdf returns a PDF or HTML fallback."""
+
+    def test_pdf_route_renders_200(self, app, auth_client):
+        with app.app_context():
+            data = _seed_two_event_show(_db.session)
+            t = data["tournament"]
+            t.set_schedule_config({"friday_pro_event_ids": [data["p1b"].id]})
+            _db.session.commit()
+            tid = t.id
+
+        resp = auth_client.get(f"/scheduling/{tid}/friday-night/pdf")
+        assert resp.status_code == 200
+        ctype = resp.headers.get("Content-Type", "")
+        # Either the PDF path (WeasyPrint installed) or the HTML fallback.
+        # On Railway and in the test env, WeasyPrint is NOT installed, so we
+        # expect text/html. Both are valid.
+        assert ctype.startswith("application/pdf") or ctype.startswith("text/html"), (
+            f"unexpected Content-Type {ctype!r} — want application/pdf or text/html"
+        )
+
+    def test_pdf_route_pdf_branch_sets_download_header(self, app, auth_client, monkeypatch):
+        """Force the WeasyPrint branch to run and assert the Content-Disposition."""
+        # Stub weasyprint.HTML so the route takes the PDF branch without needing
+        # cairo/pango installed. Must stub BEFORE the import inside the helper
+        # fires, so patch the services.print_response module's lazy import target.
+        fake_pdf_bytes = b"%PDF-1.4 fake pdf for test\n"
+
+        class _FakeWP:
+            def __init__(self, string):
+                self.string = string
+
+            def write_pdf(self):
+                return fake_pdf_bytes
+
+        import sys as _sys
+        import types as _types
+
+        fake_module = _types.ModuleType("weasyprint")
+        fake_module.HTML = _FakeWP  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "weasyprint", fake_module)
+
+        with app.app_context():
+            data = _seed_two_event_show(_db.session)
+            t = data["tournament"]
+            t.set_schedule_config({"friday_pro_event_ids": [data["p1b"].id]})
+            _db.session.commit()
+            tid = t.id
+
+        resp = auth_client.get(f"/scheduling/{tid}/friday-night/pdf")
+        assert resp.status_code == 200
+        assert resp.headers.get("Content-Type") == "application/pdf"
+        cd = resp.headers.get("Content-Disposition", "")
+        assert "attachment" in cd
+        assert "friday_night_feature" in cd
+        assert cd.endswith('.pdf"')
+        assert resp.data == fake_pdf_bytes

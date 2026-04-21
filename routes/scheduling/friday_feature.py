@@ -196,6 +196,37 @@ def friday_feature_print(tournament_id):
     )
 
 
+@scheduling_bp.route('/<int:tournament_id>/friday-night/pdf')
+def friday_feature_pdf(tournament_id):
+    """FNF schedule as a PDF download (WeasyPrint if installed, HTML fallback otherwise).
+
+    Reuses the same template as /friday-night/print so both surfaces stay in sync.
+    On Railway the fallback serves HTML with Content-Type text/html so the user
+    can still print via Ctrl-P without the deploy needing cairo/pango.
+    """
+    from datetime import datetime
+
+    from services.print_response import weasyprint_or_html
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
+    pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
+    eligible_events = [e for e in pro_events if e.name in eligible_names]
+
+    fnf_config = _load_fnf_config(tournament)
+    fnf_schedule = _build_fnf_schedule(tournament, eligible_events, fnf_config)
+
+    html = render_template(
+        'scheduling/friday_feature_print.html',
+        tournament=tournament,
+        fnf_schedule=fnf_schedule,
+        notes=fnf_config.get('notes', ''),
+        now=datetime.utcnow(),
+    )
+    safe_name = f"{tournament.name}_{tournament.year}_friday_night_feature".replace(' ', '_').replace('/', '-')
+    return weasyprint_or_html(html, safe_name)
+
+
 def _build_fnf_schedule(tournament, eligible_events, fnf_config):
     """Build the Friday Night Feature schedule: selected FNF events in run order,
     each with its heats (run_number, heat_number ordered) and competitor/stand data.
