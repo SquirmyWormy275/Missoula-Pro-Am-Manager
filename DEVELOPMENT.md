@@ -592,6 +592,45 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-21 (V2.12.0)
+
+**Minor — even flight distribution + between-flights drag-drop + print polish**
+
+Saturday show building had two separate problems. The flight builder would stack all of one event's heats into one flight when their competitors didn't overlap with other events (reported as "all underhand in flight 1"), and there was no way to manually move a heat from one flight to another without rebuilding from scratch. Also, the printed heat-sheet borders were too faint to survive photocopy and the day schedule print leaked ink on decorative gray fills. This release fixes all three in one pass.
+
+**Flight builder — per-event per-flight cap (`services/flight_builder.py`):**
+- New `event_per_flight_cap = ceil(N_e / target_flights)` computed in `_optimize_heat_order`. Threaded through `_single_pass_optimize` (tracks `(block, event_id) → count` as heats are placed) and into `_calculate_heat_score` (applies `EVENT_FLIGHT_CAP_PENALTY = 2000` per heat over cap).
+- Penalty is large enough to dominate the +1000 "first appearance" bonus and +500 springboard opener bonus combined, so crowd-variety distribution wins over local spacing optimization when a heat's competitors never appear in any other event. Before: greedy front-loaded same-event-heats in a row whenever all their competitors were new, because +1000 first-appearance crushed the +30 recency bonus. After: each event's heats spread evenly across flights.
+- Mathematically `F × ceil(N_e / F) ≥ N_e` always, so a feasible distribution exists. Sequential heat-number order within each event is preserved (per-event queues remain FIFO).
+- `_score_ordering` gets a matching `EVENT_FLIGHT_CAP_SCORE_PENALTY = 500` per over-cap heat so the multi-pass best-of-N comparison favors the better-distributed ordering.
+- Verified on a 53-heat / 3-flight show mirroring the reported incident: every event at or under its cap, 18/18/17 flight sizes preserved, Women's UH distribution went from 4-0-0 to 1-1-2.
+
+**Between-flights drag-drop (`routes/scheduling/flights.py`, `templates/pro/flights.html`):**
+- New `POST /scheduling/<tid>/flights/bulk-reorder` endpoint. Accepts `{flights: [{flight_id, heat_ids}]}` — the full DOM snapshot. Server rewrites `flight_id` + `flight_position` atomically based on what the client sent. Refuses with 400 if the heat set in the payload doesn't exactly match the heats currently assigned to those flights (guards against a half-loaded DOM dropping heats).
+- Frontend: each heat tile gets a grip handle (`.heat-drag-handle`) via `<i class="bi-grip-vertical">`. All three flight grids share `group: 'flight-heats'` so SortableJS allows drag between flights, not just within. On drop, the JS snapshots every visible flight's current state and POSTs to the bulk endpoint. Failed responses trigger a page reload so server state always wins. CSP nonce auto-injected by `_inject_csp_nonce` (inline `<script>` block requires no manual nonce attribute).
+- Saw-block recompute hook fires automatically after the move (same pattern as the existing `reorder_flight_heats`), so saw heats rebalance their Block A/B assignments to the new sequence.
+- 2 new integration tests in `tests/test_saw_block_integration.py`: happy-path cross-flight move verifies `flight_id` + `flight_position` update correctly for all three affected heats; mismatched-heat-set test verifies the 400 guard rejects incomplete payloads.
+
+**Heat sheet print (`templates/scheduling/heat_sheets_print.html`):**
+- `@media print` block: `.heat-card` border bumped from `1.5px solid #444` to `2.5px solid #000`. `.heat-card-head` bottom border from `1.5px solid #555` to `2.5px solid #000`. Pro/college left color bands from 4px to 6px (still navy/mauve). Each heat is now unambiguous on paper and survives photocopy + fax.
+
+**Day schedule print (`templates/scheduling/day_schedule_print.html`):**
+- Removed gray fill on `.slot-header` (was `#f1f1f1`) and `.heat-table thead th` (was `#fafafa`) — pure ink savings on every printed page.
+- Section titles (Friday Day Show / Friday Showcase / Saturday Show) now use `3px solid #000` above + `1px solid #000` below + uppercase tracking. Unmistakable day break without filled banners.
+- `.slot` card gets `1px solid #000` + `2px solid #000` below slot-title. Table rows use bottom-only `1px solid #000` hairlines (no top rules, no colored fills). `Heat N` label only prints on the first competitor row per heat (uses `{% if loop.first %}`) so scanning a column of 5 competitors in the same heat doesn't repeat the label 5 times.
+- Bracket rosters bumped from 2 columns to 3 for tighter vertical use. Page-break rules: `.slot` avoids splitting, `.section-title` avoids orphaning.
+
+**Regression coverage — `tests/test_flight_builder_integration.py::test_even_event_distribution_across_flights`:**
+- 3 events × 4 heats × disjoint competitor pools × 3 flights. Asserts no flight exceeds `ceil(4/3) = 2` heats of any event. Would fail against the pre-fix greedy (Women's UH 4-0-0). Passes on the new algorithm (spread 1-1-2 or 2-1-1).
+
+**Docs:**
+- `FlightLogic.md` §3.4 rewritten: removed the "variety emerges naturally from competitor spacing" claim (only true when competitors overlap across events, which is exactly the case that broke), documented the new cap mechanic with constants and penalties.
+
+**Data model:** No schema changes.
+**Tests:** 2940 passed (+3 new regression guards). 98 flight-specific tests all green. 7 saw-block integration tests all green (2 new).
+
+---
+
 ### 2026-04-21 (V2.11.3)
 
 **Patch — design review fixes: touch targets, root font-family, print-mode brand fonts**
