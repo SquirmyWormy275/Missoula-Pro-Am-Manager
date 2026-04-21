@@ -592,6 +592,31 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-21 (V2.11.2)
+
+**Patch — Pro event fee configuration surfaced + tested**
+
+`GET/POST /reporting/<tid>/pro/event-fees` and its template `reporting/event_fee_config.html` were already implemented (bulk-apply default fees to enrolled pro competitors, `overwrite` flag, per-event enrollment count + suggested fee), but the route had no sidebar link and no real tests — just one smoke hit in `test_route_smoke_qa.py`. CLAUDE.md still listed it as a gap. Patch makes the existing feature discoverable and verified.
+
+**Sidebar — `templates/_sidebar.html`:**
+- New "Event Fees" entry under Pro Day section, positioned immediately above the existing "Fee Tracker" link. `bi-cash-stack` icon. Active-route highlighting via `request.endpoint == 'reporting.pro_event_fees'`.
+
+**Tests — 6 new in `tests/test_pro_event_fees.py`:**
+- GET renders with event names + enrollment UI visible
+- POST applies the fee to competitors enrolled in that event AND skips competitors not enrolled (even when their row would have received the form field)
+- Blank fee field is a no-op (doesn't wipe or zero-out existing fees)
+- Default behavior skips competitors who already have a non-zero fee for that event
+- `overwrite=on` replaces existing non-zero fees
+- Invalid fee input ("twenty bucks") flashes an error but returns 302 — no 500
+
+**Docs — CLAUDE.md:**
+- Moved Pro Event Fee Configuration from Section 5 "Known Gaps" to "Features Functionally Complete"
+- Dropped from Section 8 remaining-gaps list
+
+**Data model:** No schema changes.
+
+---
+
 ### 2026-04-21 (V2.11.1)
 
 **Patch — Friday Night Feature PDF export**

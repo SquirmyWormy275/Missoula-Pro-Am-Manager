@@ -432,6 +432,7 @@ PayoutTemplate  (tournament-independent, standalone)
 - Handicap export helpers (`services/handicap_export.py`): chopping-event Excel export utilities
 - Gear Sharing Manager (`routes/registration.py`, `services/gear_sharing.py`, `templates/pro/gear_sharing.html`): comprehensive pro gear-sharing audit — verified pairs, unresolved entries, heat conflicts; free-text parse with review workflow; gear groups (multiple pairs sharing one saw); bidirectional sync; heat conflict auto-fix; auto-populate partners; cleanup scratched; college gear constraints view/edit; printable report
 - Fee Tracker (`routes/reporting.py`, `templates/reporting/fee_tracker.html`): entry fee collection checklist per pro competitor; per-event breakdown expandable rows; mark/unmark paid; outstanding-only filter; summary cards
+- Pro Event Fee Configuration (`GET/POST /reporting/<tid>/pro/event-fees`, `templates/reporting/event_fee_config.html`): set default fee per pro event; apply in bulk to all enrolled competitors; `overwrite` flag replaces existing non-zero fees; skips competitors not enrolled in the event; invalid fee input flashes error without crashing; sidebar link under Pro Operations. See `tests/test_pro_event_fees.py` for coverage.
 - Tournament Setup consolidated page (`routes/main.py`, `templates/tournament_setup.html`): single `/tournament/<tid>/setup` page with tabs for Events, Wood Specs, and Settings (name/year/dates); wood specs and copy-from now redirect back to setup when called from this page
 - Tournament Detail redesigned (`templates/tournament_detail.html`): 3-phase action panels (Before Show / Game Day / After Show); 6-step workflow stepper; contextual next-step banner per status; stats bar with actionable alerts; async validation status banner
 - Show Day Dashboard (`/scheduling/<tid>/show-day`, `templates/scheduling/show_day.html`): flight status cards (live/completed/pending), current heat CTA, upcoming heats, college event progress bars; 60s auto-refresh
@@ -497,8 +498,6 @@ PayoutTemplate  (tournament-independent, standalone)
 ### Known Gaps and Incomplete Features
 
 **Friday Night Feature schedule view (V2.11.0):** The Friday Night Feature now has a heat-by-heat schedule view on the Friday Showcase page plus a printable view at `/scheduling/<tid>/friday-night/print`. FNF events selected into `schedule_config['friday_pro_event_ids']` are excluded from Saturday pro flights (their heats exist in the DB with `flight_id=NULL`). Heats are ordered Springboard → Pro 1-Board → 3-Board Jigger via `_fnf_event_order()` in `routes/scheduling/friday_feature.py`. FNF still runs as a straight heat-by-heat schedule, not flights — intentional, matching college day format.
-
-**Pro event fee configuration UI:** No route or template exists for setting fee amounts per event per tournament. `entry_fees` and `fees_paid` fields exist on `ProCompetitor` but fees must currently be set directly in the database or via the edit competitor form.
 
 **Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
 
@@ -732,7 +731,6 @@ The broader vision: STRATHMARK calculates start marks and predicted times, feeds
 The following features remain as planned or implied by the codebase and requirements:
 
 **Remaining gaps (from Section 5):**
-- Pro event fee configuration UI
 - Pro entry form redesign (scope pending; current import handled by `registration_import.py` enhanced pipeline)
 
 **Technical debt:**
