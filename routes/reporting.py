@@ -3,7 +3,6 @@ Reporting routes for standings, results, and exports.
 """
 import json
 import os
-import sqlite3
 import tempfile
 
 from flask import (
@@ -37,26 +36,15 @@ from services.excel_io import export_results_to_excel
 from services.handicap_export import build_chopping_rows, export_chopping_results_to_excel
 from services.report_cache import get as cache_get
 from services.report_cache import set as cache_set
-from services.upload_security import malware_scan
+from services.restore_workflow import prepare_sqlite_restore
+from services.restore_workflow import sqlite_schema_info as _restore_schema_info
 
 reporting_bp = Blueprint('reporting', __name__)
 
 
 def _sqlite_schema_info(path: str) -> dict:
     """Read lightweight schema metadata from a SQLite database file."""
-    conn = sqlite3.connect(path)
-    try:
-        tables = {
-            row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-        revision = None
-        if 'alembic_version' in tables:
-            row = conn.execute('SELECT version_num FROM alembic_version LIMIT 1').fetchone()
-            revision = row[0] if row else None
-        return {'tables': tables, 'revision': revision}
-    finally:
-        conn.close()
+    return _restore_schema_info(path)
 
 
 def _cached_payload(key: str, builder):
@@ -471,29 +459,14 @@ def restore_database(tournament_id):
     f.save(temp_path)
 
     try:
-        malware_scan(
-            temp_path,
-            enabled=bool(current_app.config.get('ENABLE_UPLOAD_MALWARE_SCAN', False)),
-            command_template=current_app.config.get('MALWARE_SCAN_COMMAND', '')
+        restore_plan = prepare_sqlite_restore(
+            upload_path=temp_path,
+            db_uri=uri,
+            instance_path=current_app.instance_path,
+            malware_scan_enabled=bool(current_app.config.get('ENABLE_UPLOAD_MALWARE_SCAN', False)),
+            malware_scan_command=current_app.config.get('MALWARE_SCAN_COMMAND', ''),
         )
-        db_path = uri.replace('sqlite:///', '', 1)
-        if not os.path.isabs(db_path):
-            db_path = os.path.join(current_app.instance_path, db_path)
-        current_info = _sqlite_schema_info(db_path)
-        uploaded_info = _sqlite_schema_info(temp_path)
-        required_tables = {'tournaments', 'events', 'event_results', 'heats', 'users'}
-        missing_tables = sorted(required_tables - set(uploaded_info['tables']))
-        if missing_tables:
-            raise RuntimeError(
-                f'Restore file is missing required tables: {", ".join(missing_tables)}'
-            )
-        if not uploaded_info.get('revision'):
-            raise RuntimeError('Restore file is missing Alembic migration metadata.')
-        if current_info.get('revision') and uploaded_info['revision'] != current_info['revision']:
-            raise RuntimeError(
-                'Restore file schema revision does not match the current application schema. '
-                f"Expected {current_info['revision']}, got {uploaded_info['revision']}."
-            )
+        db_path = restore_plan['target_path']
         db.session.remove()
         db.engine.dispose()
         os.replace(temp_path, db_path)
