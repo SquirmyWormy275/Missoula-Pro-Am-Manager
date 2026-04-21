@@ -266,17 +266,14 @@ class TestBackupTimestamp:
         # All chars except underscore should be digits
         assert ts.replace('_', '').isdigit()
 
-    def test_timestamp_uses_utcnow(self):
-        """_timestamp() uses datetime.utcnow() for consistency."""
-        from datetime import datetime
-
+    def test_timestamp_uses_utc_filename_helper(self):
+        """_timestamp() delegates UTC filename formatting to the shared helper."""
         from services.backup import _timestamp
-        with patch('services.backup.datetime') as mock_dt:
-            mock_dt.utcnow.return_value = datetime(2026, 3, 20, 14, 30, 45)
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch('services.backup.utc_timestamp_for_filename') as mock_ts:
+            mock_ts.return_value = '20260320_143045'
             result = _timestamp()
             assert result == '20260320_143045'
-            mock_dt.utcnow.assert_called_once()
+            mock_ts.assert_called_once()
 
 
 class TestDbPathFromUri:

@@ -9,6 +9,7 @@ from datetime import datetime
 
 from database import db
 from models.background_job import BackgroundJob
+from services.time_utils import utc_now_naive
 
 _executor = ThreadPoolExecutor(max_workers=2)
 _jobs = {}
@@ -122,7 +123,7 @@ def _row_to_dict(row: BackgroundJob) -> dict:
 
 def submit(label: str, fn, *args, metadata: dict | None = None, **kwargs) -> str:
     job_id = uuid.uuid4().hex
-    submitted_at = datetime.utcnow()
+    submitted_at = utc_now_naive()
     with _lock:
         _jobs[job_id] = {
             'id': job_id,
@@ -155,7 +156,7 @@ def submit(label: str, fn, *args, metadata: dict | None = None, **kwargs) -> str
             except Exception as exc:
                 job['status'] = 'failed'
                 job['error'] = str(exc)
-            job['finished_at'] = datetime.utcnow()
+            job['finished_at'] = utc_now_naive()
             snapshot = _snapshot(job)
         _persist_job(
             job_id,
@@ -168,7 +169,7 @@ def submit(label: str, fn, *args, metadata: dict | None = None, **kwargs) -> str
     with _lock:
         _jobs[job_id]['status'] = 'running'
         _jobs[job_id]['future'] = future
-        started_at = datetime.utcnow()
+        started_at = utc_now_naive()
         _jobs[job_id]['started_at'] = started_at
     _persist_job(job_id, status='running', started_at=started_at)
 

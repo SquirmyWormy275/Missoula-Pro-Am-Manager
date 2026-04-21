@@ -1,7 +1,7 @@
 """Durable record of async background job execution."""
-from datetime import datetime
 
 from database import db
+from services.time_utils import utc_now_naive
 
 
 class BackgroundJob(db.Model):
@@ -18,7 +18,7 @@ class BackgroundJob(db.Model):
     label = db.Column(db.String(120), nullable=False)
     status = db.Column(db.String(20), nullable=False)
     tournament_id = db.Column(db.Integer, nullable=True)
-    submitted_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    submitted_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)
     result_json = db.Column(db.Text, nullable=True)
