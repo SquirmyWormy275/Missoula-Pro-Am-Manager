@@ -38,9 +38,11 @@ from services.reporting_export import (
     build_chopping_export,
     build_chopping_json_payload,
     build_results_export,
+    build_video_judge_export,
     resolve_completed_export_path,
     safe_download_name,
     submit_results_export_job,
+    submit_video_judge_export_job,
 )
 from services.restore_workflow import prepare_sqlite_restore
 from services.restore_workflow import sqlite_schema_info as _restore_schema_info
@@ -380,8 +382,63 @@ def export_results_job_status(tournament_id, job_id):
             pass
         return response
 
-    download_name = safe_download_name(tournament, 'results.xlsx')
+    # Download-name suffix depends on the kind of export the job produced.
+    # Defaults to 'results.xlsx' for the original all-results job; other
+    # kinds (video_judge_sheets) pick their own suffix here.
+    suffix_by_kind = {
+        'video_judge_sheets': 'video_judge_sheets.xlsx',
+    }
+    download_name = safe_download_name(
+        tournament, suffix_by_kind.get(job_kind, 'results.xlsx')
+    )
     return send_file(path, as_attachment=True, download_name=download_name)
+
+
+@reporting_bp.route('/<int:tournament_id>/export-video-judge')
+def export_video_judge_workbook(tournament_id):
+    """Synchronous Video Judge Excel workbook download.
+
+    Builds immediately and returns the xlsx as an attachment.  For bigger
+    tournaments use the /async variant to offload via background_jobs.
+    """
+    from services.video_judge_export import VideoJudgeWorkbookError
+    tournament = Tournament.query.get_or_404(tournament_id)
+    try:
+        export = build_video_judge_export(tournament)
+    except VideoJudgeWorkbookError as exc:
+        flash(f'Could not build Video Judge workbook: {exc}', 'error')
+        return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
+
+    log_action('report_export_downloaded', 'tournament', tournament.id, {
+        'tournament_id': tournament.id,
+        'format': export['format'],
+        'kind': export['kind'],
+    })
+    db.session.commit()
+
+    @after_this_request
+    def cleanup_file(response):
+        try:
+            os.remove(export['path'])
+        except OSError:
+            pass
+        return response
+
+    return send_file(export['path'], as_attachment=True, download_name=export['download_name'])
+
+
+@reporting_bp.route('/<int:tournament_id>/export-video-judge/async', methods=['POST'])
+def export_video_judge_workbook_async(tournament_id):
+    """Start Video Judge workbook generation as a background job."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    job_id = submit_video_judge_export_job(tournament_id)
+    log_action('report_export_job_started', 'tournament', tournament.id, {
+        'job_id': job_id,
+        'kind': 'video_judge_sheets',
+    })
+    db.session.commit()
+    return redirect(url_for('reporting.export_results_job_status',
+                            tournament_id=tournament_id, job_id=job_id))
 
 
 @reporting_bp.route('/<int:tournament_id>/backup')
