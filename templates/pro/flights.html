@@ -167,6 +167,93 @@
 .heat-tile.sortable-drag { opacity: 0.9; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
 .heat-grid.drag-over { background: rgba(232,144,18,0.06); }
 
+/* Competitor row drag (within-event heat-to-heat) */
+.comp-row-drag-handle {
+    cursor: grab;
+    color: var(--sx-text-2);
+    font-size: 0.75rem;
+    padding: 0 4px 0 0;
+    user-select: none;
+}
+.comp-row-drag-handle:hover { color: var(--sx-text); }
+.comp-row { cursor: default; }
+.comp-row.sortable-ghost { opacity: 0.35; background: var(--sx-fire-glow, rgba(232,144,18,0.15)) !important; }
+.comp-row.sortable-drag { background: var(--sx-surface-3) !important; box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
+.heat-tile table.comp-sortable.drag-invalid-target {
+    outline: 2px dashed rgba(239,43,22,0.55);
+    outline-offset: -2px;
+    background: rgba(239,43,22,0.06);
+}
+.heat-tile table.comp-sortable.drag-valid-target {
+    outline: 2px dashed rgba(45,168,94,0.60);
+    outline-offset: -2px;
+    background: rgba(45,168,94,0.06);
+}
+
+/* ── Holding Bin ──────────────────────────────────────────── */
+.holding-bin {
+    position: sticky;
+    bottom: 0;
+    z-index: 60;
+    margin: 2rem 0 0;
+    padding: 10px 14px;
+    background: var(--sx-surface-2);
+    border: 2px dashed var(--sx-amber);
+    border-radius: 10px;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
+    min-height: 72px;
+}
+.holding-bin.empty::after {
+    content: 'Drop competitors here to temporarily hold them while rearranging. They remain draggable back into any open heat of the same event.';
+    display: block;
+    color: var(--sx-text-2);
+    font-size: 0.82rem;
+    font-style: italic;
+    line-height: 1.4;
+    padding: 6px 2px;
+}
+.holding-bin-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    gap: 10px;
+}
+.holding-bin-title {
+    font-weight: 800;
+    font-size: 0.88rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sx-amber);
+}
+.holding-bin-count { font-size: 0.75rem; color: var(--sx-text-2); }
+.holding-bin-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 36px;
+}
+.bin-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--sx-surface);
+    border: 1px solid var(--sx-amber);
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: var(--sx-text);
+    cursor: grab;
+    user-select: none;
+}
+.bin-item .bin-item-event {
+    font-size: 0.68rem;
+    color: var(--sx-text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.bin-item.sortable-drag { background: var(--sx-surface-3); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+
 /* ── Type labels ──────────────────────────────────────────── */
 .badge-college-label {
     display: inline-block;
@@ -316,11 +403,24 @@
                         {% if row.heat.status == 'completed' %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% endif %}
                     </span>
                 </div>
-                <table>
+                <table class="comp-sortable"
+                       data-heat-id="{{ row.heat.id }}"
+                       data-event-id="{{ row.event.id }}"
+                       data-event-name="{{ row.event.display_name|e }}"
+                       data-max-stands="{{ row.event.max_stands or 4 }}"
+                       data-is-partnered="{{ 'true' if row.event.is_partnered else 'false' }}">
                     {% for comp in row.competitors %}
-                    <tr>
+                    <tr class="comp-row"
+                        data-competitor-id="{{ comp.id }}"
+                        data-competitor-name="{{ comp.name|e }}"
+                        {% if comp.partner_id %}data-partner-id="{{ comp.partner_id }}"{% endif %}>
                         <td class="td-stand">{{ comp.stand }}</td>
-                        <td class="td-name">{{ comp.name }}</td>
+                        <td class="td-name">
+                            <span class="comp-row-drag-handle" title="Drag to move between heats of the same event">
+                                <i class="bi bi-grip-vertical"></i>
+                            </span>
+                            {{ comp.name }}
+                        </td>
                     </tr>
                     {% else %}
                     <tr><td colspan="2" class="text-muted fst-italic">No competitors</td></tr>
@@ -373,9 +473,20 @@
 </div>
 
 {% if flight_data %}
-<div class="d-none d-md-block text-muted small text-center mt-2 mb-4">
+<div class="d-none d-md-block text-muted small text-center mt-2 mb-1">
     <i class="bi bi-grip-vertical"></i>
-    Drag heats by the handle to reorder within a flight, or drop into another flight to move.
+    Drag heats by the handle (top-left of each tile) to reorder or move between flights.
+    Drag a competitor row by its small grip to move them into another heat of the same event.
+</div>
+
+<div id="holding-bin" class="holding-bin empty">
+    <div class="holding-bin-header">
+        <span class="holding-bin-title">
+            <i class="bi bi-bucket me-1"></i>Holding Bin
+        </span>
+        <span class="holding-bin-count" id="holding-bin-count">0 competitors</span>
+    </div>
+    <div class="holding-bin-items" id="holding-bin-items"></div>
 </div>
 {% endif %}
 {% endblock %}
@@ -441,6 +552,230 @@
             }
         });
     });
+
+    // ========================================================================
+    // Competitor-row drag: within-event heat-to-heat + holding bin
+    // ========================================================================
+
+    var BIN_STORAGE_KEY = 'flight-holding-bin-' + tournamentId;
+    var binItemsEl = document.getElementById('holding-bin-items');
+    var binCountEl = document.getElementById('holding-bin-count');
+    var binRoot = document.getElementById('holding-bin');
+
+    function loadBin() {
+        try {
+            var raw = localStorage.getItem(BIN_STORAGE_KEY);
+            return raw ? JSON.parse(raw) : [];
+        } catch (_) { return []; }
+    }
+    function saveBin(items) {
+        try { localStorage.setItem(BIN_STORAGE_KEY, JSON.stringify(items)); }
+        catch (_) {}
+        renderBin();
+    }
+    function renderBin() {
+        var items = loadBin();
+        binItemsEl.innerHTML = '';
+        items.forEach(function (item, idx) {
+            var el = document.createElement('span');
+            el.className = 'bin-item';
+            el.dataset.binIndex = String(idx);
+            el.dataset.competitorId = String(item.competitor_id);
+            el.dataset.eventId = String(item.event_id);
+            el.dataset.competitorName = item.name;
+            if (item.partner_id) { el.dataset.partnerId = String(item.partner_id); }
+            el.innerHTML =
+                '<i class="bi bi-grip-vertical"></i>' +
+                '<span class="bin-item-event">' + item.event_name + '</span>' +
+                '<span>' + item.name + '</span>';
+            binItemsEl.appendChild(el);
+        });
+        binCountEl.textContent = items.length + (items.length === 1 ? ' competitor' : ' competitors');
+        binRoot.classList.toggle('empty', items.length === 0);
+    }
+    function addToBin(item) {
+        var items = loadBin();
+        // Skip duplicates
+        if (items.some(function (i) { return i.competitor_id === item.competitor_id; })) { return; }
+        items.push(item);
+        saveBin(items);
+    }
+    function removeFromBin(competitorId) {
+        var items = loadBin().filter(function (i) { return i.competitor_id !== competitorId; });
+        saveBin(items);
+    }
+
+    function parseCompRow(tr) {
+        return {
+            competitor_id: parseInt(tr.dataset.competitorId, 10),
+            name: tr.dataset.competitorName || '',
+            partner_id: tr.dataset.partnerId ? parseInt(tr.dataset.partnerId, 10) : null,
+            heat_id: parseInt(tr.closest('.comp-sortable').dataset.heatId, 10),
+            event_id: parseInt(tr.closest('.comp-sortable').dataset.eventId, 10),
+            event_name: tr.closest('.comp-sortable').dataset.eventName || '',
+            is_partnered: tr.closest('.comp-sortable').dataset.isPartnered === 'true',
+        };
+    }
+
+    function moveCompetitorServer(sourceHeatId, targetHeatId, competitorIds) {
+        return fetch('/scheduling/' + tournamentId + '/heats/' + sourceHeatId + '/drag-move', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                competitor_ids: competitorIds,
+                target_heat_id: targetHeatId
+            })
+        }).then(function (r) { return r.json().then(function (b) { return {status: r.status, body: b}; }); });
+    }
+
+    function showToast(msg, kind) {
+        // Minimal inline toast — reuses Bootstrap alert classes.
+        var wrap = document.createElement('div');
+        wrap.className = 'alert alert-' + (kind || 'warning') + ' position-fixed top-0 end-0 m-3';
+        wrap.style.zIndex = '9999';
+        wrap.style.maxWidth = '420px';
+        wrap.textContent = msg;
+        document.body.appendChild(wrap);
+        setTimeout(function () { wrap.remove(); }, 5000);
+    }
+
+    // Per-heat Sortable (per-event group so competitor can only be dropped into
+    // heats of the same event). Includes the holding bin as a universal target.
+    document.querySelectorAll('.comp-sortable').forEach(function (table) {
+        var eventId = table.dataset.eventId;
+        new Sortable(table, {
+            group: { name: 'event-' + eventId, put: ['event-' + eventId, 'bin'] },
+            animation: 120,
+            handle: '.comp-row-drag-handle',
+            draggable: 'tr.comp-row',
+            ghostClass: 'sortable-ghost',
+            dragClass: 'sortable-drag',
+            onStart: function (evt) {
+                // Visually mark same-event heats as valid targets, others as invalid.
+                document.querySelectorAll('.comp-sortable').forEach(function (t) {
+                    if (t === evt.from) return;
+                    if (t.dataset.eventId === eventId) {
+                        var max = parseInt(t.dataset.maxStands, 10) || 4;
+                        var current = t.querySelectorAll('tr.comp-row').length;
+                        if (current < max) t.classList.add('drag-valid-target');
+                        else t.classList.add('drag-invalid-target');
+                    } else {
+                        t.classList.add('drag-invalid-target');
+                    }
+                });
+            },
+            onEnd: function () {
+                document.querySelectorAll('.comp-sortable').forEach(function (t) {
+                    t.classList.remove('drag-valid-target', 'drag-invalid-target');
+                });
+            },
+            onAdd: function (evt) {
+                // A row dropped INTO this table from another heat or from the bin.
+                var tr = evt.item;
+                var info = parseCompRow(tr);
+                var targetHeatId = parseInt(table.dataset.heatId, 10);
+                var max = parseInt(table.dataset.maxStands, 10) || 4;
+                var currentCount = table.querySelectorAll('tr.comp-row').length;
+
+                if (currentCount > max) {
+                    showToast('Heat is full. Drop reverted — use the holding bin.', 'danger');
+                    evt.from.appendChild(tr);  // revert DOM
+                    return;
+                }
+
+                // Were we coming from another heat, or from the bin?
+                var fromBin = evt.from === binItemsEl;
+                var sourceHeatId = fromBin
+                    ? (tr.dataset.originalHeatId ? parseInt(tr.dataset.originalHeatId, 10) : null)
+                    : info.heat_id;
+
+                if (!sourceHeatId) {
+                    showToast('Could not determine source heat — refresh and try again.', 'danger');
+                    return;
+                }
+
+                // Partnered events: if partner_id is set and partner exists in source heat,
+                // move both. (If dragged from bin, the partner bin-entry is already here.)
+                var competitorIds = [info.competitor_id];
+                if (info.is_partnered && info.partner_id && !fromBin) {
+                    var sourceTable = document.querySelector('.comp-sortable[data-heat-id="' + sourceHeatId + '"]');
+                    if (sourceTable) {
+                        var partnerRow = sourceTable.querySelector('tr.comp-row[data-competitor-id="' + info.partner_id + '"]');
+                        if (partnerRow) { competitorIds.push(info.partner_id); }
+                    }
+                }
+
+                moveCompetitorServer(sourceHeatId, targetHeatId, competitorIds).then(function (res) {
+                    if (!res.body || !res.body.ok) {
+                        var err = (res.body && res.body.error) || 'Move failed';
+                        if (res.status === 409 && res.body && res.body.code === 'target_full') {
+                            showToast(err, 'warning');
+                        } else {
+                            showToast(err, 'danger');
+                        }
+                        window.location.reload();
+                        return;
+                    }
+                    if (fromBin) { removeFromBin(info.competitor_id); }
+                    // Quick reload so stand numbers + competitor orders reflect DB state.
+                    window.location.reload();
+                }).catch(function () {
+                    showToast('Network error on move — reloading.', 'danger');
+                    window.location.reload();
+                });
+            }
+        });
+    });
+
+    // On load, hide any competitor rows that are already in the bin (survive
+    // page reload — server still lists them in their original heat).
+    function hideBinCompetitorsInHeats() {
+        var items = loadBin();
+        var binIds = new Set(items.map(function (i) { return String(i.competitor_id); }));
+        document.querySelectorAll('tr.comp-row').forEach(function (tr) {
+            if (binIds.has(tr.dataset.competitorId)) { tr.remove(); }
+        });
+    }
+
+    // Holding bin sortable — accepts any event group via put: true with validation.
+    if (binItemsEl) {
+        renderBin();
+        hideBinCompetitorsInHeats();
+        new Sortable(binItemsEl, {
+            group: { name: 'bin', put: true, pull: true },
+            animation: 120,
+            draggable: '.bin-item, tr.comp-row',
+            ghostClass: 'sortable-ghost',
+            onAdd: function (evt) {
+                // A competitor row was dropped into the bin.
+                var tr = evt.item;
+                if (tr.classList.contains('bin-item')) return;  // bin reshuffle
+
+                var info = parseCompRow(tr);
+                // Add to localStorage bin with metadata
+                addToBin({
+                    competitor_id: info.competitor_id,
+                    name: info.name,
+                    partner_id: info.partner_id,
+                    event_id: info.event_id,
+                    event_name: info.event_name,
+                    heat_id: info.heat_id,
+                });
+
+                // Remove from source heat on the server.
+                // Sending the move to a fake target won't work; instead, we null the
+                // competitor out of the source heat via a dedicated endpoint. For
+                // MVP, since the DB source-of-truth is still the old heat, we just
+                // re-render from localStorage. The server state will be reconciled
+                // when the bin item is dragged back into a real heat.
+                tr.remove();  // remove from DOM; DB still has it in source heat
+                showToast('Added to holding bin. DB unchanged until you drop it into a real heat.', 'info');
+            }
+        });
+    }
 })();
 </script>
 {% endif %}

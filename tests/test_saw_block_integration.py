@@ -459,6 +459,139 @@ def test_bulk_reorder_rejects_mismatched_heat_set(app, auth_client):
     assert body and body.get("ok") is False
 
 
+def test_move_competitor_happy_path(app, auth_client):
+    """Drag-drop a competitor from one heat to another heat of the same event.
+
+    Uses a non-saw event so saw_block_assignment's post-move reshuffle doesn't
+    mask the assignment assertion.
+    """
+    from database import db as _db
+    from models import Event
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        ev = Event(tournament_id=t.id, name="Underhand", event_type="pro",
+                   gender="M", scoring_type="time", stand_type="underhand",
+                   max_stands=5)
+        _db.session.add(ev); _db.session.flush()
+        h_a = _seed_heat(_db, ev, 1, competitors=[1, 2, 3, 4],
+                        stand_assignments={"1": 1, "2": 2, "3": 3, "4": 4})
+        h_b = _seed_heat(_db, ev, 2, competitors=[5, 6],
+                        stand_assignments={"5": 1, "6": 2})
+        _db.session.commit()
+        tid, h_a_id, h_b_id = t.id, h_a.id, h_b.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/heats/{h_a_id}/drag-move",
+        json={"competitor_ids": [2], "target_heat_id": h_b_id},
+    )
+    assert resp.status_code == 200, resp.data
+    body = resp.get_json()
+    assert body["ok"] is True
+
+    with app.app_context():
+        from models import Heat
+        h_a = Heat.query.get(h_a_id)
+        h_b = Heat.query.get(h_b_id)
+        assert 2 not in h_a.get_competitors()
+        assert 2 in h_b.get_competitors()
+        # Target heat had stands 1 and 2 used; competitor 2 gets next free = 3
+        assert h_b.get_stand_assignments().get("2") == 3
+
+
+def test_move_competitor_rejects_full_target(app, auth_client):
+    """Moving into a full heat returns 409 with target_full code."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        ev = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        ev.max_stands = 4
+        h_a = _seed_heat(_db, ev, 1, competitors=[1, 2],
+                        stand_assignments={"1": 1, "2": 2})
+        h_b = _seed_heat(_db, ev, 2, competitors=[5, 6, 7, 8],
+                        stand_assignments={"5": 1, "6": 2, "7": 3, "8": 4})
+        _db.session.commit()
+        tid, h_a_id, h_b_id = t.id, h_a.id, h_b.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/heats/{h_a_id}/drag-move",
+        json={"competitor_ids": [1], "target_heat_id": h_b_id},
+    )
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert body.get("code") == "target_full"
+
+    # State unchanged
+    with app.app_context():
+        from models import Heat
+        h_a = Heat.query.get(h_a_id)
+        h_b = Heat.query.get(h_b_id)
+        assert 1 in h_a.get_competitors()
+        assert 1 not in h_b.get_competitors()
+
+
+def test_move_competitor_rejects_cross_event(app, auth_client):
+    """Moving a competitor into a heat of a DIFFERENT event is refused."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        ev1 = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        ev1.max_stands = 4
+        ev2 = _seed_saw_event(_db, t, name="Double Buck", event_type="pro")
+        ev2.max_stands = 4
+        h_a = _seed_heat(_db, ev1, 1, competitors=[1, 2],
+                        stand_assignments={"1": 1, "2": 2})
+        h_b = _seed_heat(_db, ev2, 1, competitors=[5, 6],
+                        stand_assignments={"5": 1, "6": 2})
+        _db.session.commit()
+        tid, h_a_id, h_b_id = t.id, h_a.id, h_b.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/heats/{h_a_id}/drag-move",
+        json={"competitor_ids": [1], "target_heat_id": h_b_id},
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert "same event" in body["error"].lower()
+
+
+def test_move_competitor_pair_moves_both(app, auth_client):
+    """Partnered events: when two competitor_ids are supplied, both move atomically."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        ev = _seed_saw_event(_db, t, name="Jack & Jill", event_type="pro",
+                             is_partnered=True)
+        ev.max_stands = 4
+        h_a = _seed_heat(_db, ev, 1, competitors=[10, 11, 12, 13],
+                        stand_assignments={"10": 1, "11": 1, "12": 2, "13": 2})
+        h_b = _seed_heat(_db, ev, 2, competitors=[],
+                        stand_assignments={})
+        _db.session.commit()
+        tid, h_a_id, h_b_id = t.id, h_a.id, h_b.id
+
+    # Move the pair [10, 11] as a unit
+    resp = auth_client.post(
+        f"/scheduling/{tid}/heats/{h_a_id}/drag-move",
+        json={"competitor_ids": [10, 11], "target_heat_id": h_b_id},
+    )
+    assert resp.status_code == 200, resp.data
+
+    with app.app_context():
+        from models import Heat
+        h_a = Heat.query.get(h_a_id)
+        h_b = Heat.query.get(h_b_id)
+        assert 10 not in h_a.get_competitors()
+        assert 11 not in h_a.get_competitors()
+        assert 10 in h_b.get_competitors()
+        assert 11 in h_b.get_competitors()
+
+
 def test_reorder_friday_events_triggers_recompute(app, auth_client):
     """Reordering Friday events reassigns blocks to match new event order."""
     from database import db as _db
