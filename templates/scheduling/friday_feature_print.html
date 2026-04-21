@@ -3,9 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <title>Friday Night Feature Schedule - {{ tournament.name }} {{ tournament.year }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Inter:wght@400;500;600;700&display=swap">
     <style>
+        /* Brand-consistent fonts for the printable schedule.
+           Fraunces for headings (warmth), Inter for body.
+           Design review F-003 (2026-04-21). */
         body {
-            font-family: Arial, sans-serif;
+            font-family: "Inter", "Segoe UI", Arial, sans-serif;
             font-size: 11pt;
             margin: 24px;
             color: #111;
@@ -14,11 +20,14 @@
             margin: 0 0 4px 0;
             font-size: 18pt;
             color: #000;
+            font-family: "Fraunces", Georgia, serif;
+            letter-spacing: 0.01em;
         }
         h2 {
             margin: 0 0 8px 0;
             font-size: 13pt;
             color: #000;
+            font-family: "Fraunces", Georgia, serif;
         }
         .muted {
             color: #555;
