@@ -633,6 +633,14 @@
                             <span class="fw-semibold" style="font-size:0.85rem;">{{ e.display_name }}</span>
                             {% if e.is_open %}<span class="badge bg-success" style="font-size:0.65rem;">OPEN</span>{% endif %}
                             {% if 'birling' in e.name|lower %}<span class="badge bg-secondary" style="font-size:0.65rem;">Always Last</span>{% endif %}
+                            {% if e.scoring_type == 'bracket' %}
+                                <a href="{{ url_for('scheduling.birling_manage', tournament_id=tournament.id, event_id=e.id) }}"
+                                   class="btn btn-sm btn-outline-info ms-auto"
+                                   style="font-size:0.7rem; padding:1px 8px;"
+                                   title="Seed, generate, and manage this birling bracket.">
+                                    <i class="bi bi-diagram-3 me-1"></i>Bracket
+                                </a>
+                            {% endif %}
                         </li>
                         {% endfor %}
                     </ul>

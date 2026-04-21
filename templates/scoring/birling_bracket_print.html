@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Birling Blank Bracket{% if brackets and brackets|length == 1 %} — {{ brackets[0].event.display_name }}{% endif %}</title>
+<style>
+    /* Standalone template — does NOT extend base.html.  WeasyPrint needs
+       all CSS inline with @page rules; browsers Ctrl-P read the same CSS. */
+    @page {
+        size: Letter landscape;
+        margin: 0.4in 0.4in 0.55in 0.4in;
+        @bottom-center {
+            content: "Page " counter(page) " of " counter(pages) "  —  STRATHEX Tournament Management";
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9pt;
+            color: #444;
+        }
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+        margin: 0; padding: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #000;
+        background: #fff;
+    }
+
+    .bracket-page { page-break-after: always; }
+    .bracket-page:last-child { page-break-after: auto; }
+
+    .sheet-header { text-align: center; margin-bottom: 0.15in; }
+    .sheet-header h1 { font-size: 22pt; margin: 0 0 4pt 0; letter-spacing: 0.4pt; }
+    .sheet-header .meta { font-size: 11pt; color: #333; }
+    .sheet-header .fill-hint {
+        font-size: 9pt; color: #666; margin-top: 4pt; font-style: italic;
+    }
+
+    .bracket-section { margin-bottom: 12px; page-break-inside: avoid; }
+    .bracket-section-title {
+        display: inline-block; padding: 3pt 10pt; border-radius: 3pt;
+        font-size: 9pt; font-weight: 700; color: #fff; margin-bottom: 6pt;
+    }
+    .bracket-section-title.winners { background: #1a6fa8; }
+    .bracket-section-title.losers  { background: #8d3a6e; }
+    .bracket-section-title.finals  { background: #388e3c; }
+
+    .bracket-row { display: flex; gap: 5pt; align-items: stretch; }
+    .bracket-round {
+        display: flex; flex-direction: column; justify-content: space-around;
+        min-width: 150pt; flex-shrink: 0;
+    }
+    .bracket-round-label {
+        text-align: center; font-size: 8pt; font-weight: 700;
+        color: #555; text-transform: uppercase; margin-bottom: 4pt;
+        letter-spacing: 0.5pt;
+    }
+
+    .match {
+        border: 1pt solid #333;
+        border-radius: 3pt;
+        margin: 4pt 0;
+        overflow: hidden;
+        font-size: 10pt;
+        background: #fff;
+    }
+    .match.is-bye { opacity: 0.55; }
+    .match-header {
+        background: #f0f0f0;
+        padding: 1pt 6pt;
+        font-size: 8pt;
+        color: #666;
+    }
+    .match-slot {
+        padding: 5pt 8pt;
+        min-height: 24pt;
+        /* Blank line for hand-written names / tallies — the judge draws
+           advancement arrows / fill names as the bracket plays out. */
+        border-bottom: 0.5pt solid #ccc;
+    }
+    .match-slot:last-child { border-bottom: none; }
+    .match-slot .tbd {
+        color: #bbb; font-style: italic; font-size: 9pt;
+    }
+
+    .placements-blank {
+        margin-top: 8pt;
+        border: 1pt solid #333; border-radius: 3pt;
+        padding: 6pt;
+        max-width: 3in;
+    }
+    .placements-blank .hdr {
+        font-size: 9pt; font-weight: 700; margin-bottom: 4pt;
+        letter-spacing: 0.5pt; text-transform: uppercase;
+    }
+    .placements-blank .row {
+        display: flex; align-items: center;
+        border-bottom: 0.5pt solid #999; padding: 4pt 0;
+        min-height: 18pt;
+    }
+    .placements-blank .row:last-child { border-bottom: none; }
+    .placements-blank .pos {
+        font-weight: 700; width: 24pt; font-size: 10pt;
+    }
+    .placements-blank .line {
+        flex: 1; border-bottom: 0.5pt solid #333;
+        margin-left: 4pt; height: 14pt;
+    }
+</style>
+</head>
+<body>
+
+{% macro bracket_slot(comp_id, lookup) %}
+    {% set name = lookup.get(comp_id|string, '') if comp_id else '' %}
+    {% if comp_id %}
+        <div class="match-slot">{{ name }}</div>
+    {% else %}
+        <div class="match-slot"><span class="tbd">_________________</span></div>
+    {% endif %}
+{% endmacro %}
+
+{% macro bracket_match(match, lookup) %}
+    <div class="match {{ 'is-bye' if match.get('is_bye') else '' }}">
+        <div class="match-header">{{ match.match_id }}</div>
+        {{ bracket_slot(match.competitor1, lookup) }}
+        {{ bracket_slot(match.competitor2, lookup) }}
+    </div>
+{% endmacro %}
+
+{% for item in brackets %}
+<div class="bracket-page">
+    <div class="sheet-header">
+        <h1>{{ item.event.display_name }}</h1>
+        <div class="meta">Missoula Pro-Am {{ year }} — Double Elimination Bracket</div>
+        <div class="fill-hint">
+            Record winners on the blank advancement slots.  Return this sheet
+            to scorekeeping after the bracket completes.
+        </div>
+    </div>
+
+    {% if item.ctx.bracket.winners %}
+    <div class="bracket-section">
+        <span class="bracket-section-title winners">Winners Bracket</span>
+        <div class="bracket-row">
+            {% for round_matches in item.ctx.bracket.winners %}
+            <div class="bracket-round">
+                <div class="bracket-round-label">
+                    {% if loop.last %}Final{% else %}Round {{ loop.index }}{% endif %}
+                </div>
+                {% for match in round_matches %}
+                    {{ bracket_match(match, item.ctx.comp_lookup) }}
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if item.ctx.bracket.losers %}
+    <div class="bracket-section">
+        <span class="bracket-section-title losers">Losers Bracket</span>
+        <div class="bracket-row">
+            {% for round_matches in item.ctx.bracket.losers %}
+            <div class="bracket-round">
+                <div class="bracket-round-label">L Round {{ loop.index }}</div>
+                {% for match in round_matches %}
+                    {{ bracket_match(match, item.ctx.comp_lookup) }}
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if item.ctx.bracket.finals %}
+    <div class="bracket-section">
+        <span class="bracket-section-title finals">Grand Finals</span>
+        <div class="bracket-row">
+            <div class="bracket-round">
+                <div class="bracket-round-label">Finals</div>
+                {{ bracket_match(item.ctx.bracket.finals, item.ctx.comp_lookup) }}
+            </div>
+            <div class="bracket-round">
+                <div class="bracket-round-label">True Finals (if needed)</div>
+                {{ bracket_match(item.ctx.bracket.true_finals, item.ctx.comp_lookup) }}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="placements-blank">
+        <div class="hdr">Final Placements (fill in)</div>
+        {% for pos in range(1, 7) %}
+        <div class="row">
+            <span class="pos">{{ pos }}.</span>
+            <span class="line"></span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+
+</body>
+</html>
