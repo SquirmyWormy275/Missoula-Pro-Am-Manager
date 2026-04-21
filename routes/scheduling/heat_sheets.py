@@ -10,43 +10,9 @@ from database import db
 from models import Event, EventResult, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 
-from . import _load_competitor_lookup, _resolve_partner_name, scheduling_bp
+from services.partner_resolver import pair_competitors_for_heat
 
-
-def _norm_alphanum(v) -> str:
-    return "".join(ch for ch in str(v or "").lower() if ch.isalnum())
-
-
-def _first_token_alphanum(v) -> str:
-    s = str(v or "").strip().lower().split()
-    return "".join(ch for ch in (s[0] if s else "") if ch.isalnum())
-
-
-def _lookup_partner_cid(partner_str: str, comps: dict, self_cid: int) -> int | None:
-    """Find the competitor id in `comps` that matches `partner_str`.
-
-    Full normalized name first; first-name fallback if exactly one comp matches.
-    Returns None on ambiguous / no match.
-    """
-    if not partner_str:
-        return None
-    norm_full = _norm_alphanum(partner_str)
-    if not norm_full:
-        return None
-    # Full match
-    for cid, c in comps.items():
-        if cid == self_cid:
-            continue
-        if _norm_alphanum(getattr(c, "name", "")) == norm_full:
-            return cid
-    # First-name fallback
-    partner_first = _first_token_alphanum(partner_str)
-    if not partner_first:
-        return None
-    matches = [cid for cid, c in comps.items()
-               if cid != self_cid
-               and _first_token_alphanum(getattr(c, "name", "")) == partner_first]
-    return matches[0] if len(matches) == 1 else None
+from . import _load_competitor_lookup, scheduling_bp
 
 
 def _stand_label(stand_type: str | None, stand_number) -> str:
@@ -149,34 +115,17 @@ def _serialize_heat_detail(tournament: Tournament, event: Event, heat: Heat) -> 
     comp_ids = heat.get_competitors()
     comp_lookup = _load_competitor_lookup(event, comp_ids)
     stand_type = event.stand_type
-    is_partnered = bool(getattr(event, "is_partnered", False))
 
-    consumed = set()
-    competitors = []
-    for comp_id in comp_ids:
-        if comp_id in consumed:
-            continue
-        comp = comp_lookup.get(comp_id)
-        name = comp.display_name if comp else f"Unknown ({comp_id})"
-        if is_partnered and comp:
-            partner = _resolve_partner_name(comp, event)
-            if partner:
-                partner_id = _lookup_partner_cid(partner, comp_lookup, comp_id)
-                # If we matched a real competitor (even fuzzily), prefer their
-                # display_name so a nickname like "TOBY" renders as "Toby Bartsch".
-                partner_label = (comp_lookup[partner_id].display_name
-                                 if partner_id and partner_id in comp_lookup
-                                 else partner)
-                name = f"{name} & {partner_label}"
-                if partner_id and partner_id != comp_id:
-                    consumed.add(partner_id)
-        competitors.append(
-            {
-                "name": name,
-                "stand": assignments.get(str(comp_id)),
-                "stand_label": _stand_label(stand_type, assignments.get(str(comp_id))),
-            }
-        )
+    competitors = [
+        {
+            "name": row["name"],
+            "stand": assignments.get(str(row["primary_comp_id"])),
+            "stand_label": _stand_label(
+                stand_type, assignments.get(str(row["primary_comp_id"]))
+            ),
+        }
+        for row in pair_competitors_for_heat(event, comp_ids, comp_lookup)
+    ]
     return {
         "heat_id": heat.id,
         "heat_number": heat.heat_number,
@@ -246,24 +195,10 @@ def heat_sheets(tournament_id):
                     if comp_ids
                     else {}
                 )
-            is_partnered = bool(getattr(event, "is_partnered", False))
-            consumed: set[int] = set()
             competitors_out = []
-            for cid in comp_ids:
-                if cid in consumed:
-                    continue
-                comp = comps.get(cid)
-                name = comp.display_name if comp else f"ID:{cid}"
-                if is_partnered and comp:
-                    partner = _resolve_partner_name(comp, event)
-                    if partner:
-                        pid = _lookup_partner_cid(partner, comps, cid)
-                        partner_label = (comps[pid].display_name
-                                         if pid and pid in comps
-                                         else partner)
-                        name = f"{name} & {partner_label}"
-                        if pid and pid != cid:
-                            consumed.add(pid)
+            for row in pair_competitors_for_heat(event, comp_ids, comps):
+                cid = row["primary_comp_id"]
+                name = row["name"] if row["competitor"] else f"ID:{cid}"
                 competitors_out.append({
                     "name": name,
                     "stand": assignments.get(str(cid), "?"),
@@ -364,24 +299,10 @@ def heat_sheets(tournament_id):
                     if comp_ids
                     else {}
                 )
-            is_partnered = bool(getattr(event, "is_partnered", False))
-            consumed: set[int] = set()
             competitors_out = []
-            for cid in comp_ids:
-                if cid in consumed:
-                    continue
-                comp = comps.get(cid)
-                name = comp.display_name if comp else f"ID:{cid}"
-                if is_partnered and comp:
-                    partner = _resolve_partner_name(comp, event)
-                    if partner:
-                        pid = _lookup_partner_cid(partner, comps, cid)
-                        partner_label = (comps[pid].display_name
-                                         if pid and pid in comps
-                                         else partner)
-                        name = f"{name} & {partner_label}"
-                        if pid and pid != cid:
-                            consumed.add(pid)
+            for row in pair_competitors_for_heat(event, comp_ids, comps):
+                cid = row["primary_comp_id"]
+                name = row["name"] if row["competitor"] else f"ID:{cid}"
                 competitors_out.append({
                     "name": name,
                     "stand": assignments.get(str(cid), "?"),
