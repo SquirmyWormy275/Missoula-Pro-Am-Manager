@@ -11,7 +11,53 @@ from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.background_jobs import submit as submit_job
 
-from . import scheduling_bp
+from . import _build_pro_flights_if_possible, _generate_all_heats, scheduling_bp
+
+
+@scheduling_bp.route('/<int:tournament_id>/flights/one-click-generate', methods=['POST'])
+def one_click_generate(tournament_id):
+    """Generate heats for every event AND build pro flights AND integrate college
+    spillover — in a single user action. Redirects back to the Flights page.
+
+    This is the button users reach for when they have competitors registered and
+    Friday/Saturday configuration done and just want the show schedule built.
+    """
+    from services.flight_builder import (
+        build_pro_flights,
+        integrate_college_spillover_into_flights,
+    )
+    from services.heat_generator import generate_event_heats
+    from services.saw_block_assignment import trigger_saw_block_recompute
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    db_config = tournament.get_schedule_config() or {}
+    saturday_college_event_ids = [int(i) for i in db_config.get('saturday_college_event_ids', [])]
+
+    try:
+        _generate_all_heats(tournament, generate_event_heats)
+        flights_built = _build_pro_flights_if_possible(tournament, build_pro_flights)
+        if flights_built is not None:
+            flash(f'Built {flights_built} pro flight(s).', 'success')
+            integration = integrate_college_spillover_into_flights(
+                tournament, saturday_college_event_ids,
+            )
+            if integration['integrated_heats'] > 0:
+                db.session.commit()
+                flash(
+                    f"Integrated {integration['integrated_heats']} college spillover heat(s) "
+                    'into Saturday flights.',
+                    'success',
+                )
+        trigger_saw_block_recompute(tournament)
+        log_action('one_click_generate', 'tournament', tournament_id, {
+            'flights_built': flights_built,
+        })
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'One-click generate failed and was rolled back: {exc}', 'error')
+
+    return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 
 
 @scheduling_bp.route('/<int:tournament_id>/flights')
@@ -78,6 +124,39 @@ def build_flights(tournament_id):
         if pro_heat_count == 0:
             flash('No pro heats found. Generate heats for pro events first, then build flights.', 'warning')
             return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+
+        # Flights exist to interleave heats from DIFFERENT events for crowd variety.
+        # Warn when that premise is broken, but still run the builder so the user can
+        # clear stale flight data and see the best grouping for the current heat state.
+        pro_events_with_heats = db.session.query(Event.id).join(Heat).filter(
+            Event.tournament_id == tournament_id,
+            Event.event_type == 'pro',
+            Event.name != 'Partnered Axe Throw',
+            Heat.run_number == 1,
+        ).distinct().count()
+        if pro_events_with_heats <= 1:
+            flash(
+                f'Only {pro_events_with_heats} pro event has heats generated. Flights group '
+                'heats from multiple events for crowd variety — all heats will land in a '
+                'single flight until more events have heats generated.',
+                'warning',
+            )
+            num_flights = None  # let the builder collapse to one flight of up to 8
+
+        # Clamp num_flights so each flight gets at least 2 heats; a "flight" with 1 heat is
+        # just a heat. Mirrors MIN_HEATS_PER_FLIGHT in flight_builder.
+        elif num_flights and num_flights > 0 and pro_heat_count >= 2:
+            effective_heats_per_flight = pro_heat_count // num_flights
+            if effective_heats_per_flight < 2:
+                import math as _math
+                clamped = _math.ceil(pro_heat_count / 2)
+                if clamped != num_flights:
+                    flash(
+                        f'Requested {num_flights} flights for {pro_heat_count} heats would '
+                        f'give less than 2 heats per flight. Building {clamped} flights instead.',
+                        'info',
+                    )
+                num_flights = clamped
 
         if request.form.get('run_async') == '1':
             def _build_flights_async(target_tournament_id: int, requested_num_flights: int | None):

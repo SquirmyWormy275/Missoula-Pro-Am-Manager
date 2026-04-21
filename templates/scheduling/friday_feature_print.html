@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Friday Night Feature Schedule - {{ tournament.name }} {{ tournament.year }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            margin: 24px;
+            color: #111;
+        }
+        h1 {
+            margin: 0 0 4px 0;
+            font-size: 18pt;
+            color: #000;
+        }
+        h2 {
+            margin: 0 0 8px 0;
+            font-size: 13pt;
+            color: #000;
+        }
+        .muted {
+            color: #555;
+            font-size: 10pt;
+        }
+        .header-bar {
+            border-bottom: 2px solid #000;
+            padding-bottom: 10px;
+            margin-bottom: 18px;
+        }
+        .notes {
+            margin: 10px 0 18px 0;
+            padding: 8px 10px;
+            background: #f7f3e8;
+            border-left: 3px solid #b48820;
+            font-style: italic;
+        }
+        .event-block {
+            margin: 18px 0;
+            page-break-inside: avoid;
+        }
+        .event-header {
+            background: #f1f1f1;
+            border: 1px solid #bbb;
+            padding: 6px 10px;
+            font-weight: 700;
+            font-size: 11.5pt;
+        }
+        .event-meta {
+            font-size: 9.5pt;
+            color: #444;
+            font-weight: normal;
+        }
+        table.heat-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid #bbb;
+            border-top: none;
+            table-layout: fixed;
+        }
+        .heat-table th,
+        .heat-table td {
+            border-top: 1px solid #ddd;
+            padding: 5px 8px;
+            vertical-align: top;
+            font-size: 10pt;
+        }
+        .heat-table thead th {
+            background: #fafafa;
+            font-size: 9pt;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            border-bottom: 2px solid #bbb;
+        }
+        .col-slot { width: 48px; text-align: center; }
+        .col-heat { width: 80px; }
+        .col-stand { width: 40px; text-align: center; font-weight: 700; }
+        .competitor-row td {
+            padding: 3px 8px;
+            border: none;
+            border-bottom: 1px dotted #ddd;
+        }
+        .competitor-row:last-child td { border-bottom: none; }
+        .no-data {
+            padding: 10px;
+            color: #666;
+            font-style: italic;
+            border: 1px solid #bbb;
+            border-top: none;
+        }
+        .print-footer {
+            margin-top: 30px;
+            padding-top: 8px;
+            border-top: 1px solid #bbb;
+            font-size: 9pt;
+            color: #666;
+            display: flex;
+            justify-content: space-between;
+        }
+        @media print {
+            body { margin: 0.5in; }
+            .no-print { display: none; }
+        }
+        .print-button-wrap {
+            text-align: right;
+            margin-bottom: 10px;
+        }
+        .print-button {
+            background: #b48820;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            font-size: 10.5pt;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="no-print print-button-wrap">
+        <button id="fnf-print-btn" class="print-button">Print</button>
+    </div>
+    <script>
+        document.getElementById('fnf-print-btn').addEventListener('click', function () {
+            window.print();
+        });
+    </script>
+
+    <div class="header-bar">
+        <h1>Friday Night Feature Schedule</h1>
+        <div class="muted">
+            {{ tournament.name }} {{ tournament.year }}
+            {% if tournament.college_date %}
+                &nbsp;·&nbsp; {{ tournament.college_date.strftime('%A, %B %d, %Y') }}
+            {% endif %}
+        </div>
+    </div>
+
+    {% if notes %}
+    <div class="notes">{{ notes }}</div>
+    {% endif %}
+
+    {% if fnf_schedule %}
+        {% set row_ns = namespace(slot=1) %}
+        {% for block in fnf_schedule %}
+        <div class="event-block">
+            <div class="event-header">
+                {{ block.event.display_name }}
+                {% if block.event.gender %}
+                    <span class="event-meta">({{ 'Men' if block.event.gender == 'M' else 'Women' }})</span>
+                {% endif %}
+                <span class="event-meta">&nbsp;·&nbsp; {{ block.event.stand_type }}</span>
+            </div>
+
+            {% if block.heats %}
+            <table class="heat-table">
+                <thead>
+                    <tr>
+                        <th class="col-slot">#</th>
+                        <th class="col-heat">Heat</th>
+                        <th class="col-stand">Stand</th>
+                        <th>Competitor</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for heat in block.heats %}
+                        {% if heat.competitors %}
+                            {% for comp in heat.competitors %}
+                            <tr class="competitor-row">
+                                {% if loop.first %}
+                                <td class="col-slot" rowspan="{{ heat.competitors|length }}">
+                                    {{ row_ns.slot }}
+                                </td>
+                                <td class="col-heat" rowspan="{{ heat.competitors|length }}">
+                                    H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}
+                                </td>
+                                {% endif %}
+                                <td class="col-stand">{{ comp.stand }}</td>
+                                <td>{{ comp.name }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% set row_ns.slot = row_ns.slot + 1 %}
+                        {% else %}
+                            <tr>
+                                <td class="col-slot">{{ row_ns.slot }}</td>
+                                <td class="col-heat">
+                                    H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}
+                                </td>
+                                <td colspan="2" class="muted" style="font-style:italic;">No competitors assigned</td>
+                            </tr>
+                            {% set row_ns.slot = row_ns.slot + 1 %}
+                        {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="no-data">No heats generated for this event.</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    {% else %}
+    <div class="no-data">No Friday Night Feature events configured.</div>
+    {% endif %}
+
+    <div class="print-footer">
+        <span>Missoula Pro-Am Manager</span>
+        <span>Generated {{ now.strftime('%Y-%m-%d %H:%M UTC') }}</span>
+    </div>
+</body>
+</html>

@@ -161,6 +161,7 @@ def friday_feature(tournament_id):
         return redirect(url_for('scheduling.friday_feature', tournament_id=tournament_id))
 
     selected_saturday_ids = set(int(i) for i in saved_opts.get('saturday_college_event_ids', []))
+    fnf_schedule = _build_fnf_schedule(tournament, eligible_events, fnf_config)
 
     return render_template(
         'scheduling/friday_feature.html',
@@ -170,4 +171,101 @@ def friday_feature(tournament_id):
         notes=fnf_config.get('notes', ''),
         sat_eligible=sat_eligible,
         selected_saturday_ids=selected_saturday_ids,
+        fnf_schedule=fnf_schedule,
     )
+
+
+@scheduling_bp.route('/<int:tournament_id>/friday-night/print')
+def friday_feature_print(tournament_id):
+    """Printable Friday Night Feature schedule — heat-by-heat order per event."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
+    pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
+    eligible_events = [e for e in pro_events if e.name in eligible_names]
+
+    fnf_config = _load_fnf_config(tournament)
+    fnf_schedule = _build_fnf_schedule(tournament, eligible_events, fnf_config)
+
+    from datetime import datetime
+    return render_template(
+        'scheduling/friday_feature_print.html',
+        tournament=tournament,
+        fnf_schedule=fnf_schedule,
+        notes=fnf_config.get('notes', ''),
+        now=datetime.utcnow(),
+    )
+
+
+def _build_fnf_schedule(tournament, eligible_events, fnf_config):
+    """Build the Friday Night Feature schedule: selected FNF events in run order,
+    each with its heats (run_number, heat_number ordered) and competitor/stand data.
+
+    FNF runs as a straight heat-by-heat schedule similar to college day — no flight
+    grouping. Used by both the interactive page and the printable view.
+    """
+    from models import Heat
+    from models.competitor import ProCompetitor
+
+    selected_event_ids = list(fnf_config.get('event_ids', []))
+    if not selected_event_ids:
+        return []
+
+    ordered_events = sorted(
+        [e for e in eligible_events if e.id in selected_event_ids],
+        key=lambda e: (_fnf_event_order(e.name), e.gender or ''),
+    )
+
+    schedule = []
+    slot = 1
+    for event in ordered_events:
+        event_heats = (
+            Heat.query
+            .filter_by(event_id=event.id)
+            .order_by(Heat.run_number, Heat.heat_number)
+            .all()
+        )
+        heat_rows = []
+        for heat in event_heats:
+            comp_ids = heat.get_competitors()
+            stand_assignments = heat.get_stand_assignments()
+            if comp_ids:
+                pros = {
+                    c.id: c for c in ProCompetitor.query.filter(
+                        ProCompetitor.id.in_(comp_ids)
+                    ).all()
+                }
+            else:
+                pros = {}
+            heat_rows.append({
+                'heat_id': heat.id,
+                'heat_number': heat.heat_number,
+                'run_number': heat.run_number,
+                'competitors': [
+                    {
+                        'name': pros[cid].display_name if cid in pros else f'ID:{cid}',
+                        'stand': stand_assignments.get(str(cid), '?'),
+                    }
+                    for cid in comp_ids
+                ],
+            })
+        schedule.append({
+            'slot': slot,
+            'event': event,
+            'heats': heat_rows,
+        })
+        slot += 1
+
+    return schedule
+
+
+# Friday Night Feature event ordering — Springboard sequencing rules for the showcase.
+# Matches services/schedule_builder._apply_friday_springboard_ordering at a high level:
+# Springboard → Pro 1-Board → 3-Board Jigger, with anything else trailing.
+_FNF_ORDER = ['Springboard', 'Pro 1-Board', '3-Board Jigger']
+
+
+def _fnf_event_order(name: str) -> int:
+    try:
+        return _FNF_ORDER.index(name)
+    except ValueError:
+        return len(_FNF_ORDER) + 1
