@@ -32,10 +32,16 @@ from models import Event, Tournament
 from services.audit import log_action
 from services.background_jobs import get as get_job
 from services.background_jobs import submit as submit_job
-from services.excel_io import export_results_to_excel
-from services.handicap_export import build_chopping_rows, export_chopping_results_to_excel
 from services.report_cache import get as cache_get
 from services.report_cache import set as cache_set
+from services.reporting_export import (
+    build_chopping_export,
+    build_chopping_json_payload,
+    build_results_export,
+    resolve_completed_export_path,
+    safe_download_name,
+    submit_results_export_job,
+)
 from services.restore_workflow import prepare_sqlite_restore
 from services.restore_workflow import sqlite_schema_info as _restore_schema_info
 
@@ -274,26 +280,23 @@ def all_results_print(tournament_id):
 def export_results(tournament_id):
     """Export standings and event results to Excel."""
     tournament = Tournament.query.get_or_404(tournament_id)
-    fd, path = tempfile.mkstemp(prefix=f'proam_{tournament_id}_', suffix='.xlsx')
-    os.close(fd)
-    export_results_to_excel(tournament, path)
+    export = build_results_export(tournament)
     log_action('report_export_downloaded', 'tournament', tournament.id, {
         'tournament_id': tournament.id,
-        'format': 'xlsx',
-        'kind': 'all_results',
+        'format': export['format'],
+        'kind': export['kind'],
     })
     db.session.commit()
 
     @after_this_request
     def cleanup_file(response):
         try:
-            os.remove(path)
+            os.remove(export['path'])
         except OSError:
             pass
         return response
 
-    download_name = f'{tournament.name}_{tournament.year}_results.xlsx'.replace(' ', '_')
-    return send_file(path, as_attachment=True, download_name=download_name)
+    return send_file(export['path'], as_attachment=True, download_name=export['download_name'])
 
 
 @reporting_bp.route('/<int:tournament_id>/export-chopping')
@@ -303,10 +306,7 @@ def export_chopping_results(tournament_id):
     fmt = (request.args.get('format') or 'xlsx').strip().lower()
 
     if fmt == 'json':
-        payload = {
-            'tournament': {'id': tournament.id, 'name': tournament.name, 'year': tournament.year},
-            'rows': build_chopping_rows(tournament),
-        }
+        payload = build_chopping_json_payload(tournament)
         log_action('report_export_downloaded', 'tournament', tournament.id, {
             'tournament_id': tournament.id,
             'format': 'json',
@@ -315,48 +315,30 @@ def export_chopping_results(tournament_id):
         db.session.commit()
         return Response(json.dumps(payload), mimetype='application/json')
 
-    fd, path = tempfile.mkstemp(prefix=f'proam_{tournament_id}_chopping_', suffix='.xlsx')
-    os.close(fd)
-    export_chopping_results_to_excel(tournament, path)
+    export = build_chopping_export(tournament)
     log_action('report_export_downloaded', 'tournament', tournament.id, {
         'tournament_id': tournament.id,
-        'format': 'xlsx',
-        'kind': 'chopping_results',
+        'format': export['format'],
+        'kind': export['kind'],
     })
     db.session.commit()
 
     @after_this_request
     def cleanup_file(response):
         try:
-            os.remove(path)
+            os.remove(export['path'])
         except OSError:
             pass
         return response
 
-    download_name = f'{tournament.name}_{tournament.year}_chopping_results.xlsx'.replace(' ', '_')
-    return send_file(path, as_attachment=True, download_name=download_name)
+    return send_file(export['path'], as_attachment=True, download_name=export['download_name'])
 
 
 @reporting_bp.route('/<int:tournament_id>/export-results/async', methods=['POST'])
 def export_results_async(tournament_id):
     """Start export generation as a background job for larger tournaments."""
     tournament = Tournament.query.get_or_404(tournament_id)
-
-    def _build_export(target_tournament_id: int) -> str:
-        export_tournament = Tournament.query.get(target_tournament_id)
-        if not export_tournament:
-            raise RuntimeError(f'Tournament {target_tournament_id} not found.')
-        fd, path = tempfile.mkstemp(prefix=f'proam_{tournament_id}_', suffix='.xlsx')
-        os.close(fd)
-        export_results_to_excel(export_tournament, path)
-        return path
-
-    job_id = submit_job(
-        f'export_results_{tournament_id}',
-        _build_export,
-        tournament_id,
-        metadata={'tournament_id': tournament_id, 'kind': 'export_results'},
-    )
+    job_id = submit_results_export_job(tournament_id)
     log_action('report_export_job_started', 'tournament', tournament.id, {'job_id': job_id})
     db.session.commit()
     return redirect(url_for('reporting.export_results_job_status', tournament_id=tournament_id, job_id=job_id))
@@ -365,10 +347,10 @@ def export_results_async(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/jobs/<job_id>')
 def export_results_job_status(tournament_id, job_id):
     tournament = Tournament.query.get_or_404(tournament_id)
-    job = get_job(job_id)
-    job_meta = job.get('metadata') if job else {}
-    if not job or int((job_meta or {}).get('tournament_id', -1)) != tournament_id:
+    job = resolve_completed_export_path(tournament_id, job_id, get_job)
+    if not job:
         abort(404)
+    job_meta = job.get('metadata') or {}
     job_kind = (job_meta or {}).get('kind') or ''
 
     if job['status'] != 'completed':
@@ -398,7 +380,7 @@ def export_results_job_status(tournament_id, job_id):
             pass
         return response
 
-    download_name = f'{tournament.name}_{tournament.year}_results.xlsx'.replace(' ', '_')
+    download_name = safe_download_name(tournament, 'results.xlsx')
     return send_file(path, as_attachment=True, download_name=download_name)
 
 
