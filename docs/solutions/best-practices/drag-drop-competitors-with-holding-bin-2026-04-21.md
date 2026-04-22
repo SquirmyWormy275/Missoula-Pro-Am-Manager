@@ -55,9 +55,10 @@ The `put: ['event-' + eventId, 'bin']` clause means this table accepts drops fro
 
 ### 2. Defense in depth: server also validates
 
-Never trust the client. The `POST /scheduling/<tid>/heats/<source_heat_id>/drag-move` endpoint re-validates:
+Never trust the client. The `POST /scheduling/<tid>/heats/<source_heat_id>/drag-move` endpoint re-validates (full signature and transaction wrapper shown in the Examples section below):
 
 ```python
+# Inside drag_move_competitor(tournament_id: int, source_heat_id: int):
 if source.event_id != target.event_id:
     return jsonify({
         'ok': False,
@@ -106,7 +107,7 @@ if (info.is_partnered && info.partner_id && !fromBin) {
 }
 ```
 
-Server-side endpoint accepts `competitor_ids: [int, ...]` and moves them as a single transaction. Capacity check is on the combined count: `len(target_comps) + len(competitor_ids) <= max_stands`. Either both fit or the move is refused.
+Server-side endpoint accepts `competitor_ids: list[int]` and moves them as a single transaction. Capacity check is on the combined count: `len(target_comps) + len(competitor_ids) <= max_stands`. Either both fit or the move is refused.
 
 ### 5. Holding bin as an escape hatch — client-side only (localStorage)
 
@@ -174,22 +175,67 @@ new Sortable(document.querySelector('.comp-sortable'), {
 
 Only same-event tables (group `event-7`) and the bin can accept drops here.
 
-### Server validation + partner-pair move
+### Server validation + partner-pair move (transactional)
 
 ```python
-# POST body: {"competitor_ids": [101, 102], "target_heat_id": 43}
-if source.event_id != target.event_id:
-    return jsonify({'ok': False, 'error': 'Same event required'}), 400
+@scheduling_bp.route(
+    '/<int:tournament_id>/heats/<int:source_heat_id>/drag-move',
+    methods=['POST'],
+)
+def drag_move_competitor(tournament_id: int, source_heat_id: int):
+    tournament = Tournament.query.get_or_404(tournament_id)
+    source = Heat.query.filter_by(id=source_heat_id).first_or_404()
 
-max_stands = event.max_stands or 4
-if len(target.get_competitors()) + len(competitor_ids) > max_stands:
-    return jsonify({'ok': False, 'code': 'target_full', 'error': 'Heat full'}), 409
+    try:
+        data = request.get_json(silent=True) or {}
+        competitor_ids: list[int] = [int(c) for c in data.get('competitor_ids', [])]
+        target_heat_id: int = int(data['target_heat_id'])
+    except (TypeError, ValueError, KeyError):
+        return jsonify({'ok': False, 'error': 'Invalid payload'}), 400
 
-for cid in competitor_ids:
-    source.remove_competitor(cid)
-    target.add_competitor(cid)
-    target.set_stand_assignment(cid, next_free_stand())
+    target = Heat.query.filter_by(id=target_heat_id).first()
+    if target is None:
+        return jsonify({'ok': False, 'error': 'Target heat not found'}), 404
+
+    # Same-event axis — the validation constraint for this drag-drop.
+    if source.event_id != target.event_id:
+        return jsonify({'ok': False, 'error': 'Same event required'}), 400
+
+    event = Event.query.filter_by(
+        id=source.event_id, tournament_id=tournament_id,
+    ).first()
+    if event is None:
+        return jsonify({'ok': False, 'error': 'Event not found'}), 404
+
+    # Capacity — for partnered pairs the check is against the COMBINED count.
+    max_stands = event.max_stands or 4
+    if len(target.get_competitors()) + len(competitor_ids) > max_stands:
+        return jsonify({
+            'ok': False, 'code': 'target_full',
+            'error': f'Heat full ({len(target.get_competitors())}/{max_stands})',
+        }), 409
+
+    # Atomic move — either every competitor relocates or none do.
+    try:
+        for cid in competitor_ids:
+            source.remove_competitor(cid)
+            target.add_competitor(cid)
+            target.set_stand_assignment(cid, _next_free_stand(target, event))
+        db.session.flush()
+        source.sync_assignments(event.event_type)
+        target.sync_assignments(event.event_type)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+
+    return jsonify({'ok': True})
 ```
+
+Note the transaction discipline:
+- `db.session.flush()` before `sync_assignments` so Heat.id is assigned on new HeatAssignment rows.
+- `db.session.commit()` fires once at the end — single atomic unit.
+- `except Exception: db.session.rollback(); raise` — any failure in the loop reverts ALL moves. Half-applied pair moves are the failure mode this guards against (partner A relocated, partner B stuck because of an IntegrityError mid-loop).
 
 ## Related
 
