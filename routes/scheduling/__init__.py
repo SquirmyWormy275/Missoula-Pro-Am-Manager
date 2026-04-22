@@ -273,6 +273,8 @@ from . import (
     heats,  # noqa: F401, E402
     partners,  # noqa: F401, E402
     preflight,  # noqa: F401, E402
+    print_hub,  # noqa: F401, E402
+    pro_checkout_roster,  # noqa: F401, E402
     show_day,  # noqa: F401, E402
 )
 

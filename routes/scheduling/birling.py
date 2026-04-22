@@ -13,6 +13,7 @@ from models import Event, EventResult, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.birling_print import build_birling_print_context
+from services.print_catalog import record_print
 from services.print_response import weasyprint_or_html
 
 from . import _signed_up_competitors, scheduling_bp
@@ -392,6 +393,7 @@ def _safe_filename_part(name: str) -> str:
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/print-blank',
                       methods=['GET'])
+@record_print('birling_blank', entity_id_kwarg='event_id')
 def birling_print_blank(tournament_id, event_id):
     """Printable blank bracket for one birling event.
 
@@ -425,6 +427,7 @@ def birling_print_blank(tournament_id, event_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/birling/print-all', methods=['GET'])
+@record_print('birling_blank')
 def birling_print_all(tournament_id):
     """Combined blank-bracket print for every birling event in the tournament.
 

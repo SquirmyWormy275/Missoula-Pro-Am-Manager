@@ -6,6 +6,7 @@ import config
 from database import db
 from models import Event, Tournament
 from services.audit import log_action
+from services.print_catalog import record_print
 
 from . import scheduling_bp
 
@@ -176,6 +177,7 @@ def friday_feature(tournament_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/friday-night/print')
+@record_print('fnf_print')
 def friday_feature_print(tournament_id):
     """Printable Friday Night Feature schedule — heat-by-heat order per event."""
     tournament = Tournament.query.get_or_404(tournament_id)
@@ -197,6 +199,7 @@ def friday_feature_print(tournament_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/friday-night/pdf')
+@record_print('fnf_pdf')
 def friday_feature_pdf(tournament_id):
     """FNF schedule as a PDF download (WeasyPrint if installed, HTML fallback otherwise).
 

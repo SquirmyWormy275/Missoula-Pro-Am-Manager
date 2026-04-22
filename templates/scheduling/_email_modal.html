@@ -1,0 +1,69 @@
+{# Print Hub email modal.
+   Opened from any row's "Email" button.
+   Form posts to scheduling.print_hub_email; CSRF-protected.
+#}
+<div class="modal fade" id="emailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form method="POST" action="{{ url_for('scheduling.print_hub_email', tournament_id=tournament.id) }}"
+              class="modal-content">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="doc_key" value="">
+            <input type="hidden" name="entity_id" value="">
+
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    Email: <span class="email-doc-label text-primary">&nbsp;</span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <div class="modal-body">
+                {% if users_with_email %}
+                <label class="form-label small fw-bold">Select recipients</label>
+                <div class="mb-3" style="max-height: 240px; overflow-y: auto;">
+                    {% for user in users_with_email %}
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               name="user_ids"
+                               value="{{ user.id }}"
+                               id="email_user_{{ user.id }}">
+                        <label class="form-check-label small" for="email_user_{{ user.id }}">
+                            {{ user.label }}
+                            <span class="text-muted">({{ user.email }})</span>
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert alert-warning py-2 small mb-3">
+                    No users with email addresses on file. Add accounts via
+                    Admin → Users, or enter ad-hoc addresses below.
+                </div>
+                {% endif %}
+
+                <label for="extra_emails" class="form-label small fw-bold">
+                    Additional recipients
+                </label>
+                <textarea id="extra_emails"
+                          name="extra_emails"
+                          class="form-control form-control-sm"
+                          rows="3"
+                          placeholder="Comma, semicolon, or newline separated"
+                          autocomplete="off"></textarea>
+                <div class="form-text small">
+                    One address per line, or comma-separated. Invalid addresses
+                    will be rejected with a flash message.
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary btn-sm"
+                        data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="bi bi-envelope"></i> Send
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

@@ -7,6 +7,8 @@ from .competitor import CollegeCompetitor, ProCompetitor
 from .event import Event, EventResult
 from .heat import Flight, Heat, HeatAssignment
 from .payout_template import PayoutTemplate
+from .print_email_log import PrintEmailLog
+from .print_tracker import PrintTracker
 from .pro_event_rank import ProEventRank
 from .school_captain import SchoolCaptain
 from .team import Team
@@ -31,4 +33,6 @@ __all__ = [
     'WoodConfig',
     'ProEventRank',
     'PayoutTemplate',
+    'PrintTracker',
+    'PrintEmailLog',
 ]

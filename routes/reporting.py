@@ -31,6 +31,7 @@ from database import db
 from models import Event, Tournament
 from services.audit import log_action
 from services.background_jobs import get as get_job
+from services.print_catalog import record_print
 from services.report_cache import get as cache_get
 from services.report_cache import set as cache_set
 from services.reporting_backup import sqlite_backup_download_plan, submit_database_backup_job
@@ -120,6 +121,7 @@ def college_standings(tournament_id):
 
 
 @reporting_bp.route('/<int:tournament_id>/college/standings/print')
+@record_print('college_standings')
 def college_standings_print(tournament_id):
     """Printable version of college standings."""
     tournament = Tournament.query.get_or_404(tournament_id)
@@ -152,6 +154,7 @@ def event_results_report(tournament_id, event_id):
 
 
 @reporting_bp.route('/<int:tournament_id>/event/<int:event_id>/results/print')
+@record_print('event_results', entity_id_kwarg='event_id')
 def event_results_print(tournament_id, event_id):
     """Printable version of event results."""
     tournament = Tournament.query.get_or_404(tournament_id)
@@ -235,6 +238,7 @@ def pro_payout_summary(tournament_id):
 
 
 @reporting_bp.route('/<int:tournament_id>/pro/payouts/print')
+@record_print('pro_payouts')
 def pro_payout_summary_print(tournament_id):
     """Printable version of payout summary."""
     tournament = Tournament.query.get_or_404(tournament_id)
@@ -265,6 +269,7 @@ def all_results(tournament_id):
 
 
 @reporting_bp.route('/<int:tournament_id>/all-results/print')
+@record_print('all_results')
 def all_results_print(tournament_id):
     """Printable version of all results."""
     tournament = Tournament.query.get_or_404(tournament_id)
@@ -758,6 +763,7 @@ def ala_membership_report(tournament_id):
 
 
 @reporting_bp.route('/ala-membership-report/<int:tournament_id>/pdf')
+@record_print('ala_report')
 def ala_membership_report_pdf(tournament_id):
     """Download ALA membership report as PDF."""
     if not current_user.is_authenticated or not current_user.is_admin:
@@ -839,33 +845,23 @@ def ala_email_report(tournament_id):
 
 
 def _send_ala_email(pdf_path, tournament, report):
-    """Send ALA report PDF via SMTP (uses same config as sms_notify)."""
-    import smtplib
+    """Send ALA report PDF via SMTP.
+
+    Routed through services.email_delivery for SMTP consolidation (single
+    place to own auth failures, credential scrubbing, and retry semantics).
+    Keeps the ALA-specific subject/body/filename here — those remain
+    policy, not plumbing.
+    """
     from datetime import datetime
-    from email import encoders
-    from email.mime.base import MIMEBase
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
 
-    smtp_host = os.environ.get('SMTP_HOST', '')
-    smtp_port = int(os.environ.get('SMTP_PORT', 587))
-    smtp_user = os.environ.get('SMTP_USER', '')
-    smtp_password = os.environ.get('SMTP_PASSWORD', '')
-    from_addr = os.environ.get('SMTP_FROM', smtp_user)
-
-    if not smtp_host or not smtp_user:
-        raise RuntimeError('SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD env vars.')
+    from services.email_delivery import EmailResult, send_document
 
     total = len(report['all_attendees'])
     members = total - len(report['non_members'])
     non_members = len(report['non_members'])
     year = report.get('year', datetime.now().year)
 
-    msg = MIMEMultipart()
-    msg['From'] = from_addr
-    msg['To'] = ALA_EMAIL
-    msg['Subject'] = f'Missoula Pro-Am {year} — ALA Membership Report'
-
+    subject = f'Missoula Pro-Am {year} — ALA Membership Report'
     body = (
         f'Attached is the ALA membership report for the Missoula Pro-Am {year}.\n\n'
         f'Total pro competitors: {total}\n'
@@ -873,16 +869,17 @@ def _send_ala_email(pdf_path, tournament, report):
         f'Non-members: {non_members}\n\n'
         f'Generated: {report["generated_at"]}\n'
     )
-    msg.attach(MIMEText(body, 'plain'))
 
     with open(pdf_path, 'rb') as f:
-        part = MIMEBase('application', 'pdf')
-        part.set_payload(f.read())
-        encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f'attachment; filename="ala_report_{year}.pdf"')
-        msg.attach(part)
+        pdf_bytes = f.read()
 
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls()
-        server.login(smtp_user, smtp_password)
-        server.send_message(msg)
+    result: EmailResult = send_document(
+        to=[ALA_EMAIL],
+        subject=subject,
+        body=body,
+        attachment_bytes=pdf_bytes,
+        attachment_name=f'ala_report_{year}.pdf',
+        attachment_mime='application/pdf',
+    )
+    if result.status != 'sent':
+        raise RuntimeError(result.error or 'Email send failed.')
