@@ -670,6 +670,19 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
     left_handed = [c for c in competitors if c.get('is_left_handed', False)]
     slow_heat = [c for c in competitors if c.get('is_slow_springboard', False)]
 
+    # Sort LH cutters by ability rank (1 = fastest). When LH_count > num_heats
+    # the tail of this list overflows into the final heat — we want the
+    # SLOWEST LH cutters to overflow (alongside any slow-heat-flagged cutters
+    # already clustering there), not whoever happens to be alphabetically
+    # last in registration order. Name-order overflow placement was the
+    # original V2.5.0 behaviour; tying the split point to ProEventRank means
+    # the fast LH cutters each get their own heat + LH dummy time-slot, and
+    # the slow LH cutters share the dedicated slow-heat block.
+    # Falls back gracefully to input order when no ranks exist for this
+    # tournament + category (that's _sort_by_ability's documented behaviour).
+    if left_handed:
+        left_handed = _sort_by_ability(left_handed, event)
+
     slow_heat_idx = (num_heats - 1) if slow_heat else None
 
     assigned_ids = set()
