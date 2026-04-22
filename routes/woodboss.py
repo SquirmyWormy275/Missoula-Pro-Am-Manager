@@ -16,6 +16,7 @@ from database import db
 from models.tournament import Tournament
 from models.wood_config import WoodConfig
 from services.audit import log_action
+from services.print_catalog import record_print
 
 woodboss_bp = Blueprint('woodboss', __name__)
 woodboss_public_bp = Blueprint('woodboss_public', __name__)
@@ -367,6 +368,7 @@ def report(tid):
 
 
 @woodboss_bp.route('/<int:tid>/report/print')
+@record_print('woodboss_report')
 def report_print(tid):
     tournament = Tournament.query.get_or_404(tid)
     report_data = woodboss_svc.get_wood_report(tid)

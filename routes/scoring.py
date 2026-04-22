@@ -36,6 +36,7 @@ from models.payout_template import PayoutTemplate
 from routes.api import write_limit
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
+from services.print_catalog import record_print
 from services.scoring_workflow import (
     competitor_lookup_for_event,
     existing_results_for_event,
@@ -1554,6 +1555,7 @@ def judge_sheet_for_event(tournament_id: int, event_id: int):
 
 
 @scoring_bp.route('/<int:tournament_id>/judge-sheets/all')
+@record_print('judge_sheet_all')
 def judge_sheets_all(tournament_id: int):
     """Concatenated judge sheet document for every event in the tournament
     that has heats assigned.  Events without heats are skipped silently so

@@ -1,7 +1,7 @@
 # Virtual Woodboss — Audit Report
 
-**Date:** 2026-04-10
-**Version at audit:** V2.8.1 → V2.8.3 (all HIGH + MEDIUM + LOW resolved except M7/M8)
+**Date:** 2026-04-10 (H0–L6); refreshed 2026-04-21 (H4 added)
+**Version at audit:** V2.8.1 → V2.8.3 → V2.11.3 (all HIGH + MEDIUM + LOW resolved except M7/M8)
 **Scope:** [models/wood_config.py](../models/wood_config.py), [routes/woodboss.py](../routes/woodboss.py), [services/woodboss.py](../services/woodboss.py), [templates/woodboss/](../templates/woodboss/), [tests/test_woodboss.py](../tests/test_woodboss.py), [models/competitor.py](../models/competitor.py)
 
 Severity legend: **HIGH** = data-loss or functional bug users hit today · **MEDIUM** = latent bug, broken edge case, or missing UI for an existing route · **LOW** = polish / robustness
@@ -56,6 +56,31 @@ If a user blanks every field on a row to clear it, the whole row is skipped and 
 **No matching template form** — grepped all templates for `delete-preset`/`deletePreset`, zero hits. Custom presets are append-only from the UI. Users can only clean up via shell (`instance/wood_presets.json`).
 
 **Fix applied:** `config_form` now passes `custom_preset_names` to the template; [templates/woodboss/config.html](../templates/woodboss/config.html) renders a "Manage custom presets" row of delete buttons (built-ins not shown). Each button posts to the existing `delete_preset` route with CSRF + `data-confirm`.
+
+### H4. [RESOLVED V2.11.3 — FOUND IN FOLLOW-UP AUDIT 2026-04-21] Pro 1-Board silently merged into the 2-Board Springboard block bucket
+**Files:** [services/woodboss.py](../services/woodboss.py) `BLOCK_EVENT_GROUPS`, `BLOCK_CONFIG_LABELS`, `_match_block_cfg_keys`, `calculate_blocks`, `_active_block_keys`, `get_lottery_view`
+
+**Symptom:** The Wood Count Report had no "Pro 1-Board" row. Pro 1-Board competitors were silently counted into `block_springboard_pro` (the 2-Board Springboard bucket) and inherited the 2-Board species/diameter on block-prep day. The three pro springboard events (Springboard/2-Board, Pro 1-Board, 3-Board Jigger) each use physically distinct wood dummies — 1-Board dummies are shorter than 2-Board; 3-Board Jigger uses fewer runs per dummy — so each needs its own wood spec. The block-turning crew would cut the wrong height/species for roughly half the pro springboard field, with no error or warning.
+
+**Why this evaded prior audits:** The V2.8.1 user commit `0eaae43` introduced `block_1board_pro` as a known key inside `apply_preset()` and added exclusivity scaffolding, but never actually registered `block_1board_pro` in `BLOCK_CONFIG_LABELS` and never updated the `BLOCK_EVENT_GROUPS` fragment mappings to route `'1-board'`/`'one board'` fragments to it — so the split was half-shipped. The MEMORY.md note for V2.8.1 claimed the three-way split was complete; subsequent audits (V2.8.2, V2.8.3) trusted the note and did not re-verify. The separate `calculate_springboard_dummies()` function masked the bug by walking event names independently, so the dummy-tree section of the report looked correct while the block section was silently wrong.
+
+**Root cause (code level):** `BLOCK_EVENT_GROUPS` matches via substring fragments with no exclusivity. Pre-fix, both `'1-board'` and `'springboard'` mapped to the same `cfg_key = 'block_springboard_pro'`, so the lack of exclusivity didn't cause a visible double-count — it meant 1-Board competitors disappeared into an already-mapped-to-2-Board bucket, and no physical config row existed for 1-Board because `BLOCK_CONFIG_LABELS` had no entry for one. Additionally, three different call sites walked `BLOCK_EVENT_GROUPS` (`_active_block_keys`, `calculate_blocks`, `get_lottery_view`) — the lottery view was unguarded, so even after the split it would have double-counted custom event renames like `"Pro 1-Board Springboard"` on the block-card print-out.
+
+**Fix applied:**
+1. Added `block_1board_pro` → `'Pro 1-Board'` to `BLOCK_CONFIG_LABELS`, ordered between 2-Board and 3-Board Jigger.
+2. Split `BLOCK_EVENT_GROUPS` pro fragment mappings so `'1-board'` / `'1 board'` / `'one-board'` / `'one board'` route to `block_1board_pro`; `'2-board'` / `'2 board'` / `'two board'` / `'springboard'` route to `block_springboard_pro`; `'3-board'` / `'3 board'` / `'three-board'` / `'three board'` / `'jigger'` route to `block_3board_pro`.
+3. Extracted a single module-level helper `_match_block_cfg_keys(event_lower, comp_type, gender)` and replaced the three duplicated fragment-match loops in `_active_block_keys`, `calculate_blocks`, and `get_lottery_view` with calls to it. The helper applies pro 1-Board / 3-Board exclusivity (if the event name names 1-board or 3-board, the generic `'springboard'` fragment is skipped) so custom renames can't double-count.
+4. Added module-level constants `PRO_ONE_BOARD_FRAGMENTS` and `PRO_THREE_BOARD_FRAGMENTS` driving the exclusivity check. Keep them synchronized with `BLOCK_EVENT_GROUPS` — an asymmetry between the two triggers a silent "fragment matches exclusivity but has no mapping" bug (caught by `test_1board_spellings_all_land_in_1board_bucket` during the session).
+
+**Verified:** `pytest tests/test_woodboss.py` 60/60 pass (up from 28). 14 new parametrized regression tests added across three classes: `TestBlockConfigLabelsIntegrity` (schema guards — `block_1board_pro` registered, every fragment mapping has a label), `TestProSpringboardExclusivity` (canonical event names map to exactly one bucket, all four 1-board spelling variants and five 3-board spelling variants land correctly, collision names like `"Pro 1-Board Springboard"` route only to `block_1board_pro`, college `"1-Board Springboard"` is intentionally still a single college springboard bucket), `TestCalculateBlocksEmitsAllLabelledKeys` (every labelled key appears in output even on empty tournaments — catches silent drop-offs).
+
+**Lessons (the meta-lesson is the important one for the next audit):**
+- MEMORY.md patch text describes *intent at time of commit*. It is not regenerated from code. If a future session reads `"the split was done"` in patch history, do NOT treat it as verification — grep the code for every expected `cfg_key` in `BLOCK_CONFIG_LABELS` and cross-reference it against `BLOCK_EVENT_GROUPS`.
+- Two functions doing the same fragment walk is two functions that can drift. This fix eliminates that by extracting one helper.
+- When adding a spelling to an exclusivity constant, also add it to the underlying fragment-mapping table. A constant that is "more aggressive" than the mappings it gates creates silent zero-bucket outcomes for edge cases.
+- The parametrized spelling-variant test is cheap insurance against the exact class of partial-split that made this bug ship.
+
+**See also:** [docs/solutions/logic-errors/woodboss-pro-1board-block-miscount-2026-04-21.md](solutions/logic-errors/woodboss-pro-1board-block-miscount-2026-04-21.md) for the full problem writeup with before/after code and prevention strategies.
 
 ---
 
@@ -167,6 +192,7 @@ Still uncovered (next pass):
 | H1 — apply_preset wipes existing size_value | HIGH | RESOLVED V2.8.3 |
 | H2 — save_config can't clear a row | HIGH | RESOLVED V2.8.3 |
 | H3 — delete_preset has no UI | HIGH | RESOLVED V2.8.3 |
+| H4 — Pro 1-Board silently merged into 2-Board Springboard bucket | HIGH | RESOLVED V2.11.3 |
 | M1 — single-species block preset | MEDIUM | RESOLVED V2.8.3 |
 | M2 — log_relay_doublebuck missing from presets | MEDIUM | RESOLVED V2.8.3 |
 | M3 — relay size_unit wrong condition | MEDIUM | RESOLVED V2.8.3 |

@@ -22,6 +22,7 @@ from routes.api import write_limit
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
 from services.gear_sharing import build_name_index, normalize_person_name, resolve_partner_name
+from services.print_catalog import record_print
 from services.upload_security import malware_scan, save_upload, validate_excel_upload
 
 registration_bp = Blueprint('registration', __name__)
@@ -1365,6 +1366,7 @@ def college_gear_remove(tournament_id):
 
 
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/print')
+@record_print('gear_sharing_print')
 def pro_gear_print(tournament_id):
     """Printable gear-sharing report grouped by equipment category."""
     tournament = Tournament.query.get_or_404(tournament_id)

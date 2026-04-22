@@ -10,6 +10,7 @@ from database import db
 from models import Event, EventResult, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.partner_resolver import pair_competitors_for_heat
+from services.print_catalog import record_print
 
 from . import _load_competitor_lookup, scheduling_bp
 
@@ -139,6 +140,7 @@ def _serialize_heat_detail(tournament: Tournament, event: Event, heat: Heat) -> 
 
 
 @scheduling_bp.route("/<int:tournament_id>/heat-sheets")
+@record_print("heat_sheets")
 def heat_sheets(tournament_id):
     """Print-ready heat sheets for all flights and events."""
     from datetime import datetime
@@ -328,6 +330,7 @@ def heat_sheets(tournament_id):
 
 
 @scheduling_bp.route("/<int:tournament_id>/day-schedule/print")
+@record_print("day_schedule")
 def day_schedule_print(tournament_id):
     """Printable day schedule with heat/stand assignments."""
     from services.schedule_builder import build_day_schedule
