@@ -37,6 +37,13 @@ jobs:
           sudo sh -c 'echo "deb [signed-by=/etc/apt/trusted.gpg.d/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
           sudo apt-get update
           sudo apt-get install -y postgresql-client-18
+          # Prepend PG 18's bin dir to PATH so the Debian pg_wrapper doesn't
+          # dispatch to an older pg_dump preinstalled on ubuntu-latest. The
+          # version mismatch error `aborting because of server version mismatch`
+          # comes from a client older than the PG 18.3 server.
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+          # Verify we're picking up PG 18:
+          /usr/lib/postgresql/18/bin/pg_dump --version
 
       - name: Verify secret is set
         env:
