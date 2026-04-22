@@ -60,8 +60,14 @@ export DATABASE_URL=postgresql://...
 flask db upgrade
 ```
 
-`railway.toml` already includes `releaseCommand = "flask db upgrade"`, so Railway
-runs this automatically on every deploy.
+`railway.toml` uses `preDeployCommand = "flask db upgrade"` so Railway runs
+migrations automatically on every deploy. `releaseCommand` was originally
+configured here but silently did not execute, leaving production schemaless
+for 2 weeks — see
+[`solutions/configuration-issues/railway-predeploy-command.md`](solutions/configuration-issues/railway-predeploy-command.md)
+for the failure mode and
+[`solutions/best-practices/railway-postgres-operational-playbook-2026-04-21.md`](solutions/best-practices/railway-postgres-operational-playbook-2026-04-21.md)
+for the broader operational context.
 
 ### 3.2 Migration chain (as of V2.3.0)
 
@@ -244,7 +250,7 @@ behavior in the operator runbook.
 - [ ] PostgreSQL add-on provisioned and `DATABASE_URL` set in Railway variables
 - [ ] `SECRET_KEY` set (strong random string, not 'dev' or 'test')
 - [ ] `FLASK_APP=app.py` set
-- [ ] `railway.toml` `releaseCommand = "flask db upgrade"` is present
+- [ ] `railway.toml` `preDeployCommand = "flask db upgrade"` is present (NOT `releaseCommand` — silently does not execute on Railway)
 - [ ] `postgres://` → `postgresql://` prefix fix applied in `config.py` if needed
 - [ ] First deploy: `flask db upgrade` runs automatically, creates all tables
 - [ ] Data migration script run (if moving existing data from SQLite)
