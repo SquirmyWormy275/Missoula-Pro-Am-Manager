@@ -18,8 +18,21 @@ name: Daily Production DB Backup
 
 on:
   schedule:
+    # Daily baseline: 08:00 UTC = 02:00 MDT / 01:00 MST — low-traffic window.
     - cron: '0 8 * * *'
+    # Race-weekend hourly coverage: every hour on April 24-26 (UTC), which
+    # covers Thursday 6 PM MDT through Sunday 5 PM MDT. Caps worst-case data
+    # loss at 1 hour during the event. Update these dates after each annual
+    # Missoula Pro-Am if the race weekend shifts.
+    - cron: '0 * 24-26 4 *'
   workflow_dispatch:
+
+# Serialize runs so the baseline + hourly + manual-dispatch schedules never
+# stampede the public Postgres proxy. Queue, don't cancel — backups mid-flight
+# should complete.
+concurrency:
+  group: daily-backup
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -37,6 +50,13 @@ jobs:
           sudo sh -c 'echo "deb [signed-by=/etc/apt/trusted.gpg.d/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
           sudo apt-get update
           sudo apt-get install -y postgresql-client-18
+          # Prepend PG 18's bin dir to PATH so the Debian pg_wrapper doesn't
+          # dispatch to an older pg_dump preinstalled on ubuntu-latest. The
+          # version mismatch error `aborting because of server version mismatch`
+          # comes from a client older than the PG 18.3 server.
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+          # Verify we're picking up PG 18:
+          /usr/lib/postgresql/18/bin/pg_dump --version
 
       - name: Verify secret is set
         env:
@@ -54,8 +74,16 @@ jobs:
           RAILWAY_PG_PUBLIC_URL: ${{ secrets.RAILWAY_PG_PUBLIC_URL }}
         run: |
           set -euo pipefail
-          # Normalize postgres:// → postgresql:// if stored in the older form
-          NORMALIZED_URL="${RAILWAY_PG_PUBLIC_URL/#postgres:\/\//postgresql://}"
+          # Tolerate three common secret-paste mishaps:
+          #   1. trailing whitespace / newline from copy-paste — strip all whitespace
+          #      (URLs cannot contain whitespace, so this is safe)
+          #   2. `KEY=URL` form — raw paste from `railway variables --kv`
+          #   3. `postgres://` (old scheme) instead of `postgresql://` — normalize
+          RAW_URL=$(printf '%s' "$RAILWAY_PG_PUBLIC_URL" | tr -d '[:space:]')
+          if [[ "$RAW_URL" =~ ^[A-Z0-9_]+= ]]; then
+            RAW_URL="${RAW_URL#*=}"
+          fi
+          NORMALIZED_URL="${RAW_URL/#postgres:\/\//postgresql://}"
           TS=$(date -u +%Y%m%d_%H%M%S)
           OUT="proam_backup_${TS}.sql.gz"
 
@@ -78,9 +106,12 @@ jobs:
 
       - name: Sanity-check dump content
         run: |
-          set -euo pipefail
+          # Deliberately NOT using `set -o pipefail` — `gunzip | head` closes
+          # the pipe early (by design) and would raise SIGPIPE on gunzip,
+          # which pipefail then converts into a fatal step failure.
+          set -eu
           echo "--- First 20 lines of dump ---"
-          gunzip -c "$BACKUP_FILE" | head -20
+          gunzip -c "$BACKUP_FILE" | head -20 || true
 
           TABLE_COUNT=$(gunzip -c "$BACKUP_FILE" | grep -c "^CREATE TABLE" || true)
           echo "CREATE TABLE statements: $TABLE_COUNT"
