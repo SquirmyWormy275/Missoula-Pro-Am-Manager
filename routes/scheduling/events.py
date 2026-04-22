@@ -164,6 +164,9 @@ def event_list(tournament_id):
     if build_diff:
         session.modified = True
 
+    from services.schedule_status import build_schedule_status
+    schedule_status = build_schedule_status(tournament)
+
     return render_template('scheduling/events.html',
                            tournament=tournament,
                            college_events=college_events,
@@ -176,7 +179,8 @@ def event_list(tournament_id):
                            pro_heats_exist=pro_heats_exist,
                            sat_spillover_count=sat_spillover_count,
                            fnf_count=fnf_count,
-                           build_diff=build_diff)
+                           build_diff=build_diff,
+                           schedule_status=schedule_status)
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])

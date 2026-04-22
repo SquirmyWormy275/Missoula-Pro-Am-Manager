@@ -201,6 +201,100 @@
         ══════════════════════════════════════════════════════════════════ #}
         <div class="tab-pane fade" id="tab-build" role="tabpanel">
 
+            {# ── Current Schedule Status Panel ─────────────────────────────
+               Inline summary of heats, flights, and warnings so the judge
+               doesn't have to round-trip to day_schedule / flights / show_day
+               to verify every build action.
+            ───────────────────────────────────────────────────────────────── #}
+            {% if schedule_status %}
+            {% set sev = schedule_status.overall_severity %}
+            {% set sev_border = {'success':'#2da85e','warning':'#d39e00','danger':'#d7303e','info':'#3b8ee8'}[sev] %}
+            <div class="card mb-3" style="border-left:4px solid {{ sev_border }};">
+                <div class="card-header py-2 d-flex align-items-center justify-content-between flex-wrap gap-2">
+                    <span class="fw-bold" style="font-size:0.95rem;">
+                        <i class="bi bi-clipboard-data me-1"></i>
+                        Current Schedule — {{ schedule_status.overall_label }}
+                    </span>
+                    {% if schedule_status.warnings %}
+                    <span class="badge bg-{{ sev }}">
+                        {{ schedule_status.warnings|length }}
+                        action{% if schedule_status.warnings|length != 1 %}s{% endif %} needed
+                    </span>
+                    {% else %}
+                    <span class="badge bg-{{ sev }}"><i class="bi bi-check-circle me-1"></i>No issues</span>
+                    {% endif %}
+                </div>
+                <div class="card-body py-3">
+                    <div class="row g-3">
+                        {# Friday column #}
+                        <div class="col-md-6">
+                            <div class="small text-muted mb-2 fw-semibold">
+                                <i class="bi bi-mortarboard me-1"></i>Friday (College)
+                            </div>
+                            <div class="d-flex flex-wrap gap-3" style="font-size:0.88rem;">
+                                <div><span class="text-muted">Events:</span>
+                                    <strong>{{ schedule_status.friday.events_configured }}</strong></div>
+                                <div><span class="text-muted">With heats:</span>
+                                    <strong>{{ schedule_status.friday.events_with_heats }}</strong>
+                                    / {{ schedule_status.friday.events_configured }}</div>
+                                <div><span class="text-muted">Total heats:</span>
+                                    <strong>{{ schedule_status.friday.heats_total }}</strong></div>
+                                <div><span class="text-muted">Placed:</span>
+                                    <strong>{{ schedule_status.friday.competitors_placed }}</strong> competitors</div>
+                            </div>
+                            <a href="{{ schedule_status.friday.detail_link }}"
+                               class="small text-decoration-none mt-1 d-inline-block">
+                                <i class="bi bi-arrow-right-short"></i>{{ schedule_status.friday.detail_label }}
+                            </a>
+                        </div>
+                        {# Saturday column #}
+                        <div class="col-md-6">
+                            <div class="small text-muted mb-2 fw-semibold">
+                                <i class="bi bi-trophy me-1"></i>Saturday (Pro Flights)
+                            </div>
+                            <div class="d-flex flex-wrap gap-3" style="font-size:0.88rem;">
+                                <div><span class="text-muted">Events:</span>
+                                    <strong>{{ schedule_status.saturday.events_configured }}</strong></div>
+                                <div><span class="text-muted">Flights:</span>
+                                    <strong>{{ schedule_status.saturday_flights }}</strong>
+                                    {% if schedule_status.saturday_flights > 0 %}
+                                    <span class="text-muted">(avg {{ schedule_status.saturday_heats_per_flight_avg }} heats/flight)</span>
+                                    {% endif %}</div>
+                                <div><span class="text-muted">Total heats:</span>
+                                    <strong>{{ schedule_status.saturday.heats_total }}</strong></div>
+                                <div><span class="text-muted">Placed:</span>
+                                    <strong>{{ schedule_status.saturday.competitors_placed }}</strong> competitors</div>
+                            </div>
+                            <a href="{{ schedule_status.saturday.detail_link }}"
+                               class="small text-decoration-none mt-1 d-inline-block">
+                                <i class="bi bi-arrow-right-short"></i>{{ schedule_status.saturday.detail_label }}
+                            </a>
+                        </div>
+                    </div>
+                    {% if schedule_status.warnings %}
+                    <hr class="my-3">
+                    <div>
+                        {% for w in schedule_status.warnings %}
+                        <div class="alert alert-{{ w.severity }} py-2 mb-2 d-flex align-items-start gap-2"
+                             style="font-size:0.85rem;">
+                            <i class="bi bi-{% if w.severity == 'danger' %}exclamation-triangle-fill{% elif w.severity == 'warning' %}exclamation-circle{% else %}info-circle{% endif %} flex-shrink-0 mt-1"></i>
+                            <div class="flex-grow-1">
+                                <div class="fw-semibold">{{ w.title }}</div>
+                                {% if w.detail %}<div class="small text-muted">{{ w.detail }}</div>{% endif %}
+                            </div>
+                            {% if w.link %}
+                            <a href="{{ w.link }}" class="btn btn-sm btn-outline-{{ w.severity }} flex-shrink-0">
+                                {{ w.link_label or 'Open' }}
+                            </a>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
             {# Overall status banner #}
             {% if college_heats_total == 0 %}
             <div class="alert alert-info d-flex align-items-center gap-2 mb-4">
