@@ -1,0 +1,138 @@
+name: Daily Production DB Backup
+
+# Runs pg_dump against the production Postgres via the Railway public proxy
+# and uploads the compressed SQL as a GitHub Actions artifact (90-day
+# retention). Daily cron at 08:00 UTC (02:00 MDT / 03:00 MST — low traffic).
+#
+# Motivated by the 2026-04-08 incident: zero backups existed when the
+# Postgres volume detached. Only reason data loss was zero is that no
+# competitor data had been entered yet.  See
+# docs/solutions/best-practices/railway-postgres-operational-playbook-2026-04-21.md
+# lesson 11.
+#
+# REQUIRED SECRET: RAILWAY_PG_PUBLIC_URL
+#   The full DATABASE_PUBLIC_URL from Railway (Settings → Secrets → Actions).
+#   Get it with: railway variables --service Postgres-HB8_ | grep DATABASE_PUBLIC_URL
+#   Form:        postgres://postgres:<pass>@turntable.proxy.rlwy.net:48640/railway
+#                (the workflow normalizes postgres:// → postgresql:// automatically)
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Install Postgres 18 client
+        run: |
+          set -euo pipefail
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo sh -c 'echo "deb [signed-by=/etc/apt/trusted.gpg.d/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-18
+
+      - name: Verify secret is set
+        env:
+          RAILWAY_PG_PUBLIC_URL: ${{ secrets.RAILWAY_PG_PUBLIC_URL }}
+        run: |
+          if [ -z "$RAILWAY_PG_PUBLIC_URL" ]; then
+            echo "::error::RAILWAY_PG_PUBLIC_URL repo secret is not configured."
+            echo "Get the URL with: railway variables --service Postgres-HB8_ | grep DATABASE_PUBLIC_URL"
+            echo "Then add it under Settings → Secrets and variables → Actions → New repository secret."
+            exit 1
+          fi
+
+      - name: Take pg_dump
+        env:
+          RAILWAY_PG_PUBLIC_URL: ${{ secrets.RAILWAY_PG_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          # Normalize postgres:// → postgresql:// if stored in the older form
+          NORMALIZED_URL="${RAILWAY_PG_PUBLIC_URL/#postgres:\/\//postgresql://}"
+          TS=$(date -u +%Y%m%d_%H%M%S)
+          OUT="proam_backup_${TS}.sql.gz"
+
+          # pg_dump: --no-owner and --no-acl keep the dump portable between
+          # accounts; --clean+--if-exists make the dump idempotent on restore
+          pg_dump "$NORMALIZED_URL" \
+            --no-owner --no-acl --clean --if-exists \
+            | gzip -9 > "$OUT"
+
+          SIZE=$(stat -c %s "$OUT")
+          echo "Backup file: $OUT ($SIZE bytes)"
+
+          if [ "$SIZE" -lt 1024 ]; then
+            echo "::error::Backup too small ($SIZE bytes) — likely an error or empty DB. Aborting."
+            exit 1
+          fi
+
+          echo "BACKUP_FILE=$OUT" >> "$GITHUB_ENV"
+          echo "BACKUP_SIZE=$SIZE" >> "$GITHUB_ENV"
+
+      - name: Sanity-check dump content
+        run: |
+          set -euo pipefail
+          echo "--- First 20 lines of dump ---"
+          gunzip -c "$BACKUP_FILE" | head -20
+
+          TABLE_COUNT=$(gunzip -c "$BACKUP_FILE" | grep -c "^CREATE TABLE" || true)
+          echo "CREATE TABLE statements: $TABLE_COUNT"
+
+          # App has 16 public tables (tournaments, teams, college_competitors,
+          # pro_competitors, events, heats, heat_assignments, event_results,
+          # flights, wood_configs, school_captains, pro_event_ranks,
+          # payout_templates, users, audit_logs, alembic_version).
+          # Allow some slack for future migrations; fail if we got < 10.
+          if [ "$TABLE_COUNT" -lt 10 ]; then
+            echo "::error::Dump has too few CREATE TABLE statements ($TABLE_COUNT); expected >= 10."
+            exit 1
+          fi
+
+          ALEMBIC_VERSION=$(gunzip -c "$BACKUP_FILE" \
+            | grep -A1 "COPY public.alembic_version" \
+            | tail -1 \
+            | head -c 50 || true)
+          if [ -n "$ALEMBIC_VERSION" ]; then
+            echo "alembic_version in dump: $ALEMBIC_VERSION"
+          else
+            echo "::warning::No alembic_version row found in dump — schema may be empty."
+          fi
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proam-db-backup-${{ github.run_id }}
+          path: ${{ env.BACKUP_FILE }}
+          retention-days: 90
+          compression-level: 0
+
+      - name: Summary
+        run: |
+          {
+            echo "## Backup Complete"
+            echo ""
+            echo "- File: \`$BACKUP_FILE\`"
+            echo "- Size: $BACKUP_SIZE bytes"
+            echo "- Retention: 90 days"
+            echo ""
+            echo "Download from the Artifacts section of this workflow run."
+            echo ""
+            echo "### Restore procedure (emergency only)"
+            echo ""
+            echo '```bash'
+            echo "# 1. Download the artifact and unzip"
+            echo "unzip proam-db-backup-*.zip"
+            echo ""
+            echo "# 2. Confirm the target DB is empty (or you have a fresh one)"
+            echo "# 3. Apply the dump via the Railway public proxy"
+            echo 'export DATABASE_URL="postgresql://postgres:<pass>@turntable.proxy.rlwy.net:48640/railway"'
+            echo "gunzip -c proam_backup_*.sql.gz | psql \"\$DATABASE_URL\""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
