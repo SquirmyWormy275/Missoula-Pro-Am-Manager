@@ -592,6 +592,44 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-22 (V2.13.0)
+
+**Feature — Print Hub + Pro Saturday Checkout Roster + Email Delivery.**
+
+Legacy judges asked for paper printouts this year. This release adds a single page listing every printable document in the app (14 entries, 13 fixed + 1 dynamic "Event Results" expanded one-row-per-event) with per-row configured/stale/fresh indicators. Also adds email-delivery for any document to one or more recipients, plus two new print surfaces (Saturday pro check-in roster and the already-existing per-event results sheet surfaced as dynamic Hub rows).
+
+**Architecture — fingerprint-based staleness.** Most domain models don't have `updated_at` columns; adding them would be a 10-migration refactor for little gain. Instead: one new `print_trackers` table keyed by `(tournament_id, doc_key, entity_id)` stores a short sha1 over the data each print route renders. Hub compares stored vs current fingerprint to decide FRESH / STALE / NEVER PRINTED. Full pattern in [docs/solutions/best-practices/print-hub-fingerprint-staleness-2026-04-22.md](docs/solutions/best-practices/print-hub-fingerprint-staleness-2026-04-22.md). Uses `hashlib.sha1` (NOT built-in `hash()`) for deterministic stability across Railway redeploys — `PYTHONHASHSEED` randomizes the built-in per process.
+
+**New files:**
+- `models/print_tracker.py`, `models/print_email_log.py`
+- `services/print_catalog.py` — registry, per-doc status_fn + fingerprint_fn, `@record_print` decorator (body-transparent; tracker writes post-response, failures swallowed-and-logged)
+- `services/email_delivery.py` — generic SMTP send + recipient validation + `EMAIL_ALLOWED_DOMAINS` opt-in allowlist + credential scrubbing + `background_jobs.submit()` queueing
+- `routes/scheduling/print_hub.py` — GET hub page, POST email endpoint (`admin_only` docs re-checked; rate-limited 20/min)
+- `routes/scheduling/pro_checkout_roster.py` — new print route
+- `templates/scheduling/print_hub.html`, `_email_modal.html`, `pro_checkout_roster_print.html`
+- `migrations/versions/m3b4c5d6e7f8_add_print_trackers_and_email_logs.py` — PG-safe direct DDL
+- `scripts/qa_print_hub.py` — scripted end-to-end QA that hits every Hub surface via Flask test client (36 checks)
+
+**Refactored:** `routes/reporting.py::_send_ala_email` now routes through `services/email_delivery.send_document`. Zero behavior change on the ALA email flow; regression-tested.
+
+**Instrumented:** 15 existing print routes get one `@record_print(...)` decorator line each. Response bodies, Content-Type, Content-Disposition, and status codes unchanged (regression-tested).
+
+**Sidebar:** new "Print Hub" link under Run Show with `bi-printer-fill` icon.
+
+**Security + correctness fixes surfaced by outside review (Codex, 2026-04-22):**
+- `admin_only` flag on `PrintDoc` — email POST re-checks `is_admin` for ALA report; prevents a judge from exfiltrating admin-only data via the server-render email path.
+- `background_jobs.submit(label, fn, *args)` signature was being called incorrectly; emails were being silently dropped in production. Fixed + matching `sync_submit` mocks in tests.
+- `_fp_all_results` now includes `points_awarded`; `_fp_pro_payouts` now includes competitor name + events entered. Both fields were being rendered by the template but missed by the fingerprint.
+- QA caught a `User.email` reference that doesn't exist on the User model; now guarded with `hasattr()`.
+
+**Test coverage:** 67 new tests across `test_print_catalog.py`, `test_email_delivery.py`, `test_print_hub_route.py`, `test_pro_checkout_roster.py`. Full suite: 3199 passed, 10 skipped, 0 failures. Ruff: clean.
+
+**Known limitations (deferred):**
+- Email render dispatch for `birling_blank` / `woodboss_report` / `judge_sheet_all` sends placeholder HTML in the email path because those docs don't have a clean "render to string" helper extractable from their view functions. Print buttons still work for all three via the normal GET route. Follow-up: extract dedicated render helpers.
+- `UNIQUE(tournament_id, doc_key, entity_id)` treats NULL as distinct on both PG and SQLite; the query-then-insert upsert is non-atomic. Low-likelihood race given single-user sessions; worth a partial unique index or non-null sentinel later.
+
+See [docs/plans/2026-04-21-002-feat-print-hub-and-pro-checkout-roster.md](docs/plans/2026-04-21-002-feat-print-hub-and-pro-checkout-roster.md) for the full implementation plan.
+
 ### 2026-04-21 (V2.12.1)
 
 **Patch — clickable seed links in birling "not seeded" flash warning**
