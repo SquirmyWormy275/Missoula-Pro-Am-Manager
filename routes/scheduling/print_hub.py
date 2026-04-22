@@ -75,10 +75,18 @@ def print_hub(tournament_id):
 
 
 def _users_with_email() -> list:
-    """Return a list of (id, label) tuples for the email modal checkboxes."""
+    """Return a list of (id, label, email) dicts for the email modal checkboxes.
+
+    The User model today has no email column (see models/user.py). If a future
+    migration adds one, this function starts returning real entries. Until then
+    the modal shows only the free-text "additional recipients" field, which is
+    sufficient — judges type the address they want.
+    """
     try:
         from models import User
 
+        if not hasattr(User, "email"):
+            return []
         users = (
             User.query.filter(
                 User.email.isnot(None),
@@ -274,6 +282,8 @@ def _collect_recipients(req) -> list[str]:
         try:
             from models import User
 
+            if not hasattr(User, "email"):
+                raise AttributeError("User.email not configured")
             ids = [int(x) for x in raw_ids if str(x).strip().isdigit()]
             if ids:
                 users = User.query.filter(User.id.in_(ids)).all()
