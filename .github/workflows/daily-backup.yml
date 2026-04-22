@@ -18,8 +18,21 @@ name: Daily Production DB Backup
 
 on:
   schedule:
+    # Daily baseline: 08:00 UTC = 02:00 MDT / 01:00 MST — low-traffic window.
     - cron: '0 8 * * *'
+    # Race-weekend hourly coverage: every hour on April 24-26 (UTC), which
+    # covers Thursday 6 PM MDT through Sunday 5 PM MDT. Caps worst-case data
+    # loss at 1 hour during the event. Update these dates after each annual
+    # Missoula Pro-Am if the race weekend shifts.
+    - cron: '0 * 24-26 4 *'
   workflow_dispatch:
+
+# Serialize runs so the baseline + hourly + manual-dispatch schedules never
+# stampede the public Postgres proxy. Queue, don't cancel — backups mid-flight
+# should complete.
+concurrency:
+  group: daily-backup
+  cancel-in-progress: false
 
 permissions:
   contents: read
