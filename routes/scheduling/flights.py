@@ -401,6 +401,17 @@ def build_flights(tournament_id):
             db.session.commit()
             flash(text.FLASH['flights_built'].format(num_flights=built), 'success')
 
+            # Phase 5: surface LH springboard dummy contention warnings.
+            from services.flight_builder import get_last_lh_flight_warnings
+            for w in get_last_lh_flight_warnings(tournament_id):
+                flash(
+                    f"LH SPRINGBOARD CONTENTION: Flight {w['flight_number']} "
+                    f"contains {w['lh_count']} left-handed cutters. "
+                    'Consider increasing flight count — LH dummy setup '
+                    'cannot be shared within one flight block.',
+                    'warning',
+                )
+
             # build_pro_flights wipes every Heat.flight_id (including college
             # spillover that was previously integrated). Chain the relay + spillover
             # so "Rebuild Flights Only" doesn't silently orphan them.

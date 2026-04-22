@@ -291,14 +291,16 @@ and one for Run 2 (`run_number=2`).
 - The scoring system records `run1_value` and `run2_value`; the best (lowest) time counts as
   `result_value`.
 
-### 5.3 Springboard Left-Hand Grouping
+### 5.3 Springboard Left-Hand Dummy (Stand 4)
 
-Left-handed springboard cutters require assignment to the same dummy. To prevent conflicts:
+Only one physical left-handed springboard dummy exists on site. The rule:
 
+- **Stand 4 is the LH dummy** (hard-coded convention — `Dummy 4` in `STAND_CONFIGS.springboard.labels`).
 - Left-handed cutters are identified via `ProCompetitor.is_left_handed_springboard`.
-- All left-handed cutters are grouped into a dedicated heat whenever capacity allows.
-- Right-handed cutters fill remaining spots using snake draft.
-- If there are no left-handed cutters, standard snake draft applies.
+- **Each heat can contain at most one LH cutter.** The heat generator spreads LH cutters one per heat (heats `0..N-1`); if `LH_count > heat_count`, overflow is placed in the final heat with an `lh_overflow` warning.
+- **Stand-4 assignment rule (Phase 5, 2026-04-22):** inside a springboard heat, an LH cutter is always assigned `stand_number=4`. The remaining cutters fill stands 1-3 in competitor-list order. If the heat has zero LH cutters, stands 1-4 are filled by list order (stand 4 is still used — it's just not LH-configured).
+- **Flight distribution:** at most one LH-containing heat per flight is preferred. The greedy flight builder penalises multiple LH heats in the same flight (`_score_ordering`). If `LH_count > flight_count`, overflow is allowed and surfaced via `get_last_lh_flight_warnings()` → operator flash: "LH SPRINGBOARD CONTENTION: Flight N contains M left-handed cutters. Consider increasing flight count — LH dummy setup cannot be shared within one flight block."
+- If there are no left-handed cutters, standard snake draft applies and stand 4 is just another RH stand.
 
 ### 5.4 Saw Stand Groups
 

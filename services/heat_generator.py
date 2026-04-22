@@ -200,6 +200,47 @@ def generate_event_heats(event: Event) -> int:
                 for comp in unit:
                     heat.set_stand_assignment(comp['id'], stand_num)
                 stand_idx += 1
+        elif event.stand_type == 'springboard':
+            # Phase 5 rule: Dummy 4 is the LH-configured physical dummy. If any
+            # competitor in this springboard heat is left-handed, they get
+            # stand_number=4; others fill stands 1-3 in competitor-list order.
+            # If no LH cutter is in the heat, fall through to the default
+            # per-index assignment so stand 4 still gets used.
+            lh_comp = next((c for c in heat_competitors if c.get('is_left_handed')), None)
+            if lh_comp is not None:
+                # Surface a heat-level warning if the heat has more than one LH
+                # cutter (overflow scenario) — only the first gets stand 4, the
+                # rest fall back to list-order assignment and will physically
+                # collide. This is rare but possible if LH_count > heat_count.
+                lh_comps_in_heat = [c for c in heat_competitors if c.get('is_left_handed')]
+                if len(lh_comps_in_heat) > 1 and lh_warnings is not None:
+                    lh_warnings.append({
+                        'type': 'multiple_lh_same_heat',
+                        'heat_index': heat_num - 1,
+                        'lh_count': len(lh_comps_in_heat),
+                        'lh_names': [c.get('name', '') for c in lh_comps_in_heat],
+                    })
+                # LH cutter goes on stand 4.
+                heat.set_stand_assignment(lh_comp['id'], 4)
+                # Fill stands 1, 2, 3 for the remaining cutters in order.
+                rh_stand_idx = 0
+                rh_stands = [1, 2, 3]
+                for comp in heat_competitors:
+                    if comp['id'] == lh_comp['id']:
+                        continue
+                    stand_num = (
+                        rh_stands[rh_stand_idx]
+                        if rh_stand_idx < len(rh_stands)
+                        else rh_stand_idx + 1
+                    )
+                    heat.set_stand_assignment(comp['id'], stand_num)
+                    rh_stand_idx += 1
+            else:
+                # No LH cutter — plain per-index assignment (stand 4 may still
+                # be used by whoever lands in index 3 of heat_competitors).
+                for i, comp in enumerate(heat_competitors):
+                    stand_num = stand_numbers[i] if i < len(stand_numbers) else i + 1
+                    heat.set_stand_assignment(comp['id'], stand_num)
         else:
             for i, comp in enumerate(heat_competitors):
                 stand_num = stand_numbers[i] if i < len(stand_numbers) else i + 1

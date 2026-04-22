@@ -33,6 +33,21 @@ PLACEMENT_MODE_ROUNDROBIN = 'roundrobin'
 PLACEMENT_MODE_CLUSTER = 'cluster'
 VALID_PLACEMENT_MODES = {PLACEMENT_MODE_ROUNDROBIN, PLACEMENT_MODE_CLUSTER}
 
+# Phase 5: track LH flight-contention warnings from the most recent
+# build_pro_flights() call so the route handler can surface them to the
+# operator via flash. Keyed by tournament.id → list of warning dicts.
+_last_lh_flight_warnings: dict[int, list[dict]] = {}
+
+
+def get_last_lh_flight_warnings(tournament_id: int) -> list[dict]:
+    """Return LH-flight-contention warnings from the most recent build for
+    the given tournament (empty list when there were none).
+
+    Warning dicts contain:
+        flight_number (int), lh_count (int)
+    """
+    return list(_last_lh_flight_warnings.get(int(tournament_id), []))
+
 # How many independent greedy passes to run; best result is kept.
 N_OPTIMIZATION_PASSES = 5
 
@@ -271,8 +286,11 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None, commit: b
         flights_created += 1
 
     # Post-slice sanity check: if any flight ended up with >1 LH-containing heat,
-    # the scoring penalty was dominated by spacing constraints.  Log a warning so
-    # the admin knows the LH dummy will be over-subscribed in those flights.
+    # the scoring penalty was dominated by spacing constraints. Log a warning so
+    # the admin knows the LH dummy will be over-subscribed in those flights,
+    # AND record the warning in _last_lh_flight_warnings so the route handler
+    # can surface it to the operator via flash message (Phase 5).
+    lh_warnings_for_tournament: list[dict] = []
     for fnum, count in lh_count_per_flight.items():
         if count > 1:
             logger.warning(
@@ -281,6 +299,14 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None, commit: b
                 'Manual review recommended.',
                 fnum, count,
             )
+            lh_warnings_for_tournament.append({
+                'flight_number': fnum,
+                'lh_count': count,
+            })
+    if lh_warnings_for_tournament:
+        _last_lh_flight_warnings[tournament.id] = lh_warnings_for_tournament
+    else:
+        _last_lh_flight_warnings.pop(tournament.id, None)
 
     # Insert partnered axe heats with deterministic flight placement.
     _insert_partnered_axe_heats(created_flights, partnered_axe_heats)
