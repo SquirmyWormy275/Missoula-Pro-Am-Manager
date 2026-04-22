@@ -592,6 +592,42 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-22 (V2.14.0)
+
+**Feature — Flight Fixes: 5-phase overhaul of Saturday flight assembly.**
+
+Ships five independent fixes to Saturday pro-flight construction plus one post-merge codex hotfix. Cumulative diff: 21 files, +3,282/-53 across PRs #68-73. See [docs/FLIGHT_FIXES_RECON.md](docs/FLIGHT_FIXES_RECON.md) for the pre-flight recon that scoped this release.
+
+**Phase 1 (PR #68) — async flight build chains spillover atomically.** Historical bug: `routes/scheduling/flights.py::_build_flights_async` built pro flights without chaining `integrate_college_spillover_into_flights`. Every async build orphaned Chokerman Run 2 and all selected `saturday_college_event_ids` with `flight_id=NULL`. Fix: thread `commit=False` through both functions so the async inner wrapper can call them and do a single final `db.session.commit()`. On any exception the whole chain rolls back — no orphaned spillover heats. Mirrors the existing `ProAmRelay._save_relay_data(commit=False)` precedent. 7 new tests in `tests/test_flight_builder_async_spillover.py`.
+
+**Phase 2 (PR #69) — DAY_SPLIT Run 2 routing + placement-mode toggle.** `integrate_college_spillover_into_flights` hard-coded Chokerman's Race as the only mandatory-Saturday event. Speed Climb (men's + women's) is in `config.DAY_SPLIT_EVENT_NAMES` but never auto-routed — Run 2 heats stayed orphaned. Fix: loop mandatory-add over `DAY_SPLIT_EVENT_NAMES`; apply `filter_by(run_number=2)` to any day-split event (not just Chokerman); process Chokerman LAST so it lands at the very end of the last flight. Also adds `saturday_college_placement_mode` schedule_config key + UI radio (`roundrobin` default, `cluster` alt) for Speed Climb distribution. Reads from `tournament.schedule_config` when not passed explicitly — 10+ existing call sites pick up the UI choice automatically. 13 new tests across `test_day_split_mandatory_routing.py`, `test_speed_climb_greedy_fill.py`, `test_chokerman_placement_preserved.py`.
+
+**Phase 3 (PR #70) — minutes-per-flight / num_flights sizing modes.** Operators could only size Saturday flights by picking a fixed count 2-10. The actual constraint is target flight duration (~60 min). Fix: radio toggle on `/scheduling/<tid>/flights/build` — (a) target duration (default 60 min, 5.5 min/heat average, derive `num_flights`) or (b) fixed count (original behaviour). Persists to `schedule_config['flight_sizing_mode']` + `target_minutes_per_flight` + `minutes_per_heat` + `num_flights` so the form pre-fills. Clamps extreme inputs to [2, 10] with a flash-info when the clamp changes the computed count. 16 new tests in `test_flight_sizing_modes.py`.
+
+**Phase 4 (PR #71) — Pro-Am Relay pseudo-heat in final flight + teams sheet.** Pro-Am Relay had no Heat rows — state lived in `Event.event_state` JSON only. It was invisible on flight sheets with no way to see where in the show it ran. Fix: synthesise a single pseudo-Heat placed at the end of the final flight via new `integrate_proam_relay_into_final_flight()`. Chain it BEFORE `integrate_college_spillover_into_flights` in all 5 call sites so Chokerman Run 2 still appends AFTER the relay (FlightLogic.md §4.1 show-climax preserved). New route `/scheduling/<tid>/relay-teams-sheet` renders a landscape WeasyPrint roster (HTML fallback for Railway without cairo/pango). Distinct "PRO-AM RELAY" heat tile on the flights page with inline link to the teams sheet. Registered in Print Hub catalog under Run Show. 9 new tests in `test_proam_relay_placement.py` (rolled back from the originally-planned 4 split files). Fixed two draft-code bugs during execution: `ProAmRelay(relay_event)` → `ProAmRelay(tournament)` (constructor takes Tournament); `relay.get_state()` → `relay.relay_data` (method does not exist).
+
+**Phase 5 (PR #72) — LH Springboard Stand 4 assignment + flight-contention flash.** Pro Springboard has 4 dummies but only one is set up left-handed. Heat generator already spread LH cutters one per heat but didn't nail them to a specific stand — operators had to remember who was LH and move them manually at show time. Fix: hard-coded convention — Stand 4 is the LH dummy. Springboard heat with 1 LH cutter assigns them `stand_number=4`; others fill stands 1-3. All-RH heats fall through to default assignment (stand 4 not reserved). Edge case (>1 LH same heat): first wins stand 4, subsequent LH cutters fall back to list order, `multiple_lh_same_heat` warning recorded. New `get_last_lh_flight_warnings(tournament_id)` surface so the `/flights/build` route can flash "LH SPRINGBOARD CONTENTION: Flight N contains M left-handed cutters" to operators. `FlightLogic.md §5.3` rewritten. 7 new tests in `test_lh_springboard_stand_4.py`. Legacy `test_flight_builder_lh_constraint.py` kept intact per plan-eng-review locked decision — still asserts the "spread across flights" property Phase 5 preserves.
+
+**Post-merge codex hotfix (PR #73) — relay status + real team shape.** Independent codex adversarial review of the cumulative 5-phase diff caught two P2 bugs the 3244 passing tests did not:
+
+1. **Relay vanishes after scoring starts.** `integrate_proam_relay_into_final_flight` checked `if status != 'drawn'` and short-circuited. Actual state machine is `not_drawn → drawn → in_progress → completed`. Rebuilds after the first relay event was scored orphaned the pseudo-heat. Fix: accept all three post-lottery statuses. Same fix propagated to `print_catalog._status_relay_teams` + `heat_sheets.relay_teams_sheet`'s `drawn` flag.
+
+2. **Teams sheet rendered empty rows against real data.** `ProAmRelay.run_lottery()` stores each team as `{pro_members: [...], college_members: [...]}` — NOT a combined `members` list. The Phase 4 template looped over `team.get('members', [])` — a key that doesn't exist. Only a made-up fixture `'members'` list made the template *appear* to work. Fix: template renders `pro_members` and `college_members` as two explicit blocks with matching PRO/COLLEGE badges. Test fixture rebuilt to use real production shape. 6 new regression tests cover both findings.
+
+**Meta-lesson (locked in for future features synthesising JSON over existing service state):** the test fixture MUST round-trip through the real service's emitter, never hand-write the JSON. Inventing a key in the fixture that matches a key the template reads produces self-consistent green tests against a shape production never emits. Codex spotted both P2s immediately by reading the real `ProAmRelay` class.
+
+**Files touched (cumulative PRs #68-73):**
+- Core: `services/flight_builder.py` (+254/-53), `services/heat_generator.py` (+41), `services/schedule_generation.py` (+14), `services/print_catalog.py` (+42)
+- Routes: `routes/scheduling/flights.py` (+245), `routes/scheduling/events.py` (+12), `routes/scheduling/heat_sheets.py` (+40), `routes/scheduling/friday_feature.py` (+13)
+- Templates: `templates/pro/build_flights.html` (+151), `templates/pro/flights.html` (+16), `templates/scheduling/friday_feature.html` (+37), `templates/scheduling/relay_teams_sheet_print.html` (new, 137)
+- Tests: 6 new test files + updated `test_print_catalog.py` expected_keys
+- Spec: `FlightLogic.md` §5.3 rewrite
+- Recon: `docs/FLIGHT_FIXES_RECON.md` (written before Phase 1)
+
+**Test totals:** 3250 passed, 0 failed after PR #73 merge. 58 of those are new flight-fix guards (Phases 1-5 + codex P2 regression).
+
+---
+
 ### 2026-04-22 (V2.13.0)
 
 **Feature — Print Hub + Pro Saturday Checkout Roster + Email Delivery.**
