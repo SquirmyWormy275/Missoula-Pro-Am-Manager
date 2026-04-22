@@ -120,6 +120,89 @@ def flight_list(tournament_id):
                            flight_data=flight_data)
 
 
+# ---------------------------------------------------------------------------
+# Flight sizing config (Phase 3) — persisted in Tournament.schedule_config.
+# Two modes: 'minutes' (derive num_flights from target duration) or 'count'
+# (operator picks num_flights directly). Defaults below are tuned for the
+# Missoula Pro Am's 60-min flight cadence and 5.5-min avg heat duration.
+# ---------------------------------------------------------------------------
+
+FLIGHT_SIZING_MODE_MINUTES = 'minutes'
+FLIGHT_SIZING_MODE_COUNT = 'count'
+VALID_FLIGHT_SIZING_MODES = {FLIGHT_SIZING_MODE_MINUTES, FLIGHT_SIZING_MODE_COUNT}
+
+FLIGHT_SIZING_DEFAULTS = {
+    'mode': FLIGHT_SIZING_MODE_MINUTES,
+    'target_minutes_per_flight': 60,
+    'minutes_per_heat': 5.5,
+    'num_flights': 4,
+}
+
+FLIGHT_COUNT_MIN = 2
+FLIGHT_COUNT_MAX = 10
+MINUTES_PER_FLIGHT_MIN = 30
+MINUTES_PER_FLIGHT_MAX = 180
+MINUTES_PER_HEAT_MIN = 1.0
+MINUTES_PER_HEAT_MAX = 15.0
+
+
+def _read_flight_sizing_config(tournament):
+    """Return saved flight-sizing config merged over defaults."""
+    cfg = tournament.get_schedule_config() or {}
+    mode = cfg.get('flight_sizing_mode', FLIGHT_SIZING_DEFAULTS['mode'])
+    if mode not in VALID_FLIGHT_SIZING_MODES:
+        mode = FLIGHT_SIZING_DEFAULTS['mode']
+    try:
+        target_minutes = int(cfg.get('target_minutes_per_flight',
+                                     FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']))
+    except (TypeError, ValueError):
+        target_minutes = FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']
+    try:
+        minutes_per_heat = float(cfg.get('minutes_per_heat',
+                                         FLIGHT_SIZING_DEFAULTS['minutes_per_heat']))
+    except (TypeError, ValueError):
+        minutes_per_heat = FLIGHT_SIZING_DEFAULTS['minutes_per_heat']
+    try:
+        saved_num_flights = int(cfg.get('num_flights', FLIGHT_SIZING_DEFAULTS['num_flights']))
+    except (TypeError, ValueError):
+        saved_num_flights = FLIGHT_SIZING_DEFAULTS['num_flights']
+    return {
+        'mode': mode,
+        'target_minutes_per_flight': max(
+            MINUTES_PER_FLIGHT_MIN, min(MINUTES_PER_FLIGHT_MAX, target_minutes),
+        ),
+        'minutes_per_heat': max(
+            MINUTES_PER_HEAT_MIN, min(MINUTES_PER_HEAT_MAX, minutes_per_heat),
+        ),
+        'num_flights': max(FLIGHT_COUNT_MIN, min(FLIGHT_COUNT_MAX, saved_num_flights)),
+    }
+
+
+def _persist_flight_sizing_config(tournament, mode, target_minutes, minutes_per_heat, num_flights):
+    """Persist operator's flight sizing choices to schedule_config."""
+    cfg = tournament.get_schedule_config() or {}
+    cfg['flight_sizing_mode'] = mode
+    cfg['target_minutes_per_flight'] = int(target_minutes)
+    cfg['minutes_per_heat'] = float(minutes_per_heat)
+    cfg['num_flights'] = int(num_flights)
+    tournament.set_schedule_config(cfg)
+
+
+def _compute_num_flights_from_duration(total_heats, minutes_per_heat, target_minutes_per_flight):
+    """Derive num_flights from target flight duration.
+
+    Returns a clamped value in [FLIGHT_COUNT_MIN, FLIGHT_COUNT_MAX]. A
+    ``clamped`` flag indicates the ideal calculation exceeded the range so
+    the caller can surface a warning.
+    """
+    import math as _math
+    if total_heats <= 0 or minutes_per_heat <= 0 or target_minutes_per_flight <= 0:
+        return FLIGHT_COUNT_MIN, False
+    ideal = _math.ceil((total_heats * minutes_per_heat) / target_minutes_per_flight)
+    clamped_value = max(FLIGHT_COUNT_MIN, min(FLIGHT_COUNT_MAX, ideal))
+    return clamped_value, clamped_value != ideal
+
+
 @scheduling_bp.route('/<int:tournament_id>/flights/build', methods=['GET', 'POST'])
 def build_flights(tournament_id):
     """Build flights for pro competition."""
@@ -128,12 +211,73 @@ def build_flights(tournament_id):
     if request.method == 'POST':
         from services.flight_builder import build_pro_flights
 
+        # Phase 3: accept either 'minutes' (duration-driven) or 'count'
+        # (operator-specified). Persist choices to schedule_config so the
+        # form pre-fills on the next visit.
+        sizing_mode_raw = (request.form.get('flight_sizing_mode') or '').strip().lower()
+        if sizing_mode_raw not in VALID_FLIGHT_SIZING_MODES:
+            sizing_mode_raw = FLIGHT_SIZING_DEFAULTS['mode']
+
         try:
-            num_flights = int(request.form.get('num_flights', 0))
-            if num_flights < 1:
-                num_flights = None
+            form_target_minutes = int(request.form.get('target_minutes_per_flight',
+                                                       FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']))
         except (TypeError, ValueError):
-            num_flights = None
+            form_target_minutes = FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']
+        form_target_minutes = max(
+            MINUTES_PER_FLIGHT_MIN, min(MINUTES_PER_FLIGHT_MAX, form_target_minutes),
+        )
+
+        try:
+            form_minutes_per_heat = float(request.form.get('minutes_per_heat',
+                                                           FLIGHT_SIZING_DEFAULTS['minutes_per_heat']))
+        except (TypeError, ValueError):
+            form_minutes_per_heat = FLIGHT_SIZING_DEFAULTS['minutes_per_heat']
+        form_minutes_per_heat = max(
+            MINUTES_PER_HEAT_MIN, min(MINUTES_PER_HEAT_MAX, form_minutes_per_heat),
+        )
+
+        try:
+            form_num_flights = int(request.form.get('num_flights', 0))
+        except (TypeError, ValueError):
+            form_num_flights = 0
+
+        # Total heats available for the duration calc (pro run_number=1 excluding axe).
+        pro_heats_for_calc = Heat.query.join(Event).filter(
+            Event.tournament_id == tournament_id,
+            Event.event_type == 'pro',
+            Event.name != 'Partnered Axe Throw',
+            Heat.run_number == 1,
+        ).count()
+
+        if sizing_mode_raw == FLIGHT_SIZING_MODE_MINUTES:
+            computed_num_flights, was_clamped = _compute_num_flights_from_duration(
+                pro_heats_for_calc, form_minutes_per_heat, form_target_minutes,
+            )
+            if was_clamped and pro_heats_for_calc > 0:
+                actual_flight_minutes = int(
+                    (pro_heats_for_calc * form_minutes_per_heat) / computed_num_flights,
+                )
+                flash(
+                    f'Target {form_target_minutes} min/flight would need more than '
+                    f'{FLIGHT_COUNT_MAX} or fewer than {FLIGHT_COUNT_MIN} flights. '
+                    f'Capped at {computed_num_flights} flights — actual duration '
+                    f'~{actual_flight_minutes} min/flight.',
+                    'info',
+                )
+            num_flights = computed_num_flights if computed_num_flights >= 1 else None
+        else:  # 'count' mode
+            num_flights = form_num_flights if form_num_flights >= 1 else None
+
+        # Persist the operator's sizing choices so the form pre-fills next visit.
+        try:
+            _persist_flight_sizing_config(
+                tournament, sizing_mode_raw,
+                form_target_minutes, form_minutes_per_heat,
+                form_num_flights if form_num_flights >= FLIGHT_COUNT_MIN else FLIGHT_SIZING_DEFAULTS['num_flights'],
+            )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
         # Guard: abort if no pro heats have been generated yet
         pro_heat_count = Heat.query.join(Event).filter(
@@ -273,10 +417,19 @@ def build_flights(tournament_id):
         if e.name != 'Partnered Axe Throw'
     )
 
+    sizing = _read_flight_sizing_config(tournament)
+
     return render_template('pro/build_flights.html',
                            tournament=tournament,
                            events=pro_events,
-                           total_heats=total_heats)
+                           total_heats=total_heats,
+                           flight_sizing=sizing,
+                           flight_count_min=FLIGHT_COUNT_MIN,
+                           flight_count_max=FLIGHT_COUNT_MAX,
+                           minutes_per_flight_min=MINUTES_PER_FLIGHT_MIN,
+                           minutes_per_flight_max=MINUTES_PER_FLIGHT_MAX,
+                           minutes_per_heat_min=MINUTES_PER_HEAT_MIN,
+                           minutes_per_heat_max=MINUTES_PER_HEAT_MAX)
 
 
 # ---------------------------------------------------------------------------
