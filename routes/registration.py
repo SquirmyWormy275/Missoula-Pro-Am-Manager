@@ -1048,6 +1048,35 @@ def pro_gear_cleanup_scratched(tournament_id):
     return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
 
 
+@registration_bp.route('/<int:tournament_id>/pro/gear-sharing/cleanup-non-enrolled', methods=['POST'])
+def pro_gear_cleanup_non_enrolled(tournament_id):
+    """Remove gear-sharing entries pointing at events the competitor is not enrolled in."""
+    tournament = Tournament.query.get_or_404(tournament_id)
+    from services.gear_sharing import cleanup_non_enrolled_gear_entries
+    try:
+        result = cleanup_non_enrolled_gear_entries(tournament)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('gear_cleanup_non_enrolled', 'tournament', tournament_id, {
+            'cleaned': result['cleaned'],
+            'pro_cleaned': result['pro_cleaned'],
+            'college_cleaned': result['college_cleaned'],
+            'affected': result['affected'],
+        })
+        if result['cleaned']:
+            flash(
+                f'Removed {result["cleaned"]} stale gear entry(s) from'
+                f' {len(result["affected"])} competitor(s) — these referenced events they are not enrolled in.',
+                'success',
+            )
+        else:
+            flash('No stale gear entries for non-enrolled events.', 'info')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error cleaning up non-enrolled gear entries: {e}', 'error')
+    return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
+
+
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/auto-partners', methods=['POST'])
 def pro_gear_auto_partners(tournament_id):
     """Copy gear_sharing entries into partners for partnered events."""

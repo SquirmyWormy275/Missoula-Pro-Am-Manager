@@ -480,3 +480,162 @@ class TestFullyValidTournament:
         assert 'has_autofixable' in report
         assert isinstance(report['issues'], list)
         assert isinstance(report['severity'], dict)
+
+
+# ---------------------------------------------------------------------------
+# Gear-sharing preflight — USING vs SHARING semantics (V2.9.1 + follow-up fix)
+# ---------------------------------------------------------------------------
+
+class TestGearSharingUsingPrefix:
+    """Regression tests for the gear-sharing preflight after V2.9.1 introduced
+    the ``using:`` value prefix. Prior to the follow-up fix, every legitimate
+    USING entry was reported as an unknown partner because the preflight
+    normalized the whole value (``using:Alice`` -> ``usingalice``) instead of
+    the underlying name."""
+
+    def _codes(self, report):
+        return {i['code'] for i in report['issues']}
+
+    def test_using_prefix_resolves_to_known_partner(self, db_session, tournament):
+        """A USING entry whose underlying name matches a roster competitor
+        must NOT be flagged as unknown."""
+        from services.preflight import build_preflight_report
+
+        jj = _make_event(db_session, tournament, 'Jack & Jill Sawing',
+                         stand_type='saw_hand', is_partnered=True)
+        alice = _make_pro(db_session, tournament, 'Alice Jones',
+                          gender='F', event_ids=[jj.id])
+        bob = _make_pro(db_session, tournament, 'Bob Smith',
+                        gender='M', event_ids=[jj.id])
+
+        alice.gear_sharing = json.dumps({str(jj.id): 'using:Bob Smith'})
+        alice.partners = json.dumps({str(jj.id): 'Bob Smith'})
+        bob.gear_sharing = json.dumps({str(jj.id): 'using:Alice Jones'})
+        bob.partners = json.dumps({str(jj.id): 'Alice Jones'})
+        db_session.flush()
+
+        report = build_preflight_report(tournament)
+        codes = self._codes(report)
+        assert 'gear_unknown_partner_names' not in codes
+        assert 'gear_partner_mismatch' not in codes
+
+    def test_sharing_entry_different_from_partner_is_not_flagged(
+            self, db_session, tournament):
+        """A SHARING entry intentionally names a DIFFERENT person than the
+        event partner — that is the entire point of cross-competitor gear
+        dependency outside a partnered pair. The preflight must not flag it
+        as a 'gear vs partner disagreement'."""
+        from services.preflight import build_preflight_report
+
+        db = _make_event(db_session, tournament, 'Double Buck', gender='M',
+                         stand_type='saw_hand', is_partnered=True)
+        ripley = _make_pro(db_session, tournament, 'Ripley Orr',
+                           gender='M', event_ids=[db.id])
+        cody = _make_pro(db_session, tournament, 'Cody Labahn',
+                         gender='M', event_ids=[db.id])
+        may = _make_pro(db_session, tournament, 'May Brown',
+                        gender='M', event_ids=[db.id])
+
+        # Ripley is partnered with Cody for Double Buck, but shares his saw
+        # with May (a cross-competitor SHARING dependency, no using: prefix).
+        ripley.gear_sharing = json.dumps({str(db.id): 'May Brown'})
+        ripley.partners = json.dumps({str(db.id): 'Cody Labahn'})
+        db_session.flush()
+
+        report = build_preflight_report(tournament)
+        codes = self._codes(report)
+        assert 'gear_partner_mismatch' not in codes
+
+    def test_using_entry_still_flagged_when_name_unknown(
+            self, db_session, tournament):
+        """The prefix fix must not mask a GENUINE unresolved partner — a
+        USING entry whose underlying name is not on the roster should still
+        trigger the unknown-partner warning."""
+        from services.preflight import build_preflight_report
+
+        jj = _make_event(db_session, tournament, 'Jack & Jill Sawing',
+                         stand_type='saw_hand', is_partnered=True)
+        alice = _make_pro(db_session, tournament, 'Alice Jones',
+                          gender='F', event_ids=[jj.id])
+
+        alice.gear_sharing = json.dumps({str(jj.id): 'using:Ghost Competitor'})
+        db_session.flush()
+
+        report = build_preflight_report(tournament)
+        codes = self._codes(report)
+        assert 'gear_unknown_partner_names' in codes
+
+    def test_using_mismatch_with_partners_still_flagged(
+            self, db_session, tournament):
+        """When a USING entry names a different person than the partners
+        dict, that IS a real inconsistency (confirmation drifted away from
+        the registered partner) and must still be flagged."""
+        from services.preflight import build_preflight_report
+
+        jj = _make_event(db_session, tournament, 'Jack & Jill Sawing',
+                         stand_type='saw_hand', is_partnered=True)
+        alice = _make_pro(db_session, tournament, 'Alice Jones',
+                          gender='F', event_ids=[jj.id])
+        _bob = _make_pro(db_session, tournament, 'Bob Smith',
+                         gender='M', event_ids=[jj.id])
+        _carol = _make_pro(db_session, tournament, 'Carol Vance',
+                           gender='F', event_ids=[jj.id])
+
+        alice.gear_sharing = json.dumps({str(jj.id): 'using:Bob Smith'})
+        alice.partners = json.dumps({str(jj.id): 'Carol Vance'})
+        db_session.flush()
+
+        report = build_preflight_report(tournament)
+        codes = self._codes(report)
+        assert 'gear_partner_mismatch' in codes
+
+
+class TestCleanupNonEnrolledGearEntries:
+    """Regression tests for services.gear_sharing.cleanup_non_enrolled_gear_entries."""
+
+    def test_removes_entries_for_non_enrolled_events(
+            self, db_session, tournament):
+        """Gear entries pointing at events the competitor is not enrolled in
+        should be removed; entries for events they ARE in stay."""
+        from services.gear_sharing import cleanup_non_enrolled_gear_entries
+
+        enrolled = _make_event(db_session, tournament, 'Single Buck',
+                               stand_type='saw_hand')
+        orphan = _make_event(db_session, tournament, 'Double Buck',
+                             stand_type='saw_hand', is_partnered=True)
+        chrissy = _make_pro(db_session, tournament, 'Chrissy Marcellus',
+                            gender='F', event_ids=[enrolled.id])
+
+        chrissy.gear_sharing = json.dumps({
+            str(enrolled.id): 'Alice Jones',
+            str(orphan.id): 'Cody Labahn',
+        })
+        db_session.flush()
+
+        result = cleanup_non_enrolled_gear_entries(tournament)
+
+        assert result['cleaned'] == 1
+        assert 'Chrissy Marcellus' in result['affected']
+        remaining = json.loads(chrissy.gear_sharing)
+        assert str(enrolled.id) in remaining
+        assert str(orphan.id) not in remaining
+
+    def test_keeps_category_entries_when_enrolled_in_matching_event(
+            self, db_session, tournament):
+        """A category key should be kept when the competitor is enrolled in
+        any event of that category, even if not all of them."""
+        from services.gear_sharing import cleanup_non_enrolled_gear_entries
+
+        sb = _make_event(db_session, tournament, 'Single Buck',
+                         stand_type='saw_hand')
+        alice = _make_pro(db_session, tournament, 'Alice Jones',
+                          gender='F', event_ids=[sb.id])
+
+        alice.gear_sharing = json.dumps({'category:crosscut': 'Bob Smith'})
+        db_session.flush()
+
+        result = cleanup_non_enrolled_gear_entries(tournament)
+
+        assert result['cleaned'] == 0
+        remaining = json.loads(alice.gear_sharing)
+        assert 'category:crosscut' in remaining
