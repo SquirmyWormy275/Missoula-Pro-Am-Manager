@@ -1,7 +1,65 @@
 # BIRLING BRACKET SYSTEM — RECON REPORT
 
-**Date:** 2026-04-12
+**Original date:** 2026-04-12
+**Last refreshed:** 2026-04-21 (see Status Update below)
 **Scope:** Full discovery, read, dependency trace, and gap analysis of all birling/bracket-related code in Missoula-Pro-Am-Manager.
+
+---
+
+## STATUS UPDATE — 2026-04-21
+
+Refreshed via `/ce:compound-refresh` after the 2026-04-13 losers-bracket rewrite and 2026-04-21 print + nav surfacing work landed. The audit below captures the 2026-04-12 snapshot for historical context; this section supersedes its file sizes, route table, and gap list.
+
+### File size drift since 2026-04-12
+
+| File | Apr 12 | Apr 21 | Change |
+|------|--------|--------|--------|
+| `services/birling_bracket.py` | 461 | 883 | +91% (fall recording, undo, sweep-byes, `get_undoable_matches`, PDF print helpers) |
+| `routes/scheduling/birling.py` | 261 | 484 | +85% (5 routes → 9 routes) |
+| `templates/scheduling/birling_manage.html` | 443 | 517 | +17% (fall cards, undo buttons, drag-drop seeding) |
+| `templates/scoring/birling_bracket.html` | 125 | 133 | +6% (minor polish; legacy route redirects here → birling_manage) |
+
+### Routes added since 2026-04-12 (9 total, was 5)
+
+| Route | Method | URL | Purpose |
+|-------|--------|-----|---------|
+| `birling_record_fall` | POST | `.../birling/record-fall` | **NEW** — records individual falls within a match (best-of-3); resolves gap #2 |
+| `birling_undo_match` | POST | `.../birling/undo` | **NEW** — reverses the last match result without wiping the bracket; resolves gap #3 |
+| `birling_print_blank` | GET | `.../birling/print-blank` | **NEW** — WeasyPrint PDF of empty bracket for paper backup |
+| `birling_print_all` | GET | `/scheduling/<tid>/birling/print-all` | **NEW** — combined PDF across every birling event in the tournament |
+
+### Gap list — status as of 2026-04-21
+
+Renumbering references the GAP SUMMARY below for traceability.
+
+| # | Gap | Status |
+|---|-----|--------|
+| 1 | No Match model (matches are JSON dicts) | **Still open** — deliberate design choice; `Event.payouts` JSON pattern unchanged |
+| 2 | No fall recording | **RESOLVED** — `BirlingBracket.record_fall()` + `POST .../birling/record-fall` route + fall cards in `birling_manage.html` |
+| 3 | No match undo | **RESOLVED** — `BirlingBracket.undo_match_result()` + `get_undoable_matches()` + `POST .../birling/undo` route + undo buttons on bracket matches. Undo is shallow (last-result-only) — matches whose downstream advancement has already been played cannot be undone; `get_undoable_matches()` computes the safe set |
+| 4 | No spectator bracket view | **Still open** — bracket remains judge-only |
+| 5 | No format differentiation (ALA vs AWFC) | **Still open** — single format (standard double-elim with true finals) |
+| 6 | No bracket seeding from STRATHMARK | **Still open** — manual + ability-rankings `pre_seedings` only |
+| 7 | Losers bracket structure broken for non-power-of-2 fields | **RESOLVED** — rewrite on 2026-04-13. `_generate_losers_bracket()` now produces correct `2*(log2(B)-1)` round count. `_sweep_losers_byes()` + `_get_lb_sources()` added to handle bye propagation through the losers bracket (scoped to L1 only to avoid premature advancement). `finalize_to_event_results()` now also sets `points_awarded` via `PLACEMENT_POINTS_DECIMAL`. Verified for field sizes 4, 6, 8, 12, 16 |
+| 8 | No bracket points integration | **RESOLVED** — `finalize_to_event_results()` now calls placement-points scoring (see gap #7 entry) |
+| 9 | No match metadata (timestamps, pond conditions, etc.) | **Still open** — deliberate; match dict shape unchanged |
+| 10 | No bracket progression validation | **RESOLVED** — `record_match_result()` now raises `ValueError` if `match_id` is not in `get_current_matches()`, preventing out-of-order advancement |
+| 11 | Bracket not exposed via API | **Still open** — public API has no bracket endpoint |
+| 12 | No bracket regeneration with preserved results | **Still open** — full wipe on regenerate |
+| 13 | `create_birling_bracket()` / `get_birling_bracket()` factory functions unused | **Still open** — dead code, deferred cleanup |
+| 14 | No SMS/notification integration | **Still open** — Twilio wired to flights only, not brackets |
+
+**Net:** 5 of 14 gaps resolved in the two weeks between the audit and this refresh.
+
+### Related docs added since 2026-04-12
+
+- [`docs/solutions/best-practices/bracket-scoring-category-wiring-2026-04-21.md`](solutions/best-practices/bracket-scoring-category-wiring-2026-04-21.md) — distills the end-to-end wiring pattern (config + routes + template + registration + JSON seeding) that finished filling the gaps this recon identified. Read this if you are adding a new bracket-scoring category.
+
+---
+
+## HISTORICAL AUDIT (2026-04-12)
+
+*The sections below are preserved as the original audit. File sizes, route counts, and gap entries are superseded by the Status Update above.*
 
 ---
 

@@ -411,7 +411,7 @@ PayoutTemplate  (tournament-independent, standalone)
 - Excel results export direct-download: `GET /reporting/<tid>/export-results` — synchronous download via `build_results_export()` in `services/excel_io.py`; returns multi-sheet XLSX (competitors, events, results, standings) with auto-cleaned temp file; complements the existing async job path `/reporting/<tid>/export-results/async` for large exports
 - Pro-Am Relay lottery (opt-in, gender-balanced draw, result entry, standings)
 - Partnered Axe Throw state machine (prelim registration, prelim scoring, top-4 advance, finals, full standings)
-- Birling bracket: full double-elimination bracket generation with advance logic (`_advance_winner`, `_drop_to_losers`, `_advance_loser_winner`); bracket viewer route + `birling_bracket.html`
+- Birling bracket: full double-elimination management at `/scheduling/<tid>/event/<eid>/birling` (`templates/scheduling/birling_manage.html`) with seeding table (falls back to `pre_seedings` from ability rankings), one-click match recording, fall-by-fall tracking (`record_fall` service + `birling_record_fall` route), shallow undo (`undo_match_result` + `get_undoable_matches`), progression validation (`record_match_result` raises `ValueError` if not in `get_current_matches()`), losers bracket with bye propagation (`_sweep_losers_byes`, `_get_lb_sources`; scoped to L1 only), corrected round count `2*(log2(B)-1)`, placement-points scoring in `finalize_to_event_results()`, WeasyPrint PDF print (`birling_print_blank`, `birling_print_all`). Legacy `/scoring/<tid>/event/<eid>/birling-bracket` 302-redirects to the management page. See [`docs/solutions/best-practices/bracket-scoring-category-wiring-2026-04-21.md`](../../Desktop/John Ruffato Startup Challenge/Python/Missoula Pro Am/Missoula-Pro-Am-Manager/docs/solutions/best-practices/bracket-scoring-category-wiring-2026-04-21.md) for the end-to-end wiring pattern.
 - Validation service for teams, college competitors, pro competitors, heat constraints; validation API (JSON) endpoints
 - Saturday priority route (`/scheduling/<tid>/college/saturday-priority`) for college overflow event flagging
 - College Saturday overflow flight integration: `integrate_college_spillover_into_flights()` places Chokerman's Race Run 2 at the end of the last flight in heat-number order; other overflow events distributed round-robin; wired to `event_list` POST actions
@@ -658,6 +658,8 @@ Cookie Stack and Standing Block stand conflict: any code touching heat generatio
 ### Test Isolation
 
 Tests MUST NEVER write to or pollute the production database. Always use separate test databases, fixtures, or transactions that roll back. Before writing any test, verify the test config uses an isolated DB connection.
+
+The 4-layer defense against test-to-prod pollution is implemented in `tests/conftest.py` (fingerprint guard), `app.py` (TESTING runtime guard), `tests/db_test_utils.py::create_test_app()` (env-var-first ordering), and `config.py` (re-resolve `DATABASE_URL` at app creation). See [docs/solutions/test-failures/test-data-polluting-production-sqlite-db-2026-04-21.md](docs/solutions/test-failures/test-data-polluting-production-sqlite-db-2026-04-21.md) for the failure modes each layer closes and diagnostic commands.
 
 ### Project Structure (Multi-Project Workspace)
 
