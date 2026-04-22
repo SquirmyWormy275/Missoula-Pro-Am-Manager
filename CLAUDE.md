@@ -165,6 +165,10 @@ static/
 FlightLogic.md          # Source-of-truth for all flight builder rules, heat gen rules, stand configs,
                         # algorithm details, constants, and known gaps. Update when rules change.
 
+docs/solutions/         # Documented solutions to past problems (bugs, best practices, workflow
+                        # patterns), organized by category with YAML frontmatter (module, tags,
+                        # problem_type). Relevant when implementing or debugging in documented areas.
+
 tests/
     conftest.py         # Shared pytest fixtures (app, client, db, seeded tournament)
     fixtures/
