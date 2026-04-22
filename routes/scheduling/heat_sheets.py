@@ -353,7 +353,11 @@ def relay_teams_sheet(tournament_id):
     relay = ProAmRelay(tournament)
     state = relay.relay_data or {}
     teams = state.get("teams") or []
-    drawn = state.get("status") == "drawn" and bool(teams)
+    # Print-ready once the lottery has run — state machine runs
+    # not_drawn → drawn → in_progress → completed. Any post-lottery state
+    # should render the roster (crews still need to know who's on which team
+    # during scoring).
+    drawn = state.get("status") in {"drawn", "in_progress", "completed"} and bool(teams)
 
     html = render_template(
         "scheduling/relay_teams_sheet_print.html",

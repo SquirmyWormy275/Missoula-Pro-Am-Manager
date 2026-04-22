@@ -229,13 +229,17 @@ def _fp_fnf(tournament, entity=None):
 
 
 def _status_relay_teams(tournament, entity=None):
-    """Status: relay is draw-complete iff ProAmRelay.relay_data shows drawn."""
+    """Status: relay is print-ready iff the lottery has been run.
+
+    Accepts any post-lottery status (drawn / in_progress / completed) — the
+    teams sheet is still relevant once scoring starts.
+    """
     from services.proam_relay import ProAmRelay
 
     relay = ProAmRelay(tournament)
     state = relay.relay_data or {}
     teams = state.get("teams") or []
-    if state.get("status") == "drawn" and teams:
+    if state.get("status") in ("drawn", "in_progress", "completed") and teams:
         return _ok()
     return _not_configured("Relay not drawn yet.")
 

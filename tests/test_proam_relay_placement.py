@@ -113,8 +113,9 @@ def _make_pro(session, tournament, name, gender="M"):
     return c
 
 
-def _seed_with_flights(session, with_relay_event=True, with_teams=False):
-    """Tournament with 2 pro flights and (optionally) a drawn Pro-Am Relay."""
+def _seed_with_flights(session, with_relay_event=True, with_teams=False, status="drawn"):
+    """Tournament with 2 pro flights and (optionally) a Pro-Am Relay in the
+    given lottery status (drawn / in_progress / completed)."""
     from models import Event
     from services.flight_builder import build_pro_flights
 
@@ -140,42 +141,27 @@ def _seed_with_flights(session, with_relay_event=True, with_teams=False):
             status="pending",
         )
         if with_teams:
+            # Mirror the real ProAmRelay.run_lottery() shape:
+            # {'pro_members': [...], 'college_members': [...]}, NOT a combined
+            # 'members' list. Codex caught this divergence post-merge.
             relay_data = {
-                "status": "drawn",
+                "status": status,
                 "teams": [
                     {
                         "team_number": 1,
-                        "members": [
-                            {
-                                "id": pros[0].id,
-                                "name": pros[0].name,
-                                "gender": "M",
-                                "division": "pro",
-                            },
-                            {
-                                "id": pros[1].id,
-                                "name": pros[1].name,
-                                "gender": "M",
-                                "division": "pro",
-                            },
+                        "pro_members": [
+                            {"id": pros[0].id, "name": pros[0].name, "gender": "M"},
+                            {"id": pros[1].id, "name": pros[1].name, "gender": "M"},
                         ],
+                        "college_members": [],
                     },
                     {
                         "team_number": 2,
-                        "members": [
-                            {
-                                "id": pros[2].id,
-                                "name": pros[2].name,
-                                "gender": "M",
-                                "division": "pro",
-                            },
-                            {
-                                "id": pros[3].id,
-                                "name": pros[3].name,
-                                "gender": "M",
-                                "division": "pro",
-                            },
+                        "pro_members": [
+                            {"id": pros[2].id, "name": pros[2].name, "gender": "M"},
+                            {"id": pros[3].id, "name": pros[3].name, "gender": "M"},
                         ],
+                        "college_members": [],
                     },
                 ],
             }
@@ -391,3 +377,123 @@ class TestRelayTeamsSheetRoute:
 
         resp = client.get(f"/scheduling/{t.id}/relay-teams-sheet")
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Codex post-merge P2: relay survives past the 'drawn' status
+# ---------------------------------------------------------------------------
+
+
+class TestRelayStatusTransitions:
+    """Locked fix for codex finding: relay pseudo-heat must be re-placeable
+    on rebuild after scoring has started. The state machine is
+    not_drawn → drawn → in_progress → completed. Only 'not_drawn' (or
+    missing/empty teams) should skip placement."""
+
+    def test_in_progress_status_still_places(self, db_session):
+        from services.flight_builder import integrate_proam_relay_into_final_flight
+
+        t, _ = _seed_with_flights(
+            db_session, with_relay_event=True, with_teams=True, status="in_progress",
+        )
+        result = integrate_proam_relay_into_final_flight(t, commit=False)
+        assert result["placed"] is True, (
+            "Regression: an in_progress relay must not disappear from the "
+            "flight sheet when flights are rebuilt mid-show."
+        )
+
+    def test_completed_status_still_places(self, db_session):
+        from services.flight_builder import integrate_proam_relay_into_final_flight
+
+        t, _ = _seed_with_flights(
+            db_session, with_relay_event=True, with_teams=True, status="completed",
+        )
+        result = integrate_proam_relay_into_final_flight(t, commit=False)
+        assert result["placed"] is True
+
+    def test_not_drawn_still_skips(self, db_session):
+        """Baseline guard: not_drawn still short-circuits placement."""
+        from services.flight_builder import integrate_proam_relay_into_final_flight
+
+        t, _ = _seed_with_flights(db_session, with_relay_event=True, with_teams=False)
+        result = integrate_proam_relay_into_final_flight(t, commit=False)
+        assert result["placed"] is False
+        assert result["reason"] == "not_drawn"
+
+    def test_rebuild_mid_show_reattaches_heat(self, db_session):
+        """Simulate the exact codex scenario: run placement while 'drawn',
+        then delete the pseudo-heat (as build_pro_flights would when rebuilding),
+        bump status to 'in_progress', and re-run placement. The relay must
+        land in the final flight again."""
+        from models import Event, Heat
+        from services.flight_builder import integrate_proam_relay_into_final_flight
+
+        t, _ = _seed_with_flights(
+            db_session, with_relay_event=True, with_teams=True, status="drawn",
+        )
+        first = integrate_proam_relay_into_final_flight(t, commit=False)
+        assert first["placed"] is True
+
+        # Mimic build_pro_flights wiping Heat.flight_id for relay heat + bump status.
+        relay_event = Event.query.filter_by(
+            tournament_id=t.id, name="Pro-Am Relay",
+        ).first()
+        Heat.query.filter_by(event_id=relay_event.id).delete(synchronize_session=False)
+        state = json.loads(relay_event.event_state or "{}")
+        state["status"] = "in_progress"
+        relay_event.event_state = json.dumps(state)
+        db_session.flush()
+
+        second = integrate_proam_relay_into_final_flight(t, commit=False)
+        assert second["placed"] is True, (
+            "Rebuild mid-show lost the relay — codex P2 regression."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Codex post-merge P2: teams sheet must render real member names
+# ---------------------------------------------------------------------------
+
+
+class TestRelayTeamsSheetRendersRealShape:
+    """ProAmRelay.run_lottery() stores team members as pro_members +
+    college_members (two separate lists). A template loop over 'members'
+    rendered empty rows against real production data — codex caught this."""
+
+    def test_sheet_renders_pro_member_names(self, db_session, client):
+        t, _pros = _seed_with_flights(
+            db_session, with_relay_event=True, with_teams=True, status="drawn",
+        )
+        _db.session.commit()
+
+        resp = client.get(f"/scheduling/{t.id}/relay-teams-sheet")
+        assert resp.status_code == 200
+        if "text/html" not in resp.content_type:
+            pytest.skip("PDF fallback — name assertion is HTML-fallback only.")
+        body = resp.data.decode("utf-8", errors="ignore")
+        # Every pro member seeded in both teams should appear by name.
+        for name in ("Pro 1", "Pro 2", "Pro 3", "Pro 4"):
+            assert name in body, (
+                f"Relay teams sheet did not render pro member {name!r}. "
+                "Codex P2 regression: template must read pro_members + "
+                "college_members, not a combined members list."
+            )
+        # Division badges match the real data shape.
+        assert "PRO" in body
+        assert "Team 1" in body
+        assert "Team 2" in body
+
+    def test_sheet_renders_when_status_is_in_progress(self, db_session, client):
+        t, _ = _seed_with_flights(
+            db_session, with_relay_event=True, with_teams=True, status="in_progress",
+        )
+        _db.session.commit()
+
+        resp = client.get(f"/scheduling/{t.id}/relay-teams-sheet")
+        assert resp.status_code == 200
+        if "text/html" not in resp.content_type:
+            pytest.skip("PDF fallback")
+        body = resp.data.decode("utf-8", errors="ignore")
+        assert "Pro 1" in body, (
+            "Teams sheet must keep rendering once scoring starts — codex P2 guard."
+        )
