@@ -49,3 +49,6 @@ htmlcov/
 
 # Logs
 *.log
+
+# Session handoff paste buffers — generated per session, not source
+SESSION_HANDOFF_*.md
