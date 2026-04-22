@@ -6,6 +6,7 @@ Judges rank/seed competitors before generating the double-elimination bracket,
 then record match results to advance competitors through the bracket.
 """
 from flask import abort, flash, jsonify, redirect, render_template, request, url_for
+from markupsafe import Markup, escape
 
 from database import db
 from models import Event, EventResult, Tournament
@@ -446,29 +447,41 @@ def birling_print_all(tournament_id):
                                 tournament_id=tournament_id))
 
     rendered: list = []
-    skipped_names: list = []
+    skipped: list = []
     for event in events:
         ctx = build_birling_print_context(event)
         if ctx is None:
-            skipped_names.append(event.display_name)
+            skipped.append(event)
             continue
         rendered.append({'event': event, 'ctx': ctx})
 
+    def _seed_links(evts):
+        parts = []
+        for evt in evts:
+            href = url_for('scheduling.birling_manage',
+                           tournament_id=tournament_id, event_id=evt.id)
+            parts.append(
+                '<a href="{href}" class="text-white fw-semibold text-decoration-underline">{name}</a>'.format(
+                    href=escape(href), name=escape(evt.display_name))
+            )
+        return Markup(', '.join(parts))
+
     if not rendered:
         flash(
-            'No birling brackets have been seeded yet: {}.  Seed at least one to print.'
-            .format(', '.join(skipped_names)),
+            Markup('No birling brackets have been seeded yet: {}. Seed at least one to print.'
+                   .format(_seed_links(skipped))),
             'warning',
         )
         return redirect(url_for('main.tournament_detail',
                                 tournament_id=tournament_id))
 
-    if skipped_names:
+    if skipped:
         flash(
-            'Skipped {} birling event(s) without a generated bracket: {}.'
-            .format(len(skipped_names), ', '.join(skipped_names)),
+            Markup('Skipped {} birling event(s) without a generated bracket: {}.'
+                   .format(len(skipped), _seed_links(skipped))),
             'info',
         )
+    skipped_names = [evt.display_name for evt in skipped]
 
     html = render_template(
         'scoring/birling_bracket_print.html',
