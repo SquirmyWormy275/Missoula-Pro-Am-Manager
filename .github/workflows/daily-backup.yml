@@ -54,15 +54,15 @@ jobs:
           RAILWAY_PG_PUBLIC_URL: ${{ secrets.RAILWAY_PG_PUBLIC_URL }}
         run: |
           set -euo pipefail
-          # Tolerate two common secret shapes:
-          #   postgres://... or postgresql://...  — URL only (preferred)
-          #   DATABASE_PUBLIC_URL=postgres://...  — raw paste from `railway variables --kv`
-          # Strip a leading `KEY=` if present (matches [A-Z0-9_]+= up to first =).
-          RAW_URL="${RAILWAY_PG_PUBLIC_URL}"
+          # Tolerate three common secret-paste mishaps:
+          #   1. trailing whitespace / newline from copy-paste — strip all whitespace
+          #      (URLs cannot contain whitespace, so this is safe)
+          #   2. `KEY=URL` form — raw paste from `railway variables --kv`
+          #   3. `postgres://` (old scheme) instead of `postgresql://` — normalize
+          RAW_URL=$(printf '%s' "$RAILWAY_PG_PUBLIC_URL" | tr -d '[:space:]')
           if [[ "$RAW_URL" =~ ^[A-Z0-9_]+= ]]; then
             RAW_URL="${RAW_URL#*=}"
           fi
-          # Normalize postgres:// → postgresql:// (SQLAlchemy 2.x + some tools require it).
           NORMALIZED_URL="${RAW_URL/#postgres:\/\//postgresql://}"
           TS=$(date -u +%Y%m%d_%H%M%S)
           OUT="proam_backup_${TS}.sql.gz"
