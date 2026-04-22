@@ -100,18 +100,30 @@
         <tbody>
             {% for team in teams %}
             <tr>
-                <td class="team-label">Team {{ loop.index }}</td>
+                <td class="team-label">Team {{ team.get('team_number', loop.index) }}</td>
                 <td class="members">
                     <ul>
-                        {% for member in team.get('members', []) %}
+                        {# ProAmRelay.run_lottery stores teams with pro_members + college_members
+                           lists, not a combined 'members' list. Render each list explicitly so
+                           PRO/COLLEGE badges match the actual division assignment. #}
+                        {% for member in team.get('pro_members', []) %}
                         <li>
                             <span class="role">
-                                {% if member.get('division') == 'pro' %}PRO{% else %}COLLEGE{% endif %}
+                                PRO
                                 {% if member.get('gender') == 'M' %}M{% elif member.get('gender') == 'F' %}F{% endif %}
                             </span>
                             {{ member.get('name', '—') }}
-                            {% if member.get('team_code') %}
-                            <small style="color:#666;">({{ member.get('team_code') }})</small>
+                        </li>
+                        {% endfor %}
+                        {% for member in team.get('college_members', []) %}
+                        <li>
+                            <span class="role">
+                                COLLEGE
+                                {% if member.get('gender') == 'M' %}M{% elif member.get('gender') == 'F' %}F{% endif %}
+                            </span>
+                            {{ member.get('name', '—') }}
+                            {% if member.get('team') and member.get('team') != 'N/A' %}
+                            <small style="color:#666;">({{ member.get('team') }})</small>
                             {% endif %}
                         </li>
                         {% endfor %}

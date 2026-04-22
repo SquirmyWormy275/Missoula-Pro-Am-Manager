@@ -1391,7 +1391,11 @@ def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool
     state = relay.relay_data or {}
     teams = state.get('teams') or []
     status = state.get('status')
-    if status != 'drawn' or not teams:
+    # Post-draw states: drawn → in_progress → completed. All of these mean
+    # the lottery has been run and real teams exist — the relay still belongs
+    # in the show schedule even after results start landing. Only 'not_drawn'
+    # (or missing/empty teams) should skip placement.
+    if status not in ('drawn', 'in_progress', 'completed') or not teams:
         return {'placed': False, 'reason': 'not_drawn', 'team_count': 0}
 
     # Idempotency: wipe any existing relay Heat rows + their HeatAssignments
