@@ -77,7 +77,7 @@ def _get_spacing(event: Event | None) -> tuple[int, int]:
     return EVENT_SPACING_TIERS.get(st, (MIN_HEAT_SPACING, TARGET_HEAT_SPACING))
 
 
-def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
+def build_pro_flights(tournament: Tournament, num_flights: int = None, commit: bool = True) -> int:
     """
     Build flights for pro competition with event variety and competitor spacing.
 
@@ -93,6 +93,10 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
         num_flights: Total number of flights to create. When provided, heats are
                      distributed evenly across that many flights. When omitted,
                      defaults to distributing in blocks of 8 heats per flight.
+        commit: When True (default), commit the transaction at the end. When False,
+                flush only so the caller can chain additional work
+                (e.g. integrate_college_spillover_into_flights) inside a single
+                outer transaction. Mirrors ProAmRelay._save_relay_data(commit=False).
 
     Returns:
         Number of flights created
@@ -272,7 +276,10 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None) -> int:
     # Insert partnered axe heats with deterministic flight placement.
     _insert_partnered_axe_heats(created_flights, partnered_axe_heats)
 
-    db.session.commit()
+    if commit:
+        db.session.commit()
+    else:
+        db.session.flush()
     return flights_created
 
 
@@ -1119,13 +1126,26 @@ def build_flight_audit_report(tournament: Tournament) -> dict:
     }
 
 
-def integrate_college_spillover_into_flights(tournament: Tournament, college_event_ids: list[int] | None = None) -> dict:
+def integrate_college_spillover_into_flights(
+    tournament: Tournament,
+    college_event_ids: list[int] | None = None,
+    commit: bool = False,
+) -> dict:
     """
     Assign selected college spillover heats into existing Saturday pro flights.
 
     Chokerman's Race only contributes run 2 per Missoula rules.
     Chokerman heats are always placed at the end of the last flight to serve as
     the show climax — no other heats are inserted after them.
+
+    Args:
+        tournament: Tournament to integrate spillover into.
+        college_event_ids: Explicitly selected spillover event ids. Chokerman is
+            auto-added.
+        commit: When True, commit the transaction at the end. Defaults to False
+            because historically this function flushed and left the caller to
+            commit; preserving that default keeps existing call sites safe.
+            Phase 1 async chain passes True at the final step.
     """
     selected_ids = set(int(v) for v in (college_event_ids or []))
     mandatory = tournament.events.filter_by(event_type='college', name="Chokerman's Race").first()
@@ -1211,6 +1231,8 @@ def integrate_college_spillover_into_flights(tournament: Tournament, college_eve
             integrated += 1
 
     db.session.flush()
+    if commit:
+        db.session.commit()
     return {
         'integrated_heats': integrated,
         'events': per_event,

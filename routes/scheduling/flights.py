@@ -180,10 +180,44 @@ def build_flights(tournament_id):
 
         if request.form.get('run_async') == '1':
             def _build_flights_async(target_tournament_id: int, requested_num_flights: int | None):
+                """Build pro flights AND chain spillover integration atomically.
+
+                Both operations run with commit=False; a single db.session.commit()
+                at the end makes the pair atomic. If spillover integration raises,
+                the entire flight build rolls back — no orphaned Chokerman Run 2
+                or selected saturday spillover heats with flight_id=NULL.
+                """
+                from services.flight_builder import integrate_college_spillover_into_flights
                 target = Tournament.query.get(target_tournament_id)
                 if not target:
                     raise RuntimeError(f'Tournament {target_tournament_id} not found.')
-                return build_pro_flights(target, num_flights=requested_num_flights)
+                try:
+                    flights_built = build_pro_flights(
+                        target,
+                        num_flights=requested_num_flights,
+                        commit=False,
+                    )
+                    saturday_college_event_ids = [
+                        int(i) for i in
+                        (target.get_schedule_config() or {}).get('saturday_college_event_ids', [])
+                    ]
+                    integration = integrate_college_spillover_into_flights(
+                        target,
+                        college_event_ids=saturday_college_event_ids,
+                        commit=False,
+                    )
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    raise
+                return {
+                    'flights_built': flights_built,
+                    'spillover': {
+                        'integrated_heats': integration.get('integrated_heats', 0),
+                        'events': integration.get('events', 0),
+                        'message': integration.get('message', ''),
+                    },
+                }
 
             job_id = submit_job(
                 'build_pro_flights',
