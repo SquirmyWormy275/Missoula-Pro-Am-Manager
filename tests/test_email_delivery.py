@@ -238,7 +238,8 @@ def test_queue_document_email_writes_log_and_sends(
     monkeypatch.setattr(smtplib, "SMTP", _FakeSMTP)
 
     # Force synchronous send — background_jobs may not be usable in tests.
-    def sync_submit(fn, *args, **kwargs):
+    # Match the real signature: submit(label, fn, *args, **kwargs).
+    def sync_submit(label, fn, *args, **kwargs):
         fn(*args, **kwargs)
 
     import services.background_jobs as bj
@@ -278,7 +279,8 @@ def test_queue_document_email_marks_failed_on_smtp_error(
 
     monkeypatch.setattr(smtplib, "SMTP", factory)
 
-    def sync_submit(fn, *args, **kwargs):
+    # Match the real signature: submit(label, fn, *args, **kwargs).
+    def sync_submit(label, fn, *args, **kwargs):
         fn(*args, **kwargs)
 
     import services.background_jobs as bj

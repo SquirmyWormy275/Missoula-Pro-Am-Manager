@@ -70,6 +70,13 @@ class PrintDoc:
     route_kwargs: tuple = field(default_factory=tuple)
     dynamic: bool = False
     enumerate_fn: Optional[Callable] = None
+    # When True, the email POST endpoint rejects requests from non-admin users
+    # even if the underlying print route would succeed (which it won't, because
+    # the route also checks is_admin). Used for docs whose content is
+    # sensitive enough that the email server-render path must enforce the
+    # same boundary as the GET route — otherwise a judge could exfiltrate
+    # admin-only data by emailing it to themselves.
+    admin_only: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -326,8 +333,10 @@ def _fp_all_results(tournament, entity=None):
         .order_by(EventResult.id)
         .all()
     )
+    # Include points_awarded — the print template shows it, so recalculated
+    # points must shift the fingerprint (Codex review 2026-04-22).
     parts = [
-        f"{r.id}:{r.competitor_id}:{r.final_position}:{r.result_value}:{r.status}"
+        f"{r.id}:{r.competitor_id}:{r.final_position}:{r.result_value}:{r.points_awarded}:{r.status}"
         for r in results
     ]
     return _sha1(parts)
@@ -344,9 +353,15 @@ def _status_pro_payouts(tournament, entity=None):
 
 
 def _fp_pro_payouts(tournament, entity=None):
+    # Include name and events_entered — the payout summary print template
+    # renders both columns, so a name change or event-list edit must shift
+    # the fingerprint (Codex review 2026-04-22).
     parts = []
     for c in sorted(tournament.pro_competitors, key=lambda x: x.id):
-        parts.append(f"{c.id}:{c.total_earnings or 0}:{int(c.payout_settled or False)}")
+        parts.append(
+            f"{c.id}:{c.name}:{c.events_entered or ''}:"
+            f"{c.total_earnings or 0}:{int(c.payout_settled or False)}"
+        )
     return _sha1(parts)
 
 
@@ -602,6 +617,7 @@ PRINT_DOCUMENTS: list[PrintDoc] = [
         status_fn=_status_ala,
         fingerprint_fn=_fp_ala,
         description="American Lumberjack Association membership report.",
+        admin_only=True,
     ),
 ]
 

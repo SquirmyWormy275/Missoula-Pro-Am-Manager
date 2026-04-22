@@ -282,7 +282,7 @@ def run_qa(app) -> None:
         import services.background_jobs as bj
 
         _orig = bj.submit
-        bj.submit = lambda fn, *a, **kw: None
+        bj.submit = lambda label, fn, *a, **kw: None
 
         resp5 = client.post(
             f"/scheduling/{tid}/print-hub/email",

@@ -230,7 +230,9 @@ def queue_document_email(
     try:
         from services import background_jobs
 
+        # submit(label, fn, *args, ...) — label first, not fn.
         background_jobs.submit(
+            f"email:{doc_key}",
             _worker_send,
             log_id,
             recipients,

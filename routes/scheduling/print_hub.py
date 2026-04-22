@@ -127,6 +127,16 @@ def print_hub_email(tournament_id):
         flash("Unknown document selected.", "error")
         return redirect(url_for("scheduling.print_hub", tournament_id=tournament_id))
 
+    # Mirror the underlying GET route's auth gate. Some docs (ALA report) are
+    # admin-only; without this check a judge could exfiltrate admin-only
+    # content by server-rendering it through the email path.
+    if doc.admin_only and not _current_user_is_admin():
+        flash(
+            f'"{doc.label}" can only be emailed by an administrator.',
+            "error",
+        )
+        return redirect(url_for("scheduling.print_hub", tournament_id=tournament_id))
+
     entity_id = _parse_int(request.form.get("entity_id"))
     entity_obj = None
     if doc.dynamic:
@@ -218,9 +228,10 @@ def print_hub_email(tournament_id):
             pass
 
     flash(
-        f"Email queued — {len(valid)} recipient"
+        f"Email queued for {len(valid)} recipient"
         + ("s" if len(valid) != 1 else "")
-        + '. You will see a "Sent" or "Failed" entry on the next Hub load.',
+        + ". Delivery runs in the background; check the PrintEmailLog table"
+        + " or AuditLog if you need to confirm the outcome.",
         "success",
     )
     return redirect(url_for("scheduling.print_hub", tournament_id=tournament_id))
@@ -271,6 +282,19 @@ def _current_user_id() -> Optional[int]:
     except Exception:
         pass
     return None
+
+
+def _current_user_is_admin() -> bool:
+    try:
+        from flask_login import current_user
+
+        return bool(
+            current_user
+            and getattr(current_user, "is_authenticated", False)
+            and getattr(current_user, "is_admin", False)
+        )
+    except Exception:
+        return False
 
 
 def _collect_recipients(req) -> list[str]:
