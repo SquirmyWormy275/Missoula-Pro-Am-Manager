@@ -20,6 +20,16 @@ import pytest
 
 from database import db as _db
 
+# Used by the TestBlockConfigLabelsIntegrity / TestProSpringboardExclusivity /
+# TestCalculateBlocksEmitsAllLabelledKeys classes at the bottom of this file —
+# the 2026-04-21 regression tests for the Pro 1-Board block-count bug. See
+# docs/solutions/logic-errors/woodboss-pro-1board-block-miscount-2026-04-21.md.
+from services.woodboss import (
+    BLOCK_CONFIG_LABELS,
+    BLOCK_EVENT_GROUPS,
+    _match_block_cfg_keys,
+)
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -968,14 +978,8 @@ class TestSaveConfigClear:
 # silently folded into the generic 2-Board Springboard bucket (block_springboard_pro)
 # instead of getting their own dedicated block_1board_pro row. See
 # docs/solutions/logic-errors/woodboss-pro-1board-block-miscount-2026-04-21.md.
+# Imports for these tests are at the top of the file (Ruff E402).
 # ---------------------------------------------------------------------------
-
-import pytest
-from services.woodboss import (
-    BLOCK_CONFIG_LABELS,
-    BLOCK_EVENT_GROUPS,
-    _match_block_cfg_keys,
-)
 
 
 class TestBlockConfigLabelsIntegrity:

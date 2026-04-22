@@ -26,9 +26,9 @@ def tournament_with_pros(app, db_session):
 
 @pytest.fixture()
 def judge_client(app, db_session):
-    from models.user import User
-
     import uuid as _uuid
+
+    from models.user import User
 
     u = User(username=f"roster_judge_{_uuid.uuid4().hex[:8]}", role="judge")
     u.set_password("pw")

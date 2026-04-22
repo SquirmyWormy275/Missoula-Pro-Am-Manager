@@ -352,6 +352,7 @@ def _render_document_html(tournament, doc, entity_obj):
     we don't want in an email context.
     """
     from datetime import datetime
+
     from flask import render_template
 
     filename_base = f"{tournament.name}_{tournament.year}_{doc.key}".replace(" ", "_")
@@ -381,8 +382,9 @@ def _render_document_html(tournament, doc, entity_obj):
         return html, filename_base
 
     if doc.key == "fnf_print" or doc.key == "fnf_pdf":
-        from .friday_feature import _build_fnf_schedule, _load_fnf_config
         import config as _cfg
+
+        from .friday_feature import _build_fnf_schedule, _load_fnf_config
 
         eligible_names = set(_cfg.FRIDAY_NIGHT_EVENTS)
         pro_events = (

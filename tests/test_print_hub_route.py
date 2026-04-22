@@ -18,9 +18,9 @@ def tournament(app, db_session):
 @pytest.fixture()
 def auth_scheduling_client(app, db_session):
     """Logged-in judge client that can hit scheduling routes."""
-    from models.user import User
-
     import uuid as _uuid
+
+    from models.user import User
 
     u = User(username=f"hub_judge_{_uuid.uuid4().hex[:8]}", role="judge")
     u.set_password("pw")
