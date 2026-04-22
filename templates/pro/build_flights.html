@@ -56,22 +56,87 @@
 
                     <form method="POST">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
                         <div class="mb-3">
-                            <label for="num_flights" class="form-label">Number of Flights</label>
+                            <label class="form-label fw-semibold">Flight Sizing</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio"
+                                       name="flight_sizing_mode"
+                                       id="mode_minutes"
+                                       value="minutes"
+                                       {% if flight_sizing.mode != 'count' %}checked{% endif %}>
+                                <label class="form-check-label" for="mode_minutes">
+                                    <strong>Target flight duration</strong>
+                                    <span class="text-muted d-block small">
+                                        Derive flight count from desired minutes-per-flight and average heat time.
+                                    </span>
+                                </label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio"
+                                       name="flight_sizing_mode"
+                                       id="mode_count"
+                                       value="count"
+                                       {% if flight_sizing.mode == 'count' %}checked{% endif %}>
+                                <label class="form-check-label" for="mode_count">
+                                    <strong>Fixed flight count</strong>
+                                    <span class="text-muted d-block small">
+                                        Pick a specific number of flights; heats distribute evenly.
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        {# Duration mode inputs #}
+                        <div id="duration_inputs" class="mb-3 ps-4 border-start">
+                            <div class="row g-2">
+                                <div class="col-sm-6">
+                                    <label for="target_minutes_per_flight" class="form-label small">
+                                        Minutes per flight
+                                    </label>
+                                    <input type="number" class="form-control"
+                                           id="target_minutes_per_flight"
+                                           name="target_minutes_per_flight"
+                                           value="{{ flight_sizing.target_minutes_per_flight }}"
+                                           min="{{ minutes_per_flight_min }}"
+                                           max="{{ minutes_per_flight_max }}"
+                                           step="5">
+                                </div>
+                                <div class="col-sm-6">
+                                    <label for="minutes_per_heat" class="form-label small">
+                                        Minutes per heat (avg)
+                                    </label>
+                                    <input type="number" class="form-control"
+                                           id="minutes_per_heat"
+                                           name="minutes_per_heat"
+                                           value="{{ flight_sizing.minutes_per_heat }}"
+                                           min="{{ minutes_per_heat_min }}"
+                                           max="{{ minutes_per_heat_max }}"
+                                           step="0.5">
+                                </div>
+                            </div>
+                            <small class="text-muted d-block mt-1">
+                                Estimated result:
+                                <span id="duration_estimate_flights" class="fw-semibold">--</span> flights
+                                from <span class="fw-semibold">{{ total_heats }}</span> total heats.
+                            </small>
+                        </div>
+
+                        {# Count mode inputs #}
+                        <div id="count_inputs" class="mb-3 ps-4 border-start">
+                            <label for="num_flights" class="form-label small">Number of Flights</label>
                             <select class="form-select" id="num_flights" name="num_flights">
-                                {% for n in range(2, 11) %}
-                                <option value="{{ n }}" {% if n == 4 %}selected{% endif %}>{{ n }} flights</option>
+                                {% for n in range(flight_count_min, flight_count_max + 1) %}
+                                <option value="{{ n }}" {% if n == flight_sizing.num_flights %}selected{% endif %}>{{ n }} flights</option>
                                 {% endfor %}
                             </select>
-                            <div class="mt-2 p-2 rounded" style="background: var(--bs-secondary-bg, #f8f9fa);">
-                                <span class="text-muted small">Estimated heats per flight: </span>
-                                <strong id="heats_estimate">--</strong>
-                                <span class="text-muted small" id="total_heats_note">
-                                    {% if total_heats %}({{ total_heats }} total heats to distribute){% endif %}
-                                </span>
-                            </div>
-                            <small class="text-muted">Heats are distributed evenly. The system interleaves events for crowd variety.</small>
+                            <small class="text-muted d-block mt-1">
+                                Estimated:
+                                <span id="count_estimate_heats" class="fw-semibold">--</span> heats per flight,
+                                ~<span id="count_estimate_minutes" class="fw-semibold">--</span> minutes per flight.
+                            </small>
                         </div>
+
                         <div class="form-check mb-3">
                             <input class="form-check-input" type="checkbox" id="run_async" name="run_async" value="1">
                             <label class="form-check-label" for="run_async">
@@ -92,22 +157,68 @@
                     </form>
 
                     <script>
+                    // Nonce stamped by app.py:_inject_csp_nonce after_request hook.
                     (function () {
                         var totalHeats = {{ total_heats | default(0) }};
-                        var select = document.getElementById('num_flights');
-                        var estimate = document.getElementById('heats_estimate');
+                        var minFlights = {{ flight_count_min }};
+                        var maxFlights = {{ flight_count_max }};
 
-                        function update() {
-                            var n = parseInt(select.value, 10);
-                            if (!n || n < 1 || totalHeats === 0) {
-                                estimate.textContent = '--';
+                        var modeMinutes = document.getElementById('mode_minutes');
+                        var modeCount = document.getElementById('mode_count');
+                        var durationInputs = document.getElementById('duration_inputs');
+                        var countInputs = document.getElementById('count_inputs');
+                        var targetMinsEl = document.getElementById('target_minutes_per_flight');
+                        var minsPerHeatEl = document.getElementById('minutes_per_heat');
+                        var numFlightsEl = document.getElementById('num_flights');
+                        var durEstFlights = document.getElementById('duration_estimate_flights');
+                        var countEstHeats = document.getElementById('count_estimate_heats');
+                        var countEstMinutes = document.getElementById('count_estimate_minutes');
+
+                        function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+                        function updateDuration() {
+                            var tm = parseFloat(targetMinsEl.value);
+                            var mh = parseFloat(minsPerHeatEl.value);
+                            if (!totalHeats || !tm || !mh) {
+                                durEstFlights.textContent = '--';
+                                return;
+                            }
+                            var ideal = Math.ceil((totalHeats * mh) / tm);
+                            durEstFlights.textContent = clamp(ideal, minFlights, maxFlights);
+                        }
+
+                        function updateCount() {
+                            var n = parseInt(numFlightsEl.value, 10);
+                            var mh = parseFloat(minsPerHeatEl.value) || 5.5;
+                            if (!n || !totalHeats) {
+                                countEstHeats.textContent = '--';
+                                countEstMinutes.textContent = '--';
+                                return;
+                            }
+                            var heatsPerFlight = Math.ceil(totalHeats / n);
+                            countEstHeats.textContent = '~' + heatsPerFlight;
+                            countEstMinutes.textContent = Math.round(heatsPerFlight * mh);
+                        }
+
+                        function showMode() {
+                            if (modeCount.checked) {
+                                durationInputs.style.display = 'none';
+                                countInputs.style.display = '';
                             } else {
-                                estimate.textContent = '~' + Math.ceil(totalHeats / n);
+                                durationInputs.style.display = '';
+                                countInputs.style.display = 'none';
                             }
                         }
 
-                        select.addEventListener('change', update);
-                        update();
+                        modeMinutes.addEventListener('change', showMode);
+                        modeCount.addEventListener('change', showMode);
+                        targetMinsEl.addEventListener('input', updateDuration);
+                        minsPerHeatEl.addEventListener('input', function () { updateDuration(); updateCount(); });
+                        numFlightsEl.addEventListener('change', updateCount);
+
+                        showMode();
+                        updateDuration();
+                        updateCount();
                     })();
                     </script>
                     {% else %}
