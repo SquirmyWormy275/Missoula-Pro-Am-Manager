@@ -93,9 +93,12 @@ jobs:
 
       - name: Sanity-check dump content
         run: |
-          set -euo pipefail
+          # Deliberately NOT using `set -o pipefail` — `gunzip | head` closes
+          # the pipe early (by design) and would raise SIGPIPE on gunzip,
+          # which pipefail then converts into a fatal step failure.
+          set -eu
           echo "--- First 20 lines of dump ---"
-          gunzip -c "$BACKUP_FILE" | head -20
+          gunzip -c "$BACKUP_FILE" | head -20 || true
 
           TABLE_COUNT=$(gunzip -c "$BACKUP_FILE" | grep -c "^CREATE TABLE" || true)
           echo "CREATE TABLE statements: $TABLE_COUNT"
