@@ -882,6 +882,84 @@ def complete_one_sided_pairs(tournament) -> dict:
     return {'completed': completed}
 
 
+def cleanup_non_enrolled_gear_entries(tournament) -> dict:
+    """
+    Remove gear-sharing entries pointing at events the competitor is not
+    enrolled in. Handles both direct event-id keys (e.g. "82") and category
+    keys (e.g. "category:crosscut") — a category key is pruned only when the
+    competitor is enrolled in zero events of that category.
+
+    Does NOT touch USING-prefixed values on an event the competitor IS in;
+    the prefix is left as-is so partnered-confirmation semantics survive.
+
+    Caller must commit. Returns {cleaned, affected: [names], pro_cleaned,
+    college_cleaned}.
+    """
+    from models import Event
+    from models.competitor import CollegeCompetitor, ProCompetitor
+
+    all_events = Event.query.filter_by(tournament_id=tournament.id).all()
+    pro_events = [e for e in all_events if e.event_type == 'pro']
+    college_events = [e for e in all_events if e.event_type == 'college']
+
+    cleaned_total = 0
+    affected: list[str] = []
+
+    def _scan(rows, relevant_events):
+        nonlocal cleaned_total
+        local_cleaned = 0
+        for comp in rows:
+            gear = comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {}
+            if not isinstance(gear, dict) or not gear:
+                continue
+            entered_vals = {
+                str(v or '').strip()
+                for v in comp.get_events_entered()
+                if str(v or '').strip()
+            }
+            kept: dict = {}
+            removed_any = False
+            for key, val in gear.items():
+                matching = [e for e in relevant_events if event_matches_gear_key(e, key)]
+                if not matching:
+                    removed_any = True
+                    continue
+                enrolled = any(
+                    str(e.id) in entered_vals
+                    or e.name in entered_vals
+                    or e.display_name in entered_vals
+                    for e in matching
+                )
+                if enrolled:
+                    kept[key] = val
+                else:
+                    removed_any = True
+            if removed_any:
+                diff = len(gear) - len(kept)
+                comp.gear_sharing = json.dumps(kept)
+                cleaned_total += diff
+                local_cleaned += diff
+                if comp.name not in affected:
+                    affected.append(comp.name)
+        return local_cleaned
+
+    pro_cleaned = _scan(
+        ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(),
+        pro_events,
+    )
+    college_cleaned = _scan(
+        CollegeCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(),
+        college_events,
+    )
+
+    return {
+        'cleaned': cleaned_total,
+        'affected': affected,
+        'pro_cleaned': pro_cleaned,
+        'college_cleaned': college_cleaned,
+    }
+
+
 def cleanup_scratched_gear_entries(tournament, scratched_competitor=None, competitor_type: str = 'pro') -> dict:
     """
     Remove gear-sharing entries from active competitors that reference scratched

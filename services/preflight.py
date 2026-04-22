@@ -5,7 +5,12 @@ from __future__ import annotations
 
 from models import Event, Flight, HeatAssignment, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
-from services.gear_sharing import event_matches_gear_key, normalize_person_name
+from services.gear_sharing import (
+    event_matches_gear_key,
+    is_using_value,
+    normalize_person_name,
+    strip_using_prefix,
+)
 
 
 def _signed_up_pro_count(event: Event) -> int:
@@ -121,8 +126,13 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                             non_enrolled_gear_names.append(competitor.name)
 
                 partner_text = str(partner or '').strip()
-                partner_norm = normalize_person_name(partner_text)
-                if not partner_text:
+                # USING entries carry a "using:" prefix to flag partnered-event
+                # confirmation (see services/gear_sharing._USING_VALUE_PREFIX).
+                # The underlying name must still resolve to a real competitor,
+                # but the prefix itself is not part of the person's name.
+                partner_name_only = strip_using_prefix(partner_text)
+                partner_norm = normalize_person_name(partner_name_only)
+                if not partner_name_only:
                     unknown_partner_rows += 1
                     if competitor.name not in unknown_partner_names:
                         unknown_partner_names.append(competitor.name)
@@ -203,6 +213,12 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
         })
 
     # 2c) Gear vs. partner field mismatch (pro only)
+    # Only USING entries claim to confirm the event partner — a mismatch there
+    # is a genuine data bug (stale confirmation vs. new partner assignment).
+    # SHARING entries (no "using:" prefix) are defined as cross-competitor gear
+    # dependency OUTSIDE the event partnership, so gear_partner != event_partner
+    # is the expected, correct shape — flagging it produced noise on every
+    # Double Buck / Jack & Jill pair with a saw-sharer.
     partner_mismatch_rows = 0
     partner_mismatch_names: list[str] = []
     for comp in ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all():
@@ -211,7 +227,10 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
         if not isinstance(gear, dict) or not isinstance(partners, dict):
             continue
         for key, gear_partner in gear.items():
-            gp = normalize_person_name(str(gear_partner or '').strip())
+            gear_text = str(gear_partner or '').strip()
+            if not is_using_value(gear_text):
+                continue
+            gp = normalize_person_name(strip_using_prefix(gear_text))
             pp = normalize_person_name(str(partners.get(key, '') or '').strip())
             if gp and pp and gp != pp:
                 partner_mismatch_rows += 1

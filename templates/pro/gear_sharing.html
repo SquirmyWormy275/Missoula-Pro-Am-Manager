@@ -61,6 +61,14 @@
                 <button type="submit" class="btn btn-outline-secondary btn-sm">Cleanup Scratched</button>
             </form>
 
+            <!-- Cleanup gear entries for events competitor is not enrolled in -->
+            <form method="POST"
+                  action="{{ url_for('registration.pro_gear_cleanup_non_enrolled', tournament_id=tournament.id) }}"
+                  data-confirm="Remove gear-sharing entries pointing at events the competitor is not enrolled in?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-secondary btn-sm">Cleanup Non-Enrolled</button>
+            </form>
+
             <!-- Auto-assign heat partners -->
             <form method="POST"
                   action="{{ url_for('registration.auto_assign_pro_partners_route', tournament_id=tournament.id) }}"

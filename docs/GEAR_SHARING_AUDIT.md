@@ -5,6 +5,16 @@ Date: 2026-04-18. Scope: source-of-truth review for the bug "OP Saw and Cookie S
 SHARING entries from the entry form are not appearing in the gear-sharing module," plus
 USING/SHARING vocabulary handling, name matching, Q27 interaction, and degenerate input.
 
+## Resolution log (update 2026-04-21)
+
+- **Finding #1 (USING vs SHARING conflation)** — RESOLVED across two releases:
+  - V2.9.1 (commit `9a4f1fb`, 2026-04-19) introduced the `using:` value prefix on `gear_sharing` entries and taught the heat builders (`competitors_share_gear_for_event`, `build_gear_conflict_pairs`, `_aggregate_gear_groups`) to skip them so partnered pairs stop getting split across heats.
+  - V2.12.x follow-up (2026-04-21) closed the display-side gap that V2.9.1 missed: `services/preflight.py` (the preflight-report scanner) was still normalizing raw `using:` values and mis-flagging every USING entry as an unknown partner, plus flagging legitimate SHARING entries as partner-mismatch noise. Fix + 6 regression tests in `tests/test_preflight.py`.
+  - Full write-up: [`docs/solutions/data-integrity/preflight-gear-sharing-using-prefix-false-positives-2026-04-21.md`](solutions/data-integrity/preflight-gear-sharing-using-prefix-false-positives-2026-04-21.md).
+  - Lesson captured there (Prevention rule #1): whenever a new value-prefix convention is added to a shared JSON field, grep every consumer across `services/` AND `routes/` AND `templates/` before declaring rollout complete. This audit itself is an example — the 828-line document below has zero mentions of `services/preflight.py` as a consumer of `gear_sharing`. That's the blind spot that let the preflight bug survive V2.9.1.
+
+Remaining Findings 2–25 (minus the two withdrawn ones, #9 and #17) retain their status below.
+
 Domain context already documented in
 `docs/Alex's Docs/GEAR_SHARING_DOMAIN.md` — that file enumerates per-event sharing
 constraints. This audit does not duplicate it; it documents the code that implements
@@ -761,7 +771,7 @@ text and skips parsing. The manager UI does not display Q27 anywhere.
 
 ## 8. Numbered bug / gap list
 
-1. **USING vs SHARING semantically conflated** — `services/gear_sharing.py:388`. The parser has zero handling of either keyword; `sharing` is only a strip target. USING entries (partnered-event confirmation) get written into `gear_sharing` JSON the same way SHARING entries do, then `build_gear_conflict_pairs` (`gear_sharing.py:905`) treats them as cross-competitor heat constraints, spreading legitimately partnered competitors across heats. Severity: HIGH. Confidence: 9.
+1. ~~**USING vs SHARING semantically conflated**~~ — **RESOLVED 2026-04-21.** V2.9.1 added a `using:` value prefix on `gear_sharing` entries (`services/gear_sharing.py:42`) and taught the heat-building consumers (`competitors_share_gear_for_event`, `build_gear_conflict_pairs`, `_aggregate_gear_groups`) to skip them. V2.12.x closed the display-facing gap V2.9.1 missed in `services/preflight.py`. See the Resolution log at the top of this file and [`solutions/data-integrity/preflight-gear-sharing-using-prefix-false-positives-2026-04-21.md`](solutions/data-integrity/preflight-gear-sharing-using-prefix-false-positives-2026-04-21.md). Severity was: HIGH. Confidence: 9.
 
 2. **`infer_equipment_categories` missing Cookie Stack, Obstacle Pole/OP, Speed Climb categories** — `services/gear_sharing.py:292`. Only emits `crosscut`, `chainsaw`, `springboard`. When the explicit per-event match fails, no category fallback exists for these events, so partner-detected entries with vague event language drop on the floor. Severity: HIGH. Confidence: 10.
 
