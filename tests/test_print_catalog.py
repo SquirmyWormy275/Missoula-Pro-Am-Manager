@@ -23,6 +23,7 @@ def test_catalog_has_expected_docs():
         "birling_blank",
         "gear_sharing_print",
         "pro_checkout",
+        "relay_teams_sheet",
         "college_standings",
         "all_results",
         "pro_payouts",

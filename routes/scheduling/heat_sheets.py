@@ -329,6 +329,46 @@ def heat_sheets(tournament_id):
     )
 
 
+@scheduling_bp.route("/<int:tournament_id>/relay-teams-sheet")
+@record_print("relay_teams_sheet")
+def relay_teams_sheet(tournament_id):
+    """Printable Pro-Am Relay drawn-teams sheet.
+
+    Phase 4 addition: the relay is placed in the final flight as a pseudo-heat
+    (see services.flight_builder.integrate_proam_relay_into_final_flight).
+    The teams themselves live in Event.event_state / payouts JSON. This route
+    renders the drawn teams in a landscape, large-font, one-team-per-row
+    layout suitable for taping to a wall on show day.
+
+    Uses services.print_response.weasyprint_or_html so Railway deploys without
+    cairo/pango fall back to HTML (Content-Type: text/html) while still showing
+    a PDF filename hint.
+    """
+    from datetime import datetime
+
+    from services.print_response import weasyprint_or_html
+    from services.proam_relay import ProAmRelay
+
+    tournament = Tournament.query.get_or_404(tournament_id)
+    relay = ProAmRelay(tournament)
+    state = relay.relay_data or {}
+    teams = state.get("teams") or []
+    drawn = state.get("status") == "drawn" and bool(teams)
+
+    html = render_template(
+        "scheduling/relay_teams_sheet_print.html",
+        tournament=tournament,
+        teams=teams,
+        drawn=drawn,
+        now=datetime.utcnow(),
+    )
+    safe_name = (
+        f"{tournament.name}_{tournament.year}_relay_teams"
+        .replace(" ", "_").replace("/", "-")
+    )
+    return weasyprint_or_html(html, safe_name)
+
+
 @scheduling_bp.route("/<int:tournament_id>/day-schedule/print")
 @record_print("day_schedule")
 def day_schedule_print(tournament_id):

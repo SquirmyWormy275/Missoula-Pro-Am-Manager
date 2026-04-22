@@ -1323,6 +1323,99 @@ def integrate_college_spillover_into_flights(
     }
 
 
+def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool = True) -> dict:
+    """
+    Place a single pseudo-Heat representing Pro-Am Relay at the end of the
+    final flight.
+
+    Phase 4 of the flight-fixes plan. Pro-Am Relay has no snake-draft heats —
+    state lives in Event.event_state / Event.payouts as a JSON blob managed
+    by services.proam_relay.ProAmRelay. This function synthesises a single
+    Heat row so heat-sheet rendering can show a "PRO-AM RELAY" card in the
+    final flight without inventing new rendering plumbing.
+
+    Ordering: chain BEFORE integrate_college_spillover_into_flights so the
+    Chokerman Run 2 closer lands AFTER the relay block — preserving
+    FlightLogic.md §4.1 (Chokerman as show climax).
+
+    Idempotent: wipes any existing Heat rows for the relay event before
+    inserting a fresh pseudo-heat, so repeated calls don't duplicate.
+
+    Args:
+        tournament: Tournament to place the relay into.
+        commit: When True (default), commit the transaction. When False,
+            flush only — used inside the async-chain atomic sequence.
+
+    Returns:
+        dict with:
+            placed (bool), heat_id (int | None), flight_id (int | None),
+            team_count (int), reason (str, only when placed=False).
+    """
+    from services.proam_relay import ProAmRelay
+
+    relay_event = Event.query.filter_by(
+        tournament_id=tournament.id, name='Pro-Am Relay',
+    ).first()
+    if not relay_event:
+        return {'placed': False, 'reason': 'no_relay_event', 'team_count': 0}
+
+    # ProAmRelay.__init__(self, tournament) — takes Tournament, not Event.
+    # State is loaded into self.relay_data during __init__ (no public get_state()).
+    relay = ProAmRelay(tournament)
+    state = relay.relay_data or {}
+    teams = state.get('teams') or []
+    status = state.get('status')
+    if status != 'drawn' or not teams:
+        return {'placed': False, 'reason': 'not_drawn', 'team_count': 0}
+
+    # Idempotency: wipe any existing relay Heat rows + their HeatAssignments
+    # so repeated rebuilds don't duplicate the pseudo-heat.
+    existing_heat_ids = [
+        h.id for h in Heat.query
+        .filter_by(event_id=relay_event.id)
+        .with_entities(Heat.id)
+        .all()
+    ]
+    if existing_heat_ids:
+        HeatAssignment.query.filter(
+            HeatAssignment.heat_id.in_(existing_heat_ids),
+        ).delete(synchronize_session=False)
+        Heat.query.filter(Heat.id.in_(existing_heat_ids)).delete(
+            synchronize_session=False,
+        )
+        db.session.flush()
+
+    flights = Flight.query.filter_by(tournament_id=tournament.id).order_by(
+        Flight.flight_number,
+    ).all()
+    if not flights:
+        return {'placed': False, 'reason': 'no_flights', 'team_count': len(teams)}
+    last_flight = flights[-1]
+
+    heat = Heat(
+        event_id=relay_event.id,
+        heat_number=1,
+        run_number=1,
+        flight_id=last_flight.id,
+        flight_position=_next_flight_position(last_flight.id),
+        status='pending',
+    )
+    heat.set_competitors([])
+    db.session.add(heat)
+
+    if commit:
+        db.session.commit()
+    else:
+        db.session.flush()
+
+    return {
+        'placed': True,
+        'heat_id': heat.id,
+        'flight_id': last_flight.id,
+        'team_count': len(teams),
+    }
+
+
 # ---------------------------------------------------------------------------
 # FlightBuilder class — thin, testable wrapper around the module functions (#12)
 # ---------------------------------------------------------------------------

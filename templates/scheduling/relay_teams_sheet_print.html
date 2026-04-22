@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Pro-Am Relay Teams — {{ tournament.name }} {{ tournament.year }}</title>
+    <style>
+        @page { size: landscape; margin: 0.5in; }
+        body {
+            font-family: "Helvetica Neue", Arial, sans-serif;
+            color: #000;
+            margin: 0;
+            padding: 0.25in;
+        }
+        h1 {
+            font-size: 34pt;
+            margin: 0 0 8pt;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .subtitle {
+            font-size: 13pt;
+            color: #444;
+            margin-bottom: 20pt;
+        }
+        table.teams {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12pt;
+        }
+        table.teams td, table.teams th {
+            padding: 12pt 14pt;
+            border: 2pt solid #000;
+            vertical-align: top;
+        }
+        table.teams th {
+            background: #000;
+            color: #fff;
+            font-size: 18pt;
+            text-align: left;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+        table.teams .team-label {
+            font-weight: 800;
+            font-size: 22pt;
+            width: 18%;
+            background: #f1e7d4;
+        }
+        table.teams .members ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4pt 24pt;
+            font-size: 17pt;
+        }
+        table.teams .members li {
+            padding: 2pt 0;
+        }
+        .role {
+            display: inline-block;
+            min-width: 82pt;
+            color: #666;
+            font-size: 12pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        .empty-note {
+            background: #fff6e0;
+            border: 2pt dashed #c28b1a;
+            padding: 24pt;
+            margin-top: 40pt;
+            font-size: 18pt;
+            text-align: center;
+        }
+        .footer {
+            margin-top: 28pt;
+            font-size: 10pt;
+            color: #777;
+        }
+    </style>
+</head>
+<body>
+    <h1>Pro-Am Relay — Drawn Teams</h1>
+    <div class="subtitle">
+        {{ tournament.name }} &middot; {{ tournament.year }}
+        {% if drawn %}&middot; Teams drawn{% else %}&middot; Draw not complete{% endif %}
+    </div>
+
+    {% if drawn %}
+    <table class="teams">
+        <thead>
+            <tr>
+                <th style="width:18%;">Team</th>
+                <th>Members</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for team in teams %}
+            <tr>
+                <td class="team-label">Team {{ loop.index }}</td>
+                <td class="members">
+                    <ul>
+                        {% for member in team.get('members', []) %}
+                        <li>
+                            <span class="role">
+                                {% if member.get('division') == 'pro' %}PRO{% else %}COLLEGE{% endif %}
+                                {% if member.get('gender') == 'M' %}M{% elif member.get('gender') == 'F' %}F{% endif %}
+                            </span>
+                            {{ member.get('name', '—') }}
+                            {% if member.get('team_code') %}
+                            <small style="color:#666;">({{ member.get('team_code') }})</small>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-note">
+        Pro-Am Relay teams have not been drawn yet.
+        Run the lottery from the Pro-Am Relay page, then reprint this sheet.
+    </div>
+    {% endif %}
+
+    <div class="footer">
+        Printed {{ now.strftime('%Y-%m-%d %H:%M UTC') }} &middot;
+        Teams arrange their own internal order — Partnered Sawing,
+        Standing Butcher Block, Underhand Butcher Block, Team Axe Throw.
+    </div>
+</body>
+</html>

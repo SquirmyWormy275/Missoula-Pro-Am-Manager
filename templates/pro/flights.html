@@ -382,14 +382,17 @@
         <div class="heat-grid flight-drag-grid" data-flight-id="{{ flight.id }}">
             {% for row in fd.heats %}
             {% set is_college = row.event.event_type == 'college' %}
-            <div class="heat-tile {{ 'heat-tile-college' if is_college else '' }} {% if row.heat.status == 'completed' %}bg-light{% endif %}"
+            {% set is_relay = row.event.name == 'Pro-Am Relay' %}
+            <div class="heat-tile {{ 'heat-tile-college' if is_college else '' }} {{ 'heat-tile-relay' if is_relay else '' }} {% if row.heat.status == 'completed' %}bg-light{% endif %}"
                  data-heat-id="{{ row.heat.id }}">
                 <div class="heat-tile-header">
                     <span class="heat-tile-event">
                         <span class="heat-drag-handle" title="Drag to reorder or move to another flight">
                             <i class="bi bi-grip-vertical"></i>
                         </span>
-                        {% if is_college %}
+                        {% if is_relay %}
+                        <span class="badge-pro-label" style="background:var(--sx-amber); color:#000;">PRO-AM RELAY</span>
+                        {% elif is_college %}
                         <span class="badge-college-label">COLLEGE</span>
                         {% else %}
                         <span class="badge-pro-label">PRO</span>
@@ -398,11 +401,20 @@
                         {% if row.event.gender %}<small class="text-muted fw-normal"> ({{ 'M' if row.event.gender == 'M' else 'F' }})</small>{% endif %}
                     </span>
                     <span class="heat-tile-num">
+                        {% if not is_relay %}
                         Heat {{ row.heat.heat_number }}
                         {% if row.heat.run_number > 1 %}&nbsp;·&nbsp;Run {{ row.heat.run_number }}{% endif %}
+                        {% endif %}
                         {% if row.heat.status == 'completed' %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% endif %}
                     </span>
                 </div>
+                {% if is_relay %}
+                <div class="small text-muted" style="padding:4px 0 2px;">
+                    <i class="bi bi-people-fill text-warning me-1"></i>
+                    See the <a href="{{ url_for('scheduling.relay_teams_sheet', tournament_id=tournament.id) }}"
+                       target="_blank" rel="noopener">Relay Teams Sheet</a> for the drawn teams.
+                </div>
+                {% endif %}
                 <table class="comp-sortable"
                        data-heat-id="{{ row.heat.id }}"
                        data-event-id="{{ row.event.id }}"
