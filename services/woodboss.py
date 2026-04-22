@@ -59,15 +59,64 @@ BLOCK_EVENT_GROUPS = [
     ('two board',    'pro', None, 'block_springboard_pro', 'Springboard (2-Board) — Pro'),
     ('springboard',  'pro', None, 'block_springboard_pro', 'Springboard (2-Board) — Pro'),
     ('1-board',      'pro', None, 'block_1board_pro',      'Pro 1-Board'),
+    ('1 board',      'pro', None, 'block_1board_pro',      'Pro 1-Board'),
+    ('one-board',    'pro', None, 'block_1board_pro',      'Pro 1-Board'),
     ('one board',    'pro', None, 'block_1board_pro',      'Pro 1-Board'),
     ('3-board',      'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
     ('3 board',      'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
     ('three-board',  'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
     ('three board',  'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
+    ('jigger',       'pro', None, 'block_3board_pro',      '3-Board Jigger — Pro'),
 ]
 
 # Relay block config_keys — no enrollment fragment matching; count comes from count_override
 RELAY_BLOCK_KEYS = {'block_relay_underhand', 'block_relay_standing'}
+
+# Pro event-name fragments that mark an event as its OWN wood category
+# (i.e. not the generic 2-Board Springboard). Used to skip the generic
+# 'springboard' fallback when routing enrollment counts to a config_key.
+# Keep in sync with BLOCK_EVENT_GROUPS: any fragment that maps a pro event
+# to block_1board_pro or block_3board_pro must appear here.
+PRO_ONE_BOARD_FRAGMENTS = ('1-board', '1 board', 'one board', 'one-board')
+PRO_THREE_BOARD_FRAGMENTS = ('3-board', '3 board', 'three-board', 'three board', 'jigger')
+
+
+def _match_block_cfg_keys(event_lower, comp_type, gender):
+    """Return the set of block cfg_keys that this event maps to.
+
+    Canonicalizes the three-way pro springboard routing (2-Board vs
+    1-Board vs 3-Board Jigger) in one place. If the event name contains
+    a 1-board or 3-board marker, the generic 'springboard' fragment is
+    NOT also allowed to match — otherwise a pro 1-Board competitor would
+    land in BOTH block_1board_pro and block_springboard_pro, shorting
+    real 2-board inventory on block-turning day.
+
+    `gender` is the event's gender for event-driven callers
+    (`_active_block_keys`) or the competitor's gender for competitor-
+    driven callers (`calculate_blocks`, `get_lottery_view`). Both work
+    because college groups are always gendered (so gender must match)
+    and pro groups declare `grp_gender=None` (open — any gender matches).
+    """
+    is_pro_one_board = comp_type == 'pro' and any(
+        f in event_lower for f in PRO_ONE_BOARD_FRAGMENTS
+    )
+    is_pro_three_board = comp_type == 'pro' and any(
+        f in event_lower for f in PRO_THREE_BOARD_FRAGMENTS
+    )
+    skip_pro_springboard_fallback = is_pro_one_board or is_pro_three_board
+
+    keys = set()
+    for (fragment, grp_type, grp_gender, cfg_key, _label) in BLOCK_EVENT_GROUPS:
+        if fragment not in event_lower:
+            continue
+        if comp_type != grp_type:
+            continue
+        if grp_gender is not None and gender != grp_gender:
+            continue
+        if skip_pro_springboard_fallback and cfg_key == 'block_springboard_pro':
+            continue
+        keys.add(cfg_key)
+    return keys
 
 # Ordered dict of all config_keys → human labels (includes relay entries)
 # Ordered: College blocks first, then Pro blocks, then Relay.
@@ -151,34 +200,7 @@ def _active_block_keys(tournament_id):
         event_lower = (event.name or '').lower().strip()
         if not event_lower:
             continue
-        comp_type = event.event_type  # 'college' | 'pro'
-        # event.gender may be None for open/mixed events
-        event_gender = event.gender
-
-        is_pro_one_board = comp_type == 'pro' and (
-            '1-board' in event_lower or '1 board' in event_lower
-            or 'one board' in event_lower or 'one-board' in event_lower
-        )
-        is_pro_three_board = comp_type == 'pro' and (
-            '3-board' in event_lower or '3 board' in event_lower
-            or 'three-board' in event_lower or 'three board' in event_lower
-            or 'jigger' in event_lower
-        )
-        skip_pro_sb_fallback = is_pro_one_board or is_pro_three_board
-
-        for (fragment, grp_type, grp_gender, cfg_key, _label) in BLOCK_EVENT_GROUPS:
-            if fragment not in event_lower:
-                continue
-            if comp_type != grp_type:
-                continue
-            # College groups are gendered — need the event's gender to match.
-            # Pro groups with grp_gender=None are open.
-            if grp_gender is not None:
-                if event_gender != grp_gender:
-                    continue
-            if skip_pro_sb_fallback and cfg_key == 'block_springboard_pro':
-                continue
-            active.add(cfg_key)
+        active |= _match_block_cfg_keys(event_lower, event.event_type, event.gender)
     return active
 
 
@@ -467,40 +489,7 @@ def calculate_blocks(tournament_id, counts=None, configs=None):
     # Accumulate enrollment-based counts per config_key
     key_counts = defaultdict(int)
     for (event_lower, comp_type, gender), n in counts.items():
-        matched_cfg_keys = set()
-
-        # Pro exclusivity: on the pro side, the 1-Board and 3-Board Jigger
-        # categories are DISTINCT from the generic 2-board Springboard
-        # category. If the event name explicitly names 1-board or 3-board,
-        # the generic 'springboard' fragment must NOT also match — otherwise
-        # one competitor would be counted twice (one 2-board plus one 1-board
-        # / 3-board block), shorting real 2-board inventory on block-turning
-        # day or ghosting extra blocks for a category that isn't running.
-        is_pro_one_board = comp_type == 'pro' and (
-            '1-board' in event_lower or '1 board' in event_lower
-            or 'one board' in event_lower or 'one-board' in event_lower
-        )
-        is_pro_three_board = comp_type == 'pro' and (
-            '3-board' in event_lower or '3 board' in event_lower
-            or 'three-board' in event_lower or 'three board' in event_lower
-            or 'jigger' in event_lower
-        )
-        skip_pro_springboard_fallback = is_pro_one_board or is_pro_three_board
-
-        for (fragment, grp_type, grp_gender, cfg_key, _label) in BLOCK_EVENT_GROUPS:
-            if fragment not in event_lower:
-                continue
-            if comp_type != grp_type:
-                continue
-            # grp_gender=None means open (any gender matches)
-            if grp_gender is not None and gender != grp_gender:
-                continue
-            # Exclusivity: don't fold a 1-board / 3-board event into the
-            # generic 2-board Springboard bucket.
-            if skip_pro_springboard_fallback and cfg_key == 'block_springboard_pro':
-                continue
-            matched_cfg_keys.add(cfg_key)
-        for cfg_key in matched_cfg_keys:
+        for cfg_key in _match_block_cfg_keys(event_lower, comp_type, gender):
             key_counts[cfg_key] += n
 
     results = []
@@ -887,16 +876,7 @@ def get_lottery_view(tournament_id):
         comp_type = comp['comp_type']
         for event_name in comp['events']:
             event_lower = event_name.lower().strip()
-            matched_cfg_keys = set()
-            for (fragment, grp_type, grp_gender, cfg_key, _label) in BLOCK_EVENT_GROUPS:
-                if fragment not in event_lower:
-                    continue
-                if comp_type != grp_type:
-                    continue
-                if grp_gender is not None and gender != grp_gender:
-                    continue
-                matched_cfg_keys.add(cfg_key)
-            for cfg_key in matched_cfg_keys:
+            for cfg_key in _match_block_cfg_keys(event_lower, comp_type, gender):
                 key_event_comps[cfg_key][event_name].append({
                     'name': comp['name'],
                     'affiliation': comp['affiliation'],

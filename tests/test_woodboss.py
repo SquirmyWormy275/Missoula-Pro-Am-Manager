@@ -960,3 +960,109 @@ class TestSaveConfigClear:
         assert row.species is None
         assert row.size_value is None  # cleared
 
+
+# ---------------------------------------------------------------------------
+# Pro springboard category exclusivity — regression guards
+#
+# These tests pin the fix for the 2026-04-21 bug where Pro 1-Board competitors
+# silently folded into the generic 2-Board Springboard bucket (block_springboard_pro)
+# instead of getting their own dedicated block_1board_pro row. See
+# docs/solutions/logic-errors/woodboss-pro-1board-block-miscount-2026-04-21.md.
+# ---------------------------------------------------------------------------
+
+import pytest
+from services.woodboss import (
+    BLOCK_CONFIG_LABELS,
+    BLOCK_EVENT_GROUPS,
+    _match_block_cfg_keys,
+)
+
+
+class TestBlockConfigLabelsIntegrity:
+    """Schema-level guards so new block buckets can't silently disappear."""
+
+    def test_block_1board_pro_is_registered(self):
+        assert 'block_1board_pro' in BLOCK_CONFIG_LABELS
+        assert BLOCK_CONFIG_LABELS['block_1board_pro'] == 'Pro 1-Board'
+
+    def test_every_fragment_mapping_has_a_label(self):
+        """Any cfg_key referenced by BLOCK_EVENT_GROUPS must render a row."""
+        referenced = {cfg_key for (_f, _t, _g, cfg_key, _l) in BLOCK_EVENT_GROUPS}
+        missing = referenced - set(BLOCK_CONFIG_LABELS.keys())
+        assert not missing, f"BLOCK_EVENT_GROUPS references keys with no label: {missing}"
+
+
+class TestProSpringboardExclusivity:
+    """`_match_block_cfg_keys` must route each pro springboard event name
+    to exactly one bucket — the 2026-04-21 bug shipped when 1-Board events
+    folded into `block_springboard_pro` silently."""
+
+    @pytest.mark.parametrize("event_name,expected_key", [
+        ('Springboard',      'block_springboard_pro'),
+        ('Pro 1-Board',      'block_1board_pro'),
+        ('3-Board Jigger',   'block_3board_pro'),
+    ])
+    def test_canonical_pro_event_maps_to_exactly_one_bucket(self, event_name, expected_key):
+        keys = _match_block_cfg_keys(event_name.lower(), 'pro', 'M')
+        assert keys == {expected_key}, (
+            f"{event_name!r} mapped to {keys}, expected {{{expected_key!r}}}"
+        )
+
+    @pytest.mark.parametrize("spelling", [
+        'Pro 1-Board',
+        'Pro 1 Board',
+        'Pro One Board',
+        'Pro One-Board',
+    ])
+    def test_1board_spellings_all_land_in_1board_bucket(self, spelling):
+        keys = _match_block_cfg_keys(spelling.lower(), 'pro', 'M')
+        assert keys == {'block_1board_pro'}
+
+    @pytest.mark.parametrize("spelling", [
+        '3-Board Jigger',
+        '3 Board Jigger',
+        'Three-Board Jigger',
+        'Three Board Jigger',
+        'Jigger',
+    ])
+    def test_3board_spellings_all_land_in_3board_bucket(self, spelling):
+        keys = _match_block_cfg_keys(spelling.lower(), 'pro', 'M')
+        assert keys == {'block_3board_pro'}
+
+    @pytest.mark.parametrize("collision_name", [
+        'Pro 1-Board Springboard',
+        '1-Board Springboard Pro',
+        'Springboard 1-Board',
+    ])
+    def test_collision_name_lands_in_1board_only_not_double_counted(self, collision_name):
+        """Custom tournament renames that contain BOTH '1-board' and
+        'springboard' must route to block_1board_pro ONLY — not also
+        into block_springboard_pro."""
+        keys = _match_block_cfg_keys(collision_name.lower(), 'pro', 'M')
+        assert keys == {'block_1board_pro'}, (
+            f"{collision_name!r} leaked into {keys} — exclusivity broken"
+        )
+
+    def test_3board_jigger_collision_name_lands_in_3board_only(self):
+        keys = _match_block_cfg_keys('3-board springboard jigger', 'pro', 'M')
+        assert keys == {'block_3board_pro'}
+
+    def test_college_1board_still_maps_to_college_springboard(self):
+        """College 1-Board Springboard is not a distinct wood category —
+        it uses the same block as College Springboard (both are college
+        springboard events)."""
+        keys = _match_block_cfg_keys('1-board springboard', 'college', 'M')
+        assert keys == {'block_springboard_college_M'}
+
+
+class TestCalculateBlocksEmitsAllLabelledKeys:
+    """Every registered block key must appear in `calculate_blocks` output,
+    even when zero competitors are enrolled — so a silent drop-off can't
+    hide an entire wood category from the report again."""
+
+    def test_empty_tournament_still_emits_every_labelled_key(self, db_session, tournament):
+        from services.woodboss import calculate_blocks
+        rows = calculate_blocks(tournament.id)
+        emitted_keys = {r['config_key'] for r in rows}
+        missing = set(BLOCK_CONFIG_LABELS.keys()) - emitted_keys
+        assert not missing, f"calculate_blocks dropped {missing} from output"

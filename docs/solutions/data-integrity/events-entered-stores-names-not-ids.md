@@ -46,3 +46,6 @@ Pro path already did this via `_get_pro_event_map`. College paths must match.
 - Any new code reading `events_entered` on either competitor model MUST build both id_map and name_map.
 - Log a warning when a resolution misses both — silent skip hides the class of bug that caused the V2.8.2 Woodboss incident.
 - CLAUDE.md Section 4 documents this explicitly; treat it as a cross-cutting invariant.
+
+## Related Issues
+- [`../logic-errors/woodboss-pro-1board-block-miscount-2026-04-21.md`](../logic-errors/woodboss-pro-1board-block-miscount-2026-04-21.md) — second silent-undercount bug in the same file (`services/woodboss.py`, V2.11.3, 2026-04-21). Different root cause (fragment-matching taxonomy vs. ID-vs-name resolver), same user-visible class (block-count shortage on race-day prep). When auditing either `_count_competitors` / `_list_competitors` / `calculate_blocks` / `get_lottery_view`, check both defects together — they sit on adjacent code paths and share the "shipped silent" failure mode.
