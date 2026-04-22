@@ -252,3 +252,53 @@ class TestPrintAll:
     def test_missing_tournament_404(self, bp_auth_client):
         resp = bp_auth_client.get("/scheduling/99999/birling/print-all")
         assert resp.status_code == 404
+
+    def test_all_ungenerated_flash_contains_seed_links(
+        self,
+        bp_auth_client,
+        db_session,
+    ):
+        """When every bracket is unseeded, the redirect flash must include a
+        clickable <a> link to each event's seeding page so the judge can
+        navigate directly instead of hunting for it."""
+        t = make_tournament(db_session)
+        men = _make_bracket_event(db_session, t, name="Birling", gender="M")
+        women = _make_bracket_event(db_session, t, name="Birling", gender="F")
+        db_session.flush()
+        men_id, women_id = men.id, women.id
+
+        resp = bp_auth_client.get(f"/scheduling/{t.id}/birling/print-all")
+        assert resp.status_code in (302, 303)
+
+        with bp_auth_client.session_transaction() as sess:
+            flashes = sess.get("_flashes", [])
+        assert flashes, "expected at least one flashed message"
+        warning_bodies = [msg for cat, msg in flashes if cat == "warning"]
+        assert warning_bodies, "expected a warning-category flash"
+        body = warning_bodies[-1]
+        assert f'href="/scheduling/{t.id}/event/{men_id}/birling"' in body
+        assert f'href="/scheduling/{t.id}/event/{women_id}/birling"' in body
+
+    def test_mixed_skip_flash_contains_seed_links(
+        self,
+        bp_auth_client,
+        db_session,
+    ):
+        """Partial seeding: the info-level skip flash must also carry the
+        seeding-page link for each unseeded event."""
+        t = make_tournament(db_session)
+        men = _make_bracket_event(db_session, t, name="Birling", gender="M")
+        women = _make_bracket_event(db_session, t, name="Birling", gender="F")
+        _seed_generated_bracket(men)
+        db_session.flush()
+        women_id = women.id
+
+        resp = bp_auth_client.get(f"/scheduling/{t.id}/birling/print-all")
+        assert resp.status_code == 200
+
+        with bp_auth_client.session_transaction() as sess:
+            flashes = sess.get("_flashes", [])
+        info_bodies = [msg for cat, msg in flashes if cat == "info"]
+        assert info_bodies, "expected an info-category skip flash"
+        body = info_bodies[-1]
+        assert f'href="/scheduling/{t.id}/event/{women_id}/birling"' in body

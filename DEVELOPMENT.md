@@ -592,6 +592,29 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-21 (V2.12.1)
+
+**Patch — clickable seed links in birling "not seeded" flash warning**
+
+When a judge clicked "Print Birling Brackets" on the tournament overview before any bracket was seeded, the flash warning listed which events still needed seeding but the names were plain text — the judge had to hunt through the sidebar and event list to find each event's seeding page. This patch turns each event name in the warning into a direct `<a>` link to its `scheduling.birling_manage` page.
+
+**`routes/scheduling/birling.py::birling_print_all`:**
+- Imports `markupsafe.Markup` + `escape` (first use of Markup in this codebase — no new dependency; markupsafe is already a Flask transitive dep).
+- `skipped` list now holds `Event` objects instead of pre-formatted display-name strings so we have access to `event.id` when building links. A `skipped_names` list is still assembled at the end solely for the `log_action` audit payload, preserving the existing contract.
+- Nested helper `_seed_links(evts)` builds `<a href="/scheduling/<tid>/event/<eid>/birling" class="text-white fw-semibold text-decoration-underline">{escaped name}</a>` fragments. All user-controllable values (`display_name`) pass through `markupsafe.escape` *before* being concatenated into the `Markup` wrapper — no XSS surface introduced.
+- Both branches emit a `Markup(...)` flash body: the "all ungenerated → 302" warning and the "some skipped alongside rendered" info flash.
+- `text-white` + underline inline classes ensure the link is visible against the amber warning-toast background rendered by `templates/base.html` (Bootstrap's `.alert-link` is scoped to `.alert` elements and wouldn't apply to toasts).
+
+**Tests — `tests/test_routes_birling_print.py::TestPrintAll` (+2):**
+- `test_all_ungenerated_flash_contains_seed_links`: both unseeded events' `href` attributes appear in the warning-category flash body.
+- `test_mixed_skip_flash_contains_seed_links`: the info-category skip flash (when at least one bracket IS seeded) also links the unseeded event's seeding page.
+- Existing 9 route tests in the file remain unchanged — none asserted on flash body content, so the Markup switch didn't perturb them.
+
+**Data model:** No schema changes.
+**Tests:** 2942 passed, 9 skipped, 1 xpassed (+2 new regression tests for clickable flash).
+
+---
+
 ### 2026-04-21 (V2.12.0)
 
 **Minor — even flight distribution + between-flights drag-drop + print polish**
