@@ -457,9 +457,12 @@ def _create_app_inner():
         body = response.get_data(as_text=True)
         changed = False
 
-        # 1. Optional Arapaho translation
-        if text.get_language() == 'arp':
-            translated = text.translate_html(body)
+        # 1. Full-page translation for any non-default language that has a
+        # phrase map (currently Arapaho and Russian). The DEFAULT_LANGUAGE
+        # ('en') is the source text — no translation pass needed for it.
+        active_lang = text.get_language()
+        if active_lang != text.DEFAULT_LANGUAGE and active_lang in text.TRANSLATIONS:
+            translated = text.translate_html(body, lang=active_lang)
             if translated != body:
                 body = translated
                 changed = True
