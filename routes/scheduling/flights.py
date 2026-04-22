@@ -25,6 +25,7 @@ def one_click_generate(tournament_id):
     from services.flight_builder import (
         build_pro_flights,
         integrate_college_spillover_into_flights,
+        integrate_proam_relay_into_final_flight,
     )
     from services.heat_generator import generate_event_heats
     from services.saw_block_assignment import trigger_saw_block_recompute
@@ -39,6 +40,10 @@ def one_click_generate(tournament_id):
         flights_built = _build_pro_flights_if_possible(tournament, build_pro_flights)
         if flights_built is not None:
             flash(f'Built {flights_built} pro flight(s).', 'success')
+            # Phase 4: Relay BEFORE spillover so Chokerman Run 2 still closes.
+            relay_result = integrate_proam_relay_into_final_flight(tournament)
+            if relay_result.get('placed'):
+                flash('Pro-Am Relay placed in the final flight.', 'success')
             integration = integrate_college_spillover_into_flights(
                 tournament, saturday_college_event_ids,
             )
@@ -324,14 +329,21 @@ def build_flights(tournament_id):
 
         if request.form.get('run_async') == '1':
             def _build_flights_async(target_tournament_id: int, requested_num_flights: int | None):
-                """Build pro flights AND chain spillover integration atomically.
+                """Build pro flights + relay + spillover atomically.
 
-                Both operations run with commit=False; a single db.session.commit()
-                at the end makes the pair atomic. If spillover integration raises,
-                the entire flight build rolls back — no orphaned Chokerman Run 2
-                or selected saturday spillover heats with flight_id=NULL.
+                All three operations run with commit=False; a single db.session.commit()
+                at the end makes the chain atomic. If any step raises, the entire
+                build rolls back — no orphaned relay heat, no orphaned Chokerman
+                Run 2, no orphaned saturday_college_event_ids heats.
+
+                Order: build → relay → spillover. Relay lands first at the end of
+                the last flight; Chokerman Run 2 then appends AFTER the relay so
+                the show closes with Chokerman (FlightLogic.md §4.1).
                 """
-                from services.flight_builder import integrate_college_spillover_into_flights
+                from services.flight_builder import (
+                    integrate_college_spillover_into_flights,
+                    integrate_proam_relay_into_final_flight,
+                )
                 target = Tournament.query.get(target_tournament_id)
                 if not target:
                     raise RuntimeError(f'Tournament {target_tournament_id} not found.')
@@ -340,6 +352,9 @@ def build_flights(tournament_id):
                         target,
                         num_flights=requested_num_flights,
                         commit=False,
+                    )
+                    relay_result = integrate_proam_relay_into_final_flight(
+                        target, commit=False,
                     )
                     saturday_college_event_ids = [
                         int(i) for i in
@@ -356,6 +371,11 @@ def build_flights(tournament_id):
                     raise
                 return {
                     'flights_built': flights_built,
+                    'relay': {
+                        'placed': relay_result.get('placed', False),
+                        'reason': relay_result.get('reason'),
+                        'team_count': relay_result.get('team_count', 0),
+                    },
                     'spillover': {
                         'integrated_heats': integration.get('integrated_heats', 0),
                         'events': integration.get('events', 0),
@@ -382,10 +402,17 @@ def build_flights(tournament_id):
             flash(text.FLASH['flights_built'].format(num_flights=built), 'success')
 
             # build_pro_flights wipes every Heat.flight_id (including college
-            # spillover that was previously integrated). Chain the spillover
-            # integration so "Rebuild Flights Only" doesn't silently orphan
-            # Saturday-spillover heats. Mirrors one_click_generate.
-            from services.flight_builder import integrate_college_spillover_into_flights
+            # spillover that was previously integrated). Chain the relay + spillover
+            # so "Rebuild Flights Only" doesn't silently orphan them.
+            # Order: relay BEFORE spillover so Chokerman Run 2 lands last.
+            from services.flight_builder import (
+                integrate_college_spillover_into_flights,
+                integrate_proam_relay_into_final_flight,
+            )
+            relay_result = integrate_proam_relay_into_final_flight(tournament)
+            if relay_result.get('placed'):
+                flash('Pro-Am Relay placed in the final flight.', 'success')
+
             db_config = tournament.get_schedule_config() or {}
             saturday_college_event_ids = [
                 int(i) for i in db_config.get('saturday_college_event_ids', [])

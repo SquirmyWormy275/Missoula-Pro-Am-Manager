@@ -7,12 +7,21 @@ from models import Event, HeatAssignment, Tournament
 
 def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None = None) -> dict:
     """Apply the one-click preflight autofix workflow and return a summary."""
-    from services.flight_builder import integrate_college_spillover_into_flights
+    from services.flight_builder import (
+        integrate_college_spillover_into_flights,
+        integrate_proam_relay_into_final_flight,
+    )
     from services.gear_sharing import complete_one_sided_pairs, parse_all_gear_details
     from services.partner_matching import auto_assign_pro_partners
 
     heats_fixed = 0
     for event in tournament.events.all():
+        # Skip Pro-Am Relay: its pseudo-heats are synthesized by
+        # integrate_proam_relay_into_final_flight and have no HeatAssignment
+        # rows to sync. Walking them here creates empty no-op HeatAssignment
+        # writes that churn the DB for no effect.
+        if event.name == 'Pro-Am Relay':
+            continue
         for heat in event.heats.all():
             json_ids = heat.get_competitors()
             HeatAssignment.query.filter_by(heat_id=heat.id).delete()
@@ -29,6 +38,8 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
     gear_parse_result = parse_all_gear_details(tournament)
     pairs_result = complete_one_sided_pairs(tournament)
     partner_summary = auto_assign_pro_partners(tournament)
+    # Phase 4: relay BEFORE spillover so Chokerman Run 2 still closes the show.
+    relay_result = integrate_proam_relay_into_final_flight(tournament)
     integration = integrate_college_spillover_into_flights(tournament, saturday_ids or [])
 
     return {
@@ -37,6 +48,7 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
         'gear_pairs_completed': pairs_result['completed'],
         'partner_summary': partner_summary,
         'spillover': integration,
+        'relay': relay_result,
     }
 
 

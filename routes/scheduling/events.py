@@ -50,6 +50,8 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
     action = request.form.get('action', '')
     tournament_id = tournament.id
 
+    from services.flight_builder import integrate_proam_relay_into_final_flight
+
     if action == 'generate_all':
         try:
             _generate_all_heats(tournament, generate_event_heats)
@@ -57,6 +59,10 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
                 flash(f'Built {flights} pro flight(s).', 'success')
+                # Phase 4: relay BEFORE spillover so Chokerman Run 2 closes.
+                relay_result = integrate_proam_relay_into_final_flight(tournament)
+                if relay_result.get('placed'):
+                    flash('Pro-Am Relay placed in the final flight.', 'success')
                 integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
                 if integration['integrated_heats'] > 0:
                     db.session.commit()
@@ -79,6 +85,9 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
                 flash(f'Rebuilt {flights} pro flight(s).', 'success')
+                relay_result = integrate_proam_relay_into_final_flight(tournament)
+                if relay_result.get('placed'):
+                    flash('Pro-Am Relay placed in the final flight.', 'success')
                 integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
                 if integration['integrated_heats'] > 0:
                     db.session.commit()
@@ -97,6 +106,9 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
 
     elif action == 'integrate_spillover':
         try:
+            relay_result = integrate_proam_relay_into_final_flight(tournament)
+            if relay_result.get('placed'):
+                flash('Pro-Am Relay placed in the final flight.', 'success')
             integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
             db.session.commit()
             flash(integration['message'], 'info')

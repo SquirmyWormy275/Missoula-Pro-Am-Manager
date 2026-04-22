@@ -225,6 +225,36 @@ def _fp_fnf(tournament, entity=None):
     return _sha1(parts)
 
 
+# --- Pro-Am Relay Teams Sheet (Phase 4) ----------------------------------
+
+
+def _status_relay_teams(tournament, entity=None):
+    """Status: relay is draw-complete iff ProAmRelay.relay_data shows drawn."""
+    from services.proam_relay import ProAmRelay
+
+    relay = ProAmRelay(tournament)
+    state = relay.relay_data or {}
+    teams = state.get("teams") or []
+    if state.get("status") == "drawn" and teams:
+        return _ok()
+    return _not_configured("Relay not drawn yet.")
+
+
+def _fp_relay_teams(tournament, entity=None):
+    """Fingerprint: relay status + member count + member IDs per team."""
+    from services.proam_relay import ProAmRelay
+
+    relay = ProAmRelay(tournament)
+    state = relay.relay_data or {}
+    teams = state.get("teams") or []
+    parts = [state.get("status") or "-"]
+    for idx, team in enumerate(teams):
+        members = team.get("members") or []
+        member_ids = ",".join(str(m.get("id", "?")) for m in members)
+        parts.append(f"t{idx}:{member_ids}")
+    return _sha1(parts)
+
+
 # --- Birling (blank bracket + seeded all) --------------------------------
 
 
@@ -521,6 +551,18 @@ PRINT_DOCUMENTS: list[PrintDoc] = [
         status_fn=_status_fnf,
         fingerprint_fn=_fp_fnf,
         description="FNF schedule as PDF download.",
+    ),
+    PrintDoc(
+        key="relay_teams_sheet",
+        label="Pro-Am Relay Teams Sheet",
+        section=SECTION_RUN_SHOW,
+        route_endpoint="scheduling.relay_teams_sheet",
+        status_fn=_status_relay_teams,
+        fingerprint_fn=_fp_relay_teams,
+        description=(
+            "Landscape roster of the drawn Pro-Am Relay teams — one team per "
+            "row for wall posting. Print after the lottery runs."
+        ),
     ),
     # --- Run Show --------------------------------------------------------
     PrintDoc(
