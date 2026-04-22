@@ -1,0 +1,147 @@
+name: Production Health Monitor
+
+# Polls the deployed app's /health endpoint every 5 minutes and opens a
+# GitHub issue on failure (or comments on the existing open one). Closes
+# the issue automatically when health recovers.
+#
+# Motivated by the 2026-04-08 incident: production ran `status: degraded`
+# for 14 days with nobody watching. See
+# docs/solutions/best-practices/railway-postgres-operational-playbook-2026-04-21.md
+# lessons 2, 4, and 10.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: health-monitor
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+
+jobs:
+  check-health:
+    runs-on: ubuntu-latest
+    env:
+      HEALTH_URL: https://missoula-pro-am-manager-production.up.railway.app/health
+      ALERT_LABEL: health-alert
+      PLAYBOOK: docs/solutions/best-practices/railway-postgres-operational-playbook-2026-04-21.md
+    steps:
+      - name: Fetch /health
+        id: health
+        run: |
+          set -u
+          BODY_FILE=$(mktemp)
+          CODE=$(curl -s --max-time 15 -o "$BODY_FILE" -w "%{http_code}" "$HEALTH_URL" || echo "000")
+          BODY=$(cat "$BODY_FILE")
+
+          if [ -z "$BODY" ]; then
+            BODY='{"error":"empty_response"}'
+          fi
+
+          echo "HTTP code: $CODE"
+          echo "Body: $BODY"
+
+          STATUS=$(echo "$BODY" | jq -r '.status // "missing"')
+          DB=$(echo "$BODY" | jq -r '.db // "missing"')
+          MIG_REV=$(echo "$BODY" | jq -r '.migration_rev // "missing"')
+          MIG_CURRENT=$(echo "$BODY" | jq -r '.migration_current // "missing"')
+
+          {
+            echo "http_code=$CODE"
+            echo "status=$STATUS"
+            echo "db=$DB"
+            echo "migration_rev=$MIG_REV"
+            echo "migration_current=$MIG_CURRENT"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "body<<HEALTH_EOF"
+            echo "$BODY"
+            echo "HEALTH_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$CODE" != "200" ] || [ "$STATUS" != "ok" ] || [ "$DB" != "true" ] || [ "$MIG_CURRENT" != "true" ]; then
+            echo "healthy=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Production /health unhealthy: code=$CODE status=$STATUS db=$DB migration_current=$MIG_CURRENT"
+          else
+            echo "healthy=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Production /health ok (rev=$MIG_REV)"
+          fi
+
+      - name: Ensure alert label exists
+        if: steps.health.outputs.healthy == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh label list --json name --jq '.[].name' | grep -qx "$ALERT_LABEL"; then
+            gh label create "$ALERT_LABEL" --description "Automated production health check alert" --color d73a4a
+          fi
+
+      - name: Open or comment on alert issue
+        if: steps.health.outputs.healthy == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HTTP_CODE: ${{ steps.health.outputs.http_code }}
+          STATUS: ${{ steps.health.outputs.status }}
+          DB: ${{ steps.health.outputs.db }}
+          MIG_REV: ${{ steps.health.outputs.migration_rev }}
+          MIG_CURRENT: ${{ steps.health.outputs.migration_current }}
+          BODY_RAW: ${{ steps.health.outputs.body }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          TITLE="[health-alert] Production health check failing"
+
+          COMMENT=$(cat <<END_COMMENT
+          ### Health check failed at $TIMESTAMP
+
+          | Field | Value |
+          |-------|-------|
+          | HTTP code | \`$HTTP_CODE\` |
+          | status | \`$STATUS\` |
+          | db | \`$DB\` |
+          | migration_rev | \`$MIG_REV\` |
+          | migration_current | \`$MIG_CURRENT\` |
+
+          <details>
+          <summary>Raw response body</summary>
+
+          \`\`\`json
+          $BODY_RAW
+          \`\`\`
+          </details>
+
+          **Workflow run**: $RUN_URL
+
+          **Next steps** — see \`$PLAYBOOK\`:
+          - HTTP 000 = crash loop or network outage (lesson 4)
+          - HTTP 502 that persists beyond 2 minutes = deploy stuck (lesson 4)
+          - \`db: false\` = Postgres unreachable; check volume (lesson 3)
+          - \`migration_current: false\` = schema drift; apply \`flask db upgrade\` via public proxy (lesson 1, Example 1)
+          END_COMMENT
+          )
+
+          EXISTING=$(gh issue list --label "$ALERT_LABEL" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Commenting on existing issue #$EXISTING"
+            gh issue comment "$EXISTING" --body "$COMMENT"
+          else
+            echo "Creating new alert issue"
+            gh issue create --title "$TITLE" --label "$ALERT_LABEL" --body "$COMMENT"
+          fi
+
+      - name: Close alert issue on recovery
+        if: steps.health.outputs.healthy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MIG_REV: ${{ steps.health.outputs.migration_rev }}
+        run: |
+          EXISTING=$(gh issue list --label "$ALERT_LABEL" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            gh issue close "$EXISTING" --comment "Health recovered at $TIMESTAMP (rev=$MIG_REV). Workflow run: $RUN_URL"
+          fi
