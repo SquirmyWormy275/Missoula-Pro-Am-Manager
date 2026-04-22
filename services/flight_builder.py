@@ -11,6 +11,7 @@ import logging
 import math
 from collections import defaultdict
 
+from config import DAY_SPLIT_EVENT_NAMES
 from database import db
 from models import Event, Flight, Heat, HeatAssignment, Tournament
 
@@ -23,6 +24,14 @@ TARGET_HEAT_SPACING = 5
 
 PARTNERED_AXE_EVENT_NAME = 'Partnered Axe Throw'
 PARTNERED_AXE_SHOW_TEAM_COUNT = 4
+
+# Placement modes for non-Chokerman spillover events (locked plan-eng-review
+# decision: Speed Climb Run 2 defaults to round-robin with spacing, but judges
+# can toggle to 'cluster' mode to greedy-fill Saturday flights from flight 1
+# forward). Chokerman's Race is unaffected — it is always the show closer.
+PLACEMENT_MODE_ROUNDROBIN = 'roundrobin'
+PLACEMENT_MODE_CLUSTER = 'cluster'
+VALID_PLACEMENT_MODES = {PLACEMENT_MODE_ROUNDROBIN, PLACEMENT_MODE_CLUSTER}
 
 # How many independent greedy passes to run; best result is kept.
 N_OPTIMIZATION_PASSES = 5
@@ -1130,27 +1139,66 @@ def integrate_college_spillover_into_flights(
     tournament: Tournament,
     college_event_ids: list[int] | None = None,
     commit: bool = False,
+    placement_mode: str | None = None,
 ) -> dict:
     """
     Assign selected college spillover heats into existing Saturday pro flights.
 
-    Chokerman's Race only contributes run 2 per Missoula rules.
-    Chokerman heats are always placed at the end of the last flight to serve as
-    the show climax — no other heats are inserted after them.
+    Day-split events (config.DAY_SPLIT_EVENT_NAMES — Chokerman's Race and Speed
+    Climb) contribute Run 2 only, per Missoula rules. Chokerman's Race Run 2
+    heats are always placed at the end of the last flight to serve as the show
+    climax — no other heats are inserted after them. Speed Climb Run 2 and
+    other selected spillover events (Obstacle Pole, Standing Block Speed, etc.)
+    are distributed according to `placement_mode`.
+
+    Day-split events are auto-added to the mandatory set — operators do NOT need
+    to check them explicitly on the spillover form.
 
     Args:
         tournament: Tournament to integrate spillover into.
-        college_event_ids: Explicitly selected spillover event ids. Chokerman is
-            auto-added.
+        college_event_ids: Explicitly selected spillover event ids. All events
+            in DAY_SPLIT_EVENT_NAMES are auto-added (Chokerman, Speed Climb).
         commit: When True, commit the transaction at the end. Defaults to False
             because historically this function flushed and left the caller to
             commit; preserving that default keeps existing call sites safe.
             Phase 1 async chain passes True at the final step.
+        placement_mode: How to distribute non-Chokerman spillover heats across
+            Saturday flights. When None (default), read from
+            tournament.schedule_config['saturday_college_placement_mode'] so
+            existing callers pick up the operator's UI choice automatically.
+            - PLACEMENT_MODE_ROUNDROBIN ('roundrobin'): cycle through flights in
+              flight_number order, respecting MIN_HEAT_SPACING for any
+              competitor who also runs a pro event. Preserves pre-phase-2
+              behaviour for Obstacle Pole etc.
+            - PLACEMENT_MODE_CLUSTER ('cluster'): greedy-fill the first flight
+              with remaining capacity under the target heats_per_flight, then
+              spill to the next. Used when operators want Speed Climb to
+              cluster at the start of Saturday rather than distribute.
     """
+    if placement_mode is None:
+        try:
+            cfg = tournament.get_schedule_config() or {}
+            placement_mode = cfg.get('saturday_college_placement_mode') or PLACEMENT_MODE_ROUNDROBIN
+        except Exception:
+            placement_mode = PLACEMENT_MODE_ROUNDROBIN
+    if placement_mode not in VALID_PLACEMENT_MODES:
+        logger.warning(
+            'integrate_college_spillover_into_flights: unknown placement_mode %r, '
+            'falling back to %r', placement_mode, PLACEMENT_MODE_ROUNDROBIN,
+        )
+        placement_mode = PLACEMENT_MODE_ROUNDROBIN
+
     selected_ids = set(int(v) for v in (college_event_ids or []))
-    mandatory = tournament.events.filter_by(event_type='college', name="Chokerman's Race").first()
-    if mandatory:
-        selected_ids.add(mandatory.id)
+
+    # Auto-add every DAY_SPLIT_EVENT_NAMES event (Chokerman + Speed Climb M/F).
+    # Operators never have to tick these on the UI — Run 2 is non-negotiable
+    # per Missoula rules and the spec (FlightLogic.md §4.1).
+    mandatory_events = tournament.events.filter(
+        Event.event_type == 'college',
+        Event.name.in_(list(DAY_SPLIT_EVENT_NAMES)),
+    ).all()
+    for ev in mandatory_events:
+        selected_ids.add(ev.id)
 
     flights = Flight.query.filter_by(tournament_id=tournament.id).order_by(Flight.flight_number).all()
     if not flights:
@@ -1176,10 +1224,24 @@ def integrate_college_spillover_into_flights(
                 competitor_last_position[int(comp_id)] = global_position
             global_position += 1
 
-    for event in sorted(events, key=lambda e: (e.name, e.gender or '')):
-        if event.name == "Chokerman's Race":
-            # Run 2 only on Saturday. All heats group together at the end of
-            # the last flight in the same heat-number order as Run 1.
+    # Cluster-mode needs a per-flight capacity target. Derive it from the current
+    # flight fill level so the cap reflects whatever heats_per_flight the flight
+    # build used (Phase 1 / Phase 3 compatible).
+    per_flight_counts: dict[int, int] = {}
+    for flight in flights:
+        per_flight_counts[flight.id] = Heat.query.filter_by(flight_id=flight.id).count()
+    target_heats_per_flight = max(per_flight_counts.values()) if per_flight_counts else 0
+
+    # Process Chokerman's Race LAST so it lands at the very end of the last flight
+    # (after any Speed Climb Run 2 heats that may have been placed there by the
+    # fallback paths). This preserves the FlightLogic.md §4.1 climax rule.
+    def _event_order_key(ev):
+        chokerman_last = 1 if ev.name == "Chokerman's Race" else 0
+        return (chokerman_last, ev.name, ev.gender or '')
+
+    for event in sorted(events, key=_event_order_key):
+        if event.name in DAY_SPLIT_EVENT_NAMES:
+            # Run 2 only — Run 1 stays on Friday's college schedule.
             heats = event.heats.filter_by(run_number=2).order_by(Heat.heat_number).all()
         else:
             heats = event.heats.order_by(Heat.run_number, Heat.heat_number).all()
@@ -1195,8 +1257,27 @@ def integrate_college_spillover_into_flights(
                 # Always place at end of last flight (show climax — sealed position).
                 heat.flight_id = last_flight.id
                 heat.flight_position = _next_flight_position(last_flight.id)
+                per_flight_counts[last_flight.id] = per_flight_counts.get(last_flight.id, 0) + 1
+                global_position += 1
+            elif placement_mode == PLACEMENT_MODE_CLUSTER:
+                # Cluster-at-front: pick the flight with the fewest heats
+                # placed so far, tie-breaking to the lowest flight_number.
+                # This makes spillover fill flight 1 first (respecting the
+                # pro-built balance), then flight 2, then flight 3, rather
+                # than distributing round-robin across all flights.
+                heat_comp_ids = [int(c) for c in heat.get_competitors()]
+                target = min(
+                    flights,
+                    key=lambda f: (per_flight_counts.get(f.id, 0), f.flight_number),
+                )
+                heat.flight_id = target.id
+                heat.flight_position = _next_flight_position(target.id)
+                per_flight_counts[target.id] = per_flight_counts.get(target.id, 0) + 1
+                for cid in heat_comp_ids:
+                    competitor_last_position[cid] = global_position
                 global_position += 1
             else:
+                # PLACEMENT_MODE_ROUNDROBIN — existing behaviour, unchanged.
                 # Try flights in round-robin order, respecting MIN_HEAT_SPACING for
                 # any competitor who also appears in pro heats.
                 heat_comp_ids = [int(c) for c in heat.get_competitors()]
@@ -1212,6 +1293,7 @@ def integrate_college_spillover_into_flights(
                     if spacing_ok:
                         heat.flight_id = candidate.id
                         heat.flight_position = _next_flight_position(candidate.id)
+                        per_flight_counts[candidate.id] = per_flight_counts.get(candidate.id, 0) + 1
                         for cid in heat_comp_ids:
                             competitor_last_position[cid] = candidate_pos
                         flight_idx = (flight_idx + attempt + 1) % len(flights)
@@ -1223,6 +1305,7 @@ def integrate_college_spillover_into_flights(
                     target = flights[flight_idx % len(flights)]
                     heat.flight_id = target.id
                     heat.flight_position = _next_flight_position(target.id)
+                    per_flight_counts[target.id] = per_flight_counts.get(target.id, 0) + 1
                     for cid in heat_comp_ids:
                         competitor_last_position[cid] = global_position
                     flight_idx = (flight_idx + 1) % len(flights)

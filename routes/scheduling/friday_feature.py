@@ -114,11 +114,20 @@ def friday_feature(tournament_id):
         except (TypeError, ValueError):
             saturday_college_event_ids = []
 
+        # Phase 2: saturday_college_placement_mode toggle ('roundrobin' default, 'cluster' alt).
+        # Only accept known modes; silently fall back to default on invalid input.
+        placement_mode_raw = (request.form.get('saturday_college_placement_mode') or 'roundrobin').strip()
+        saturday_placement_mode = (
+            placement_mode_raw if placement_mode_raw in {'roundrobin', 'cluster'} else 'roundrobin'
+        )
+
         # Merge into DB config (preserves friday_event_order / saturday_event_order)
         db_cfg = tournament.get_schedule_config()
         db_cfg['saturday_college_event_ids'] = saturday_college_event_ids
+        db_cfg['saturday_college_placement_mode'] = saturday_placement_mode
         saved_opts = dict(saved_opts)
         saved_opts['saturday_college_event_ids'] = saturday_college_event_ids
+        saved_opts['saturday_college_placement_mode'] = saturday_placement_mode
         session[session_key] = saved_opts
         session.modified = True
         tournament.set_schedule_config(db_cfg)
@@ -162,6 +171,9 @@ def friday_feature(tournament_id):
         return redirect(url_for('scheduling.friday_feature', tournament_id=tournament_id))
 
     selected_saturday_ids = set(int(i) for i in saved_opts.get('saturday_college_event_ids', []))
+    saturday_placement_mode = saved_opts.get('saturday_college_placement_mode', 'roundrobin')
+    if saturday_placement_mode not in {'roundrobin', 'cluster'}:
+        saturday_placement_mode = 'roundrobin'
     fnf_schedule = _build_fnf_schedule(tournament, eligible_events, fnf_config)
 
     return render_template(
@@ -172,6 +184,7 @@ def friday_feature(tournament_id):
         notes=fnf_config.get('notes', ''),
         sat_eligible=sat_eligible,
         selected_saturday_ids=selected_saturday_ids,
+        saturday_placement_mode=saturday_placement_mode,
         fnf_schedule=fnf_schedule,
     )
 
