@@ -28,6 +28,10 @@ jobs:
       HEALTH_URL: https://missoula-pro-am-manager-production.up.railway.app/health
       ALERT_LABEL: health-alert
       PLAYBOOK: docs/solutions/best-practices/railway-postgres-operational-playbook-2026-04-21.md
+      # GH_REPO tells `gh` which repo to target without needing a git checkout.
+      # Without this, gh shells out to `git` and fails with "not a git repository".
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Fetch /health
         id: health
@@ -73,8 +77,6 @@ jobs:
 
       - name: Ensure alert label exists
         if: steps.health.outputs.healthy == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh label list --json name --jq '.[].name' | grep -qx "$ALERT_LABEL"; then
             gh label create "$ALERT_LABEL" --description "Automated production health check alert" --color d73a4a
@@ -83,7 +85,6 @@ jobs:
       - name: Open or comment on alert issue
         if: steps.health.outputs.healthy == 'false'
         env:
-          GH_TOKEN: ${{ github.token }}
           HTTP_CODE: ${{ steps.health.outputs.http_code }}
           STATUS: ${{ steps.health.outputs.status }}
           DB: ${{ steps.health.outputs.db }}
@@ -136,7 +137,6 @@ jobs:
       - name: Close alert issue on recovery
         if: steps.health.outputs.healthy == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           MIG_REV: ${{ steps.health.outputs.migration_rev }}
         run: |
