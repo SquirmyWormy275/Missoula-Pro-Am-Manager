@@ -83,12 +83,32 @@ def flight_list(tournament_id):
             else:
                 comps = {c.id: c for c in ProCompetitor.query.filter(
                     ProCompetitor.id.in_(comp_ids)).all()} if comp_ids else {}
+
+            # For partnered events, resolve each competitor's partner_id
+            # (the other ProCompetitor.id bound to this event in their
+            # partners JSON) so the UI can drag the pair as one unit.
+            partner_id_by_comp: dict[int, int | None] = {}
+            if event.is_partnered and event.event_type == 'pro':
+                for cid, comp in comps.items():
+                    partner_id_by_comp[cid] = None
+                    partners = comp.get_partners() if hasattr(comp, 'get_partners') else {}
+                    partner_name = partners.get(str(event.id)) or partners.get(event.id)
+                    if partner_name:
+                        for other_cid, other in comps.items():
+                            if other_cid != cid and other.name.strip().lower() == str(partner_name).strip().lower():
+                                partner_id_by_comp[cid] = other_cid
+                                break
+
             heat_rows.append({
                 'heat': heat,
                 'event': event,
                 'competitors': [
-                    {'name': comps[cid].display_name if cid in comps else f'ID:{cid}',
-                     'stand': assignments.get(str(cid), '?')}
+                    {
+                        'id': cid,
+                        'name': comps[cid].display_name if cid in comps else f'ID:{cid}',
+                        'stand': assignments.get(str(cid), '?'),
+                        'partner_id': partner_id_by_comp.get(cid),
+                    }
                     for cid in comp_ids
                 ],
             })
@@ -182,9 +202,31 @@ def build_flights(tournament_id):
             log_action('flights_built', 'tournament', tournament_id, {'count': built})
             db.session.commit()
             flash(text.FLASH['flights_built'].format(num_flights=built), 'success')
+
+            # build_pro_flights wipes every Heat.flight_id (including college
+            # spillover that was previously integrated). Chain the spillover
+            # integration so "Rebuild Flights Only" doesn't silently orphan
+            # Saturday-spillover heats. Mirrors one_click_generate.
+            from services.flight_builder import integrate_college_spillover_into_flights
+            db_config = tournament.get_schedule_config() or {}
+            saturday_college_event_ids = [
+                int(i) for i in db_config.get('saturday_college_event_ids', [])
+            ]
+            integration = integrate_college_spillover_into_flights(
+                tournament, saturday_college_event_ids,
+            )
+            if integration.get('integrated_heats'):
+                db.session.commit()
+                flash(
+                    f"Integrated {integration['integrated_heats']} college spillover "
+                    f"heat(s) into Saturday flights.",
+                    'success',
+                )
+
             from services.saw_block_assignment import trigger_saw_block_recompute
             trigger_saw_block_recompute(tournament)
         except Exception as e:
+            db.session.rollback()
             flash(text.FLASH['flights_error'].format(error=str(e)), 'error')
 
         return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
@@ -293,6 +335,136 @@ def bulk_reorder_flights(tournament_id):
     trigger_saw_block_recompute(tournament)
 
     return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Competitor move — drag-drop individuals (or partnered pairs) between heats
+# ---------------------------------------------------------------------------
+
+@scheduling_bp.route('/<int:tournament_id>/heats/<int:source_heat_id>/drag-move',
+                     methods=['POST'])
+def drag_move_competitor(tournament_id, source_heat_id):
+    """Move a competitor (or a partnered pair) from source_heat to target_heat.
+
+    Both heats must belong to the same event (a competitor can only be rearranged
+    into a heat they're signed up for — which means same event). For partnered
+    events the caller must send both partner IDs in competitor_ids; the endpoint
+    moves them as a unit.
+
+    Body: {
+        competitor_ids: [int, ...],  # 1 for solo, 2 for partnered
+        target_heat_id: int,
+    }
+
+    Returns: {ok: bool, error?: str, source?: {...}, target?: {...}}
+    """
+    tournament = Tournament.query.get_or_404(tournament_id)
+    source = Heat.query.filter_by(id=source_heat_id).first_or_404()
+
+    try:
+        data = request.get_json(silent=True) or {}
+        competitor_ids = [int(c) for c in data.get('competitor_ids', [])]
+        target_heat_id = int(data.get('target_heat_id'))
+    except (TypeError, ValueError, KeyError):
+        return jsonify({'ok': False, 'error': 'Invalid payload'}), 400
+
+    if not competitor_ids:
+        return jsonify({'ok': False, 'error': 'competitor_ids required'}), 400
+
+    target = Heat.query.filter_by(id=target_heat_id).first()
+    if target is None:
+        return jsonify({'ok': False, 'error': 'Target heat not found'}), 404
+
+    # Same-event constraint: competitors signed up for event E can only be moved
+    # among heats of event E.
+    if source.event_id != target.event_id:
+        return jsonify({
+            'ok': False,
+            'error': 'Competitor can only be moved into a heat of the same event.',
+        }), 400
+
+    event = Event.query.filter_by(id=source.event_id, tournament_id=tournament_id).first()
+    if event is None:
+        return jsonify({'ok': False, 'error': 'Event not found for tournament'}), 404
+
+    # Every competitor in the payload must currently be in the source heat.
+    source_comps = source.get_competitors()
+    missing = [c for c in competitor_ids if c not in source_comps]
+    if missing:
+        return jsonify({
+            'ok': False,
+            'error': f'Competitor(s) {missing} not in source heat — refresh and try again.',
+        }), 400
+
+    # Target heat capacity check.
+    max_stands = event.max_stands or 4
+    target_comps = target.get_competitors()
+    if len(target_comps) + len(competitor_ids) > max_stands:
+        return jsonify({
+            'ok': False,
+            'code': 'target_full',
+            'error': (
+                f'Target heat {target.heat_number} is full '
+                f'({len(target_comps)}/{max_stands}). '
+                'Use the holding bin to rearrange, or pick a heat with open stands.'
+            ),
+        }), 409
+
+    # Perform the move.
+    source_assignments = source.get_stand_assignments()
+    target_assignments = target.get_stand_assignments()
+
+    used_stands = {int(v) for v in target_assignments.values() if v is not None}
+    next_free = 1
+    def _next_stand():
+        nonlocal next_free
+        while next_free in used_stands:
+            next_free += 1
+        stand = next_free
+        used_stands.add(stand)
+        next_free += 1
+        return stand
+
+    for cid in competitor_ids:
+        source.remove_competitor(cid)
+        source_assignments.pop(str(cid), None)
+        target.add_competitor(cid)
+        target.set_stand_assignment(cid, _next_stand())
+
+    source.stand_assignments = (
+        __import__('json').dumps(source_assignments) if source_assignments else '{}'
+    )
+    db.session.flush()
+
+    competitor_type = 'pro' if event.event_type == 'pro' else 'college'
+    source.sync_assignments(competitor_type)
+    target.sync_assignments(competitor_type)
+
+    db.session.commit()
+    log_action('competitor_moved_between_heats', 'heat', target.id, {
+        'tournament_id': tournament_id,
+        'source_heat_id': source.id,
+        'target_heat_id': target.id,
+        'competitor_ids': competitor_ids,
+        'event_id': event.id,
+    })
+
+    from services.saw_block_assignment import trigger_saw_block_recompute
+    trigger_saw_block_recompute(tournament)
+
+    return jsonify({
+        'ok': True,
+        'source': {
+            'heat_id': source.id,
+            'competitor_ids': source.get_competitors(),
+            'stand_assignments': source.get_stand_assignments(),
+        },
+        'target': {
+            'heat_id': target.id,
+            'competitor_ids': target.get_competitors(),
+            'stand_assignments': target.get_stand_assignments(),
+        },
+    })
 
 
 # ---------------------------------------------------------------------------

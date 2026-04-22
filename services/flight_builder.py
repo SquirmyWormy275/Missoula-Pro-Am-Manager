@@ -49,6 +49,17 @@ _CONFLICTING_STANDS: dict[str, str] = {
 # Minimum gap between conflicting stand types (approximately one flight block)
 _STAND_CONFLICT_GAP = 8
 
+# Same-stand-type CROSS-event adjacency: events sharing a stand_type use the same
+# physical stands (Men's Underhand + Women's Underhand both draw from the 5 underhand
+# stands; Single Buck + Double Buck + Jack & Jill all draw from the 8 hand-saw stands).
+# Truly back-to-back placement (gap=1) forces the crew to reset the same stands with
+# no break for the crowd. Penalize gap=1 only — gap>=2 means one heat of a different
+# stand type breaks up the sequence, which is acceptable.
+# Penalty is deliberately smaller than the distribution cap penalty so even-distribution
+# still dominates scheduling; adjacency is a secondary ordering concern.
+_SAME_STAND_TYPE_MIN_GAP = 2
+_SAME_STAND_TYPE_PENALTY = 200.0
+
 # Per-event per-flight distribution: each event's heats are targeted to spread
 # evenly across flights as ceil(N_e / target_flights) per flight. Penalty per
 # heat over that cap must outweigh first-appearance (+1000) and springboard
@@ -463,6 +474,9 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
     # Count of this event's heats already placed in the current flight block,
     # used to enforce the even-distribution cap. Key: (block, event_id).
     event_heats_in_block: dict[tuple[int, int], int] = {}
+    # Track (position, event_id) for the last heat of each stand_type so the
+    # greedy can penalize CROSS-event same-stand-type adjacency.
+    stand_type_last_event: dict[str, tuple[int, int]] = {}
 
     while True:
         candidates = [
@@ -494,6 +508,7 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
                     previous_heat_comps=ordered[-1]['competitors'] if ordered else set(),
                     event_per_flight_cap=event_per_flight_cap,
                     event_heats_in_block=event_heats_in_block,
+                    stand_type_last_event=stand_type_last_event,
                 ),
                 remaining_counts[eid],   # tie-break: more remaining = preferred
                 eid,
@@ -518,6 +533,7 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
                         event_last_block,
                         event_per_flight_cap=event_per_flight_cap,
                         event_heats_in_block=event_heats_in_block,
+                        stand_type_last_event=stand_type_last_event,
                     ),
                     remaining_counts[eid],
                     eid,
@@ -537,6 +553,8 @@ def _single_pass_optimize(event_queues: dict, event_id_order: list,
         if stand_type:
             stand_type_last_position[stand_type] = pos
         event_id = best_heat_data['heat'].event_id
+        if stand_type and event_id is not None:
+            stand_type_last_event[stand_type] = (pos, event_id)
         current_block = pos // heats_per_flight if heats_per_flight > 0 else 0
         event_last_block[event_id] = current_block
         event_heats_in_block[(current_block, event_id)] = (
@@ -630,6 +648,26 @@ def _score_ordering(ordered: list, heats_per_flight: int,
             if cap is not None and count > cap:
                 total -= EVENT_FLIGHT_CAP_SCORE_PENALTY * (count - cap)
 
+    # Same-stand-type CROSS-event adjacency penalty across the full ordering.
+    # Mirrors the per-step penalty in _calculate_heat_score. Only penalizes
+    # when consecutive same-stand-type heats come from DIFFERENT events
+    # (e.g. Men's UH → Women's UH) — intra-event adjacency is handled by
+    # competitor spacing and the distribution cap.
+    prev_by_stand: dict[str, tuple[int, int]] = {}  # stand_type -> (pos, event_id)
+    for pos, hd in enumerate(ordered):
+        st = getattr(hd.get('event'), 'stand_type', None)
+        if not st:
+            continue
+        eid = hd['heat'].event_id
+        last = prev_by_stand.get(st)
+        if last is not None:
+            last_pos, last_eid = last
+            if last_eid != eid:  # cross-event only
+                gap = pos - last_pos
+                if gap < _SAME_STAND_TYPE_MIN_GAP:
+                    total -= _SAME_STAND_TYPE_PENALTY * (_SAME_STAND_TYPE_MIN_GAP - gap)
+        prev_by_stand[st] = (pos, eid)
+
     return total
 
 
@@ -641,7 +679,8 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
                            gear_conflict_pairs: dict[int, set[int]] | None = None,
                            previous_heat_comps: set | None = None,
                            event_per_flight_cap: dict[int, int] | None = None,
-                           event_heats_in_block: dict | None = None) -> float:
+                           event_heats_in_block: dict | None = None,
+                           stand_type_last_event: dict[str, tuple[int, int]] | None = None) -> float:
     """
     Calculate a score for placing a heat at the current position.
 
@@ -756,6 +795,25 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
                 already = event_heats_in_block.get((current_block, event_id), 0)
                 if already >= cap:
                     score -= EVENT_FLIGHT_CAP_PENALTY * (already - cap + 1)
+
+    # Same-stand-type cross-event adjacency penalty. Back-to-back heats from
+    # DIFFERENT events that share a stand_type (Men's UH → Women's UH,
+    # Single Buck → Jack & Jill) reuse the same physical stands with no
+    # crew-reset or crowd-variety break. Intra-event adjacency (Men's UH H1
+    # → H2) is handled by competitor spacing + the distribution cap and is
+    # not penalized here.
+    # Penalty is smaller than the distribution cap (2000) and first-appearance
+    # bonus (1000) so it shifts preference without hard-blocking when the only
+    # remaining candidates are same-stand-type.
+    if (stand_type and stand_type_last_event is not None):
+        last_event_of_stand = stand_type_last_event.get(stand_type)
+        if last_event_of_stand is not None:
+            last_pos, last_eid = last_event_of_stand
+            event_id = getattr(event, 'id', None)
+            if event_id is not None and last_eid != event_id:
+                gap = current_position - last_pos
+                if gap < _SAME_STAND_TYPE_MIN_GAP:
+                    score -= _SAME_STAND_TYPE_PENALTY * (_SAME_STAND_TYPE_MIN_GAP - gap)
 
     return score
 

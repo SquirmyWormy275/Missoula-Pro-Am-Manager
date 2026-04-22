@@ -228,6 +228,7 @@ def _build_path(rule: str, ids: dict[str, object]) -> str:
         "<int:event_id>": str(event_id),
         "<int:eid>": str(event_id),
         "<int:heat_id>": str(ids["heat_id"]),
+        "<int:source_heat_id>": str(ids["heat_id"]),
         "<int:user_id>": str(ids["user_id"]),
         "<int:team_id>": str(ids["team_id"]) if ids["team_id"] is not None else "",
         "<int:competitor_id>": str(competitor_id) if competitor_id is not None else "",
