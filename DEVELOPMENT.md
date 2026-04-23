@@ -592,6 +592,35 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-22 (V2.14.2)
+
+**What changed for you.** The Run Show page (`/scheduling/<tid>/events`) no longer flashes "X events have no heats yet" warnings for events that intentionally never produce heats — Axe Throw, Caber Toss, Peavey Log Roll, and Pulp Toss (college come-and-go signup format) plus Partnered Axe Throw and Pro-Am Relay (state-machine events that store progression in `Event.payouts` JSON). The Current Schedule status panel now reflects actual schedule readiness instead of crying wolf on every page load. Same release also surfaces the flight sizing controls (mode toggle, num_flights, target minutes per flight, minutes per heat) directly on the Run Show page above the Generate buttons — no more bouncing to `/flights/build` to retune flight count between Generate clicks. Both pages share the same persisted `schedule_config`, so changing flight count in either place updates the other.
+
+**Patch — Run Show false-positive warning banner + inline flight count input.** Race-weekend operator hit Generate All Heats + Build Flights on `/scheduling/<tid>/events`, the action ran cleanly (174 heats + 7 flights built on the test tournament), but the page-top warning banner persistently flashed two false positives on every page load:
+
+- "6 college event(s) have no heats yet: Men's Axe Throw, Women's Axe Throw, Peavey Log Roll, Men's Caber Toss, Women's Caber Toss, Pulp Toss"
+- "1 pro event(s) have no heats yet: Partnered Axe Throw"
+
+Operator believed generation was broken when it was not.
+
+**Root cause.** `services/schedule_status.py::_is_open_list_only` checked `event.is_open` (the OPEN/CLOSED registration flag toggled at event setup) instead of the authoritative `LIST_ONLY_EVENT_NAMES = {'axethrow','cabertoss','peaveylogroll','pulptoss'}` name set. CLAUDE.md §3 explicitly allows operators to configure traditionally-OPEN events as CLOSED, so `is_open=False` no longer correlates with "this event needs heats." Pro state-machine events (Partnered Axe Throw runs prelims→finals via `Event.payouts` JSON; Pro-Am Relay synthesises a single pseudo-Heat at flight-build time) were never excluded at all. The bug has lived in `schedule_status.py` since the Run Show panel landed in PR #64 (V2.12.1) — race-weekend was just the first time operators clicked Generate enough to see the banner.
+
+**Fix.** `services/schedule_status.py`: import `LIST_ONLY_EVENT_NAMES` and define `_STATE_MACHINE_PRO_NAMES = {"partneredaxethrow", "proamrelay"}`. New helpers `_is_signup_only_college` (normalized-name match against `LIST_ONLY_EVENT_NAMES`, retains the `is_open=True` short-circuit for backward compat) and `_is_state_machine_pro`. Warning aggregator now uses these instead of `_is_open_list_only` (the old helper kept for any external callers).
+
+**Bundled UX add — flight-count input on Run Show page.** Same fix surfaces the flight-sizing controls (mode toggle: count or minutes; num_flights; target_minutes_per_flight; minutes_per_heat) inline on `/scheduling/<tid>/events` directly above the Generate buttons. Previously these only existed on the separate `/flights/build` page, so `_handle_event_list_post` always called the builder with no `num_flights` override. Implementation reuses the V2.14.0 Phase 3 helpers (`_read_flight_sizing_config`, `_persist_flight_sizing_config`, `_compute_num_flights_from_duration`, `FLIGHT_SIZING_*` constants) imported from `routes/scheduling/flights.py` — both pages write the same `Tournament.schedule_config` JSON keys so changing flight count on either page round-trips to the other with no drift. `routes/scheduling/__init__.py::_build_pro_flights_if_possible` accepts a new `num_flights` kwarg threaded through `generate_all` and `rebuild_flights` actions in `routes/scheduling/events.py`.
+
+**Tests.** 2 new regression tests in `tests/test_schedule_status.py::TestBuildScheduleStatus`:
+- `test_closed_signup_only_event_not_warned` — closes the previously-broken `is_open=False` + name-in-LIST path. Uses Caber Toss explicitly.
+- `test_state_machine_pro_event_not_warned` — covers both Partnered Axe Throw and Pro-Am Relay.
+
+The existing `test_open_college_event_without_heats_not_warned` (covering only `is_open=True`) is preserved. The new tests close the negative-path coverage gap that was the third instance of a same-class trilogy: V2.13.0 `background_jobs.submit` mock matched the buggy call signature; V2.14.0 relay template fixture matched the template's expected shape rather than what the service emitted; V2.14.2 schedule_status tests covered only the suppressing branch. Captured as a meta-lesson in `docs/solutions/logic-errors/schedule-status-warning-false-positive-list-only-events-2026-04-22.md` Prevention §3 and cross-linked to the two prior trilogy docs in `docs/solutions/test-failures/`.
+
+**Files touched:** `services/schedule_status.py` (+45/-2), `routes/scheduling/__init__.py` (+13/-3), `routes/scheduling/events.py` (+108), `templates/scheduling/events.html` (+50), `tests/test_schedule_status.py` (+50). Plus `docs/solutions/logic-errors/schedule-status-warning-false-positive-list-only-events-2026-04-22.md` (new) and `docs/solutions/integration-issues/rebuild-flights-orphans-saturday-spillover-2026-04-21.md` refresh (snippet now includes the V2.14.0 Phase 4 `integrate_proam_relay_into_final_flight` and Phase 5 `get_last_lh_flight_warnings` lines that landed between `build_pro_flights` and the spillover call). No migration. No new model columns.
+
+**Verification.** Full `tests/test_schedule_status.py` passes; targeted regression suite (schedule_status + one_click_and_fnf + flight_builder_async + flight_sizing + relay + LH springboard + Chokerman + Speed Climb + day-split + route smoke) reports 300/300 passing. Live POST against tournament 2: rebuild_flights with `num_flights=5` → flights went 7→5; `schedule_config` persisted (`mode=count`, `num=5`, `target_min=60`); subsequent GET pre-fills the form correctly. Phantom warning banner gone on both T1 and T2.
+
+---
+
 ### 2026-04-22 (V2.14.1)
 
 **Patch — FNF per-event stand count override.** Race-weekend tournament setup surfaced a missing feature: operators could not configure a different stand count for Pro 1-Board on Friday Night vs Saturday Springboard. Both events share `stand_type='springboard'` and the existing per-stand-type override on `/setup-events` applied to all three pro springboard events (Springboard, Pro 1-Board, 3-Board Jigger) as a single group. `Event.max_stands` was already the authoritative per-event column in the heat generator (line `services/heat_generator.py:130`) — it just wasn't exposed on the Friday Showcase page.
