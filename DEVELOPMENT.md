@@ -592,6 +592,10 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-23 (V2.14.13)
+
+**Patch.** College Stock Saw heats sometimes showed three or more consecutive solo heats parked on the same physical stand (usually stand 8) because `scratch_competitor` leaves the surviving partner on whatever stand they started on — when every scratched entrant happens to be the stand-7 seat, judges were left setting up the same stand repeatedly between every heat instead of alternating 7/8. The generator itself always assigned new solos to stand 7, so the bug only surfaced after mutations. New `services.heat_generator.rebalance_stock_saw_solo_stands(event)` walks heats in `(run_number, heat_number)` order, flips the next-solo stand between 7 and 8 each time a solo is encountered, and normalizes pair heats back onto `[7, 8]` (also repairs the `flights.py::_next_stand` bug that counted from 1 instead of the event's specific stands). Dual-run events reset alternation at each run boundary. Hooked into `generate_event_heats` (end), `scratch_competitor` (after commit), `move_competitor_between_heats` in both the event-heats route and the flight-builder route, and `add_competitor_to_heat`. Idempotent. Scope is Missoula college Stock Saw only — pro Stock Saw and non-stock-saw events are left untouched. 7 regression tests in `tests/test_stock_saw_stand_rebalance.py` including the exact race-day screenshot pattern (pairs at 1-2 and 7-9, solos at 3-6 and 10 all on stand 8). No migration.
+
 ### 2026-04-23 (V2.14.12)
 
 **What changed for you.** The Friday college schedule's final four events now auto-generate in a fixed operator-mandated order: **Men's Chokerman's Race → Women's Chokerman's Race → Men's Birling → Women's Birling**. Previously the order fell out of name + gender ranks tied together — it usually produced the right output, but a name-spelling drift or gender-enum change could silently re-order the final block. The lock makes the final-four order bulletproof.
