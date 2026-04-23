@@ -443,7 +443,7 @@ event.payouts = {"1": 500, "2": 300, "3": 200, "4": 100}
 
 ### Prerequisites
 
-- Python 3.10+
+- **Python 3.10 (exact minor version — match production)**. Railway runs Python 3.10. Newer locally-installed Python (3.11, 3.12, 3.13) parses syntax that production rejects (notably PEP 701 f-string features lifted in 3.12+) and silently passes every local gate before failing at the Railway pre-deploy step. Pin via `pyenv install 3.10.13 && pyenv local 3.10.13`, or via `mise` / `uv` reading the project's `.python-version`. Verify any `*.py` change against prod's grammar with `python -c "import ast; ast.parse(open('FILE').read(), feature_version=(3,10))"` regardless of the locally-installed interpreter. See [`docs/solutions/build-errors/railway-python-310-fstring-backslash-deploy-failure-2026-04-23.md`](docs/solutions/build-errors/railway-python-310-fstring-backslash-deploy-failure-2026-04-23.md) for the V2.14.10 incident that motivated this.
 - pip
 
 ### Installation
@@ -591,6 +591,10 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-04-23 (V2.14.11)
+
+**Patch.** Preflight "Partnership is not reciprocal" + "Partner name does not match any entered competitor" firing on valid pairs when one side of the roster had the full name ("Mickinley Verhulst") and the other side wrote only the first name with a small typo ("McKinley"). Root cause in `services/name_match.find_partner_match`: Tier 3 Levenshtein ran against full normalized names, so `"mckinley"` (8 chars) vs `"mickinleyverhulst"` (17 chars) = distance 9 — blown out by the 8 last-name chars the form didn't include. Fix adds Tier 4: Levenshtein ≤ 2 on **first-token**, run only when Tier 3 finds zero matches (on Tier 3 ambiguity we still refuse). Shared module flows fix all three callers: preflight unresolved/non-reciprocal checks, `heat_generator._find_partner` snake-draft pairing, and `partner_resolver.lookup_partner_cid` heat-sheet render. Two new regression tests in `tests/test_partner_pairing_fixes.py::TestFindPartnerFuzzy` — one asserts the asymmetric first-name typo now resolves, one asserts the tier still refuses on first-token ambiguity.
 
 ### 2026-04-23 (V2.14.10)
 

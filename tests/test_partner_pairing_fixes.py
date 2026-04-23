@@ -192,6 +192,34 @@ class TestFindPartnerFuzzy:
         match = _find_partner("Robertson", pool, pool[0])
         assert match is None
 
+    def test_asymmetric_first_name_typo_resolves(self):
+        """Race-weekend bug: form wrote 'McKinley', roster has 'Mickinley
+        Verhulst'. Full-name distance is 9 (last name adds 8 chars), but
+        first-token distance is 1 — tier 4 catches it."""
+        from services.heat_generator import _find_partner
+
+        pool = [
+            {"id": 1, "name": "Jordan Navas", "base_name": "Jordan Navas"},
+            {"id": 2, "name": "Mickinley Verhulst", "base_name": "Mickinley Verhulst"},
+            {"id": 3, "name": "Mackenzie Breitner", "base_name": "Mackenzie Breitner"},
+        ]
+        match = _find_partner("McKinley", pool, pool[0])
+        assert match is not None and match["id"] == 2, (
+            f"expected Mickinley Verhulst (id=2), got {match}"
+        )
+
+    def test_first_token_fuzzy_refuses_ambiguous(self):
+        """Two roster members within first-token distance 2 of target → None."""
+        from services.heat_generator import _find_partner
+
+        pool = [
+            {"id": 1, "name": "Jordan Navas", "base_name": "Jordan Navas"},
+            {"id": 2, "name": "Mickinley Verhulst", "base_name": "Mickinley Verhulst"},
+            {"id": 3, "name": "Mickinly Johnson", "base_name": "Mickinly Johnson"},
+        ]
+        match = _find_partner("McKinley", pool, pool[0])
+        assert match is None, "ambiguous first-token fuzzy must refuse"
+
 
 # ---------------------------------------------------------------------------
 # D — _build_partner_units skips unpaired by default + populates log
