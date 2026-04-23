@@ -592,6 +592,36 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-23 (V2.14.5)
+
+**What changed for you.** The Payout Manager page (sidebar → Scoring → Configure Payouts) no longer 500s when any saved payout template exists. Same fix covers the per-event payouts page and the Tournament Setup payouts tab.
+
+**Root cause.** Three templates used a Jinja2 filter expression that Jinja2 doesn't actually support:
+
+```jinja
+{% for pos, amt in tpl.get_payouts().items()|sort(attribute='0', key=int) %}
+```
+
+Jinja2's `sort` filter signature is `sort(value, reverse=False, case_sensitive=False, attribute=None)` — there is no `key=` kwarg. That's Python's `sorted()`, not Jinja's filter. The page rendered fine when no `PayoutTemplate` rows existed because the outer `{% if templates %}` block was skipped; as soon as a template was saved the `{% for tpl in templates %}` loop hit the broken expression and raised `TypeError: do_sort() got an unexpected keyword argument 'key'`. Prod traceback (request IDs `9bb650a4`, `f7931c78`, `d9893c09` on 2026-04-23) confirms the bug site at `templates/scoring/tournament_payouts.html:330`.
+
+The intent of `key=int` was to avoid a lexicographic string sort where `"10"` comes before `"2"`. A plain `|sort(attribute='0')` would render positions as 1, 10, 11, 2, 3, ... which is wrong but wouldn't crash.
+
+**Fix.** New `PayoutTemplate.sorted_payouts()` model method returns `[(pos, amt), ...]` sorted by `int(position)`. Three templates now call it instead of the broken Jinja filter:
+
+- `templates/scoring/tournament_payouts.html:330`
+- `templates/scoring/configure_payouts.html:177`
+- `templates/tournament_setup.html:366`
+
+**Tests.** New `tests/test_payout_template_render.py` with 4 tests: the model unit (seeds `{"10": ..., "2": ..., "1": ..., "11": ...}` and asserts output is `["1", "2", "10", "11"]` not lexicographic) plus 3 render tests — payout-manager, per-event configure_payouts, and `tournament_setup?tab=payouts` — each seeds two `PayoutTemplate` rows (one with ≥10 positions so a bad sort would fail visibly) and asserts the page returns 200 instead of 500. Verified the suite catches the regression by temporarily reverting the fix on `tournament_payouts.html` — the render test failed as expected, then restored.
+
+**Meta-lesson.** Empty-DB smoke tests hid this bug for its entire lifetime. The existing `test_smoke_scoring_payout_manager` in `test_route_smoke_qa.py` seeded no templates, so the `{% if templates %}` branch never rendered the broken loop. Going forward, route smoke tests that render template-expansion blocks gated on collection existence need at least one seed row in the collection — zero-row is a trivial success that proves nothing about the non-empty render path. Same pattern as the V2.14.0 codex catch (empty `members` list hid a wrong-shape key) and the V2.13.0 mock-signature-matches-buggy-call-site lesson.
+
+**Full suite.** 152 passed on the targeted renderer + route smoke intersection; zero regressions.
+
+**Files touched.** `models/payout_template.py` (+8 `sorted_payouts()` helper), `templates/scoring/tournament_payouts.html` (-1 +1), `templates/scoring/configure_payouts.html` (-1 +1), `templates/tournament_setup.html` (-1 +1), `tests/test_payout_template_render.py` (new, 112 lines), `pyproject.toml` (2.14.4 → 2.14.5), `routes/main.py` (two `/health` literals bumped per PREPARE FOR COMMIT step 5). No migration.
+
+---
+
 ### 2026-04-23 (V2.14.4)
 
 **What changed for you.** When an event has an odd number of competitors and the field can't split evenly across heats, the leftover competitor now runs **alone in the final heat** instead of opening the event in heat 1. Saw, underhand, standing block, standard events, and springboard (without slow-heat cutters) all follow the new rule. Partnered events (Jack & Jill, Double Buck) get the same treatment — the partial pair-heat closes the show. Springboard events that pin a slow-heat cluster to the final heat still do so by design (the slow cluster takes precedence). LH-overflow heats, which intentionally pack extra left-handed cutters into the final heat, also stay put.

@@ -31,5 +31,13 @@ class PayoutTemplate(db.Model):
     def set_payouts(self, payout_dict: dict) -> None:
         self.payouts = json.dumps(payout_dict)
 
+    def sorted_payouts(self) -> list:
+        """Return [(pos, amt), ...] sorted by position as int.
+
+        Templates call this instead of |sort(attribute='0', key=int) — Jinja2's
+        sort filter has no key= kwarg, and a string sort puts '10' before '2'.
+        """
+        return sorted(self.get_payouts().items(), key=lambda kv: int(kv[0]))
+
     def total_purse(self) -> float:
         return sum(float(v) for v in self.get_payouts().values())
