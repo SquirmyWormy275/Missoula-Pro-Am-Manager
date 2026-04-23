@@ -1,6 +1,7 @@
 ---
 title: "Rebuild Flights Only" silently orphans Saturday college spillover heats
 date: 2026-04-21
+last_updated: 2026-04-22
 category: integration-issues
 module: flight_builder
 problem_type: integration_issue
@@ -43,7 +44,7 @@ The `/one-click-generate` route at `routes/scheduling/flights.py` correctly chai
 
 Mirror what `one_click_generate` already does. After `build_pro_flights()`, chain `integrate_college_spillover_into_flights()` using the saturday_college_event_ids persisted in `tournament.schedule_config`.
 
-In `routes/scheduling/flights.py::build_flights` (POST branch):
+In `routes/scheduling/flights.py::build_flights` (POST branch). Note: V2.14.0 grew the chain — Phase 4 added `integrate_proam_relay_into_final_flight` BEFORE spillover so Chokerman Run 2 still closes the show, and Phase 5 added a `get_last_lh_flight_warnings` flash loop right after the build to surface LH springboard contention. The chaining principle below is unchanged; the chain is just longer.
 
 ```python
 try:
@@ -52,11 +53,28 @@ try:
     db.session.commit()
     flash(text.FLASH['flights_built'].format(num_flights=built), 'success')
 
+    # V2.14.0 Phase 5: surface LH springboard dummy contention warnings.
+    from services.flight_builder import get_last_lh_flight_warnings
+    for w in get_last_lh_flight_warnings(tournament_id):
+        flash(
+            f"LH SPRINGBOARD CONTENTION: Flight {w['flight_number']} "
+            f"contains {w['lh_count']} left-handed cutters. ...",
+            'warning',
+        )
+
     # build_pro_flights wipes every Heat.flight_id (including college
-    # spillover that was previously integrated). Chain the spillover
-    # integration so "Rebuild Flights Only" doesn't silently orphan
-    # Saturday-spillover heats. Mirrors one_click_generate.
-    from services.flight_builder import integrate_college_spillover_into_flights
+    # spillover that was previously integrated). Chain the relay + spillover
+    # integration so "Rebuild Flights Only" doesn't silently orphan them.
+    # Order: relay BEFORE spillover so Chokerman Run 2 lands AFTER the relay
+    # (FlightLogic.md §4.1 show-climax rule).
+    from services.flight_builder import (
+        integrate_college_spillover_into_flights,
+        integrate_proam_relay_into_final_flight,  # V2.14.0 Phase 4
+    )
+    relay_result = integrate_proam_relay_into_final_flight(tournament)
+    if relay_result.get('placed'):
+        flash('Pro-Am Relay placed in the final flight.', 'success')
+
     db_config = tournament.get_schedule_config() or {}
     saturday_college_event_ids = [
         int(i) for i in db_config.get('saturday_college_event_ids', [])
@@ -92,7 +110,7 @@ except Exception as e:
 - Regression test (future): a dedicated integration test that marks events for Saturday spillover, calls `/flights/build`, and asserts all spillover heats have `flight_id != NULL`. Not currently written; the existing smoke tests cover the happy-path one-click flow.
 - **Architectural rule:** `build_pro_flights` should only be called by orchestrating routes that also handle downstream integration. If a future caller is added that skips spillover, it must document why and flag the risk of orphaned heats. Consider making `build_pro_flights` always call `integrate_college_spillover_into_flights` internally — but only if a design review concludes the coupling is preferable to the current orchestrator pattern.
 - **UI signal:** The "Rebuild Flights Only" button's label implies it won't touch spillover, which was true before V2.11.0 (when spillover integration didn't exist) but became misleading after. Button copy is now accurate thanks to this fix — "Rebuild Flights Only" means "rebuild pro flights AND re-integrate spillover." If the behavior is ever split again (e.g., power-user mode that skips integration), the label must be updated in lockstep.
-- **Preflight check** at `services/preflight.py:232-255` continues to catch orphaned spillover heats. It's the last line of defense — even if the fix ever regresses, the preflight dashboard will surface the issue before the show goes live.
+- **Preflight check** in `services/preflight.py` (`spillover_not_in_flights` finding code in `build_preflight_report`) continues to catch orphaned spillover heats. It's the last line of defense — even if the fix ever regresses, the preflight dashboard will surface the issue before the show goes live. Reference the finding code, not a line range — preflight has accreted checks since this doc was written and line numbers drift.
 - **Pattern-to-not-copy:** The snippet above uses `except Exception as e: flash(... .format(error=str(e)), 'error')` because that's exactly what the shipped code does (it predates this fix and wasn't in scope to change). Per CLAUDE.md Section 5 error-handling rules and the fix already applied in `routes/registration.py`, leaking raw exception text to a user-facing flash is an anti-pattern. New callers of `build_pro_flights` should log the exception server-side and show a generic admin-contact message to the user. Cleanup of this specific flash is tracked separately from this fix.
 - **Config coercion:** `[int(i) for i in db_config.get('saturday_college_event_ids', [])]` assumes the config writer side (the events page POST handler) validates integers before persisting. Per CLAUDE.md Section 6 input-conversion rules, if a future caller reads this config from a less-trusted source, wrap the coercion in `try/except (TypeError, ValueError)` and skip malformed entries.
 

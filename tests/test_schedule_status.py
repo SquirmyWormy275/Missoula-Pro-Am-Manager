@@ -104,6 +104,57 @@ class TestBuildScheduleStatus:
             "no heats" in w["title"] and "college" in w["title"] for w in s["warnings"]
         )
 
+    def test_closed_signup_only_event_not_warned(self, app, tournament):
+        """V2.14.2 regression: is_open=False + name in LIST_ONLY_EVENT_NAMES
+        should NOT trigger 'no heats yet' warning.
+
+        Operators are allowed to configure traditionally-OPEN events as CLOSED
+        on the Event Setup page (CLAUDE.md §3). When they do, the events still
+        run come-and-go signup-list format and never produce Heat rows. The
+        previous _is_open_list_only(event.is_open) check missed this path
+        and produced a phantom warning on every Run Show page load.
+        """
+        with app.app_context():
+            ev = Event(
+                tournament_id=tournament.id,
+                name="Caber Toss",
+                event_type="college",
+                gender="M",
+                scoring_type="distance",
+                stand_type="caber",
+                is_open=False,  # the previously-broken path
+            )
+            db.session.add(ev)
+            db.session.commit()
+        with app.test_request_context("/"):
+            s = build_schedule_status(tournament)
+        assert not any(
+            "no heats" in w["title"] and "college" in w["title"]
+            for w in s["warnings"]
+        ), "Closed signup-only college event should not warn (LIST_ONLY_EVENT_NAMES)"
+
+    def test_state_machine_pro_event_not_warned(self, app, tournament):
+        """V2.14.2 regression: Partnered Axe Throw and Pro-Am Relay run on
+        state machines stored in Event.payouts JSON, not regular Heat rows.
+        Their steady-state heat count is zero — that is not a warning."""
+        with app.app_context():
+            for name in ("Partnered Axe Throw", "Pro-Am Relay"):
+                ev = Event(
+                    tournament_id=tournament.id,
+                    name=name,
+                    event_type="pro",
+                    scoring_type="hits",
+                    is_open=False,
+                )
+                db.session.add(ev)
+            db.session.commit()
+        with app.test_request_context("/"):
+            s = build_schedule_status(tournament)
+        assert not any(
+            "no heats" in w["title"] and "pro" in w["title"]
+            for w in s["warnings"]
+        ), "State-machine pro events should not warn (Partnered Axe Throw, Pro-Am Relay)"
+
     def test_pro_heats_without_flights_warns(self, app, tournament):
         with app.app_context():
             ev = Event(

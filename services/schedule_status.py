@@ -15,15 +15,23 @@ Design constraints:
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import TypedDict
 
 from flask import url_for
 
+from config import LIST_ONLY_EVENT_NAMES
 from database import db
 from models.event import Event
 from models.heat import Flight, Heat
 from models.tournament import Tournament
+
+# Pro events that never produce regular Heat rows because their progression
+# is managed by a state machine stored in Event.payouts JSON. Surfacing
+# "no heats yet" for these on the Run Show panel is a false alarm — both
+# events are working as designed when their heat count is zero.
+_STATE_MACHINE_PRO_NAMES = {"partneredaxethrow", "proamrelay"}
 
 
 class Warning_(TypedDict, total=False):
@@ -186,10 +194,15 @@ def _build_warnings(
     tid = tournament.id
 
     # --- 1. Events configured but no heats yet ---
+    # List-only college events (Axe Throw, Caber Toss, Peavey, Pulp Toss) are
+    # signup-only by name regardless of the is_open flag — they never produce
+    # heats. State-machine pro events (Partnered Axe Throw, Pro-Am Relay) also
+    # never produce regular Heat rows. Excluding both classes here removes the
+    # phantom "X events have no heats" banner that fired on every Generate.
     college_missing = [
         e
         for e in college_events
-        if not heats_by_event.get(e.id) and not _is_open_list_only(e)
+        if not heats_by_event.get(e.id) and not _is_signup_only_college(e)
     ]
     if college_missing:
         warnings.append(
@@ -203,7 +216,11 @@ def _build_warnings(
             }
         )
 
-    pro_missing = [e for e in pro_events if not heats_by_event.get(e.id)]
+    pro_missing = [
+        e
+        for e in pro_events
+        if not heats_by_event.get(e.id) and not _is_state_machine_pro(e)
+    ]
     if pro_missing:
         warnings.append(
             {
@@ -270,8 +287,39 @@ def _build_warnings(
 
 
 def _is_open_list_only(event: Event) -> bool:
-    """College OPEN events with no heats (sign-up-only) are not a warning."""
+    """College OPEN events with no heats (sign-up-only) are not a warning.
+
+    Retained for callers/tests that import this helper directly. Prefer
+    ``_is_signup_only_college`` for the broader name-driven check used by
+    the warning aggregator.
+    """
     return event.event_type == "college" and bool(getattr(event, "is_open", False))
+
+
+def _is_signup_only_college(event: Event) -> bool:
+    """College events that never produce heats — Axe Throw, Caber Toss,
+    Peavey Log Roll, Pulp Toss. These run come-and-go signup-list format
+    no matter how the operator toggled OPEN/CLOSED on the setup page.
+    """
+    if event.event_type != "college":
+        return False
+    if bool(getattr(event, "is_open", False)):
+        return True
+    normalized = re.sub(r"[^a-z0-9]+", "", str(event.name or "").lower())
+    return normalized in LIST_ONLY_EVENT_NAMES
+
+
+def _is_state_machine_pro(event: Event) -> bool:
+    """Pro events whose progression is stored in Event.payouts JSON, not
+    Heat rows. Partnered Axe Throw runs prelims → finals via state machine
+    and only inserts heats during finals. Pro-Am Relay synthesises a single
+    pseudo-Heat at flight-build time. Either having zero Heat rows is the
+    expected steady state, not a configuration gap.
+    """
+    if event.event_type != "pro":
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", "", str(event.name or "").lower())
+    return normalized in _STATE_MACHINE_PRO_NAMES
 
 
 def _display_event_name(e: Event) -> str:

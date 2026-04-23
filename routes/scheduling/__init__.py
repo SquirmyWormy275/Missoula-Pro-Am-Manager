@@ -243,8 +243,14 @@ def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
         flash(f'Failed to generate heats for {errors} event(s).', 'error')
 
 
-def _build_pro_flights_if_possible(tournament: Tournament, build_pro_flights_fn):
-    """Build pro flights if there are any pro heats."""
+def _build_pro_flights_if_possible(tournament: Tournament, build_pro_flights_fn, num_flights=None):
+    """Build pro flights if there are any pro heats.
+
+    ``num_flights`` is forwarded to ``build_pro_flights_fn`` so callers on the
+    Run Show page can honour the operator's flight-count choice without going
+    through /flights/build first. ``None`` defers sizing to the builder's
+    persisted-config + auto-derive logic.
+    """
     from flask import flash
     pro_heats = Heat.query.join(Event).filter(
         Event.tournament_id == tournament.id,
@@ -254,7 +260,9 @@ def _build_pro_flights_if_possible(tournament: Tournament, build_pro_flights_fn)
     if pro_heats == 0:
         flash('No pro heats available yet, so no flights were built.', 'warning')
         return None
-    return build_pro_flights_fn(tournament)
+    if num_flights is None:
+        return build_pro_flights_fn(tournament)
+    return build_pro_flights_fn(tournament, num_flights=num_flights)
 
 
 # ---------------------------------------------------------------------------
