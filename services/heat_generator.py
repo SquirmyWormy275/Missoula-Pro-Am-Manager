@@ -318,6 +318,11 @@ def generate_event_heats(event: Event) -> int:
     for heat in created_heats:
         heat.sync_assignments(comp_type)
 
+    # Stock Saw: alternate solo-heat stands across 7 and 8 so consecutive
+    # solos don't pile onto the same physical stand. Must run after
+    # sync_assignments so the HeatAssignment rows reflect the final layout.
+    rebalance_stock_saw_solo_stands(event)
+
     # Promote any fallback gear-sharing violations recorded by the snake-draft
     # helpers into the module-level lookup so the route layer can surface a
     # WARNING flash to the judge (gear audit fix G2/G3 — 2026-04-07).  Each
@@ -1044,6 +1049,84 @@ def _stand_numbers_for_event(event: Event, max_per_heat: int, stand_config: dict
         return list(specific)[:max_per_heat]
 
     return list(range(1, max_per_heat + 1))
+
+
+def _is_stock_saw(event: Event) -> bool:
+    return (
+        event.event_type == 'college'
+        and _normalize_name(event.name) == _normalize_name('Stock Saw')
+    )
+
+
+def rebalance_stock_saw_solo_stands(event: Event) -> int:
+    """Normalize Stock Saw stand assignments: pairs always use 7+8, solos
+    alternate 7, 8, 7, 8... across the event in heat_number order so the
+    off-stand can be set up while the on-stand runs.
+
+    Scope: Missoula college Stock Saw only (stands 7 + 8). Called at the end
+    of heat generation and after any mutation (scratch, move, add). Also
+    repairs the `_next_stand` bug in the flight-builder move route which
+    starts counting from 1 instead of 7 — any competitor mis-assigned to a
+    stand outside [7, 8] is pulled back onto 7 or 8 here.
+
+    Walks heats per (run_number, heat_number). Flips the next-solo stand each
+    time a solo is encountered. Runs are balanced independently so run 2
+    alternation starts fresh.
+
+    Returns the number of heats whose stand assignment changed.
+    """
+    if not _is_stock_saw(event):
+        return 0
+
+    heats = Heat.query.filter_by(event_id=event.id).order_by(
+        Heat.run_number, Heat.heat_number,
+    ).all()
+
+    changed_heats = set()
+    current_run = None
+    next_solo_stand = 7  # flips per solo within a run
+    for heat in heats:
+        if heat.run_number != current_run:
+            current_run = heat.run_number
+            next_solo_stand = 7  # reset alternation at run boundary
+
+        comp_ids = heat.get_competitors()
+        if not comp_ids:
+            continue
+
+        assignments = heat.get_stand_assignments()
+
+        if len(comp_ids) == 1:
+            sole_id = comp_ids[0]
+            try:
+                current_stand = int(assignments.get(str(sole_id)) or 0)
+            except (TypeError, ValueError):
+                current_stand = 0
+            if current_stand != next_solo_stand:
+                heat.set_stand_assignment(sole_id, next_solo_stand)
+                changed_heats.add(heat.id)
+            next_solo_stand = 8 if next_solo_stand == 7 else 7
+        else:
+            # Pair (or larger): stock saw only has 2 stands, so the first two
+            # competitors go to 7 and 8 in comp-order. Extras (shouldn't
+            # happen, but don't crash) fall through to the old behaviour.
+            desired = [7, 8]
+            for i, cid in enumerate(comp_ids[:2]):
+                try:
+                    current_stand = int(assignments.get(str(cid)) or 0)
+                except (TypeError, ValueError):
+                    current_stand = 0
+                if current_stand != desired[i]:
+                    heat.set_stand_assignment(cid, desired[i])
+                    changed_heats.add(heat.id)
+
+    if changed_heats:
+        db.session.flush()
+        for heat in heats:
+            if heat.id in changed_heats:
+                heat.sync_assignments(event.event_type)
+
+    return len(changed_heats)
 
 
 def _get_tournament_events(event: Event) -> list:

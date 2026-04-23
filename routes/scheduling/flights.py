@@ -717,6 +717,15 @@ def drag_move_competitor(tournament_id, source_heat_id):
     source.sync_assignments(competitor_type)
     target.sync_assignments(competitor_type)
 
+    # Stock Saw: a move can leave the source/target with a solo on the same
+    # stand as a neighbour — re-alternate 7/8 before committing so the state
+    # the judge sees already has clean alternation.
+    try:
+        from services.heat_generator import rebalance_stock_saw_solo_stands
+        rebalance_stock_saw_solo_stands(event)
+    except Exception:
+        pass  # Rebalance must not block the move.
+
     db.session.commit()
     log_action('competitor_moved_between_heats', 'heat', target.id, {
         'tournament_id': tournament_id,

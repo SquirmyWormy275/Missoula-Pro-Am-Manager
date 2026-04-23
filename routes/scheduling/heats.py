@@ -338,6 +338,14 @@ def move_competitor_between_heats(tournament_id, event_id):
         source.sync_assignments(comp_type)
         target.sync_assignments(comp_type)
 
+    # Stock Saw: a move can leave a solo on the same stand as its neighbour —
+    # re-alternate 7/8 across all solo heats in this event.
+    try:
+        from services.heat_generator import rebalance_stock_saw_solo_stands
+        rebalance_stock_saw_solo_stands(event)
+    except Exception:
+        pass  # Rebalance failure must not block the move.
+
     db.session.commit()
 
     # Check for gear-sharing conflicts created by this move (warn, don't block).
@@ -502,6 +510,14 @@ def scratch_competitor(tournament_id, event_id):
                 engine.calculate_positions(event)
             except Exception:
                 pass  # Position recalc failure should not block the scratch
+
+        # Stock Saw: a scratch can leave a solo on the same stand as the
+        # previous solo — rebalance so consecutive solos alternate 7/8.
+        try:
+            from services.heat_generator import rebalance_stock_saw_solo_stands
+            rebalance_stock_saw_solo_stands(event)
+        except Exception:
+            pass  # Rebalance failure must not block the scratch.
 
         invalidate_tournament_caches(tournament_id)
         log_action('heat_scratch', 'event', event.id, {
@@ -693,6 +709,14 @@ def add_to_heat(tournament_id, event_id):
                     )
             except Exception:
                 pass
+
+        # Stock Saw: adding a competitor can turn a solo heat into a pair or
+        # vice versa — re-alternate 7/8 across remaining solos.
+        try:
+            from services.heat_generator import rebalance_stock_saw_solo_stands
+            rebalance_stock_saw_solo_stands(event)
+        except Exception:
+            pass  # Rebalance failure must not block the add.
 
         invalidate_tournament_caches(tournament_id)
         log_action('heat_add_competitor', 'event', event.id, {
