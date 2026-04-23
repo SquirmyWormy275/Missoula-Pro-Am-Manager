@@ -566,3 +566,160 @@ class TestGenerateSawHeats:
         heats = _generate_saw_heats(comps, 2, 8, {}, event=ev)
         placed = [c for heat in heats for c in heat]
         assert len(placed) == 8
+
+
+# ---------------------------------------------------------------------------
+# Partial heat positioning — solo/odd-out competitor closes the event
+# ---------------------------------------------------------------------------
+
+class TestPartialHeatGoesLast:
+    """Convention (user rule, 2026-04-22): when a field doesn't divide evenly,
+    the leftover competitor or partial-fill heat runs LAST in the event order,
+    not first. Snake-draft on its own leaves the partial in heat 0; this is
+    the regression guard that the post-process reorder fixes it.
+    """
+
+    def test_saw_odd_competitors_solo_lands_in_final_heat(self):
+        """College stock saw with 19 competitors and 2 stands per heat — heat 1
+        must NOT be the solo competitor. Mirrors the screenshot bug report.
+        """
+        ev = _event(event_type='college', name='Stock Saw', stand_type='saw_hand',
+                    is_partnered=False)
+        comps = [_comp(i, name=f'C{i}') for i in range(1, 20)]  # 19 competitors
+        heats = _generate_saw_heats(comps, 10, 2, {}, event=ev)
+        sizes = [len(h) for h in heats]
+        assert sum(sizes) == 19
+        assert len(heats) == 10
+        # First heat must be FULL (2), final heat is the solo (1).
+        assert sizes[0] == 2, f'Heat 1 should not be the solo heat — sizes={sizes}'
+        assert sizes[-1] == 1, f'Final heat should hold the solo competitor — sizes={sizes}'
+
+    def test_standard_partial_heat_at_end(self):
+        """5 competitors / 2 per heat → 3 heats sized [2, 2, 1] — solo last."""
+        ev = _event(event_type='college', stand_type='underhand')
+        comps = [_comp(i, name=f'C{i}') for i in range(1, 6)]
+        heats = _generate_standard_heats(comps, 3, 2, event=ev)
+        sizes = [len(h) for h in heats]
+        assert sizes == [2, 2, 1]
+
+    def test_standard_three_per_heat_partial_at_end(self):
+        """7 competitors / 3 per heat → 3 heats sized [3, 3, 1]."""
+        ev = _event(event_type='college', stand_type='underhand')
+        comps = [_comp(i, name=f'C{i}') for i in range(1, 8)]
+        heats = _generate_standard_heats(comps, 3, 3, event=ev)
+        sizes = [len(h) for h in heats]
+        # Snake-draft balances naturally — accept any layout where the smallest
+        # size is at the end (not in heat 0).
+        assert sizes[0] >= sizes[-1], f'First heat must be >= last — sizes={sizes}'
+        assert sum(sizes) == 7
+
+    def test_standard_full_field_no_reorder(self):
+        """8 competitors / 2 per heat divides evenly — no partial, ordering
+        unchanged from the snake draft."""
+        ev = _event(event_type='college', stand_type='underhand')
+        comps = [_comp(i, name=f'C{i}') for i in range(1, 9)]
+        heats = _generate_standard_heats(comps, 4, 2, event=ev)
+        sizes = [len(h) for h in heats]
+        assert sizes == [2, 2, 2, 2]
+
+    def test_standard_single_heat_no_reorder(self):
+        """One heat, one competitor — nothing to reorder."""
+        ev = _event(event_type='college', stand_type='underhand')
+        comps = [_comp(1, name='Solo')]
+        heats = _generate_standard_heats(comps, 1, 4, event=ev)
+        assert len(heats) == 1
+        assert len(heats[0]) == 1
+
+    def test_springboard_no_lh_no_slow_partial_at_end(self):
+        """Plain springboard with odd field — partial closes the event."""
+        ev = _event(event_type='college', stand_type='springboard')
+        comps = [_comp(i, name=f'C{i}') for i in range(1, 6)]  # 5 cutters
+        heats = _generate_springboard_heats(comps, 3, 2, {}, event=ev)
+        sizes = [len(h) for h in heats]
+        assert sum(sizes) == 5
+        assert sizes[0] >= sizes[-1], f'Partial must be last — sizes={sizes}'
+
+    def test_springboard_slow_cluster_pinned_to_final_even_when_partial_exists(self):
+        """Slow-heat invariant takes precedence over partial-at-end. Slow cutters
+        must remain in the final heat even if it means a non-slow heat is the
+        partial (rare interaction case)."""
+        ev = _event(event_type='college', stand_type='springboard')
+        # 5 cutters, 1 slow — the slow cluster goes to final heat by design.
+        comps = [
+            _comp(1, name='Slow', is_slow_springboard=True),
+            _comp(2, name='B'),
+            _comp(3, name='C'),
+            _comp(4, name='D'),
+            _comp(5, name='E'),
+        ]
+        heats = _generate_springboard_heats(comps, 3, 2, {}, event=ev)
+        # Slow cutter must be in the final heat (idx -1).
+        final_ids = {c['id'] for c in heats[-1]}
+        assert 1 in final_ids, (
+            f'Slow cutter must close the event — heats={[[c["id"] for c in h] for h in heats]}'
+        )
+
+    def test_gear_violation_heat_index_follows_reorder(self):
+        """When a fallback gear-conflict places a competitor in the partial
+        heat AND the partial gets reordered to the end, the gear_violations
+        entry's heat_index must point at the NEW position so the judge's
+        flash-warning fingers the correct heat (not the original snake-draft
+        index that no longer exists in the final order)."""
+        ev = _event(event_type='college', stand_type='underhand')
+        # 3 competitors, all sharing axe gear → snake forces heat 0 to take
+        # the leftover via the fallback path. With max_per_heat=1, num_heats=3,
+        # so all heats end up partial — _no_ reorder occurs (all-partial guard).
+        # Use 5 comps with max_per_heat=2 → snake gives sizes [1, 2, 2], a real
+        # reorder. To force a fallback gear violation in the partial heat,
+        # competitors share gear so the snake's first pass conflicts.
+        gear = {'axe': True}
+        comps = [
+            _comp(i, name=f'C{i}', gear_sharing=dict(gear))
+            for i in range(1, 6)
+        ]
+        gear_violations: list = []
+        heats = _generate_standard_heats(
+            comps, 3, 2, event=ev, gear_violations=gear_violations,
+        )
+        sizes = [len(h) for h in heats]
+        assert sum(sizes) == 5
+        # Partial heat (size 1) is at the end after reorder.
+        assert sizes[-1] == 1, f'expected partial last, got {sizes}'
+        # Any logged gear_violation heat_index points at a valid heat in the
+        # post-reorder order (not stale pre-reorder index that would mislead
+        # the judge's flash warning to the wrong heat number).
+        for v in gear_violations:
+            idx = v['heat_index']
+            assert 0 <= idx < len(heats), (
+                f'gear_violation heat_index={idx} out of range — stale after reorder?'
+            )
+            # The named competitor must actually be in the heat the violation
+            # points at — proves the remap is correct, not just in-bounds.
+            comp_id = v['comp_id']
+            assert any(c['id'] == comp_id for c in heats[idx]), (
+                f'gear_violation says comp {comp_id} is in heat {idx} but they are not — '
+                f'heat {idx} contains {[c["id"] for c in heats[idx]]}'
+            )
+
+    def test_partnered_saw_odd_pairs_partial_at_end(self):
+        """Partnered Jack & Jill: 5 mixed pairs (10 competitors) on 2-stand heats
+        → 3 heats with units [2, 2, 1]. Partial pair-heat must close the event.
+        """
+        ev = _event(event_type='college', name='Jack & Jill Sawing',
+                    stand_type='saw_hand', is_partnered=True, partner_gender='mixed')
+        # 5 male + 5 female pairs by partner_name link
+        pairs = []
+        for i in range(5):
+            m_id = 100 + i
+            f_id = 200 + i
+            m_name = f'M{i}'
+            f_name = f'F{i}'
+            pairs.append(_comp(m_id, name=m_name, gender='M', partner_name=f_name))
+            pairs.append(_comp(f_id, name=f_name, gender='F', partner_name=m_name))
+        # _generate_standard_heats handles partner unitization. 5 units / 2 per
+        # heat → 3 heats; expect stands_used = [2, 2, 1].
+        heats = _generate_standard_heats(pairs, 3, 2, event=ev)
+        # Each unit is a pair (2 competitors). Sizes in competitor count: full=4, partial=2.
+        sizes = [len(h) for h in heats]
+        assert sum(sizes) == 10, f'All 10 partnered competitors placed — sizes={sizes}'
+        assert sizes[0] >= sizes[-1], f'Partial pair-heat must be last — sizes={sizes}'

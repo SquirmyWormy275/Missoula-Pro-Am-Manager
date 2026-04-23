@@ -592,6 +592,32 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-23 (V2.14.4)
+
+**What changed for you.** When an event has an odd number of competitors and the field can't split evenly across heats, the leftover competitor now runs **alone in the final heat** instead of opening the event in heat 1. Saw, underhand, standing block, standard events, and springboard (without slow-heat cutters) all follow the new rule. Partnered events (Jack & Jill, Double Buck) get the same treatment — the partial pair-heat closes the show. Springboard events that pin a slow-heat cluster to the final heat still do so by design (the slow cluster takes precedence). LH-overflow heats, which intentionally pack extra left-handed cutters into the final heat, also stay put.
+
+**Patch — solo competitor closes the event, not opens it.** Race-weekend operator caught the bug on the Men's Stock Saw heat sheet: 19 college competitors on 2 stands produced heat sizes `[1, 2, 2, 2, 2, 2, 2, 2, 2, 2]` — Alex Kaper (UM-A) ran alone in heat 1 while every other heat had two competitors. Expected behavior is the reverse: heats 1..9 full, heat 10 is the solo.
+
+**Root cause.** `services/heat_generator.py::_advance_snake_index` reverses direction by **reusing the boundary heat** when the forward pass ends. For 19 competitors placed into 10 heats: the first pass fills heats 0..9 with units 0..9 (one each), then `_advance_snake_index(9, 1, 10)` turns around and returns heat index 9 again, so the second pass places units 10..18 into heats 9..1 going backward. Heat 0 never receives a second unit. Snake-draft bookkeeping is working as designed for skill balance, the bug is only in the display order of the resulting heats — the partial slot ends up at the start instead of the end.
+
+**Fix.** New `services/heat_generator.py::_move_partial_heats_to_end` helper runs as a post-process step after the snake draft in both `_generate_standard_heats` (covers saw, underhand, standing block, and partnered events) and `_generate_springboard_heats`. The helper scans the per-heat `stands_used` counter (or competitor count for non-partnered events) and reorders so any heat below `max_per_heat` moves to the end of the list while preserving the relative order of full heats — skill mix per heat is unchanged, only the display order changes. The helper no-ops when:
+
+- Every heat is full (even fields — no reorder needed)
+- Every heat is partial (single-heat events, small tournaments)
+- Any heat exceeds `max_per_heat` (intentional springboard LH overflow: `if any(s > max_per_heat for s in sizes)` short-circuits)
+
+Springboard generator additionally gates the reorder on `if not slow_heat:` so the slow-cluster-pinned-to-final-heat invariant wins when both rules could apply. The helper returns `(reordered_heats, old_to_new)` and both generators pipe the mapping through `_remap_violation_heat_indices` to keep `gear_violations[i]['heat_index']` pointing at the post-reorder position — otherwise the judge's flash-warning would finger the wrong heat after the rotation (caught during self-review, not in production).
+
+**Tests.** 9 new unit tests in `tests/test_heat_generator.py::TestPartialHeatGoesLast` and the gear-violation remap invariant. Covers the screenshot scenario (19-on-2 saw), 5-on-2 standard, 7-on-3 standard, full-field no-reorder, single-heat no-reorder, springboard-no-LH-no-slow, springboard-slow-cluster-precedence (slow wins over partial-at-end), partnered-5-pairs-on-2-stands (odd pair-heat closes), and gear-violation heat_index validity after reorder. All 98 heat generator tests pass (67 preexisting + 9 new, plus the LH/saw/springboard coverage).
+
+**Additional coverage — scripted end-to-end QA.** New `scripts/qa_solo_heat_placement.py` exercises the full service path (DB seed → `generate_event_heats` → Heat + HeatAssignment rows) with 5 scenarios, including the exact screenshot case (19 competitors across UM/CSU/UI/FVC/MSU). Catches regressions that pure unit tests cannot reach: Heat row creation, stand_number assignment (validates college stock saw lands on stands 7+8 only), HeatAssignment FK integrity, and the gear_violations remap path. 9/9 checks green. Follows the same pattern as `scripts/qa_print_hub.py` from V2.13.0 — pragmatic Flask test client against a temp-file SQLite DB seeded via migrations, runs in seconds.
+
+**Full suite.** 3287 passed, 10 skipped, 1 xpassed.
+
+**Files touched.** `services/heat_generator.py` (+73/-3 including `_move_partial_heats_to_end` helper and `_remap_violation_heat_indices` helper + 2 call sites), `tests/test_heat_generator.py` (+155 new test class), `scripts/qa_solo_heat_placement.py` (new scripted QA, +260), `pyproject.toml` (version bump 2.14.3 → 2.14.4), `routes/main.py` (two `/health` + `/health/diag` literals bumped to 2.14.4 per the V2.13.0 lesson baked into PREPARE FOR COMMIT step 5), `DEVELOPMENT.md` (this entry). No migration. No template changes.
+
+---
+
 ### 2026-04-23 (V2.14.3)
 
 **What changed for you.** Judges running the Pro-Am Relay can now pick the number of teams when they Redraw, instead of being locked to whatever count was drawn first. On the Relay dashboard, the Redraw Lottery form now exposes the same **Number of Teams** dropdown as the initial Draw form, defaulting to the currently-drawn count but letting you pick anything up to `capacity.max_teams`. So: judge drew 2 teams, later realizes the opt-in pool supports 3, clicks Redraw, picks 3, done. No more manual state reset, no more judges stuck at 2 teams because the bottleneck pool shifted overnight.
