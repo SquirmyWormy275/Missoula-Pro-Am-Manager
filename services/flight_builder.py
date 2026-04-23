@@ -1068,10 +1068,29 @@ def build_flight_audit_report(tournament: Tournament) -> dict:
         return {'error': 'No flights built yet.'}
 
     # Build global ordered heat list across all flights in display order.
+    # Previous: per-flight Heat.query.filter_by(flight_id=...) — N+1 across
+    # flight count. Replaced with a single batch query joined by flight_id
+    # then grouped in memory; same ordering guaranteed by sorting the
+    # batched rows by (flight_number, flight_position).
+    flight_ids = [f.id for f in flights]
+    flight_lookup = {f.id: f for f in flights}
+    batched_heats = (
+        Heat.query
+        .filter(Heat.flight_id.in_(flight_ids))
+        .order_by(Heat.flight_id, Heat.flight_position)
+        .all()
+    )
+    # Sort to flight_number-major order to match the original per-flight loop.
+    batched_heats.sort(
+        key=lambda h: (
+            flight_lookup[h.flight_id].flight_number,
+            h.flight_position if h.flight_position is not None else 0,
+        )
+    )
     all_heat_data = []
-    for flight in flights:
-        for heat in Heat.query.filter_by(flight_id=flight.id).order_by(Heat.flight_position).all():
-            all_heat_data.append({
+    for heat in batched_heats:
+        flight = flight_lookup[heat.flight_id]
+        all_heat_data.append({
                 'heat': heat,
                 'event': heat.event,
                 'flight_number': flight.flight_number,

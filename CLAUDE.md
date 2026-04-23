@@ -74,6 +74,10 @@ routes/
         ability_rankings.py # ability_rankings
         preflight.py      # preflight_check, preflight_json, generate_async, job_status
         assign_marks.py   # assign_marks (STRATHMARK handicap mark assignment)
+        birling.py        # birling_manage, birling_generate, birling_record_match, birling_reset, birling_finalize, birling_print_*
+        partners.py       # auto-partner assignment endpoints for partnered pro events
+        print_hub.py      # /scheduling/<tid>/print-hub aggregator (V2.13.0)
+        pro_checkout_roster.py # Pro Saturday checkout roster (V2.13.0)
     scoring.py          # Heat result entry, position calculation, payouts
     reporting.py        # Standings, event results, payout summary (with settlement), ALA report + email, fee_tracker
     proam_relay.py      # Pro-Am Relay lottery, results, and manual team builder
@@ -83,8 +87,10 @@ routes/
     auth.py             # Login, logout, bootstrap, user management (/auth prefix)
     portal.py           # Spectator and competitor portals (/portal prefix)
     api.py              # Public read-only REST API (/api/public prefix)
+    demo_data.py        # Demo seed routes (/demo prefix; in MANAGEMENT_BLUEPRINTS)
     woodboss.py         # Virtual Woodboss — material planning (/woodboss prefix)
-                        #   woodboss_bp (protected) + woodboss_public_bp (HMAC share link)
+                        #   woodboss_bp (protected, in MANAGEMENT_BLUEPRINTS)
+                        #   woodboss_public_bp (HMAC share link, public — third public route family alongside auth + portal)
     strathmark.py       # STRATHMARK sync status page (/strathmark prefix); requires is_judge (in MANAGEMENT_BLUEPRINTS)
 
 services/
@@ -520,7 +526,7 @@ PayoutTemplate  (tournament-independent, standalone)
 
 **Pro entry form redesign:** Scope pending. Current import flow handled by `services/pro_entry_importer.py` (basic parsing) and `services/registration_import.py` (enhanced pipeline with dirty-file support, fuzzy matching, cross-validation, and structured report). See `routes/import_routes.py` for the upload → review → confirm workflow.
 
-**Authentication:** Flask-Login is active. Management blueprints (main, registration, scheduling, scoring, reporting, proam_relay, partnered_axe, validation, import_pro) require `is_judge` (admin or judge role) via `require_judge_for_management_routes` in `app.py`. Auth routes (`/auth/*`) and portal routes (`/portal/*`) are public. Bootstrap endpoint (`/auth/bootstrap`) creates the first account when DB has no users — it locks itself afterward. Seven defined roles: admin, judge, scorer, registrar, competitor, spectator, viewer.
+**Authentication:** Flask-Login is active. The 12 management blueprints in `MANAGEMENT_BLUEPRINTS` (main, registration, scheduling, scoring, reporting, proam_relay, partnered_axe, validation, import_pro, woodboss, demo, strathmark) require `is_judge` (admin or judge role) via `require_judge_for_management_routes` in `app.py`. Three public route families: auth (`/auth/*`), portal (`/portal/*`), and the woodboss HMAC share link (`/woodboss/share/...` via `woodboss_public_bp`). Bootstrap endpoint (`/auth/bootstrap`) creates the first account when DB has no users — it locks itself afterward. Seven defined roles: admin, judge, scorer, registrar, competitor, spectator, viewer.
 
 **CSRF protection:** Flask-WTF `CSRFProtect` is active. All POST form templates include `{{ csrf_token() }}`. JSON API endpoints (routes/validation.py) that do not submit HTML forms are GET-only and require no exemption. If a new POST endpoint returns JSON rather than HTML, apply `@csrf.exempt` from `app.csrf`.
 

@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 SHOW_NAME = 'Missoula Pro-Am'
 SOURCE_APP = 'missoula-manager'
 
+# NOTE: cache + skipped-log files live in instance/ which is EPHEMERAL on
+# Railway — every deploy wipes them. Symptom: the /strathmark/status page
+# reports "last push: never" after each redeploy even when pushes happened.
+# This is operationally tolerable (sync calls themselves are idempotent),
+# but a follow-up ticket should move both files to the DB so status is
+# durable. Tracked as audit tech-debt #13. Do not put load-bearing data
+# in these files.
 _CACHE_DIR = 'instance'
 _SYNC_CACHE_FILE = os.path.join(_CACHE_DIR, 'strathmark_sync_cache.json')
 _SKIPPED_LOG_FILE = os.path.join(_CACHE_DIR, 'strathmark_skipped.json')

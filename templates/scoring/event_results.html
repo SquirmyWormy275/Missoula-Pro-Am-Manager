@@ -327,7 +327,7 @@
                     <td>{{ r.run3_value|int if r.run3_value is not none else '—' }}</td>
                     <td>
                       <strong>{{ r.result_value|int if r.result_value is not none else '—' }}</strong>
-                      {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2σ">⚠</span>{% endif %}
+                      {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2 standard deviations"><i class="bi bi-exclamation-triangle-fill"></i></span>{% endif %}
                     </td>
 
                   {% elif event.requires_dual_runs %}
@@ -335,13 +335,13 @@
                     <td class="text-muted">{{ "%.2f"|format(r.run2_value) if r.run2_value is not none else '—' }}</td>
                     <td>
                       <strong>{{ "%.2f"|format(r.best_run) if r.best_run is not none else '—' }}</strong>
-                      {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2σ">⚠</span>{% endif %}
+                      {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2 standard deviations"><i class="bi bi-exclamation-triangle-fill"></i></span>{% endif %}
                     </td>
 
                   {% elif event.is_hard_hit %}
                     <td>
                       <strong>{{ r.result_value|int if r.result_value is not none else '—' }}</strong> hits
-                      {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2σ">⚠</span>{% endif %}
+                      {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2 standard deviations"><i class="bi bi-exclamation-triangle-fill"></i></span>{% endif %}
                     </td>
                     <td class="text-muted small">
                       {{ "%.2f"|format(r.tiebreak_value) ~ 's' if r.tiebreak_value is not none else '—' }}
@@ -354,7 +354,7 @@
                         {% elif event.scoring_type == 'hits' %}{{ r.result_value|int }} hits
                         {% elif event.scoring_type == 'distance' %}{{ "%.1f"|format(r.result_value) }} ft
                         {% else %}{{ r.result_value }}{% endif %}
-                        {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2σ">⚠</span>{% endif %}
+                        {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2 standard deviations"><i class="bi bi-exclamation-triangle-fill"></i></span>{% endif %}
                       {% else %}—{% endif %}
                     </td>
                   {% endif %}
@@ -466,9 +466,12 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!data.rows.length) { liveBody.innerHTML = '<div class="text-muted text-center py-3 small">No results yet.</div>'; return; }
         let html = '<table class="table table-sm mb-0"><tbody>';
         data.rows.slice(0, 10).forEach(r => {
-            const flag  = r.is_flagged ? ' <span class="badge bg-warning text-dark">⚠</span>' : '';
+            const flag  = r.is_flagged ? ' <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle-fill"></i></span>' : '';
             const pos   = r.position;
-            const medal = pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `${pos}.`;
+            const medal = pos === 1 ? '<i class="bi bi-trophy-fill text-warning"></i>'
+                        : pos === 2 ? '<i class="bi bi-award-fill text-secondary"></i>'
+                        : pos === 3 ? '<i class="bi bi-award text-secondary"></i>'
+                        : `${pos}.`;
             const val   = r.result_value !== null ? Number(r.result_value).toFixed(requiresTriple ? 0 : 2) : '—';
             // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
             html += `<tr><td class="ps-3" style="width:40px">${medal}</td><td><strong>${escapeHtml(r.competitor_name)}</strong>${flag}</td><td class="text-end pe-3 text-muted small">${val}</td></tr>`;
@@ -526,7 +529,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
                     html += `<li>${escapeHtml(o.competitor_name)}: <strong>${escapeHtml(o.result_value)}</strong> (${escapeHtml(o.deviation)}σ from mean ${escapeHtml(o.mean)})</li>`;
                 });
-                html += '</ul><p class="mb-0 mt-1 small">These will be flagged ⚠ after finalization. Verify before confirming.</p></div>';
+                html += '</ul><p class="mb-0 mt-1 small">These will be flagged with a warning badge after finalization. Verify before confirming.</p></div>';
             }
 
             // Throw-off warnings

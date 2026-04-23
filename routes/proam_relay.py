@@ -2,12 +2,21 @@
 Routes for Pro-Am Relay lottery and management.
 """
 from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
+from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
 from models import Tournament
 from models.event import Event
 from services.cache_invalidation import invalidate_tournament_caches
 from services.proam_relay import compute_team_health, create_proam_relay_event, get_proam_relay
+
+# Shared message for the concurrent-edit case — surfaced when SQLAlchemy
+# version_id detects a parallel update has advanced the row. Without this
+# arm, race-day operators got an opaque 500 instead of a "reload" hint.
+_STALE_DATA_FLASH = (
+    'Another judge updated this in parallel. Reload the page and try again — '
+    'your last input was not saved.'
+)
 
 bp = Blueprint('proam_relay', __name__, url_prefix='/tournament/<int:tournament_id>/proam-relay')
 
@@ -53,6 +62,9 @@ def draw_lottery(tournament_id):
         result = relay.run_lottery(num_teams=num_teams)
         invalidate_tournament_caches(tournament_id)
         flash(result['message'], 'success')
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
     except ValueError as e:
         flash(str(e), 'danger')
 
@@ -82,6 +94,9 @@ def redraw_lottery(tournament_id):
         result = relay.redraw_lottery(num_teams=num_teams)
         invalidate_tournament_caches(tournament_id)
         flash(f"Lottery has been redrawn with {num_teams} team(s).", 'success')
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
     except ValueError as e:
         flash(str(e), 'danger')
 
@@ -132,6 +147,9 @@ def enter_results(tournament_id):
             relay.record_total_time(team_number, total_seconds)
             invalidate_tournament_caches(tournament_id)
             flash(f'Time recorded for Team {team_number}.', 'success')
+        except StaleDataError:
+            db.session.rollback()
+            flash(_STALE_DATA_FLASH, 'warning')
         except ValueError:
             flash('Invalid time format. Use seconds (45.67) or MM:SS.ms (1:23.45).', 'danger')
 
@@ -191,6 +209,9 @@ def save_manual_teams(tournament_id):
         result = relay.set_teams_manually(team_assignments)
         invalidate_tournament_caches(tournament_id)
         flash(result['message'], 'success')
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
     except (ValueError, json.JSONDecodeError) as e:
         flash(str(e), 'danger')
 
@@ -217,6 +238,10 @@ def replace_competitor(tournament_id):
         relay.replace_competitor(team_number, old_competitor_id, new_competitor_id, competitor_type)
         invalidate_tournament_caches(tournament_id)
         flash('Competitor replaced successfully', 'success')
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('proam_relay.view_teams', tournament_id=tournament_id))
     except ValueError as e:
         flash(str(e), 'danger')
 

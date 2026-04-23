@@ -87,6 +87,14 @@ def test_run_preflight_autofix_syncs_heat_assignments(db_session, monkeypatch):
         'services.partner_matching.auto_assign_pro_partners',
         lambda _tournament: {'assigned_pairs': 3},
     )
+    # MOCK FIDELITY: real signature is integrate_college_spillover_into_flights(
+    # tournament, college_event_ids=None, commit=False, placement_mode=None).
+    # This 2-positional lambda only matches the current call site at
+    # services/schedule_generation.py:_integrate_spillover. If a future caller
+    # adds positional args (e.g., placement_mode=) the mock will silently keep
+    # passing while production crashes. If you change the production signature,
+    # also update this lambda. See V2.13.0/V2.14.0/V2.14.5 mock-shape trilogy
+    # in docs/solutions/test-failures/test-shape-matches-bug-shape-trilogy-2026-04-23.md.
     monkeypatch.setattr(
         'services.flight_builder.integrate_college_spillover_into_flights',
         lambda _tournament, _ids: {'integrated_heats': 4},
@@ -135,6 +143,11 @@ def test_generate_tournament_schedule_artifacts_orchestrates_heat_and_flight_gen
         _db.session.add(heat)
         _db.session.flush()
 
+    # MOCK FIDELITY: build_pro_flights real signature is
+    # (tournament, num_flights=None, commit=True). The 1-positional lambda
+    # below matches the current call site at services/schedule_generation.py
+    # but a future caller adding num_flights= would crash the mock without
+    # exposing whether production is broken. See trilogy doc.
     monkeypatch.setattr('services.heat_generator.generate_event_heats', _fake_generate)
     monkeypatch.setattr('services.flight_builder.build_pro_flights', lambda _tournament: 2)
 

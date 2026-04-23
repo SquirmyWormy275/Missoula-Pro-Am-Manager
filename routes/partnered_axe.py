@@ -2,6 +2,7 @@
 Routes for Partnered Axe Throw prelims/finals management.
 """
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
 from models import Tournament
@@ -10,6 +11,14 @@ from services.cache_invalidation import invalidate_tournament_caches
 from services.partnered_axe import (
     find_partnered_axe_throw,
     get_or_create_partnered_axe_throw,
+)
+
+# Shared message for the concurrent-edit case — surfaced when SQLAlchemy
+# version_id detects a parallel update has advanced the row. See companion
+# constant in routes/proam_relay.py.
+_STALE_DATA_FLASH = (
+    'Another judge updated this in parallel. Reload the page and try again — '
+    'your last input was not saved.'
 )
 
 bp = Blueprint('partnered_axe', __name__, url_prefix='/tournament/<int:tournament_id>/partnered-axe')
@@ -100,6 +109,9 @@ def register_pair(tournament_id):
         pair = pat.register_pair(competitor1_id, competitor2_id)
         invalidate_tournament_caches(tournament_id)
         flash(f'Pair registered: {pair["competitor1"]["name"]} & {pair["competitor2"]["name"]}', 'success')
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
     except ValueError as e:
         flash(str(e), 'danger')
 
@@ -137,9 +149,14 @@ def record_prelim(tournament_id):
         flash('Invalid pair ID or hit count.', 'error')
         return redirect(url_for('partnered_axe.prelims', tournament_id=tournament_id))
 
-    pat.record_prelim_result(pair_id, hits)
-    invalidate_tournament_caches(tournament_id)
-    flash(f'Prelim result recorded for Pair {pair_id}', 'success')
+    try:
+        pat.record_prelim_result(pair_id, hits)
+        invalidate_tournament_caches(tournament_id)
+        flash(f'Prelim result recorded for Pair {pair_id}', 'success')
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('partnered_axe.prelims', tournament_id=tournament_id))
 
     # If the score was entered from the event_results page, redirect back there
     if request.form.get('return_to') == 'event_results':
@@ -160,6 +177,9 @@ def advance_to_finals(tournament_id):
         finalists = pat.advance_to_finals()
         invalidate_tournament_caches(tournament_id)
         flash('Top 4 pairs advanced to finals!', 'success')
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
     except ValueError as e:
         flash(str(e), 'danger')
 
@@ -196,8 +216,13 @@ def record_final(tournament_id):
         flash('Invalid pair ID or hit count.', 'error')
         return redirect(url_for('partnered_axe.finals', tournament_id=tournament_id))
 
-    pat.record_final_result(pair_id, hits)
-    invalidate_tournament_caches(tournament_id)
+    try:
+        pat.record_final_result(pair_id, hits)
+        invalidate_tournament_caches(tournament_id)
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('partnered_axe.finals', tournament_id=tournament_id))
 
     if pat.get_stage() == 'completed':
         flash('Finals complete! Final standings are now available.', 'success')

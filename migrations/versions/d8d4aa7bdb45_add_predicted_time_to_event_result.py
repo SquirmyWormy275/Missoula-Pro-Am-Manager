@@ -57,21 +57,21 @@ def downgrade():
         batch_op.alter_column('is_finalized',
                existing_type=sa.BOOLEAN(),
                nullable=False,
-               existing_server_default=sa.text('0'))
+               existing_server_default=sa.text('false'))
         batch_op.alter_column('requires_triple_runs',
                existing_type=sa.BOOLEAN(),
                nullable=False,
-               existing_server_default=sa.text('0'))
+               existing_server_default=sa.text('false'))
         batch_op.alter_column('is_handicap',
                existing_type=sa.BOOLEAN(),
                nullable=False,
-               existing_server_default=sa.text("'0'"))
+               existing_server_default=sa.text("'false'"))
 
     with op.batch_alter_table('event_results', schema=None) as batch_op:
         batch_op.alter_column('throwoff_pending',
                existing_type=sa.BOOLEAN(),
                nullable=False,
-               existing_server_default=sa.text('0'))
+               existing_server_default=sa.text('false'))
         batch_op.drop_column('predicted_time')
 
     # ### end Alembic commands ###

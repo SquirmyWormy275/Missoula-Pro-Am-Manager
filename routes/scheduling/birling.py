@@ -7,6 +7,7 @@ then record match results to advance competitors through the bracket.
 """
 from flask import abort, flash, jsonify, redirect, render_template, request, url_for
 from markupsafe import Markup, escape
+from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
 from models import Event, EventResult, Tournament
@@ -18,6 +19,14 @@ from services.print_catalog import record_print
 from services.print_response import weasyprint_or_html
 
 from . import _signed_up_competitors, scheduling_bp
+
+# Shared message for the concurrent-edit case — surfaced when SQLAlchemy
+# version_id detects a parallel update has advanced the row. See companion
+# constant in routes/proam_relay.py and routes/partnered_axe.py.
+_STALE_DATA_FLASH = (
+    'Another judge updated this in parallel. Reload the page and try again — '
+    'your last input was not saved.'
+)
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling', methods=['GET'])
@@ -200,6 +209,11 @@ def birling_record_match(tournament_id, event_id):
 
     try:
         bb.record_match_result(match_id, winner_id)
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
     except ValueError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('scheduling.birling_manage',
@@ -248,6 +262,11 @@ def birling_record_fall(tournament_id, event_id):
 
     try:
         result = bb.record_fall(match_id, fall_winner_id)
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
     except ValueError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('scheduling.birling_manage',
@@ -314,6 +333,11 @@ def birling_undo_match(tournament_id, event_id):
 
     try:
         result = bb.undo_match_result(match_id)
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
     except ValueError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('scheduling.birling_manage',

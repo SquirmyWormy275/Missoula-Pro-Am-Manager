@@ -456,13 +456,19 @@ def build_flights(tournament_id):
 
         return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 
-    # Get available heats
+    # Get available heats — single batch query, in-memory count by event_id.
+    # Previous: per-event count() — N queries on every render of the build
+    # flights page. With ~13 pro events that's 13 small queries; cheap but
+    # easy to remove.
     pro_events = tournament.events.filter_by(event_type='pro').all()
-    total_heats = sum(
-        e.heats.filter_by(run_number=1).count()
-        for e in pro_events
-        if e.name != 'Partnered Axe Throw'
-    )
+    eligible_event_ids = [e.id for e in pro_events if e.name != 'Partnered Axe Throw']
+    if eligible_event_ids:
+        total_heats = Heat.query.filter(
+            Heat.event_id.in_(eligible_event_ids),
+            Heat.run_number == 1,
+        ).count()
+    else:
+        total_heats = 0
 
     sizing = _read_flight_sizing_config(tournament)
 
@@ -759,10 +765,19 @@ def _send_upcoming_heat_sms(tournament_id: int, current_flight_number: int) -> N
     if not target_flight:
         return
 
+    # Batch-load all events referenced by this flight's heats so the SMS
+    # notify path doesn't issue one Event.query.get() per heat. Was N+1.
+    heats = list(target_flight.heats.all())
+    event_ids = {h.event_id for h in heats}
+    events_by_id = {
+        e.id: e
+        for e in Event.query.filter(Event.id.in_(event_ids)).all()
+    } if event_ids else {}
+
     competitor_ids_in_flight = set()
     competitor_type_map: dict = {}
-    for heat in target_flight.heats.all():
-        event = Event.query.get(heat.event_id)
+    for heat in heats:
+        event = events_by_id.get(heat.event_id)
         if not event:
             continue
         for cid in heat.get_competitors():
