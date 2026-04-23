@@ -121,14 +121,18 @@ Divergence type      | Caught by                | V-tag
 ---------------------+--------------------------+-------
 Function signature   | codex outside review     | V2.13.0
 JSON shape           | codex outside review     | V2.14.0
-...next one?         | ?                        | ?
+Empty-collection     | prod 500 (Railway logs)  | V2.14.5
+smoke test
 ```
 
-Two instances is a pattern. Add new rows here when the same thing happens again.
+**Three instances is a trilogy.** See [test-shape-matches-bug-shape-trilogy-2026-04-23.md](test-shape-matches-bug-shape-trilogy-2026-04-23.md) for the generalized meta-pattern and the three rules extracted from all three instances: mock fidelity, fixture round-trip, and non-empty seed.
 
 ## Related docs
 
-- [mock-signature-matches-buggy-call-site-2026-04-22.md](mock-signature-matches-buggy-call-site-2026-04-22.md) — sibling pattern on function signatures
+- [test-shape-matches-bug-shape-trilogy-2026-04-23.md](test-shape-matches-bug-shape-trilogy-2026-04-23.md) — **the generalized meta-pattern.** This doc is Instance 2 of three; the trilogy doc extracts the class-level rule.
+- [mock-signature-matches-buggy-call-site-2026-04-22.md](mock-signature-matches-buggy-call-site-2026-04-22.md) — sibling pattern on function signatures (Instance 1)
+- [../best-practices/jinja-sort-filter-has-no-key-kwarg-2026-04-23.md](../best-practices/jinja-sort-filter-has-no-key-kwarg-2026-04-23.md) — the specific surface mechanism of Instance 3 (Jinja `|sort(key=int)` landmine)
+- [../best-practices/traceback-before-repro-2026-04-23.md](../best-practices/traceback-before-repro-2026-04-23.md) — process rule from Instance 3: pull prod logs before writing local repros
 - [docs/FLIGHT_FIXES_RECON.md](../../FLIGHT_FIXES_RECON.md) — the recon that scoped V2.14.0 Phase 4
 - [services/proam_relay.py](../../../services/proam_relay.py) — the real emitter (run_lottery + set_teams_manually)
 - `tests/test_proam_relay_placement.py::TestRelayTeamsSheetRendersRealShape` — the content-assertion guard added after codex caught it
