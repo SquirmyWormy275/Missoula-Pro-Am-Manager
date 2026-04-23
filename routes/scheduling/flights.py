@@ -443,7 +443,16 @@ def build_flights(tournament_id):
             trigger_saw_block_recompute(tournament)
         except Exception as e:
             db.session.rollback()
-            flash(text.FLASH['flights_error'].format(error=str(e)), 'error')
+            from flask import current_app
+            current_app.logger.exception(
+                'Flight build failed for tournament %s', tournament_id,
+            )
+            # Generic message — full traceback is in app logs. Operator gets
+            # the action plus a hint to escalate; raw exception text never
+            # surfaces in the UI per CLAUDE.md §6 safe-error-handling rule.
+            flash(text.FLASH['flights_error'].format(
+                error='see application logs (admin only)'
+            ), 'error')
 
         return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 

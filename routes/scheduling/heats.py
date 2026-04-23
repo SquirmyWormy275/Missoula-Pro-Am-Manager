@@ -173,7 +173,15 @@ def generate_heats(tournament_id, event_id):
             trigger_saw_block_recompute(tournament)
     except Exception as e:
         db.session.rollback()
-        flash(text.FLASH['heats_error'].format(error=str(e)), 'error')
+        from flask import current_app
+        current_app.logger.exception(
+            'Heat generation failed for tournament %s event %s', tournament_id, event_id,
+        )
+        # Generic message — full traceback is in app logs. Raw exception text
+        # never surfaces in the UI per CLAUDE.md §6 safe-error-handling rule.
+        flash(text.FLASH['heats_error'].format(
+            error='see application logs (admin only)'
+        ), 'error')
 
     return redirect(url_for('scheduling.event_heats',
                             tournament_id=tournament_id,
