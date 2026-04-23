@@ -443,7 +443,7 @@ event.payouts = {"1": 500, "2": 300, "3": 200, "4": 100}
 
 ### Prerequisites
 
-- Python 3.10+
+- **Python 3.10 (exact minor version — match production)**. Railway runs Python 3.10. Newer locally-installed Python (3.11, 3.12, 3.13) parses syntax that production rejects (notably PEP 701 f-string features lifted in 3.12+) and silently passes every local gate before failing at the Railway pre-deploy step. Pin via `pyenv install 3.10.13 && pyenv local 3.10.13`, or via `mise` / `uv` reading the project's `.python-version`. Verify any `*.py` change against prod's grammar with `python -c "import ast; ast.parse(open('FILE').read(), feature_version=(3,10))"` regardless of the locally-installed interpreter. See [`docs/solutions/build-errors/railway-python-310-fstring-backslash-deploy-failure-2026-04-23.md`](docs/solutions/build-errors/railway-python-310-fstring-backslash-deploy-failure-2026-04-23.md) for the V2.14.10 incident that motivated this.
 - pip
 
 ### Installation
@@ -591,6 +591,29 @@ STAND_CONFIGS = {
 ---
 
 ## Changelog
+
+### 2026-04-23 (V2.14.12)
+
+**What changed for you.** The Friday college schedule's final four events now auto-generate in a fixed operator-mandated order: **Men's Chokerman's Race → Women's Chokerman's Race → Men's Birling → Women's Birling**. Previously the order fell out of name + gender ranks tied together — it usually produced the right output, but a name-spelling drift or gender-enum change could silently re-order the final block. The lock makes the final-four order bulletproof.
+
+**Override path.** Operator drag-and-drops on the Run Show events page → writes `friday_event_order` to `Tournament.schedule_config` → custom order wins over the lock. No new UI button needed; the existing reorder + reset-order endpoints already handle override and lock-restore.
+
+**Why it matters.** Friday closes with two paired-gender events back-to-back; the order is part of the show's pacing. Hardcoding it via name+gender match (with normalization for apostrophes / casing) means the lock survives any future event-name rename that doesn't update the rank lookup. Same defensive pattern as the V2.14.0 LH springboard Stand 4 lock.
+
+**Files.** `services/schedule_builder.py` (+50, new `FRIDAY_END_OF_DAY_LOCK_ORDER` constant + `_friday_end_of_day_lock_position` helper + reworked `_college_friday_sort_key` to use lock_position as the first tie-breaker), `tests/test_schedule_builder_ordering.py` (+150, new `TestFridayEndOfDayLock` class — 4 tests covering canonical lock order on full Friday, partial lock when only some lock events are configured, custom_order override, and unit-level lock-position helper with apostrophe / casing variants).
+
+**Regression tests.** 124 passed across `test_schedule_builder`, `test_schedule_builder_ordering`, `test_schedule_status`, `test_routes_smoke`. No migration.
+
+**Also bundled (compound documentation from earlier today's session).** Three docs from the V2.14.10 / V2.14.11 ship that didn't make their commits:
+- New: `docs/solutions/build-errors/railway-python-310-fstring-backslash-deploy-failure-2026-04-23.md` — canonical record of the V2.14.10 deploy-fail (PEP 701 backslash-in-f-string-expression vs Python 3.10), with AST-validation prevention recipe and safe-vs-unsafe pattern table.
+- Refreshed: `docs/solutions/test-failures/test-shape-matches-bug-shape-trilogy-2026-04-23.md` — Trilogy → Quartet, added Rule 4 (pin verification environment to production), Release Timeline row 4, generalization paragraph.
+- Refreshed: `docs/solutions/best-practices/railway-postgres-operational-playbook-2026-04-21.md` — added Lesson 17 (Python interpreter version pinning + AST defense in depth).
+- Refreshed: `DEVELOPMENT.md` Prerequisites — Python "3.10+" tightened to "3.10 (exact minor — match production)" with concrete pinning instructions.
+- New: `.python-version` (`3.10.13`) so pyenv / mise / uv default new dev machines to the prod minor version.
+
+### 2026-04-23 (V2.14.11)
+
+**Patch.** Preflight "Partnership is not reciprocal" + "Partner name does not match any entered competitor" firing on valid pairs when one side of the roster had the full name ("Mickinley Verhulst") and the other side wrote only the first name with a small typo ("McKinley"). Root cause in `services/name_match.find_partner_match`: Tier 3 Levenshtein ran against full normalized names, so `"mckinley"` (8 chars) vs `"mickinleyverhulst"` (17 chars) = distance 9 — blown out by the 8 last-name chars the form didn't include. Fix adds Tier 4: Levenshtein ≤ 2 on **first-token**, run only when Tier 3 finds zero matches (on Tier 3 ambiguity we still refuse). Shared module flows fix all three callers: preflight unresolved/non-reciprocal checks, `heat_generator._find_partner` snake-draft pairing, and `partner_resolver.lookup_partner_cid` heat-sheet render. Two new regression tests in `tests/test_partner_pairing_fixes.py::TestFindPartnerFuzzy` — one asserts the asymmetric first-name typo now resolves, one asserts the tier still refuses on first-token ambiguity.
 
 ### 2026-04-23 (V2.14.10)
 

@@ -16,12 +16,21 @@ the ladder so every consumer applies the same bar.
 The matching ladder, in order:
   1. Exact normalized full-name match   (alphanumeric, lowercase)
   2. First-token (first-name) match     — one-match only, refuses on ambiguity
-  3. Levenshtein distance ≤ MAX_FUZZY   — one-match only, refuses on ambiguity
+  3. Levenshtein distance ≤ MAX_FUZZY   on full name — one-match only
+  4. Levenshtein distance ≤ MAX_FUZZY   on first-token — one-match only
 
 Levenshtein cap is intentionally tight (2 edits): catches "Mckinley/McKinlay/
 Mickinley" but refuses "Mark/Mary" (1 edit, too loose for the same-name claim).
-The one-match-only rule on tier 2/3 prevents silently picking the wrong person
+The one-match-only rule on tier 2/3/4 prevents silently picking the wrong person
 when several pool members are similar.
+
+Tier 4 exists because tier 3 runs on FULL normalized names — when the partner
+field was written as a first name only (e.g. "Mckinley") and the roster has
+the full name ("Mickinley Verhulst"), the last name adds 8+ edits so full-name
+Levenshtein trips the ≤2 cap even though the first-name distance is 1. Tier 4
+falls back to first-token distance for that asymmetric case. It runs ONLY when
+tier 3 finds zero matches — on tier 3 ambiguity we refuse rather than descend
+to a looser tier.
 """
 
 from __future__ import annotations
@@ -146,4 +155,20 @@ def find_partner_match(
     ]
     if len(fuzzy_matches) == 1:
         return fuzzy_matches[0]
+    if len(fuzzy_matches) >= 2:
+        # Full-name ambiguous — refuse rather than descend to the looser
+        # first-token tier, which would pick arbitrarily between them.
+        return None
+
+    # Tier 4: Levenshtein ≤ MAX_FUZZY_DISTANCE on first-token — one match only.
+    # Catches "Mckinley" → "Mickinley Verhulst": full-name distance is 9 (last
+    # name adds 8 chars the form didn't include), but first-token distance is 1.
+    if target_first:
+        first_fuzzy_matches = [
+            entry
+            for entry, _norm, first in _entries()
+            if first and levenshtein(first, target_first) <= MAX_FUZZY_DISTANCE
+        ]
+        if len(first_fuzzy_matches) == 1:
+            return first_fuzzy_matches[0]
     return None
