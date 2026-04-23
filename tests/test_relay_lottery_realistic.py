@@ -363,3 +363,5 @@ class TestRelayResultRecording:
         assert len(results) == 2
         assert results[0]['team_number'] == 2, "Team with lower total time should be first"
         assert results[1]['team_number'] == 1
+
+

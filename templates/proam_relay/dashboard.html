@@ -171,6 +171,20 @@
                         <form action="{{ url_for('proam_relay.redraw_lottery', tournament_id=tournament.id) }}" method="POST"
                               data-confirm="This will clear all teams and results. Are you sure?">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            {% if capacity.max_teams > 0 %}
+                            {% set default_redraw_n = [teams|length, capacity.max_teams]|min %}
+                            <div class="mb-2">
+                                <label class="form-label small text-muted mb-1">Number of Teams</label>
+                                <select name="num_teams" class="form-select form-select-sm">
+                                    {% for n in range(1, capacity.max_teams + 1) %}
+                                    <option value="{{ n }}" {% if n == default_redraw_n %}selected{% endif %}>{{ n }} Team{% if n != 1 %}s{% endif %}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text small">
+                                    Max {{ capacity.max_teams }} based on current opt-ins.
+                                </div>
+                            </div>
+                            {% endif %}
                             <button type="submit" class="btn btn-outline-danger w-100">
                                 <i class="bi bi-arrow-repeat"></i> Redraw Lottery
                             </button>
