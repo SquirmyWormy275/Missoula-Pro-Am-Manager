@@ -485,3 +485,138 @@ class TestFridayFeaturePdfRoute:
         assert "friday_night_feature" in cd
         assert cd.endswith('.pdf"')
         assert resp.data == fake_pdf_bytes
+
+
+# ---------------------------------------------------------------------------
+# Per-event stand count override (FNF 1-Board etc.)
+# ---------------------------------------------------------------------------
+
+
+class TestFNFPerEventStandOverride:
+    """POST /scheduling/<tid>/friday-night must accept `stands_event_<id>` and
+    write it to Event.max_stands so Pro 1-Board can run on a different stand
+    count than Saturday Springboard."""
+
+    def test_stand_input_persists_to_event_max_stands(self, app, auth_client):
+        from models import Event
+
+        with app.app_context():
+            data = _seed_two_event_show(_db.session)
+            t = data["tournament"]
+            p1b_id = data["p1b"].id
+            assert Event.query.get(p1b_id).max_stands == 2
+            _db.session.commit()
+            tid = t.id
+
+        resp = auth_client.post(
+            f"/scheduling/{tid}/friday-night",
+            data={
+                "action": "save",
+                "event_ids": [str(p1b_id)],
+                f"stands_event_{p1b_id}": "3",
+                "notes": "",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+
+        with app.app_context():
+            assert Event.query.get(p1b_id).max_stands == 3
+
+    def test_blank_stand_input_preserves_existing(self, app, auth_client):
+        from models import Event
+
+        with app.app_context():
+            data = _seed_two_event_show(_db.session)
+            t = data["tournament"]
+            p1b_id = data["p1b"].id
+            Event.query.get(p1b_id).max_stands = 5
+            _db.session.commit()
+            tid = t.id
+
+        resp = auth_client.post(
+            f"/scheduling/{tid}/friday-night",
+            data={
+                "action": "save",
+                "event_ids": [str(p1b_id)],
+                f"stands_event_{p1b_id}": "",
+                "notes": "",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+
+        with app.app_context():
+            assert Event.query.get(p1b_id).max_stands == 5
+
+    def test_invalid_stand_input_rejected_without_crash(self, app, auth_client):
+        from models import Event
+
+        with app.app_context():
+            data = _seed_two_event_show(_db.session)
+            t = data["tournament"]
+            p1b_id = data["p1b"].id
+            Event.query.get(p1b_id).max_stands = 4
+            _db.session.commit()
+            tid = t.id
+
+        for bad in ["zero", "-3", "0", "3.5"]:
+            resp = auth_client.post(
+                f"/scheduling/{tid}/friday-night",
+                data={
+                    "action": "save",
+                    "event_ids": [str(p1b_id)],
+                    f"stands_event_{p1b_id}": bad,
+                    "notes": "",
+                },
+                follow_redirects=False,
+            )
+            assert resp.status_code in (302, 303)
+            with app.app_context():
+                assert Event.query.get(p1b_id).max_stands == 4
+
+    def test_generate_heats_respects_new_cap(self, app, auth_client):
+        """Integration: set stands=3 on Pro 1-Board with 9 competitors,
+        POST action=generate_heats, expect ceil(9/3)=3 heats sized ≤3."""
+        from models import Event, Heat, ProCompetitor, Tournament
+
+        with app.app_context():
+            t = _make_tournament(_db.session, name="Stand Override Run")
+            p1b = _make_pro_event(
+                _db.session, t, "Pro 1-Board", "springboard", max_stands=4
+            )
+            comps = []
+            for i in range(9):
+                comp = ProCompetitor(
+                    tournament_id=t.id,
+                    name=f"P1B Cutter {i}",
+                    gender="M",
+                    status="active",
+                )
+                comp.set_events_entered([p1b.name])
+                _db.session.add(comp)
+                _db.session.flush()
+                comps.append(comp)
+            _db.session.commit()
+            tid = t.id
+            p1b_id = p1b.id
+
+        resp = auth_client.post(
+            f"/scheduling/{tid}/friday-night",
+            data={
+                "action": "generate_heats",
+                "event_ids": [str(p1b_id)],
+                f"stands_event_{p1b_id}": "3",
+                "notes": "",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+
+        with app.app_context():
+            e = Event.query.get(p1b_id)
+            assert e.max_stands == 3
+            heats = Heat.query.filter_by(event_id=p1b_id).all()
+            assert len(heats) >= 3
+            for h in heats:
+                assert len(h.get_competitors()) <= 3

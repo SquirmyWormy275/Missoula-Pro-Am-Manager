@@ -592,6 +592,18 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-22 (V2.14.1)
+
+**Patch — FNF per-event stand count override.** Race-weekend tournament setup surfaced a missing feature: operators could not configure a different stand count for Pro 1-Board on Friday Night vs Saturday Springboard. Both events share `stand_type='springboard'` and the existing per-stand-type override on `/setup-events` applied to all three pro springboard events (Springboard, Pro 1-Board, 3-Board Jigger) as a single group. `Event.max_stands` was already the authoritative per-event column in the heat generator (line `services/heat_generator.py:130`) — it just wasn't exposed on the Friday Showcase page.
+
+**Fix.** Added a "Stands" column to the FNF event-selection table in `templates/scheduling/friday_feature.html` with a `type="number"` input per row (`name="stands_event_<id>"`, min=1, max=12, pre-fills from current `Event.max_stands` or the stand_type default). POST handler in `routes/scheduling/friday_feature.py::friday_feature` parses those inputs and writes directly to each event's `max_stands` BEFORE `db.session.commit()` — so when `action=generate_heats` runs in the same request, the regenerated heats pick up the new cap. Blank preserves existing value. Invalid input (non-int, negative, zero) flashes a warning without crashing. Valid updates flash a summary line listing which events changed.
+
+**Tests.** 4 new tests in `tests/test_one_click_and_fnf.py::TestFNFPerEventStandOverride`: persist via POST, blank preserves existing, invalid rejected without crash, end-to-end `generate_heats` with 9 competitors + stands=3 produces ceil(9/3)=3 heats each ≤3 competitors. Full FNF file: 18 passed.
+
+**Files touched:** `routes/scheduling/friday_feature.py` (+38), `templates/scheduling/friday_feature.html` (+9), `tests/test_one_click_and_fnf.py` (+135). No migration. No new model columns.
+
+---
+
 ### 2026-04-22 (V2.14.0)
 
 **Feature — Flight Fixes: 5-phase overhaul of Saturday flight assembly.**

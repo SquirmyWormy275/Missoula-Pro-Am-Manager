@@ -106,6 +106,29 @@ def friday_feature(tournament_id):
 
         _save_fnf_config(tournament, {'event_ids': selected_ids, 'notes': notes})
 
+        # Per-event stand count override for FNF events.
+        # Each eligible event exposes a `stands_event_<id>` input. Blank or invalid
+        # input is ignored (keeps existing max_stands). Valid >=1 ints are written
+        # to Event.max_stands so the heat generator picks up the new cap on
+        # regeneration. This lets FNF Pro 1-Board run on a different stand count
+        # than Saturday Springboard even though both share stand_type='springboard'.
+        stand_updates = []
+        for event in eligible_events:
+            raw = (request.form.get(f'stands_event_{event.id}') or '').strip()
+            if not raw:
+                continue
+            try:
+                val = int(raw)
+            except (TypeError, ValueError):
+                flash(f'Ignored invalid stand count for {event.display_name}: "{raw}".', 'warning')
+                continue
+            if val < 1:
+                flash(f'Stand count for {event.display_name} must be at least 1.', 'warning')
+                continue
+            if event.max_stands != val:
+                event.max_stands = val
+                stand_updates.append((event.display_name, val))
+
         # Save Saturday spillover selections into the shared schedule session
         try:
             saturday_college_event_ids = [
@@ -132,6 +155,13 @@ def friday_feature(tournament_id):
         session.modified = True
         tournament.set_schedule_config(db_cfg)
         db.session.commit()
+
+        if stand_updates:
+            summary = ', '.join(f'{n}: {v} stands' for n, v in stand_updates)
+            flash(
+                f'Stand count updated for {len(stand_updates)} FNF event(s) ({summary}).',
+                'info',
+            )
 
         if action == 'generate_heats' and selected_ids:
             # Generate heats for each Friday Night Feature event using the
@@ -165,6 +195,7 @@ def friday_feature(tournament_id):
             log_action('friday_feature_configured', 'tournament', tournament_id, {
                 'fnf_event_count': len(selected_ids),
                 'sat_spillover_count': len(saturday_college_event_ids),
+                'stand_updates': [{'event': n, 'max_stands': v} for n, v in stand_updates],
             })
             db.session.commit()
             flash('Friday Showcase & Saturday spillover saved.', 'success')
@@ -176,12 +207,19 @@ def friday_feature(tournament_id):
         saturday_placement_mode = 'roundrobin'
     fnf_schedule = _build_fnf_schedule(tournament, eligible_events, fnf_config)
 
+    # Per-event stand count for the form — falls back to the stand_type default
+    # from STAND_CONFIGS when max_stands is not set on the row.
+    stand_defaults = {e.id: (e.max_stands if e.max_stands is not None else
+                              config.STAND_CONFIGS.get(e.stand_type or '', {}).get('total'))
+                      for e in eligible_events}
+
     return render_template(
         'scheduling/friday_feature.html',
         tournament=tournament,
         eligible_events=eligible_events,
         selected_ids=set(fnf_config.get('event_ids', [])),
         notes=fnf_config.get('notes', ''),
+        stand_defaults=stand_defaults,
         sat_eligible=sat_eligible,
         selected_saturday_ids=selected_saturday_ids,
         saturday_placement_mode=saturday_placement_mode,

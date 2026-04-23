@@ -55,6 +55,7 @@
                                             <th style="width:50px;">Include</th>
                                             <th>Event</th>
                                             <th>Type</th>
+                                            <th style="width:90px;" title="Competitors per heat. FNF events can run on a different stand count than Saturday — e.g. Pro 1-Board on 3 stands while Saturday Springboard uses 4.">Stands</th>
                                             <th>Status</th>
                                         </tr>
                                     </thead>
@@ -68,6 +69,14 @@
                                             </td>
                                             <td>{{ event.display_name }}</td>
                                             <td><span class="badge bg-secondary">{{ event.scoring_type }}</span></td>
+                                            <td>
+                                                <input type="number" class="form-control form-control-sm"
+                                                       name="stands_event_{{ event.id }}"
+                                                       min="1" max="12" step="1"
+                                                       value="{{ stand_defaults.get(event.id) or '' }}"
+                                                       placeholder="—"
+                                                       aria-label="Stand count for {{ event.display_name }}">
+                                            </td>
                                             <td>
                                                 {% if event.status == 'completed' %}
                                                 <span class="badge bg-success">Completed</span>
