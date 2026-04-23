@@ -400,9 +400,57 @@
                                 </span>
                             </div>
 
-                            {# Primary action #}
+                            {# Primary action — flight sizing form is the same one as on the
+                               Build Flights page; values are stored in schedule_config so the
+                               two pages stay in sync. #}
                             <form method="POST" action="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" data-loading>
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                                {% if flight_sizing %}
+                                <div class="border rounded p-2 mb-2" style="background:rgba(232,184,75,0.05); border-color:rgba(232,184,75,0.25) !important;">
+                                    <div class="d-flex align-items-center gap-2 mb-2">
+                                        <i class="bi bi-collection-play text-warning"></i>
+                                        <strong style="font-size:0.85rem;">Flight Sizing</strong>
+                                        <span class="text-muted" style="font-size:0.75rem;">used when building or rebuilding pro flights</span>
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-3 align-items-center mb-1" style="font-size:0.85rem;">
+                                        <div class="form-check form-check-inline mb-0">
+                                            <input class="form-check-input" type="radio" name="flight_sizing_mode" id="rs_mode_count" value="count"
+                                                   {% if flight_sizing.mode == 'count' %}checked{% endif %}>
+                                            <label class="form-check-label" for="rs_mode_count">Pick number of flights</label>
+                                        </div>
+                                        <div class="form-check form-check-inline mb-0">
+                                            <input class="form-check-input" type="radio" name="flight_sizing_mode" id="rs_mode_minutes" value="minutes"
+                                                   {% if flight_sizing.mode == 'minutes' %}checked{% endif %}>
+                                            <label class="form-check-label" for="rs_mode_minutes">Pick target minutes per flight</label>
+                                        </div>
+                                    </div>
+                                    <div class="row g-2 align-items-center" style="font-size:0.85rem;">
+                                        <div class="col-sm-4">
+                                            <label class="form-label mb-1" for="rs_num_flights" style="font-size:0.78rem;">Flights</label>
+                                            <input type="number" class="form-control form-control-sm" id="rs_num_flights" name="num_flights"
+                                                   min="{{ flight_count_min }}" max="{{ flight_count_max }}"
+                                                   value="{{ flight_sizing.num_flights }}">
+                                            <small class="text-muted" style="font-size:0.7rem;">{{ flight_count_min }}–{{ flight_count_max }}</small>
+                                        </div>
+                                        <div class="col-sm-4">
+                                            <label class="form-label mb-1" for="rs_target_minutes" style="font-size:0.78rem;">Min/flight</label>
+                                            <input type="number" class="form-control form-control-sm" id="rs_target_minutes" name="target_minutes_per_flight"
+                                                   min="{{ minutes_per_flight_min }}" max="{{ minutes_per_flight_max }}"
+                                                   value="{{ flight_sizing.target_minutes_per_flight }}">
+                                            <small class="text-muted" style="font-size:0.7rem;">{{ minutes_per_flight_min }}–{{ minutes_per_flight_max }}</small>
+                                        </div>
+                                        <div class="col-sm-4">
+                                            <label class="form-label mb-1" for="rs_minutes_per_heat" style="font-size:0.78rem;">Min/heat</label>
+                                            <input type="number" step="0.5" class="form-control form-control-sm" id="rs_minutes_per_heat" name="minutes_per_heat"
+                                                   min="{{ minutes_per_heat_min }}" max="{{ minutes_per_heat_max }}"
+                                                   value="{{ flight_sizing.minutes_per_heat }}">
+                                            <small class="text-muted" style="font-size:0.7rem;">{{ minutes_per_heat_min }}–{{ minutes_per_heat_max }}</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endif %}
+
                                 <div class="d-grid mb-2">
                                     <button type="submit" name="action" value="generate_all" class="btn btn-primary"
                                             data-confirm="Generate heats for all events and build pro flights? Existing heats will be regenerated.">

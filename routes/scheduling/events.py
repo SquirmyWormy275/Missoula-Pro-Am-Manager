@@ -38,6 +38,80 @@ def _snapshot_flights(tournament_id: int) -> dict:
     return snapshot
 
 
+def _resolve_num_flights_from_form(tournament, form):
+    """Read flight-sizing inputs from the Run Show form, persist them to
+    ``schedule_config``, and return the resolved ``num_flights`` integer
+    (or ``None`` to let the builder fall back to its own defaults).
+
+    Reuses the validation + clamping helpers from /flights/build so the two
+    pages cannot drift. Absent form fields → return ``None`` and skip
+    persistence so legacy POSTers (existing tests, automation) keep working.
+    """
+    from .flights import (
+        FLIGHT_COUNT_MIN,
+        FLIGHT_SIZING_DEFAULTS,
+        FLIGHT_SIZING_MODE_COUNT,
+        FLIGHT_SIZING_MODE_MINUTES,
+        MINUTES_PER_FLIGHT_MAX,
+        MINUTES_PER_FLIGHT_MIN,
+        MINUTES_PER_HEAT_MAX,
+        MINUTES_PER_HEAT_MIN,
+        VALID_FLIGHT_SIZING_MODES,
+        _compute_num_flights_from_duration,
+        _persist_flight_sizing_config,
+    )
+
+    raw_mode = (form.get('flight_sizing_mode') or '').strip().lower()
+    if not raw_mode:
+        return None  # Form did not include sizing fields — keep legacy behaviour.
+    if raw_mode not in VALID_FLIGHT_SIZING_MODES:
+        raw_mode = FLIGHT_SIZING_DEFAULTS['mode']
+
+    try:
+        target_minutes = int(form.get('target_minutes_per_flight',
+                                      FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']))
+    except (TypeError, ValueError):
+        target_minutes = FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']
+    target_minutes = max(MINUTES_PER_FLIGHT_MIN, min(MINUTES_PER_FLIGHT_MAX, target_minutes))
+
+    try:
+        minutes_per_heat = float(form.get('minutes_per_heat',
+                                          FLIGHT_SIZING_DEFAULTS['minutes_per_heat']))
+    except (TypeError, ValueError):
+        minutes_per_heat = FLIGHT_SIZING_DEFAULTS['minutes_per_heat']
+    minutes_per_heat = max(MINUTES_PER_HEAT_MIN, min(MINUTES_PER_HEAT_MAX, minutes_per_heat))
+
+    try:
+        form_num_flights = int(form.get('num_flights', 0))
+    except (TypeError, ValueError):
+        form_num_flights = 0
+
+    if raw_mode == FLIGHT_SIZING_MODE_MINUTES:
+        pro_heats_for_calc = Heat.query.join(Event).filter(
+            Event.tournament_id == tournament.id,
+            Event.event_type == 'pro',
+            Event.name != 'Partnered Axe Throw',
+            Heat.run_number == 1,
+        ).count()
+        computed, _was_clamped = _compute_num_flights_from_duration(
+            pro_heats_for_calc, minutes_per_heat, target_minutes,
+        )
+        resolved = computed if computed >= 1 else None
+    else:  # 'count' mode
+        resolved = form_num_flights if form_num_flights >= 1 else None
+
+    try:
+        _persist_flight_sizing_config(
+            tournament, raw_mode, target_minutes, minutes_per_heat,
+            form_num_flights if form_num_flights >= FLIGHT_COUNT_MIN else FLIGHT_SIZING_DEFAULTS['num_flights'],
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    return resolved
+
+
 def _handle_event_list_post(tournament, saturday_college_event_ids, generate_event_heats, build_pro_flights, integrate_college_spillover_into_flights):
     """Handle POST actions for event_list: generate_all, rebuild_flights, integrate_spillover.
 
@@ -52,11 +126,13 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
 
     from services.flight_builder import integrate_proam_relay_into_final_flight
 
+    num_flights_override = _resolve_num_flights_from_form(tournament, request.form)
+
     if action == 'generate_all':
         try:
             _generate_all_heats(tournament, generate_event_heats)
             pre_snap = _snapshot_flights(tournament_id)
-            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
+            flights = _build_pro_flights_if_possible(tournament, build_pro_flights, num_flights=num_flights_override)
             if flights is not None:
                 flash(f'Built {flights} pro flight(s).', 'success')
                 # Phase 4: relay BEFORE spillover so Chokerman Run 2 closes.
@@ -82,7 +158,7 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
     elif action == 'rebuild_flights':
         try:
             pre_snap = _snapshot_flights(tournament_id)
-            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
+            flights = _build_pro_flights_if_possible(tournament, build_pro_flights, num_flights=num_flights_override)
             if flights is not None:
                 flash(f'Rebuilt {flights} pro flight(s).', 'success')
                 relay_result = integrate_proam_relay_into_final_flight(tournament)
@@ -179,6 +255,19 @@ def event_list(tournament_id):
     from services.schedule_status import build_schedule_status
     schedule_status = build_schedule_status(tournament)
 
+    # Flight sizing — read from the same schedule_config that /flights/build
+    # writes to, so changing flight count on either page updates the other.
+    from .flights import (
+        FLIGHT_COUNT_MAX,
+        FLIGHT_COUNT_MIN,
+        MINUTES_PER_FLIGHT_MAX,
+        MINUTES_PER_FLIGHT_MIN,
+        MINUTES_PER_HEAT_MAX,
+        MINUTES_PER_HEAT_MIN,
+        _read_flight_sizing_config,
+    )
+    flight_sizing = _read_flight_sizing_config(tournament)
+
     return render_template('scheduling/events.html',
                            tournament=tournament,
                            college_events=college_events,
@@ -192,7 +281,14 @@ def event_list(tournament_id):
                            sat_spillover_count=sat_spillover_count,
                            fnf_count=fnf_count,
                            build_diff=build_diff,
-                           schedule_status=schedule_status)
+                           schedule_status=schedule_status,
+                           flight_sizing=flight_sizing,
+                           flight_count_min=FLIGHT_COUNT_MIN,
+                           flight_count_max=FLIGHT_COUNT_MAX,
+                           minutes_per_flight_min=MINUTES_PER_FLIGHT_MIN,
+                           minutes_per_flight_max=MINUTES_PER_FLIGHT_MAX,
+                           minutes_per_heat_min=MINUTES_PER_HEAT_MIN,
+                           minutes_per_heat_max=MINUTES_PER_HEAT_MAX)
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])
