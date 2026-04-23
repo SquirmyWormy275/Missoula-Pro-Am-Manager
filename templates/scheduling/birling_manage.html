@@ -3,9 +3,28 @@
 
 {% block head_extra %}
 <style>
-/* ── Bracket visualization ─────────────────────────── */
-.bracket-container { overflow-x: auto; padding: 8px 0; }
-.bracket-section { margin-bottom: 24px; }
+/* ── Bracket visualization ─────────────────────────────────────────
+   Each .bracket-round is a flex column with justify-content:space-around.
+   When every round has the same outer height (enforced by the
+   --round-height custom property applied at .bracket-row), the matches
+   within each round sit at positions 1/(2N), 3/(2N), 5/(2N)... down the
+   column.  A round with half the matches of its predecessor lands
+   exactly at the midpoints — which is the bracket geometry we want.
+
+   Match heights are fixed so the total column height is deterministic:
+     round-height = round1-match-count * (match-h + match-gap)
+   Pass round1-match-count inline per .bracket-row (see template loops).
+*/
+.bracket-container {
+    overflow-x: auto;
+    padding: 12px 4px 6px;
+    --match-h: 62px;
+    --match-gap: 14px;
+    --round-gap: 32px;
+    --connector-w: 16px;
+    --connector-color: rgba(255, 255, 255, 0.18);
+}
+.bracket-section { margin-bottom: 28px; }
 .bracket-section-title {
     background: var(--surface-200, #1a3a5c);
     color: #fff;
@@ -20,40 +39,71 @@
     display: flex;
     flex-direction: row;
     align-items: stretch;
-    gap: 8px;
+    gap: var(--round-gap);
+    padding-right: var(--connector-w);
+    --row-height: calc(
+        var(--row-match-count, 1) * var(--match-h)
+        + max(0, var(--row-match-count, 1) - 1) * var(--match-gap)
+    );
+    min-height: var(--row-height);
 }
 .bracket-round {
     display: flex;
     flex-direction: column;
     justify-content: space-around;
-    min-width: 180px;
+    min-width: 190px;
     flex-shrink: 0;
+    position: relative;
+    padding-block: 6px;
 }
 .bracket-round-label {
     text-align: center;
-    font-size: 0.75rem;
+    font-size: 0.70rem;
     color: var(--text-muted, #aaa);
-    margin-bottom: 6px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.08em;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--connector-color);
+    margin-bottom: 10px;
 }
 .bracket-match {
     border: 1px solid var(--border-color, #333);
     border-radius: 6px;
     padding: 0;
-    margin: 6px 2px;
     background: var(--surface-100, #1e1e1e);
     font-size: 0.85rem;
     overflow: hidden;
+    min-height: var(--match-h);
+    position: relative;
+    flex: 0 0 auto;
+}
+/* Horizontal connector stub leaving a match (all rounds except the last). */
+.bracket-round:not(:last-child) .bracket-match::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: calc(var(--connector-w) * -1);
+    width: var(--connector-w);
+    height: 1px;
+    background: var(--connector-color);
+}
+/* Horizontal connector stub entering a match (all rounds except the first). */
+.bracket-round:not(:first-child) .bracket-match::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: calc(var(--connector-w) * -1);
+    width: var(--connector-w);
+    height: 1px;
+    background: var(--connector-color);
 }
 .bracket-match.playable {
     border-color: var(--proam-accent, #ef2b16);
     box-shadow: 0 0 0 1px var(--proam-accent, #ef2b16);
 }
-.bracket-match.completed {
-    opacity: 0.85;
-}
+.bracket-match.completed { opacity: 0.92; }
+.bracket-match.is-bye { opacity: 0.55; }
 .match-header {
     background: var(--surface-200, #2a2a2a);
     padding: 2px 8px;
@@ -62,19 +112,18 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    line-height: 1.4;
 }
 .match-slot {
-    padding: 6px 10px;
+    padding: 5px 10px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    min-height: 34px;
+    min-height: 26px;
 }
-.match-slot + .match-slot {
-    border-top: 1px solid var(--border-color, #333);
-}
+.match-slot + .match-slot { border-top: 1px solid var(--border-color, #333); }
 .match-slot.winner-slot {
-    background: rgba(25, 135, 84, 0.15);
+    background: rgba(25, 135, 84, 0.18);
     font-weight: 700;
 }
 .match-slot.loser-slot {
@@ -85,16 +134,22 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 130px;
+    max-width: 140px;
 }
-.match-slot .slot-name.tbd {
+.match-slot .slot-name.tbd,
+.match-slot .slot-name.bye {
     color: var(--text-muted, #888);
     font-style: italic;
 }
-.match-slot .slot-name.bye {
-    color: var(--text-muted, #666);
-    font-style: italic;
+/* Losers bracket geometry is irregular (drop-down rounds interleave with
+   consolidation rounds) so we do not force the same geometric alignment
+   as the winners bracket. Left-align matches and let each round flow. */
+.bracket-row.losers-row { align-items: flex-start; }
+.bracket-row.losers-row .bracket-round {
+    justify-content: flex-start;
+    gap: var(--match-gap);
 }
+.bracket-row.losers-row .bracket-match { margin-bottom: 0; }
 
 /* ── Seed input table ──────────────────────────────── */
 .seed-input {
@@ -380,12 +435,15 @@
 
             {% set playable_ids = current_matches | map(attribute='match_id') | list %}
 
-            {# Winners bracket #}
+            {# Winners bracket — matches in each round align with parents
+               via equal column heights + justify-content:space-around.
+               --row-match-count drives the shared column height. #}
             {% if bracket.winners %}
+            {% set wb_round1_count = bracket.winners[0]|length if bracket.winners[0] else 1 %}
             <div class="bracket-section">
                 <span class="bracket-section-title">Winners Bracket</span>
                 <div class="bracket-container">
-                    <div class="bracket-row">
+                    <div class="bracket-row" style="--row-match-count: {{ wb_round1_count }};">
                         {% for round_matches in bracket.winners %}
                         <div class="bracket-round">
                             <div class="bracket-round-label">
@@ -401,12 +459,14 @@
             </div>
             {% endif %}
 
-            {# Losers bracket #}
+            {# Losers bracket — drop-down rounds interleave with consolidation
+               rounds, so geometric parent-midpoint alignment does not apply.
+               Use .losers-row to let each round stack its matches top-down. #}
             {% if bracket.losers %}
             <div class="bracket-section">
                 <span class="bracket-section-title">Losers Bracket</span>
                 <div class="bracket-container">
-                    <div class="bracket-row">
+                    <div class="bracket-row losers-row">
                         {% for round_matches in bracket.losers %}
                         <div class="bracket-round">
                             <div class="bracket-round-label">L Round {{ loop.index }}</div>
@@ -425,7 +485,7 @@
             <div class="bracket-section">
                 <span class="bracket-section-title">Grand Finals</span>
                 <div class="bracket-container">
-                    <div class="bracket-row">
+                    <div class="bracket-row" style="--row-match-count: 1;">
                         <div class="bracket-round">
                             <div class="bracket-round-label">Finals</div>
                             {{ render_match(bracket.finals, playable_ids) }}

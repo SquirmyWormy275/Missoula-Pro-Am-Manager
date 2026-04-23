@@ -223,9 +223,10 @@
                 <span class="sb-text ms-2">Saw Block Status</span>
             </a>
             {% endif %}
-            <a href="{{ url_for('scheduling.birling_print_all', tournament_id=tournament.id) }}"
-               class="nav-link sidebar-child" target="_blank" rel="noopener"
-               title="Birling Brackets (seeded, printable)">
+            <a href="{{ url_for('scheduling.birling_index', tournament_id=tournament.id) }}"
+               class="nav-link sidebar-child {{ 'active' if request.endpoint == 'scheduling.birling_index' else '' }}"
+               {% if request.endpoint == 'scheduling.birling_index' %}aria-current="page"{% endif %}
+               title="Birling Brackets — seed, manage, and print each gender's bracket.">
                 <i class="bi bi-diagram-3 sb-icon"></i>
                 <span class="sb-text ms-2">Birling Brackets</span>
             </a>
