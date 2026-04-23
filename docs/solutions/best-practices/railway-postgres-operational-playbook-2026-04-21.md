@@ -87,7 +87,7 @@ This is the only way to run `flask db upgrade` or `pg_dump` against production f
 
 **10. External uptime monitoring is not optional for race-day-week.** Production ran `status: degraded, db: false, migration_rev: null` for 14 days and nobody noticed. Wire an external pinger (UptimeRobot free tier, BetterUptime, or a GitHub Actions cron calling `/health`) that alerts on `status != "ok"` or non-200. Do this before any future deploy that touches migrations.
 
-**11. Backups must be wired to a scheduled caller, not just present as code.** `services/backup.py` exists with S3 upload logic, but the env vars (`BACKUP_S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) are unset and no cron/admin route calls the function. That is not a backup — it is dead code. Railway automatic snapshots require Pro tier; on Hobby, run a manual `pg_dump` before every risky deploy and schedule a daily one via GitHub Actions cron against the public proxy. The first real backup this project ever had was `instance/backups/proam_recovery_20260408_115838.sql.gz`, taken during recovery, not before it.
+**11. Backups must be wired to a scheduled caller, not just present as code.** `services/backup.py` exists with S3 upload logic, but the env vars (`BACKUP_S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) are unset and no cron/admin route calls the function. That is not a backup — it is dead code. Railway automatic snapshots require Pro tier; on Hobby, run a manual `pg_dump` before every risky deploy and schedule a daily one via GitHub Actions cron against the public proxy. The first real backup this project ever had was `instance/backups/proam_recovery_20260408_115838.sql.gz`, taken during recovery, not before it. Status (2026-04-22): a GitHub Actions workflow now performs this — daily at 08:00 UTC + hourly during the April 24-26 UTC race-weekend window — see [`../integration-issues/github-actions-pg-backup-four-bug-chain-2026-04-22.md`](../integration-issues/github-actions-pg-backup-four-bug-chain-2026-04-22.md) for the four footguns this workflow had to dodge to actually run.
 
 **12. Offline migration dry-runs are cheap diagnostics.** `flask db upgrade --sql` dumps the migration chain as raw SQL with no DB connection — use it to inspect what WOULD run before touching production, and to diff against the migration chain in MEMORY.md.
 
@@ -227,4 +227,6 @@ railway logs --service App --tail 200
 - `services/backup.py` — S3 backup (currently dead code awaiting env vars + caller)
 - `instance/backup_now.sh` — manual backup script used during recovery (requires `RAILWAY_TOKEN`)
 - `.github/workflows/ci.yml` — 3-job CI (`lint`, `test`, `postgres-smoke`)
+- `.github/workflows/health-monitor.yml` — 5-min `/health` poller + GitHub issue auto-open/close
+- `.github/workflows/daily-backup.yml` — daily 08:00 UTC + hourly April 24-26 UTC `pg_dump` to GHA artifact
 - `routes/main.py` `/health` endpoint — `status`, `db`, `migration_rev`
