@@ -218,12 +218,22 @@ def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
     Each event is wrapped in its own savepoint (begin_nested) so that a failure
     in one event is rolled back in isolation without corrupting the session state
     for subsequent events or for the flight-building step that follows.
+
+    Per-event outcomes are surfaced to the operator via flash:
+      - generated: count + nothing more (success, common case)
+      - skipped (no entrants): each event named individually so the operator can
+        click straight through to registration and add the missing competitors,
+        rather than seeing a single "Skipped 13 without entrants" line that
+        gives no path to resolution.
+      - errors (anything else): each event named with the underlying error,
+        plus a per-event ``error`` flash so they cannot be missed.
     """
     from flask import flash
+    from markupsafe import Markup, escape
     events = tournament.events.order_by(Event.event_type, Event.name, Event.gender).all()
     generated = 0
-    skipped = 0
-    errors = 0
+    skipped_events: list[tuple[Event, str]] = []
+    failed_events: list[tuple[Event, str]] = []
 
     for event in events:
         try:
@@ -232,15 +242,64 @@ def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
             generated += 1
         except Exception as exc:
             # begin_nested().__exit__ rolls back to the savepoint on exception.
-            if 'No competitors entered' in str(exc):
-                skipped += 1
+            msg = str(exc)
+            if 'No competitors entered' in msg:
+                skipped_events.append((event, msg))
             else:
-                errors += 1
-                flash(f'Heat generation error for {event.display_name}: {exc}', 'error')
+                failed_events.append((event, msg))
+                flash(
+                    f'Heat generation error for {event.display_name}: {msg}',
+                    'error',
+                )
 
-    flash(f'Heats generated for {generated} event(s). Skipped {skipped} without entrants.', 'success')
-    if errors:
-        flash(f'Failed to generate heats for {errors} event(s).', 'error')
+    flash(f'Heats generated for {generated} event(s).', 'success')
+
+    if skipped_events:
+        # Build clickable per-division summary so operators can jump straight
+        # to the right registration page and fix the missing entries.
+        from flask import url_for
+        college_skipped = [e for e, _ in skipped_events if e.event_type == 'college']
+        pro_skipped = [e for e, _ in skipped_events if e.event_type == 'pro']
+
+        if pro_skipped:
+            names = ', '.join(_event_label(e) for e in pro_skipped)
+            link = url_for('registration.pro_registration', tournament_id=tournament.id)
+            flash(
+                Markup(
+                    f'{len(pro_skipped)} pro event(s) skipped — no competitors entered: '
+                    f'<strong>{escape(names)}</strong>. '
+                    f'<a href="{escape(link)}" class="alert-link">Open pro registration</a> '
+                    f'to add entries, then click Generate again.'
+                ),
+                'warning',
+            )
+        if college_skipped:
+            names = ', '.join(_event_label(e) for e in college_skipped)
+            link = url_for('registration.college_registration', tournament_id=tournament.id)
+            flash(
+                Markup(
+                    f'{len(college_skipped)} college event(s) skipped — no competitors entered: '
+                    f'<strong>{escape(names)}</strong>. '
+                    f'<a href="{escape(link)}" class="alert-link">Open college registration</a> '
+                    f'to add entries, then click Generate again.'
+                ),
+                'warning',
+            )
+
+    if failed_events:
+        flash(
+            f'Failed to generate heats for {len(failed_events)} event(s) — see errors above.',
+            'error',
+        )
+
+
+def _event_label(event: Event) -> str:
+    """Compact label for flash messages: ``"Underhand (M)"``."""
+    base = event.display_name if hasattr(event, 'display_name') else event.name
+    gender = (getattr(event, 'gender', None) or '').strip()
+    if gender and f'({gender})' not in base:
+        return f'{base} ({gender})'
+    return base
 
 
 def _build_pro_flights_if_possible(tournament: Tournament, build_pro_flights_fn, num_flights=None):

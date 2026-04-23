@@ -243,3 +243,127 @@ class TestEventListRouteRendersPanel:
         html = r.get_data(as_text=True)
         assert "Current Schedule" in html, "status panel missing from events.html"
         assert "No events configured yet" in html
+
+
+class TestWarningsCarrySubmitAction:
+    """Regression tests for the V2.14.x bug where the 'Generate pro heats'
+    button in the schedule status panel was a hyperlink to scheduling.event_list
+    — i.e. the page the operator was already on. Clicking it just reloaded
+    the page with no generation triggered, which the operator (correctly)
+    perceived as a broken button.
+
+    The fix: actionable warnings now carry a ``submit_action`` field that the
+    template uses to render a POST <form> button submitting that action to
+    scheduling.event_list. One click runs the operation it advertises.
+    """
+
+    def test_pro_missing_heats_carries_submit_action(self, app, tournament):
+        with app.app_context():
+            ev = Event(
+                tournament_id=tournament.id,
+                name="Springboard",
+                event_type="pro",
+                gender="M",
+                scoring_type="time",
+                stand_type="springboard",
+                is_open=False,
+            )
+            db.session.add(ev)
+            db.session.commit()
+        with app.test_request_context("/"):
+            s = build_schedule_status(tournament)
+        pro_warning = next(
+            (w for w in s["warnings"] if "pro event" in w["title"]), None
+        )
+        assert pro_warning is not None
+        assert pro_warning.get("submit_action") == "generate_all", (
+            "pro_missing warning must carry submit_action='generate_all' so the "
+            "warning button actually generates instead of reloading the page"
+        )
+
+    def test_college_missing_heats_carries_submit_action(self, app, tournament):
+        with app.app_context():
+            ev = Event(
+                tournament_id=tournament.id,
+                name="Underhand",
+                event_type="college",
+                gender="M",
+                scoring_type="time",
+                stand_type="underhand",
+                is_open=False,
+            )
+            db.session.add(ev)
+            db.session.commit()
+        with app.test_request_context("/"):
+            s = build_schedule_status(tournament)
+        college_warning = next(
+            (w for w in s["warnings"] if "college event" in w["title"]), None
+        )
+        assert college_warning is not None
+        assert college_warning.get("submit_action") == "generate_all"
+
+    def test_pro_heats_without_flights_carries_rebuild_action(self, app, tournament):
+        with app.app_context():
+            ev = Event(
+                tournament_id=tournament.id,
+                name="Springboard",
+                event_type="pro",
+                gender="M",
+                scoring_type="time",
+                stand_type="springboard",
+                is_open=False,
+            )
+            db.session.add(ev)
+            db.session.flush()
+            h = Heat(event_id=ev.id, heat_number=1, run_number=1, competitors="[]")
+            db.session.add(h)
+            db.session.commit()
+        with app.test_request_context("/"):
+            s = build_schedule_status(tournament)
+        flights_warning = next(
+            (w for w in s["warnings"] if "flights are not built" in w["title"]), None
+        )
+        assert flights_warning is not None
+        assert flights_warning.get("submit_action") == "rebuild_flights"
+
+    def test_template_renders_form_button_when_submit_action_set(self, app, client):
+        """The events.html template must render an actionable warning as a POST
+        form button (not a hyperlink) so clicking it triggers generation.
+        """
+        with app.app_context():
+            t = Tournament(name="Submit Action Render Test", year=2026, status="setup")
+            db.session.add(t)
+            db.session.flush()
+            ev = Event(
+                tournament_id=t.id,
+                name="Springboard",
+                event_type="pro",
+                gender="M",
+                scoring_type="time",
+                stand_type="springboard",
+                is_open=False,
+            )
+            db.session.add(ev)
+            db.session.commit()
+            tid = t.id
+
+            from models.user import User
+            u = User(username="submit_action_admin", role="admin")
+            u.set_password("testpass123")
+            db.session.add(u)
+            db.session.commit()
+            uid = u.id
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(uid)
+            sess["_fresh"] = True
+
+        r = client.get(f"/scheduling/{tid}/events")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        # The warning must render as a POST form with the action field set.
+        # A bare <a href> would mean the click bug is back.
+        assert 'name="action" value="generate_all"' in html, (
+            "actionable warning must render as a POST submit button so a single "
+            "click triggers generation"
+        )
