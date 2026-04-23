@@ -110,10 +110,27 @@ def _get_bracket_competitors(event: Event) -> list[str]:
         return [comp_lookup[cid].display_name for cid in all_ids if cid in comp_lookup]
 
 
+def _build_event_roster_lookup(event: Event) -> dict:
+    """Return id→competitor for every active competitor of the event's type
+    in this tournament. Used as the partner-render fallback so partner names
+    always carry their school tag even when the partner landed in a different
+    heat or was held back as unpaired."""
+    if event.event_type == "college":
+        rows = CollegeCompetitor.query.filter_by(
+            tournament_id=event.tournament_id, status="active",
+        ).all()
+    else:
+        rows = ProCompetitor.query.filter_by(
+            tournament_id=event.tournament_id, status="active",
+        ).all()
+    return {c.id: c for c in rows}
+
+
 def _serialize_heat_detail(tournament: Tournament, event: Event, heat: Heat) -> dict:
     assignments = heat.get_stand_assignments()
     comp_ids = heat.get_competitors()
     comp_lookup = _load_competitor_lookup(event, comp_ids)
+    roster_lookup = _build_event_roster_lookup(event) if event.is_partnered else None
     stand_type = event.stand_type
 
     competitors = [
@@ -124,7 +141,7 @@ def _serialize_heat_detail(tournament: Tournament, event: Event, heat: Heat) -> 
                 stand_type, assignments.get(str(row["primary_comp_id"]))
             ),
         }
-        for row in pair_competitors_for_heat(event, comp_ids, comp_lookup)
+        for row in pair_competitors_for_heat(event, comp_ids, comp_lookup, roster_lookup)
     ]
     return {
         "heat_id": heat.id,
@@ -196,8 +213,9 @@ def heat_sheets(tournament_id):
                     if comp_ids
                     else {}
                 )
+            roster_lookup = _build_event_roster_lookup(event) if event.is_partnered else None
             competitors_out = []
-            for row in pair_competitors_for_heat(event, comp_ids, comps):
+            for row in pair_competitors_for_heat(event, comp_ids, comps, roster_lookup):
                 cid = row["primary_comp_id"]
                 name = row["name"] if row["competitor"] else f"ID:{cid}"
                 competitors_out.append({
@@ -300,8 +318,9 @@ def heat_sheets(tournament_id):
                     if comp_ids
                     else {}
                 )
+            roster_lookup = _build_event_roster_lookup(event) if event.is_partnered else None
             competitors_out = []
-            for row in pair_competitors_for_heat(event, comp_ids, comps):
+            for row in pair_competitors_for_heat(event, comp_ids, comps, roster_lookup):
                 cid = row["primary_comp_id"]
                 name = row["name"] if row["competitor"] else f"ID:{cid}"
                 competitors_out.append({
@@ -381,7 +400,11 @@ def day_schedule_print(tournament_id):
 
     tournament = Tournament.query.get_or_404(tournament_id)
     session_key = f"schedule_options_{tournament_id}"
-    saved = session.get(session_key, {})
+    # DB-first read: Friday Showcase page + Run Show page both persist these
+    # keys to schedule_config. Reading session-only meant a printout from a
+    # fresh browser session silently omitted FNF events and Saturday spillover
+    # events — operators handed judges a schedule that didn't match the DB.
+    saved = tournament.get_schedule_config() or session.get(session_key, {})
     friday_pro_event_ids = [int(eid) for eid in saved.get("friday_pro_event_ids", [])]
     saturday_college_event_ids = [
         int(eid) for eid in saved.get("saturday_college_event_ids", [])

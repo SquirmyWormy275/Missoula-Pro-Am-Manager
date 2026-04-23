@@ -21,6 +21,11 @@ def one_click_generate(tournament_id):
 
     This is the button users reach for when they have competitors registered and
     Friday/Saturday configuration done and just want the show schedule built.
+
+    Honours the operator's persisted flight-sizing config (Tournament.schedule_config)
+    so num_flights chosen on /flights/build or the Run Show form is NOT overridden by
+    the builder's 8-heats-per-flight default. Without this, ~615 pro heats produced 77
+    flights regardless of what the operator picked.
     """
     from services.flight_builder import (
         build_pro_flights,
@@ -34,10 +39,13 @@ def one_click_generate(tournament_id):
 
     db_config = tournament.get_schedule_config() or {}
     saturday_college_event_ids = [int(i) for i in db_config.get('saturday_college_event_ids', [])]
+    num_flights_override = _resolve_num_flights_from_persisted_config(tournament)
 
     try:
         _generate_all_heats(tournament, generate_event_heats)
-        flights_built = _build_pro_flights_if_possible(tournament, build_pro_flights)
+        flights_built = _build_pro_flights_if_possible(
+            tournament, build_pro_flights, num_flights=num_flights_override,
+        )
         if flights_built is not None:
             flash(f'Built {flights_built} pro flight(s).', 'success')
             # Phase 4: Relay BEFORE spillover so Chokerman Run 2 still closes.
@@ -206,6 +214,35 @@ def _compute_num_flights_from_duration(total_heats, minutes_per_heat, target_min
     ideal = _math.ceil((total_heats * minutes_per_heat) / target_minutes_per_flight)
     clamped_value = max(FLIGHT_COUNT_MIN, min(FLIGHT_COUNT_MAX, ideal))
     return clamped_value, clamped_value != ideal
+
+
+def _resolve_num_flights_from_persisted_config(tournament) -> int | None:
+    """Return num_flights from saved schedule_config, honouring the saved mode.
+
+    Mirrors the resolver used by /flights/build POST and the Run Show form, but
+    reads from persisted Tournament.schedule_config instead of request.form. Used
+    by buttons (one-click generate) that don't host the sizing form themselves —
+    without this, the builder's 8-heats-per-flight default produces a flight per
+    8 heats no matter what the operator chose.
+
+    Returns None when there are no pro heats yet or when the saved config can't
+    be resolved, letting the builder fall back to its own default.
+    """
+    sizing = _read_flight_sizing_config(tournament)
+    if sizing['mode'] == FLIGHT_SIZING_MODE_MINUTES:
+        pro_heats = Heat.query.join(Event).filter(
+            Event.tournament_id == tournament.id,
+            Event.event_type == 'pro',
+            Event.name != 'Partnered Axe Throw',
+            Heat.run_number == 1,
+        ).count()
+        if pro_heats <= 0:
+            return None
+        computed, _ = _compute_num_flights_from_duration(
+            pro_heats, sizing['minutes_per_heat'], sizing['target_minutes_per_flight'],
+        )
+        return computed if computed >= 1 else None
+    return sizing['num_flights'] if sizing['num_flights'] >= 1 else None
 
 
 @scheduling_bp.route('/<int:tournament_id>/flights/build', methods=['GET', 'POST'])

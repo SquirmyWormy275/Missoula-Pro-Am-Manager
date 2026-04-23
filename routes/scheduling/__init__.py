@@ -230,16 +230,23 @@ def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
     """
     from flask import flash
     from markupsafe import Markup, escape
+
+    from services.heat_generator import get_last_unpaired_partnered
+
     events = tournament.events.order_by(Event.event_type, Event.name, Event.gender).all()
     generated = 0
     skipped_events: list[tuple[Event, str]] = []
     failed_events: list[tuple[Event, str]] = []
+    unpaired_by_event: list[tuple[Event, list[dict]]] = []
 
     for event in events:
         try:
             with db.session.begin_nested():   # savepoint per event — rollback on failure
                 generate_event_heats_fn(event)
             generated += 1
+            unpaired = get_last_unpaired_partnered(event.id)
+            if unpaired:
+                unpaired_by_event.append((event, unpaired))
         except Exception as exc:
             # begin_nested().__exit__ rolls back to the savepoint on exception.
             msg = str(exc)
@@ -253,6 +260,35 @@ def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
                 )
 
     flash(f'Heats generated for {generated} event(s).', 'success')
+
+    # Surface partnered-event entrants that were held back across the bulk run.
+    # One aggregated flash with a Preflight link beats N per-event flashes that
+    # bury the actionable list at the bottom of the screen.
+    if unpaired_by_event:
+        from flask import url_for
+        total = sum(len(rows) for _, rows in unpaired_by_event)
+        per_event_blurbs = []
+        for ev, rows in unpaired_by_event:
+            names = ', '.join(
+                f"{r['comp_name']}{(' → \"' + r['partner_name'] + '\"') if r['partner_name'] else ''}"
+                for r in rows[:3]
+            )
+            extra = f' (+{len(rows) - 3} more)' if len(rows) > 3 else ''
+            per_event_blurbs.append(
+                f'<strong>{escape(_event_label(ev))}</strong>: {escape(names)}{extra}'
+            )
+        link = url_for('scheduling.preflight_check', tournament_id=tournament.id)
+        flash(
+            Markup(
+                f'HELD BACK: {total} partnered-event entrant(s) across '
+                f'{len(unpaired_by_event)} event(s) have unresolved partners and '
+                f'were NOT placed in heats — '
+                + '; '.join(per_event_blurbs)
+                + f'. <a href="{escape(link)}" class="alert-link">Open Preflight Check</a> '
+                'to resolve, then click Generate again.'
+            ),
+            'warning',
+        )
 
     if skipped_events:
         # Build clickable per-division summary so operators can jump straight

@@ -27,7 +27,12 @@ def preflight_check(tournament_id):
     from services.preflight import build_preflight_report
 
     session_key = f'schedule_options_{tournament_id}'
-    saved = session.get(session_key, {})
+    # DB-first read: Friday Showcase page persists to schedule_config; session
+    # may be empty in a fresh browser session. Without the DB fallback the
+    # autofix POST runs with saturday_ids=[] and orphans Chokerman Run 2 +
+    # every selected spillover event with flight_id=NULL. Mirrors the JSON
+    # endpoint a few lines below that already reads DB-first.
+    saved = tournament.get_schedule_config() or session.get(session_key, {})
     saturday_ids = [int(eid) for eid in saved.get('saturday_college_event_ids', [])]
 
     if request.method == 'POST':

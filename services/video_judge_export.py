@@ -130,10 +130,17 @@ def _team_code(event: Event, comp) -> str | None:
     return team.team_code if team else None
 
 
-def _rows_for_heat(event: Event, heat: Heat, comp_lookup: dict) -> list[dict]:
-    """Build row dicts for one heat. Each row becomes one Excel line per run."""
+def _rows_for_heat(event: Event, heat: Heat, comp_lookup: dict,
+                   roster_lookup: dict | None = None) -> list[dict]:
+    """Build row dicts for one heat. Each row becomes one Excel line per run.
+
+    ``roster_lookup`` is forwarded to ``pair_competitors_for_heat`` so a
+    partner that isn't in this heat's ``comp_lookup`` (because the pair was
+    split across heats or held back as unpaired) still renders with their
+    school tag instead of the bare partner string from the form.
+    """
     assignments = heat.get_stand_assignments()
-    pairs = pair_competitors_for_heat(event, heat.get_competitors(), comp_lookup)
+    pairs = pair_competitors_for_heat(event, heat.get_competitors(), comp_lookup, roster_lookup)
 
     out: list[dict] = []
     for pair in pairs:
@@ -209,10 +216,23 @@ def build_video_judge_rows(tournament: Tournament) -> "OrderedDict[str, dict]":
             all_comp_ids.extend(heat.get_competitors())
         comp_lookup = _load_competitor_lookup(event, all_comp_ids)
 
+        # For partnered events, also load every active competitor of this
+        # type as a fallback so the partner-render gets school tags even when
+        # the partner landed in a different heat / was held back.
+        roster_lookup = None
+        if event.is_partnered:
+            model = CollegeCompetitor if event.event_type == "college" else ProCompetitor
+            roster_lookup = {
+                c.id: c
+                for c in model.query.filter_by(
+                    tournament_id=event.tournament_id, status="active",
+                ).all()
+            }
+
         for heat in heats:
             sheet_title = _sheet_key_for_heat(event, heat)
             entry = sheets.setdefault(sheet_title, {"event": event, "rows": []})
-            entry["rows"].extend(_rows_for_heat(event, heat, comp_lookup))
+            entry["rows"].extend(_rows_for_heat(event, heat, comp_lookup, roster_lookup))
 
     # Stable sort per sheet.  Row order: heat_number, run_number, stand, name.
     for entry in sheets.values():
