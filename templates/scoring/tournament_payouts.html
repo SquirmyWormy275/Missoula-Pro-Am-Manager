@@ -327,7 +327,7 @@
                 <div class="mt-1 tpl-breakdown" id="tpl-breakdown-{{ tpl.id }}" style="display:none;">
                   <table class="table table-sm table-borderless mb-0" style="font-size:.72rem;">
                     <tbody>
-                      {% for pos, amt in tpl.get_payouts().items()|sort(attribute='0', key=int) %}
+                      {% for pos, amt in tpl.sorted_payouts() %}
                       <tr>
                         <td class="py-0 ps-0" style="width:36px; color:var(--sx-text-3);">
                           {% if pos == '1' %}1st
