@@ -53,8 +53,23 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
 
 
 def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
-    """Generate heats for every event, then build pro flights when possible."""
-    from services.flight_builder import build_pro_flights
+    """Generate heats for every event, then build pro flights when possible.
+
+    Matches the synchronous Run Show "Generate All Heats + Build Flights"
+    pipeline: generate heats → build flights → place Pro-Am Relay pseudo-heat
+    in the final flight → integrate Saturday college spillover (Chokerman Run 2
+    etc.). Without the last two steps the async generate path would produce an
+    incomplete schedule — relay unassigned, Chokerman Run 2 with flight_id=NULL.
+
+    Flight build + relay + spillover run with commit=False and commit once at
+    the end so the chain is atomic. Mirrors ``_build_flights_async`` in
+    ``routes/scheduling/flights.py``.
+    """
+    from services.flight_builder import (
+        build_pro_flights,
+        integrate_college_spillover_into_flights,
+        integrate_proam_relay_into_final_flight,
+    )
     from services.heat_generator import generate_event_heats
 
     tournament = db.session.get(Tournament, tournament_id)
@@ -82,11 +97,44 @@ def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
         for heat in event.heats.all()
         if heat.run_number == 1
     )
-    flights = build_pro_flights(tournament) if pro_heats else None
+    flights = None
+    relay_placed = False
+    spillover_integrated = 0
+    if pro_heats:
+        from routes.scheduling.flights import _resolve_num_flights_from_persisted_config
+        num_flights = _resolve_num_flights_from_persisted_config(tournament)
+        saturday_college_event_ids = [
+            int(i) for i in
+            (tournament.get_schedule_config() or {}).get('saturday_college_event_ids', [])
+        ]
+        try:
+            flights = build_pro_flights(
+                tournament, num_flights=num_flights, commit=False,
+            )
+            # Relay BEFORE spillover so Chokerman Run 2 lands AFTER the relay
+            # (FlightLogic.md §4.1 show-climax rule).
+            relay_result = integrate_proam_relay_into_final_flight(
+                tournament, commit=False,
+            )
+            relay_placed = bool(relay_result.get('placed'))
+            integration = integrate_college_spillover_into_flights(
+                tournament,
+                college_event_ids=saturday_college_event_ids,
+                commit=False,
+            )
+            spillover_integrated = integration.get('integrated_heats', 0)
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            errors.append(f'flight build chain failed: {exc}')
+            flights = None
+
     return {
         'ok': True,
         'generated': generated,
         'skipped': skipped,
         'errors': errors,
         'flights': flights,
+        'relay_placed': relay_placed,
+        'spillover_integrated': spillover_integrated,
     }

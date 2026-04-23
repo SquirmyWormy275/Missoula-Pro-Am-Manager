@@ -109,6 +109,67 @@
                                    class="btn btn-outline-secondary btn-sm mt-1">
                                     <i class="bi bi-tools"></i> Open Gear Sharing Manager
                                 </a>
+                                {% elif issue.code == 'unresolved_partner_name' and issue.unresolved %}
+                                <details class="mt-2">
+                                    <summary class="text-warning fw-semibold" style="cursor:pointer;">
+                                        Show {{ issue.unresolved|length }} held-back competitor(s)
+                                    </summary>
+                                    <table class="table table-sm mt-2 mb-0" style="font-size:0.85rem;">
+                                        <thead>
+                                            <tr>
+                                                <th>Competitor</th>
+                                                <th>Event</th>
+                                                <th>Listed partner (unmatched)</th>
+                                                <th>Fix</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for u in issue.unresolved %}
+                                            <tr>
+                                                <td>{{ u.competitor_name }}</td>
+                                                <td>{{ u.event_name }}</td>
+                                                <td><code>"{{ u.partner_name }}"</code></td>
+                                                <td>
+                                                    {% if u.competitor_id %}
+                                                    <span class="text-muted small">Edit competitor's partner field on the registration page.</span>
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </details>
+                                {% elif issue.code == 'non_reciprocal_partnership' and issue.non_reciprocal %}
+                                <details class="mt-2">
+                                    <summary class="text-warning fw-semibold" style="cursor:pointer;">
+                                        Show {{ issue.non_reciprocal|length }} non-reciprocal pair(s)
+                                    </summary>
+                                    <table class="table table-sm mt-2 mb-0" style="font-size:0.85rem;">
+                                        <thead>
+                                            <tr>
+                                                <th>Competitor says</th>
+                                                <th>Their partner says</th>
+                                                <th>Event</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for n in issue.non_reciprocal %}
+                                            <tr>
+                                                <td>{{ n.competitor_name }} → <strong>{{ n.matched_partner_name }}</strong></td>
+                                                <td>
+                                                    {{ n.matched_partner_name }} →
+                                                    {% if n.partner_says %}
+                                                    <strong>{{ n.partner_says }}</strong>
+                                                    {% else %}
+                                                    <em class="text-danger">(none — blank partner field)</em>
+                                                    {% endif %}
+                                                </td>
+                                                <td>{{ n.event_name }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </details>
                                 {% endif %}
                             </td>
                             <td>

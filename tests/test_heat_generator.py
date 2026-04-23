@@ -315,11 +315,30 @@ class TestBuildPartnerUnits:
         ids_in_pair = {c['id'] for c in pair_units[0]}
         assert ids_in_pair == {1, 2}
 
-    def test_partnered_unmatched_competitor_is_single(self):
+    def test_partnered_unmatched_competitor_held_back_by_default(self):
+        """Behaviour change 2026-04-23: unmatched competitors in a partnered
+        event are HELD BACK (not placed solo on a stand). A solo placement in
+        a partnered event is wrong by definition — the event needs a pair.
+        Was ``test_partnered_unmatched_competitor_is_single`` before the fix.
+        """
+        ev = _event(is_partnered=True)
+        alice = _comp(id=1, name='Alice', partner_name='Bob')  # Bob not in pool
+        charlie = _comp(id=3, name='Charlie', partner_name='')  # blank
+        unpaired_log: list = []
+        units = _build_partner_units([alice, charlie], ev, unpaired_log=unpaired_log)
+        assert units == []
+        assert {entry['comp_id'] for entry in unpaired_log} == {1, 3}
+        reasons = {entry['comp_id']: entry['reason'] for entry in unpaired_log}
+        assert reasons[1] == 'unresolved'
+        assert reasons[3] == 'blank'
+
+    def test_partnered_unmatched_legacy_solo_placement_opt_in(self):
+        """Legacy mode: skip_unpaired=False reproduces the pre-fix behaviour
+        (solo placement) for any caller that needs it."""
         ev = _event(is_partnered=True)
         alice = _comp(id=1, name='Alice', partner_name='Bob')
         charlie = _comp(id=3, name='Charlie', partner_name='')
-        units = _build_partner_units([alice, charlie], ev)
+        units = _build_partner_units([alice, charlie], ev, skip_unpaired=False)
         assert len(units) == 2
         assert all(len(u) == 1 for u in units)
 

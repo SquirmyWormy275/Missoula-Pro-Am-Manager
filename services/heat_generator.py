@@ -27,6 +27,15 @@ _last_gear_violations: dict[int, list[dict]] = {}
 # (reconfigure field sizes vs. rebuild gear pairs).
 _last_lh_overflow_warnings: dict[int, list[dict]] = {}
 
+# Per-event unpaired-partnered-competitor log, populated by
+# _build_partner_units() when a partnered-event entrant cannot be paired
+# (partner_name blank, unresolved against the event pool, or self-reference).
+# When skip_unpaired=True (default) these competitors are HELD BACK from heat
+# generation rather than placed solo on a stand. Routes call
+# get_last_unpaired_partnered() after generate_event_heats() to surface a
+# warning flash + Preflight resolution prompt.
+_last_unpaired_partnered: dict[int, list[dict]] = {}
+
 
 def get_last_gear_violations(event_id: int) -> list[dict]:
     """Return the gear-sharing violations recorded by the most recent
@@ -40,6 +49,15 @@ def get_last_lh_overflow_warnings(event_id: int) -> list[dict]:
     empty list.  Each entry is a dict with keys type, heat_index,
     overflow_count, overflow_names."""
     return list(_last_lh_overflow_warnings.get(event_id, []))
+
+
+def get_last_unpaired_partnered(event_id: int) -> list[dict]:
+    """Return the unpaired-partnered-competitor list recorded by the most
+    recent generate_event_heats(event) call for this event_id, or an empty
+    list. Each entry is a dict with keys: comp_id, comp_name, partner_name
+    (raw string from partners JSON, possibly empty), reason ('blank' |
+    'unresolved' | 'self_reference')."""
+    return list(_last_unpaired_partnered.get(event_id, []))
 
 
 def _sort_by_ability(competitors: list, event: Event) -> list:
@@ -152,6 +170,13 @@ def generate_event_heats(event: Event) -> int:
     lh_warnings: list[dict] = []
     _last_lh_overflow_warnings.pop(event.id, None)
 
+    # Per-event unpaired-partnered-competitor list. Populated when a partnered
+    # event entrant has a blank, unresolved, or self-referential partner_name.
+    # Held-back competitors are excluded from heats so a partnered event never
+    # has a solo person on a stand. Surfaced via flash + Preflight.
+    unpaired_log: list[dict] = []
+    _last_unpaired_partnered.pop(event.id, None)
+
     # Apply special constraints
     if event.stand_type == 'springboard':
         heats = _generate_springboard_heats(competitors, num_heats, max_per_heat, stand_config, event=event,
@@ -159,18 +184,24 @@ def generate_event_heats(event: Event) -> int:
                                             lh_warnings=lh_warnings)
     elif event.stand_type in ['saw_hand']:
         heats = _generate_saw_heats(competitors, num_heats, max_per_heat, stand_config, event=event,
-                                    gear_violations=gear_violations)
+                                    gear_violations=gear_violations,
+                                    unpaired_log=unpaired_log)
     else:
         heats = _generate_standard_heats(competitors, num_heats, max_per_heat, event=event,
-                                         gear_violations=gear_violations)
+                                         gear_violations=gear_violations,
+                                         unpaired_log=unpaired_log)
 
     # Use actual heat count returned by the generator (saw events recalculate internally).
     actual_heat_count = len(heats)
 
-    # Validate: every competitor must appear in exactly one heat.
+    # Validate: every competitor must appear in exactly one heat — UNLESS they
+    # were intentionally held back as an unpaired partnered-event entrant.
+    # Held-back IDs are tracked in unpaired_log so the warning below only fires
+    # for genuine snake-draft / gear-conflict misplacements.
     placed_ids = {c['id'] for heat_comps in heats for c in heat_comps}
+    held_back_ids = {entry['comp_id'] for entry in unpaired_log}
     expected_ids = {c['id'] for c in competitors}
-    missing = expected_ids - placed_ids
+    missing = (expected_ids - placed_ids) - held_back_ids
     if missing:
         logger.warning(
             'heat_generator: %d competitor(s) not placed in any heat for event %r: %s',
@@ -335,6 +366,21 @@ def generate_event_heats(event: Event) -> int:
             )
         _last_lh_overflow_warnings[event.id] = resolved_lh
 
+    # Promote unpaired-partnered competitors so the route can flash + Preflight
+    # can offer a resolution UI. These competitors were intentionally HELD BACK
+    # from heat generation rather than placed solo on a stand. Each entry has:
+    # comp_id, comp_name, partner_name (raw), reason ('blank'|'unresolved'|
+    # 'self_reference').
+    if unpaired_log:
+        _last_unpaired_partnered[event.id] = list(unpaired_log)
+        for u in unpaired_log:
+            logger.warning(
+                'UNPAIRED PARTNERED ENTRANT: %s (event=%r, partner=%r, reason=%s) '
+                '— held back from heats, resolve in Preflight',
+                u.get('comp_name', ''), event.display_name,
+                u.get('partner_name', ''), u.get('reason', ''),
+            )
+
     # Flush but do NOT commit — the calling route owns the transaction boundary and
     # will commit (or roll back) after all scheduling actions are complete.  This
     # prevents partial state if a later step in the same request fails.
@@ -464,7 +510,8 @@ def _remap_violation_heat_indices(violations: list | None, old_to_new: dict[int,
 
 
 def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: int, event: Event = None,
-                              gear_violations: list | None = None) -> list:
+                              gear_violations: list | None = None,
+                              unpaired_log: list | None = None) -> list:
     """
     Generate heats using snake draft distribution.
 
@@ -473,9 +520,13 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
     For partnered events, each unit (a pair) occupies ONE stand. `max_per_heat`
     therefore counts STANDS, not individual competitors, and num_heats is
     recomputed from unit count so we don't over-allocate empty heats.
+
+    Partnered-event entrants whose partner cannot be resolved are HELD BACK
+    (not placed solo) and recorded in ``unpaired_log`` for the route to
+    surface. See ``_build_partner_units`` for the matching ladder.
     """
     competitors = _sort_by_ability(competitors, event)
-    units = _build_partner_units(competitors, event)
+    units = _build_partner_units(competitors, event, unpaired_log=unpaired_log)
     # Re-sort partner units by composite rank so paired competitors enter the
     # snake draft in the right ability order (#22).
     units = _sort_units_by_ability(units, event)
@@ -550,41 +601,27 @@ def _first_token(value: str) -> str:
 def _find_partner(partner_name: str, pool: list, self_comp: dict) -> dict | None:
     """Best-effort partner match against a pool of competitors.
 
-    1. Exact full-name (normalized) match.
-    2. First-name fuzzy match, but only if exactly ONE pool competitor shares
-       that first name (ambiguous first names do NOT pair — avoids wrong pairs).
+    Three-tier ladder via services.name_match.find_partner_match:
+      1. Exact full-name (normalized) match.
+      2. First-token (first-name) match — one match only.
+      3. Levenshtein ≤ 2 fuzzy match — one match only.
+
+    Tier 3 catches form-typed misspellings like "McKinlay" → "McKinley" that
+    used to silently land a competitor solo on a stand. The one-match-only
+    rule on tiers 2 and 3 prevents picking the wrong person when the pool
+    has several similar names.
 
     `self_comp` is excluded from the match pool. Returns the matched competitor
     dict or None.
     """
-    if not partner_name:
-        return None
-    norm_partner = _norm_name(partner_name)
-    if not norm_partner:
-        return None
-    self_id = self_comp.get('id')
+    from services.name_match import find_partner_match
 
-    def _key(c):
-        return _norm_name(c.get('base_name') or c.get('name'))
-
-    # Exact match first.
-    for c in pool:
-        if c.get('id') == self_id:
-            continue
-        if _key(c) == norm_partner:
-            return c
-
-    # First-name fallback. Partner string is often "TOBY" or "Greer" — match to
-    # exactly one competitor whose first name matches, else give up (ambiguous).
-    partner_first = _first_token(partner_name)
-    if not partner_first:
-        return None
-    first_matches = [c for c in pool
-                     if c.get('id') != self_id
-                     and _first_token(c.get('base_name') or c.get('name')) == partner_first]
-    if len(first_matches) == 1:
-        return first_matches[0]
-    return None
+    return find_partner_match(
+        partner_name,
+        pool,
+        name_getter=lambda c: c.get('base_name') or c.get('name'),
+        exclude_key=self_comp.get('id') if isinstance(self_comp, dict) else None,
+    )
 
 
 def _rebuild_pair_units(heat_competitors: list, event: Event) -> list:
@@ -615,28 +652,73 @@ def _rebuild_pair_units(heat_competitors: list, event: Event) -> list:
     return units
 
 
-def _build_partner_units(competitors: list, event: Event) -> list:
+def _build_partner_units(
+    competitors: list,
+    event: Event,
+    *,
+    skip_unpaired: bool = True,
+    unpaired_log: list | None = None,
+) -> list:
     """Build assignment units; partnered events keep recognized pairs together.
 
-    Uses `_find_partner` so nicknames and first-name-only partner strings pair
-    correctly when unambiguous within the event pool.
+    Uses `_find_partner` (which goes through the shared ``services.name_match``
+    ladder including Levenshtein ≤ 2 fuzzy matching) so nicknames, first-name-
+    only partner strings, AND minor typos pair correctly when unambiguous.
+
+    Partnered-event behaviour change (2026-04-23): when ``skip_unpaired`` is
+    True (default), competitors whose partner cannot be resolved are HELD BACK
+    rather than placed solo on a stand. Solo placement of a partnered-event
+    competitor is wrong by definition — the event needs a pair to function.
+    Each held-back entry is appended to ``unpaired_log`` (when supplied) so
+    the route can surface them to the operator and Preflight can offer a
+    resolution UI before the next generate run.
+
+    When ``skip_unpaired`` is False (legacy behaviour), unpaired competitors
+    fall through to a solo unit and the snake-draft places them on their own
+    stand. The legacy path is preserved so callers that need it (e.g. unit
+    tests asserting old shape) can opt in explicitly.
     """
     if not event or not event.is_partnered:
         return [[c] for c in competitors]
 
     used = set()
     units = []
+    self_norm_lookup = {c['id']: _norm_name(c.get('base_name') or c.get('name'))
+                        for c in competitors}
 
     for comp in competitors:
         comp_id = comp['id']
         if comp_id in used:
             continue
 
-        partner = _find_partner(comp.get('partner_name'), competitors, comp)
-        if partner and partner['id'] not in used:
+        raw_partner_name = (comp.get('partner_name') or '').strip()
+        partner = _find_partner(raw_partner_name, competitors, comp)
+        if partner and partner['id'] not in used and partner['id'] != comp_id:
             units.append([comp, partner])
             used.add(comp_id)
             used.add(partner['id'])
+            continue
+
+        # No resolvable partner — classify the failure for the operator log.
+        partner_norm = _norm_name(raw_partner_name)
+        if not raw_partner_name:
+            reason = 'blank'
+        elif partner_norm and partner_norm == self_norm_lookup.get(comp_id, ''):
+            reason = 'self_reference'
+        else:
+            reason = 'unresolved'
+
+        if unpaired_log is not None:
+            unpaired_log.append({
+                'comp_id': comp_id,
+                'comp_name': comp.get('name') or comp.get('base_name') or '',
+                'partner_name': raw_partner_name,
+                'reason': reason,
+            })
+
+        if skip_unpaired:
+            # Hold back from heat generation — operator resolves in Preflight.
+            used.add(comp_id)
             continue
 
         units.append([comp])
@@ -881,18 +963,24 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
 
 def _generate_saw_heats(competitors: list, num_heats: int,
                         max_per_heat: int, stand_config: dict, event: Event = None,
-                        gear_violations: list | None = None) -> list:
+                        gear_violations: list | None = None,
+                        unpaired_log: list | None = None) -> list:
     """
     Generate saw heats respecting stand group constraints.
 
     Saw stands are in groups of 4. One group runs while the other sets up.
+
+    For partnered saw events (Jack & Jill, Double Buck) the unpaired_log
+    captures any entrant whose partner cannot be resolved so the operator
+    can fix it in Preflight before regenerating.
     """
     # Standard snake draft, but limit to 4 per heat for saw events
     actual_max = min(max_per_heat, 4)  # Saw groups are 4 each
     num_heats = math.ceil(len(competitors) / actual_max)
 
     return _generate_standard_heats(competitors, num_heats, actual_max, event=event,
-                                    gear_violations=gear_violations)
+                                    gear_violations=gear_violations,
+                                    unpaired_log=unpaired_log)
 
 
 def _advance_snake_index(heat_idx: int, direction: int, num_heats: int):

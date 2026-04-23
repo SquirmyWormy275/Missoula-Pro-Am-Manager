@@ -620,3 +620,85 @@ class TestFNFPerEventStandOverride:
             assert len(heats) >= 3
             for h in heats:
                 assert len(h.get_competitors()) <= 3
+
+
+# ---------------------------------------------------------------------------
+# one-click MUST honour the persisted num_flights config
+# ---------------------------------------------------------------------------
+
+class TestOneClickHonorsPersistedFlightCount:
+    """When the operator has saved num_flights via /flights/build (or the Run
+    Show form), one_click_generate must NOT fall back to the builder's default
+    8-heats-per-flight. Without this guard, ~615 pro heats produces 77 flights
+    no matter what the operator picked. Also covers the persisted-config helper
+    used by services.schedule_generation.
+    """
+
+    def test_route_uses_persisted_num_flights_count_mode(self, app, auth_client):
+        from models import Flight
+
+        with app.app_context():
+            data = _seed_two_event_show(_db.session)
+            t = data["tournament"]
+            t.set_schedule_config({
+                "flight_sizing_mode": "count",
+                "num_flights": 3,
+                "target_minutes_per_flight": 60,
+                "minutes_per_heat": 5.5,
+                "friday_pro_event_ids": [],
+            })
+            _db.session.commit()
+            tid = t.id
+
+        resp = auth_client.post(
+            f"/scheduling/{tid}/flights/one-click-generate",
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+
+        with app.app_context():
+            flights = Flight.query.filter_by(tournament_id=tid).all()
+            # 6 total heats / 3 requested flights = 2 heats each, no clamp.
+            # Without the fix, default heats_per_flight=8 would yield 1 flight.
+            assert len(flights) == 3, (
+                f"one-click ignored persisted num_flights=3; got {len(flights)} flights"
+            )
+
+    def test_resolver_returns_persisted_count(self, db_session):
+        from routes.scheduling.flights import _resolve_num_flights_from_persisted_config
+
+        data = _seed_two_event_show(db_session)
+        t = data["tournament"]
+        t.set_schedule_config({
+            "flight_sizing_mode": "count",
+            "num_flights": 4,
+            "target_minutes_per_flight": 60,
+            "minutes_per_heat": 5.5,
+        })
+        db_session.flush()
+
+        assert _resolve_num_flights_from_persisted_config(t) == 4
+
+    def test_resolver_minutes_mode_caps_at_max(self, db_session):
+        """Minutes mode must not produce ridiculous flight counts even with absurd
+        target/heat ratios — the CAP at FLIGHT_COUNT_MAX (10) is the second-line
+        defense behind the persisted-num_flights override."""
+        from routes.scheduling.flights import (
+            FLIGHT_COUNT_MAX,
+            _resolve_num_flights_from_persisted_config,
+        )
+
+        data = _seed_two_event_show(db_session)
+        t = data["tournament"]
+        # 6 heats in fixture; force a calc that would exceed cap.
+        t.set_schedule_config({
+            "flight_sizing_mode": "minutes",
+            "target_minutes_per_flight": 30,
+            "minutes_per_heat": 15.0,  # 6 heats * 15 / 30 = 3 flights — fine
+            "num_flights": 4,
+        })
+        db_session.flush()
+
+        result = _resolve_num_flights_from_persisted_config(t)
+        assert result is not None
+        assert result <= FLIGHT_COUNT_MAX

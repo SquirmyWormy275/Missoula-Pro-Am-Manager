@@ -41,8 +41,14 @@ def lookup_partner_cid(
 ) -> int | None:
     """Find a competitor id in `comps` whose name matches `partner_str`.
 
-    Full normalized-name match first; first-name fallback if exactly one comp
-    matches by first token.  Returns None on ambiguous or no match.
+    Three-tier ladder via services.name_match.find_partner_match:
+      1. Exact normalized-name match.
+      2. First-token (first-name) match — one match only.
+      3. Levenshtein ≤ 2 fuzzy match — one match only.
+
+    Tier 3 catches typos like "McKinlay" → "McKinley" so the heat-sheet
+    render can still pair-render even when the form had a misspelling.
+    Returns None on ambiguous or no match.
 
     Args:
         partner_str: Partner name as written on the form (possibly nickname
@@ -52,30 +58,23 @@ def lookup_partner_cid(
         self_cid: Competitor id to exclude from the search (so a pair doesn't
             match to itself).
     """
-    if not partner_str:
-        return None
-    norm_full = _norm_alphanum(partner_str)
-    if not norm_full:
+    from services.name_match import find_partner_match
+
+    if not partner_str or not comps:
         return None
 
-    # Full match
-    for cid, c in comps.items():
-        if cid == self_cid:
-            continue
-        if _norm_alphanum(getattr(c, "name", "")) == norm_full:
-            return cid
+    # Pre-filter out self so name_match doesn't have to introspect tuple
+    # entries. Yields a list of (cid, comp) the matcher walks via its
+    # name_getter callable; matched entry is returned, we extract cid.
+    pool_items = [(cid, c) for cid, c in comps.items() if cid != self_cid]
 
-    # First-name fallback — one-match only
-    partner_first = _first_token_alphanum(partner_str)
-    if not partner_first:
-        return None
-    matches = [
-        cid
-        for cid, c in comps.items()
-        if cid != self_cid
-        and _first_token_alphanum(getattr(c, "name", "")) == partner_first
-    ]
-    return matches[0] if len(matches) == 1 else None
+    matched = find_partner_match(
+        partner_str,
+        pool_items,
+        name_getter=lambda item: getattr(item[1], "name", ""),
+        exclude_key=None,
+    )
+    return matched[0] if matched is not None else None
 
 
 def _resolve_partner_name_local(competitor, event: Event) -> str:
@@ -107,6 +106,7 @@ def pair_competitors_for_heat(
     event: Event,
     comp_ids: list,
     comp_lookup: dict,
+    roster_lookup: dict | None = None,
 ) -> list[dict]:
     """Collapse a heat's competitor id list into one row per competitor/pair.
 
@@ -121,19 +121,35 @@ def pair_competitors_for_heat(
     display_name is used in preference to the raw form string so nicknames
     like "TOBY" render as "Toby Bartsch".
 
+    Tournament-roster fallback (2026-04-23): when ``roster_lookup`` is
+    supplied AND the partner can't be resolved against the heat's
+    ``comp_lookup`` (because partner-resolution failed at heat-gen and the
+    partner wound up in a different heat OR was held back), the matcher
+    re-tries against the broader roster so the rendered string at least
+    carries the partner's school tag (e.g. ``"Jordan Navas (UM-A) & McKinley
+    Smith (UM-B)"``) instead of the bare partner string from the form
+    (e.g. ``"Jordan Navas (UM-A) & McKinley"``). The ``partner_comp_id``
+    field still reports the in-heat resolution; the broader-lookup label only
+    affects display.
+
     Args:
         event: Event this heat belongs to (needs .id, .name, .display_name,
             .is_partnered).
         comp_ids: Ordered list of competitor IDs on the heat.
         comp_lookup: Dict competitor_id -> ORM object (must expose .name and
             .display_name and .get_partners()).
+        roster_lookup: Optional dict competitor_id -> ORM object covering the
+            full tournament roster (or at least every competitor enrolled in
+            this event). When supplied, used as a fallback display source
+            when the heat-local lookup fails. None preserves legacy raw-string
+            fallback.
 
     Returns:
         List of dicts, one per unique pair/competitor:
             {
               'primary_comp_id': int,        # first id in the pair as listed
-              'partner_comp_id': int | None, # matched partner id, or None
-              'name': str,                   # "Alice" or "Alice & Bob"
+              'partner_comp_id': int | None, # matched partner id IN THIS HEAT, or None
+              'name': str,                   # "Alice" or "Alice & Bob (TEAM)"
               'competitor': ORM | None,      # primary comp object (or None)
             }
     """
@@ -152,13 +168,23 @@ def pair_competitors_for_heat(
             partner = _resolve_partner_name_local(comp, event)
             if partner:
                 partner_cid = lookup_partner_cid(partner, comp_lookup, comp_id)
-                # Prefer matched comp's display_name so nicknames like "TOBY"
-                # render as "Toby Bartsch".
-                partner_label = (
-                    comp_lookup[partner_cid].display_name
-                    if partner_cid and partner_cid in comp_lookup
-                    else partner
-                )
+                if partner_cid and partner_cid in comp_lookup:
+                    # Heat-local match wins — full pair render with both school tags.
+                    partner_label = comp_lookup[partner_cid].display_name
+                elif roster_lookup:
+                    # Partner not in this heat. Try the tournament-wide roster so
+                    # the school tag still renders. Does NOT update partner_cid
+                    # because the pair is split across heats — caller may want
+                    # to know that.
+                    roster_match_cid = lookup_partner_cid(
+                        partner, roster_lookup, comp_id,
+                    )
+                    if roster_match_cid and roster_match_cid in roster_lookup:
+                        partner_label = roster_lookup[roster_match_cid].display_name
+                    else:
+                        partner_label = partner
+                else:
+                    partner_label = partner
                 name = f"{name} & {partner_label}"
                 if partner_cid and partner_cid != comp_id:
                     consumed.add(partner_cid)

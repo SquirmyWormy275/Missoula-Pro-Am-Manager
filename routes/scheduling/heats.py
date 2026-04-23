@@ -149,7 +149,11 @@ def generate_heats(tournament_id, event_id):
                                         event_id=event_id))
 
     # Import heat generation service
-    from services.heat_generator import generate_event_heats, get_last_gear_violations
+    from services.heat_generator import (
+        generate_event_heats,
+        get_last_gear_violations,
+        get_last_unpaired_partnered,
+    )
     from services.saw_block_assignment import trigger_saw_block_recompute
 
     try:
@@ -165,6 +169,23 @@ def generate_heats(tournament_id, event_id):
             flash(
                 f'WARNING: {len(violations)} gear-sharing conflict(s) could not be avoided '
                 f'during heat generation. Review the gear manager before running the show.',
+                'warning'
+            )
+        # Surface partnered-event entrants held back due to unresolved partner.
+        # Operator must resolve in Preflight before they show up in heats.
+        unpaired = get_last_unpaired_partnered(event.id)
+        if unpaired:
+            names_blurb = ', '.join(
+                f"{u['comp_name']} → \"{u['partner_name']}\""
+                if u['partner_name'] else u['comp_name']
+                for u in unpaired[:5]
+            )
+            extra = f' (+{len(unpaired) - 5} more)' if len(unpaired) > 5 else ''
+            flash(
+                f'HELD BACK: {len(unpaired)} partnered-event entrant(s) in '
+                f'{event.display_name} have unresolved partners and were '
+                f'NOT placed in heats. {names_blurb}{extra}. '
+                'Run Preflight Check to fix and regenerate.',
                 'warning'
             )
         # Recompute hand-saw stand block alternation after heat gen commits.

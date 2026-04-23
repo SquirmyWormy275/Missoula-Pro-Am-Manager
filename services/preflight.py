@@ -28,6 +28,44 @@ def _signed_up_pro_count(event: Event) -> int:
     return count
 
 
+def _signed_up_competitors_for_event(event: Event) -> list:
+    """Return active competitors of the right type+gender enrolled in event.
+
+    Used by partnered-event preflight checks (odd-pool, unresolved-partner,
+    non-reciprocal). Mirrors the same enrollment-resolution rules
+    services.heat_generator._get_event_competitors uses so what preflight
+    sees matches what heat-gen sees.
+    """
+    target_id = str(event.id)
+    target_names = {event.name.lower(), event.display_name.lower()}
+    if event.event_type == 'college':
+        rows = CollegeCompetitor.query.filter_by(
+            tournament_id=event.tournament_id, status='active',
+        ).all()
+    else:
+        rows = ProCompetitor.query.filter_by(
+            tournament_id=event.tournament_id, status='active',
+        ).all()
+    if event.gender:
+        rows = [c for c in rows if c.gender == event.gender]
+    enrolled = []
+    for comp in rows:
+        entered = [str(v or '').strip() for v in (comp.get_events_entered() or [])]
+        for value in entered:
+            if not value:
+                continue
+            if value == target_id or value.lower() in target_names:
+                enrolled.append(comp)
+                break
+    return enrolled
+
+
+def _signed_up_count_for_event(event: Event) -> int:
+    """Type-agnostic enrollment count (pro OR college). Replaces
+    _signed_up_pro_count for the new partnered-event scan."""
+    return len(_signed_up_competitors_for_event(event))
+
+
 def build_preflight_report(tournament: Tournament, saturday_college_event_ids: list[int] | None = None) -> dict:
     issues: list[dict] = []
     saturday_ids = set(int(v) for v in (saturday_college_event_ids or []))
@@ -70,10 +108,14 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                     'autofix': True,
                 })
 
-    # 2) Partner completeness for pro partnered events
-    partnered_events = tournament.events.filter_by(event_type='pro', is_partnered=True).all()
+    # 2) Partner completeness for ALL partnered events (college + pro).
+    # Previously pro-only — Jack & Jill / Double Buck / Pulp Toss / Peavey on
+    # the college side had no odd-pool check, so a missing partner silently
+    # placed the lone entrant solo on a stand at race time. Now both sides
+    # are scanned.
+    partnered_events = tournament.events.filter_by(is_partnered=True).all()
     for event in partnered_events:
-        entered = _signed_up_pro_count(event)
+        entered = _signed_up_count_for_event(event)
         if entered <= 1:
             continue
         if entered % 2 != 0:
@@ -84,6 +126,158 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                 'detail': f'{event.display_name}: {entered} entrants, one competitor will remain unmatched.',
                 'autofix': True,
             })
+
+    # 2a) Unresolved partner names + non-reciprocal partnerships.
+    # For every partnered-event entrant, attempt the same three-tier match the
+    # heat generator runs (exact → first-name → Levenshtein ≤ 2). Flag any
+    # entrant whose partner can't be resolved against the event pool, AND any
+    # pair where reciprocity breaks (Jordan says McKinley but McKinley says
+    # someone else, or doesn't list Jordan at all).
+    from services.name_match import find_partner_match, normalize_alphanum
+    unresolved_pairs: list[dict] = []
+    non_reciprocal: list[dict] = []
+    self_ref_partner: list[dict] = []
+    for event in partnered_events:
+        pool = _signed_up_competitors_for_event(event)
+        if len(pool) <= 1:
+            continue
+        # Build lookup by competitor id and by normalized name for fast checks.
+        by_id = {c.id: c for c in pool}
+        norm_to_comp = {normalize_alphanum(c.name): c for c in pool}
+        for comp in pool:
+            partners = comp.get_partners() if hasattr(comp, 'get_partners') else {}
+            partner_name = ''
+            if isinstance(partners, dict):
+                # Same key-priority as services.heat_generator._get_partner_name_for_event.
+                for key in (str(event.id), event.name, event.display_name,
+                            event.name.lower(), event.display_name.lower()):
+                    raw = partners.get(key)
+                    if raw and str(raw).strip():
+                        partner_name = str(raw).strip()
+                        break
+            if not partner_name:
+                # Blank partner — already counted by the odd-pool check via the
+                # pool-size parity, so don't double-emit. Continue.
+                continue
+            # Self-reference check.
+            if normalize_alphanum(partner_name) == normalize_alphanum(comp.name):
+                self_ref_partner.append({
+                    'competitor_id': comp.id,
+                    'competitor_name': comp.display_name,
+                    'event_id': event.id,
+                    'event_name': event.display_name,
+                    'partner_name': partner_name,
+                })
+                continue
+            matched = find_partner_match(
+                partner_name, pool,
+                name_getter=lambda c: c.name,
+                exclude_key=comp.id,
+            )
+            if matched is None:
+                unresolved_pairs.append({
+                    'competitor_id': comp.id,
+                    'competitor_name': comp.display_name,
+                    'event_id': event.id,
+                    'event_name': event.display_name,
+                    'partner_name': partner_name,
+                })
+                continue
+            # Reciprocity: matched partner must list comp back.
+            their_partners = (
+                matched.get_partners() if hasattr(matched, 'get_partners') else {}
+            )
+            their_partner_name = ''
+            if isinstance(their_partners, dict):
+                for key in (str(event.id), event.name, event.display_name,
+                            event.name.lower(), event.display_name.lower()):
+                    raw = their_partners.get(key)
+                    if raw and str(raw).strip():
+                        their_partner_name = str(raw).strip()
+                        break
+            if not their_partner_name:
+                non_reciprocal.append({
+                    'competitor_id': comp.id,
+                    'competitor_name': comp.display_name,
+                    'event_id': event.id,
+                    'event_name': event.display_name,
+                    'partner_name': partner_name,
+                    'partner_id': matched.id,
+                    'matched_partner_name': matched.display_name,
+                    'partner_says': '',
+                })
+                continue
+            their_match = find_partner_match(
+                their_partner_name, pool,
+                name_getter=lambda c: c.name,
+                exclude_key=matched.id,
+            )
+            if their_match is None or their_match.id != comp.id:
+                non_reciprocal.append({
+                    'competitor_id': comp.id,
+                    'competitor_name': comp.display_name,
+                    'event_id': event.id,
+                    'event_name': event.display_name,
+                    'partner_name': partner_name,
+                    'partner_id': matched.id,
+                    'matched_partner_name': matched.display_name,
+                    'partner_says': their_partner_name,
+                })
+    if unresolved_pairs:
+        names = ', '.join(
+            f"{p['competitor_name']} → \"{p['partner_name']}\" ({p['event_name']})"
+            for p in unresolved_pairs[:5]
+        )
+        suffix = f' (+{len(unresolved_pairs) - 5} more)' if len(unresolved_pairs) > 5 else ''
+        issues.append({
+            'severity': 'high',
+            'code': 'unresolved_partner_name',
+            'title': 'Partner name does not match any entered competitor',
+            'detail': (
+                f'{len(unresolved_pairs)} partnered-event entrant(s) listed a '
+                f'partner that does not match anyone entered in the same event '
+                f'(checked exact, first-name, and Levenshtein ≤ 2 fuzzy). '
+                f'These competitors will be HELD BACK from heat generation '
+                f'until resolved. {names}{suffix}.'
+            ),
+            'autofix': False,
+            'unresolved': unresolved_pairs,
+        })
+    if self_ref_partner:
+        names = ', '.join(
+            f"{p['competitor_name']} ({p['event_name']})" for p in self_ref_partner[:5]
+        )
+        suffix = f' (+{len(self_ref_partner) - 5} more)' if len(self_ref_partner) > 5 else ''
+        issues.append({
+            'severity': 'high',
+            'code': 'self_reference_partner',
+            'title': 'Competitor listed themselves as partner',
+            'detail': (
+                f'{len(self_ref_partner)} entrant(s) listed their own name as '
+                f'their partner. Held back from heats. {names}{suffix}.'
+            ),
+            'autofix': False,
+        })
+    if non_reciprocal:
+        names = ', '.join(
+            f"{p['competitor_name']} → {p['matched_partner_name']} but "
+            f"{p['matched_partner_name']} → {p['partner_says'] or '(none)'} "
+            f"({p['event_name']})"
+            for p in non_reciprocal[:5]
+        )
+        suffix = f' (+{len(non_reciprocal) - 5} more)' if len(non_reciprocal) > 5 else ''
+        issues.append({
+            'severity': 'high',
+            'code': 'non_reciprocal_partnership',
+            'title': 'Partnership is not reciprocal',
+            'detail': (
+                f'{len(non_reciprocal)} partnership(s) are non-reciprocal — '
+                f'A says B is their partner, but B says someone else (or no one). '
+                f'{names}{suffix}.'
+            ),
+            'autofix': False,
+            'non_reciprocal': non_reciprocal,
+        })
 
     # 2b) Gear-sharing integrity (college + pro)
     all_events = tournament.events.all()
