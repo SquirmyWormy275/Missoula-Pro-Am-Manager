@@ -411,6 +411,58 @@ def _get_event_competitors(event: Event) -> list:
     return competitors
 
 
+def _move_partial_heats_to_end(heats: list, sizes: list, max_per_heat: int) -> tuple[list, dict[int, int]]:
+    """Reorder heats so any short/partial-fill heats run AFTER the full ones.
+
+    Convention (user rule, 2026-04-22): when a field doesn't divide evenly into
+    the heat size (e.g. odd N with 2-up stock saw), the leftover competitor or
+    partial heat closes out the event rather than starting it. Snake-draft on
+    its own leaves the partial in heat 0 because the second pass turns around
+    early; this reorders heat 0 to the end of the list while preserving the
+    relative order of the other heats so the skill mix is unchanged.
+
+    `sizes` is parallel to `heats` and reports the *capacity-relevant* fill
+    count for each heat — stand-units for partnered events, competitor count
+    otherwise — so the partial check matches the generator's own bookkeeping.
+
+    Returns `(reordered_heats, old_to_new)` where `old_to_new[i]` is the new
+    index of what used to be heat `i`. Identity mapping when no reorder runs
+    (single heat, all-partial, all-full, or any heat over capacity — the last
+    case being intentional springboard LH overflow that must stay pinned to
+    the final heat).
+
+    Callers MUST use `old_to_new` to remap any side-channel data that carries
+    pre-reorder heat indices (gear_violations, lh_warnings) — otherwise those
+    warnings end up pointing at the wrong heat after the reorder.
+    """
+    identity = {i: i for i in range(len(heats))}
+    if len(heats) <= 1:
+        return heats, identity
+    if any(s > max_per_heat for s in sizes):
+        return heats, identity
+    full_idx = [i for i, s in enumerate(sizes) if s >= max_per_heat]
+    partial_idx = [i for i, s in enumerate(sizes) if s < max_per_heat]
+    if not partial_idx or not full_idx:
+        return heats, identity
+    new_order = full_idx + partial_idx
+    old_to_new = {old: new for new, old in enumerate(new_order)}
+    return [heats[i] for i in new_order], old_to_new
+
+
+def _remap_violation_heat_indices(violations: list | None, old_to_new: dict[int, int]) -> None:
+    """Update each violation's `heat_index` after a heat reorder so the surfaced
+    warning points at the heat the competitor actually landed in. No-op when
+    `violations` is None or the mapping is identity."""
+    if not violations:
+        return
+    if all(old == new for old, new in old_to_new.items()):
+        return
+    for v in violations:
+        idx = v.get('heat_index')
+        if isinstance(idx, int) and idx in old_to_new:
+            v['heat_index'] = old_to_new[idx]
+
+
 def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: int, event: Event = None,
                               gear_violations: list | None = None) -> list:
     """
@@ -479,6 +531,12 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
                 heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
 
         heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
+
+    # Re-order so any partial heat closes the event instead of opening it.
+    # Remap gear_violations heat indices in-place so the judge's flash points
+    # at the heat the competitor actually landed in after the reorder.
+    heats, old_to_new = _move_partial_heats_to_end(heats, stands_used, max_per_heat)
+    _remap_violation_heat_indices(gear_violations, old_to_new)
 
     return heats
 
@@ -805,6 +863,18 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
         if not placed:
             break
         heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
+
+    # Re-order so any partial heat closes the event instead of opening it.
+    # Springboard isn't partnered, so competitor count == capacity-relevant size.
+    # The helper no-ops when any heat is over capacity (LH overflow stays put).
+    # Skip the reorder entirely when slow-heat cutters were placed — the slow
+    # cluster is intentionally pinned to the final heat and must not migrate.
+    # Remap gear_violations heat indices in-place after the reorder.
+    if not slow_heat:
+        heats, old_to_new = _move_partial_heats_to_end(
+            heats, [len(h) for h in heats], max_per_heat,
+        )
+        _remap_violation_heat_indices(gear_violations, old_to_new)
 
     return heats
 
