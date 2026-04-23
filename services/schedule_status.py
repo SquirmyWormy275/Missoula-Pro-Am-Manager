@@ -40,6 +40,13 @@ class Warning_(TypedDict, total=False):
     detail: str
     link: str | None
     link_label: str | None
+    # When set, the events.html warning panel renders the call-to-action
+    # as a POST <form> submitting this value as the ``action`` field to
+    # ``scheduling.event_list`` instead of a hyperlink. Lets a single
+    # click on the warning actually run the operation it advertises
+    # (e.g. "Generate pro heats" actually generates), instead of bouncing
+    # the user back to the page they are already on.
+    submit_action: str | None
 
 
 class DayStatus(TypedDict):
@@ -213,6 +220,7 @@ def _build_warnings(
                 + ("…" if len(college_missing) > 5 else ""),
                 "link": url_for("scheduling.event_list", tournament_id=tid),
                 "link_label": "Generate college heats",
+                "submit_action": "generate_all",
             }
         )
 
@@ -230,6 +238,7 @@ def _build_warnings(
                 + ("…" if len(pro_missing) > 5 else ""),
                 "link": url_for("scheduling.event_list", tournament_id=tid),
                 "link_label": "Generate pro heats",
+                "submit_action": "generate_all",
             }
         )
 
@@ -243,6 +252,7 @@ def _build_warnings(
                 "detail": 'Click "Build Flights" or "One-click Saturday Show Build" to group heats into flights.',
                 "link": url_for("scheduling.event_list", tournament_id=tid),
                 "link_label": "Build flights",
+                "submit_action": "rebuild_flights",
             }
         )
 
@@ -280,6 +290,7 @@ def _build_warnings(
                 "detail": "These events share physical stands and must not run at the same time. Rebuild flights to resolve.",
                 "link": url_for("scheduling.event_list", tournament_id=tid),
                 "link_label": "Rebuild flights",
+                "submit_action": "rebuild_flights",
             }
         )
 

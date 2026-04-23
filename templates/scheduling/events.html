@@ -282,7 +282,21 @@
                                 <div class="fw-semibold">{{ w.title }}</div>
                                 {% if w.detail %}<div class="small text-muted">{{ w.detail }}</div>{% endif %}
                             </div>
-                            {% if w.link %}
+                            {% if w.submit_action %}
+                            {# Actionable warning: render as POST form so a single click on
+                               the warning runs the operation it advertises. The previous
+                               <a href="event_list"> bounced the user back to the page they
+                               were already on with no generation triggered. #}
+                            <form method="POST" action="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                                  class="flex-shrink-0 m-0" data-loading>
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" name="action" value="{{ w.submit_action }}"
+                                        class="btn btn-sm btn-{{ w.severity }}"
+                                        data-confirm="{{ w.link_label or 'Run this action?' }} — proceed?">
+                                    <i class="bi bi-lightning-charge me-1"></i>{{ w.link_label or 'Run' }}
+                                </button>
+                            </form>
+                            {% elif w.link %}
                             <a href="{{ w.link }}" class="btn btn-sm btn-outline-{{ w.severity }} flex-shrink-0">
                                 {{ w.link_label or 'Open' }}
                             </a>

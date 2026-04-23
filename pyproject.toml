@@ -1,6 +1,6 @@
 [project]
 name = "missoula-pro-am-manager"
-version = "2.14.5"
+version = "2.14.6"
 description = "Tournament management system for the Missoula Pro-Am timbersports competition"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }

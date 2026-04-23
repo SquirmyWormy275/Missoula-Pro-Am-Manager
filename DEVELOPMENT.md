@@ -592,6 +592,28 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-23 (V2.14.6)
+
+**What changed for you.** The "Generate pro heats" button in the Schedule Status warning panel on Run Show > Build Schedule now actually generates heats when you click it. Same for the matching college, "rebuild flights", and Cookie/Standing conflict warnings — one click on the warning button runs the operation it advertises. When events get skipped because no competitors entered them, the post-redirect flash names the skipped events explicitly and links straight to the right registration page so you can fix it without hunting.
+
+**Root cause.** `services/schedule_status.py` rendered every actionable warning's call-to-action as `<a href="{{ url_for('scheduling.event_list', tournament_id=tid) }}">`. But `scheduling.event_list` IS the Run Show page itself — clicking the warning button reloaded the same page with no generation triggered. Operators (correctly) read this as a broken button. Compounding the confusion: when the actual `Generate All Heats + Build Flights` form button on the same page DID run, the wrapper `_generate_all_heats` lumped every "no competitors entered" event into one silent `Skipped N without entrants` flash with no event names and no link to fix anything. So skipped events stayed invisible on the next page render and the warning kept shouting "13 pro events have no heats" with no actionable path forward.
+
+**Fix.** Two-part:
+
+1. `services/schedule_status.py` adds a `submit_action` field to the `Warning_` TypedDict. Four warnings now carry an action: `college_missing` (`generate_all`), `pro_missing` (`generate_all`), `pro_heats_without_flights` (`rebuild_flights`), and `cookie_block_simultaneous` (`rebuild_flights`). `templates/scheduling/events.html` renders these as POST `<form>` buttons that submit to `scheduling.event_list` with the named action. Non-actionable warnings keep the `<a href>` fallback. One click = one generation run.
+
+2. `routes/scheduling/__init__.py` `_generate_all_heats` now collects skipped events by name into `skipped_events: list[tuple[Event, str]]`, splits them by `event_type`, and emits two distinct `Markup`-flashed warnings (one for college, one for pro) that name every skipped event and link to the matching registration page (`registration.pro_registration` / `registration.college_registration`). Operators land directly on the page where they can add the missing entries, then click Generate again.
+
+**Tests.** New `TestWarningsCarrySubmitAction` class in `tests/test_schedule_status.py` (4 tests): asserts the three actionable warnings carry the correct `submit_action` value, plus a route-level test that `GET /scheduling/<tid>/events` actually renders `name="action" value="generate_all"` in the warning panel HTML (guards against a regression where the template loses the form-button branch). End-to-end Flask test client verification confirms the POST round-trips through the handler (302 redirect) and the follow-up GET surfaces a flash containing both the skipped event name and the pro registration link.
+
+**Meta-lesson.** When a warning panel CTA links to the same page the user is on, the click is silently a no-op. Either the warning needs an actionable `submit_action` so one click runs the operation, or the warning needs a different target (an anchor jump, a sibling page) so the click visibly does something. Static `url_for(...)` warning links with no awareness of the rendering page are the failure mode here.
+
+**Full suite.** 37 passed across `tests/test_schedule_status.py`, `tests/test_one_click_and_fnf.py`, `tests/test_flight_builder_async_spillover.py` (the relevant intersection). Zero regressions.
+
+**Files touched.** `services/schedule_status.py` (+10/-0), `templates/scheduling/events.html` (+15/-2), `routes/scheduling/__init__.py` (+57/-9), `tests/test_schedule_status.py` (+127 — `TestWarningsCarrySubmitAction`), `pyproject.toml` (2.14.5 → 2.14.6), `routes/main.py` (two `/health` + `/health/diag` literals bumped per PREPARE FOR COMMIT step 5). No migration. No payout-related files touched (parallel session V2.14.5 owned that area).
+
+---
+
 ### 2026-04-23 (V2.14.5)
 
 **What changed for you.** The Payout Manager page (sidebar → Scoring → Configure Payouts) no longer 500s when any saved payout template exists. Same fix covers the per-event payouts page and the Tournament Setup payouts tab.
