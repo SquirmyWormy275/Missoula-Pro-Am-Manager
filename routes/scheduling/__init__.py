@@ -269,10 +269,14 @@ def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
         total = sum(len(rows) for _, rows in unpaired_by_event)
         per_event_blurbs = []
         for ev, rows in unpaired_by_event:
-            names = ', '.join(
-                f"{r['comp_name']}{(' → \"' + r['partner_name'] + '\"') if r['partner_name'] else ''}"
-                for r in rows[:3]
-            )
+            # Build each name blurb without backslashes inside the f-string
+            # expression (Python 3.10 / pre-PEP-701 constraint). Prod runs 3.10.
+            def _blurb(row: dict) -> str:
+                partner = row.get('partner_name') or ''
+                if partner:
+                    return '{} → "{}"'.format(row.get('comp_name', ''), partner)
+                return row.get('comp_name', '')
+            names = ', '.join(_blurb(r) for r in rows[:3])
             extra = f' (+{len(rows) - 3} more)' if len(rows) > 3 else ''
             per_event_blurbs.append(
                 f'<strong>{escape(_event_label(ev))}</strong>: {escape(names)}{extra}'
