@@ -354,3 +354,165 @@ def test_saturday_and_friday_helpers_are_pure_reads(db_session, tournament):
 
     assert h.stand_assignments == stands_before
     assert tournament.schedule_config == config_before
+
+
+# ---------------------------------------------------------------------------
+# Friday end-of-day lock (2026-04-23)
+# ---------------------------------------------------------------------------
+# Operator rule: the FINAL FOUR Friday college events must auto-generate as
+# 1. Men's Chokerman's Race
+# 2. Women's Chokerman's Race
+# 3. Men's Birling
+# 4. Women's Birling
+# Override path: operator drag-drops on Run Show → friday_event_order set in
+# schedule_config → custom order wins.
+
+
+class TestFridayEndOfDayLock:
+    """The four end-of-day events must always auto-sort in the locked order
+    when no custom_order is set, regardless of name/gender enum drift."""
+
+    def _seed_full_friday(self, db_session, tournament):
+        """Seed a representative Friday — open events, closed events, and
+        all four lock events (M/F Chokerman, M/F Birling) in scrambled
+        creation order so the sort has work to do."""
+        events = {}
+        # Scramble: birling FIRST, then closed, then chokerman, then open.
+        # If sort works, lock order should still come out at the END as
+        # M-Chokerman, W-Chokerman, M-Birling, W-Birling.
+        events['birling_f'] = _make_event(
+            db_session, tournament, "Birling", "college", "F",
+            stand_type="birling",
+        )
+        events['birling_m'] = _make_event(
+            db_session, tournament, "Birling", "college", "M",
+            stand_type="birling",
+        )
+        events['underhand_m'] = _make_event(
+            db_session, tournament, "Underhand Speed", "college", "M",
+            stand_type="underhand",
+        )
+        events['choker_f'] = _make_event(
+            db_session, tournament, "Chokerman's Race", "college", "F",
+            stand_type="chokerman", requires_dual_runs=True,
+        )
+        events['choker_m'] = _make_event(
+            db_session, tournament, "Chokerman's Race", "college", "M",
+            stand_type="chokerman", requires_dual_runs=True,
+        )
+        events['axe'] = _make_event(
+            db_session, tournament, "Axe Throw", "college", None,
+            stand_type="axe_throw", is_open=True,
+        )
+        # One heat each so they appear in the ordered output.
+        for ev in events.values():
+            _make_heat(db_session, ev, 1)
+        return events
+
+    def test_default_sort_locks_final_four_in_canonical_order(self, db_session, tournament):
+        """No custom_order: the last four events MUST be M-Chokerman,
+        W-Chokerman, M-Birling, W-Birling in that exact order."""
+        from services.schedule_builder import build_day_schedule
+
+        events = self._seed_full_friday(db_session, tournament)
+        sched = build_day_schedule(tournament)
+
+        friday = sched['friday_day']
+        last_four = friday[-4:]
+        last_four_ids = [entry['event_id'] for entry in last_four]
+
+        expected = [
+            events['choker_m'].id,
+            events['choker_f'].id,
+            events['birling_m'].id,
+            events['birling_f'].id,
+        ]
+        assert last_four_ids == expected, (
+            f"End-of-day lock broken. Expected {expected}, got {last_four_ids} "
+            f"(labels: {[e['label'] for e in last_four]})"
+        )
+
+    def test_chokerman_lands_before_birling_when_only_some_locks_present(self, db_session, tournament):
+        """Partial lock — only Chokerman M+F + Birling M (no F birling).
+        The three present lock events must still come last in lock order."""
+        from services.schedule_builder import build_day_schedule
+
+        underhand_m = _make_event(
+            db_session, tournament, "Underhand Speed", "college", "M",
+            stand_type="underhand",
+        )
+        birling_m = _make_event(
+            db_session, tournament, "Birling", "college", "M",
+            stand_type="birling",
+        )
+        choker_m = _make_event(
+            db_session, tournament, "Chokerman's Race", "college", "M",
+            stand_type="chokerman", requires_dual_runs=True,
+        )
+        choker_f = _make_event(
+            db_session, tournament, "Chokerman's Race", "college", "F",
+            stand_type="chokerman", requires_dual_runs=True,
+        )
+        for ev in (underhand_m, birling_m, choker_m, choker_f):
+            _make_heat(db_session, ev, 1)
+
+        sched = build_day_schedule(tournament)
+        friday = sched['friday_day']
+        ordered_ids = [entry['event_id'] for entry in friday]
+
+        # Underhand first, then chokerman M, F, then birling M.
+        assert ordered_ids == [
+            underhand_m.id, choker_m.id, choker_f.id, birling_m.id,
+        ], f"Lock order broken on partial set: {ordered_ids}"
+
+    def test_custom_friday_order_overrides_lock(self, db_session, tournament):
+        """When operator sets schedule_config['friday_event_order'], the lock
+        defers to their explicit choice — that's the documented override path."""
+        from services.schedule_builder import build_day_schedule
+
+        events = self._seed_full_friday(db_session, tournament)
+        # Operator wants Birling FIRST (weird, but their call). Custom order
+        # puts birling at position 0; lock should NOT re-insert chokerman after.
+        custom = [
+            events['birling_m'].id,
+            events['birling_f'].id,
+            events['choker_m'].id,
+            events['choker_f'].id,
+            events['underhand_m'].id,
+            events['axe'].id,
+        ]
+        tournament.set_schedule_config({'friday_event_order': custom})
+        db_session.flush()
+
+        sched = build_day_schedule(tournament)
+        friday = sched['friday_day']
+        ordered_ids = [entry['event_id'] for entry in friday]
+
+        assert ordered_ids == custom, (
+            f"Custom order should win over lock; got {ordered_ids}"
+        )
+
+    def test_lock_helper_returns_position_for_lock_events_only(self):
+        """Unit test the lookup helper directly — defends against name /
+        gender enum drift."""
+        from services.schedule_builder import _friday_end_of_day_lock_position
+
+        class _StubEvent:
+            def __init__(self, name, gender):
+                self.name = name
+                self.gender = gender
+
+        # Lock events.
+        assert _friday_end_of_day_lock_position(_StubEvent("Chokerman's Race", "M")) == 0
+        assert _friday_end_of_day_lock_position(_StubEvent("Chokerman's Race", "F")) == 1
+        assert _friday_end_of_day_lock_position(_StubEvent("Birling", "M")) == 2
+        assert _friday_end_of_day_lock_position(_StubEvent("Birling", "F")) == 3
+
+        # Apostrophe / casing variants must still match (name normalization).
+        assert _friday_end_of_day_lock_position(_StubEvent("chokermans race", "M")) == 0
+        assert _friday_end_of_day_lock_position(_StubEvent("CHOKERMAN'S RACE", "F")) == 1
+
+        # Non-lock events.
+        assert _friday_end_of_day_lock_position(_StubEvent("Underhand Speed", "M")) is None
+        assert _friday_end_of_day_lock_position(_StubEvent("Birling", None)) is None
+        assert _friday_end_of_day_lock_position(_StubEvent("", "M")) is None

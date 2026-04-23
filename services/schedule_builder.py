@@ -253,6 +253,55 @@ def _to_schedule_entries(events: list[Event], start_slot: int = 1) -> list[dict]
     return entries
 
 
+# ---------------------------------------------------------------------------
+# Friday end-of-day lock
+# ---------------------------------------------------------------------------
+# Operator rule (2026-04-23): the FINAL FOUR Friday college events must
+# auto-generate in this exact order:
+#   1. Men's Chokerman's Race
+#   2. Women's Chokerman's Race
+#   3. Men's Birling
+#   4. Women's Birling
+#
+# Chokerman events close out the regular Friday CLOSED-events block; Birling
+# is the show-closer (double-elimination, runs until complete). Locking the
+# order explicitly (rather than letting it fall out of name+gender ranks)
+# makes the rule impossible to break by accident if a name or gender enum
+# ever drifts.
+#
+# Override path: operator drag-and-drops on the Run Show page → writes
+# `friday_event_order` to schedule_config → `_apply_custom_order` honours
+# it. This auto-lock only applies when no custom order is set.
+FRIDAY_END_OF_DAY_LOCK_ORDER: list[tuple[str, str]] = [
+    ("Chokerman's Race", 'M'),
+    ("Chokerman's Race", 'F'),
+    ('Birling', 'M'),
+    ('Birling', 'F'),
+]
+
+
+def _lock_norm(value: str) -> str:
+    """Local copy of _normalize_name for module-level dict comprehension —
+    `_normalize_name` is defined later in the file; using it at import time
+    would NameError. Behaviour MUST stay identical to _normalize_name."""
+    return re.sub(r'[^a-z0-9]+', '', (value or '').lower())
+
+
+_FRIDAY_END_OF_DAY_LOCK_INDEX = {
+    (_lock_norm(name), gender): idx
+    for idx, (name, gender) in enumerate(FRIDAY_END_OF_DAY_LOCK_ORDER)
+}
+
+
+def _friday_end_of_day_lock_position(event: Event) -> int | None:
+    """Return the lock position (0-3) for one of the four end-of-day events,
+    or None for any other event. Name match is normalized so apostrophes,
+    spacing, and case can't break the lock."""
+    key = (_lock_norm(getattr(event, 'name', '')),
+           getattr(event, 'gender', None))
+    return _FRIDAY_END_OF_DAY_LOCK_INDEX.get(key)
+
+
 def _college_friday_sort_key(event: Event):
     # Signup-only events (Axe Throw / Caber Toss / Peavey Log Roll / Pulp Toss)
     # run first as come-and-go format. Use name-based LIST_ONLY_EVENT_NAMES
@@ -260,17 +309,31 @@ def _college_friday_sort_key(event: Event):
     # CLOSED on the setup page (CLAUDE.md §3 "to save time"), and they still
     # run signup-list format. Same root failure class as the V2.14.2 schedule
     # status fix (docs/solutions/logic-errors/schedule-status-warning-false-positive-list-only-events-2026-04-22.md).
-    # Chokerman's Race Run 1 goes at end of day, BEFORE Birling.
-    # Birling is always the absolute last event on Friday.
-    is_birling = 2 if 'birling' in event.name.lower() else 0
-    is_chokerman = 1 if "chokerman" in event.name.lower() else 0
-    end_of_day = max(is_birling, is_chokerman)
+    #
+    # End-of-day lock (2026-04-23): the final four events fall in a fixed
+    # operator-mandated order — see FRIDAY_END_OF_DAY_LOCK_ORDER. Lock-events
+    # get end_of_day=1 + an explicit lock_position 0-3 that wins over name +
+    # gender rank, so the order is bulletproof even if event.name spelling
+    # or gender enum ever drift. Non-lock events get end_of_day=0 and a
+    # lock_position higher than any lock event so they sort BEFORE the lock
+    # block.
+    lock_pos = _friday_end_of_day_lock_position(event)
+    if lock_pos is not None:
+        end_of_day = 1
+        lock_position = lock_pos
+    else:
+        end_of_day = 0
+        lock_position = len(FRIDAY_END_OF_DAY_LOCK_ORDER)  # sorts before lock block
     normalized = re.sub(r'[^a-z0-9]+', '', str(event.name or '').lower())
     is_signup_only = normalized in LIST_ONLY_EVENT_NAMES or bool(getattr(event, 'is_open', False))
     open_rank = 0 if is_signup_only else 1
     event_rank = _college_name_rank(event.name)
     gender_rank = _gender_rank(event.gender)
-    return (end_of_day, open_rank, event_rank, gender_rank)
+    # Lock events: (end_of_day=1, lock_position 0-3) drives ordering.
+    # Non-lock events: (end_of_day=0, lock_position=4) all tie on lock_position
+    # so open_rank + event_rank + gender_rank decide as before — preserves the
+    # pre-lock behaviour for the non-final-four events.
+    return (end_of_day, lock_position, open_rank, event_rank, gender_rank)
 
 
 def _spillover_sort_key(event: Event):
