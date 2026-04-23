@@ -59,19 +59,18 @@ def _play_match(bracket, match_id, winner_id):
 # ---------------------------------------------------------------------------
 
 class TestBracketGeneration12:
-    """Verify bracket structure for 12 competitors (rounds up to 16-slot)."""
+    """Verify bracket structure for 12 competitors uses compact scaling."""
 
-    def test_bracket_size_is_16(self):
+    def test_first_round_has_six_matches(self):
         b, comps = _bracket_12()
         first_round = b.bracket_data['bracket']['winners'][0]
-        # 16 bracket = 8 first-round matches
-        assert len(first_round) == 8
+        assert len(first_round) == 6
 
-    def test_four_byes_in_first_round(self):
+    def test_no_first_round_byes_for_even_12_competitors(self):
         b, comps = _bracket_12()
         first_round = b.bracket_data['bracket']['winners'][0]
         byes = [m for m in first_round if m['is_bye']]
-        assert len(byes) == 4, f"Expected 4 byes (16 - 12), got {len(byes)}"
+        assert len(byes) == 0, f"Expected no first-round byes for 12 competitors, got {len(byes)}"
 
     def test_bye_matches_auto_advance_winner(self):
         b, comps = _bracket_12()
@@ -95,10 +94,10 @@ class TestBracketGeneration12:
     def test_winners_bracket_has_correct_rounds(self):
         b, comps = _bracket_12()
         winners = b.bracket_data['bracket']['winners']
-        # 16-slot: round 1 (8 matches), round 2 (4), round 3 (2), round 4 (1)
+        # Compact 12-competitor shape: round 1 (6 matches), round 2 (3), round 3 (2), round 4 (1)
         assert len(winners) == 4
-        assert len(winners[0]) == 8
-        assert len(winners[1]) == 4
+        assert len(winners[0]) == 6
+        assert len(winners[1]) == 3
         assert len(winners[2]) == 2
         assert len(winners[3]) == 1
 
@@ -268,9 +267,9 @@ class TestTop6Determination:
         """Verify the women's bracket (also 12 competitors) generates correctly."""
         b, comps = _bracket_12(names=BIRLING_WOMEN_BRACKET)
         first_round = b.bracket_data['bracket']['winners'][0]
-        assert len(first_round) == 8
+        assert len(first_round) == 6
         byes = [m for m in first_round if m['is_bye']]
-        assert len(byes) == 4
+        assert len(byes) == 0
 
     def test_women_bracket_full_sim(self):
         """Run full women's bracket to completion."""
@@ -285,7 +284,6 @@ class TestTop6Determination:
         b, comps = _bracket_12()
         first_round = b.bracket_data['bracket']['winners'][0]
 
-        # Seed 1 (id=1, Tommy White) should face the highest seed or a bye
         match_with_seed1 = None
         for match in first_round:
             if match['competitor1'] == 1 or match['competitor2'] == 1:
@@ -293,7 +291,6 @@ class TestTop6Determination:
                 break
 
         assert match_with_seed1 is not None, "Seed 1 should be in a first-round match"
-        # In standard bracket seeding, seed 1 faces seed N (or bye if N > num_comps)
-        # With 12 competitors in 16-slot, seed 1 faces slot 16 which is a bye
-        if match_with_seed1['is_bye']:
-            assert match_with_seed1['winner'] == 1, "Seed 1 should auto-advance through bye"
+        assert match_with_seed1['competitor1'] == 1 or match_with_seed1['competitor2'] == 1
+        opponent = match_with_seed1['competitor2'] if match_with_seed1['competitor1'] == 1 else match_with_seed1['competitor1']
+        assert opponent == 12, f"Seed 1 should face seed 12 in the first round, got {opponent}"
