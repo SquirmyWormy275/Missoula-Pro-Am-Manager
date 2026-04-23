@@ -111,7 +111,14 @@ def upload_pro_entries(tournament_id):
         from services.pro_entry_importer import compute_review_flags, parse_pro_entries
         entries = parse_pro_entries(upload_path)
     except Exception as exc:
-        flash(f'Could not parse file: {exc}', 'error')
+        current_app.logger.exception(
+            'Pro-entry parse failed for tournament %s upload %s', tournament_id, upload_path,
+        )
+        flash(
+            'Could not parse file. Confirm it is a valid .xlsx export from the entry form, '
+            'then try again. If the problem persists, contact admin.',
+            'error',
+        )
         return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
 
     if not entries:

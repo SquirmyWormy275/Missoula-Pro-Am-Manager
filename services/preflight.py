@@ -3,7 +3,7 @@ Preflight checks for scheduling and registration consistency.
 """
 from __future__ import annotations
 
-from models import Event, Flight, HeatAssignment, Tournament
+from models import Event, Flight, Heat, HeatAssignment, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.gear_sharing import (
     event_matches_gear_key,
@@ -32,22 +32,43 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
     issues: list[dict] = []
     saturday_ids = set(int(v) for v in (saturday_college_event_ids or []))
 
-    # 1) Heat JSON vs HeatAssignment divergence
-    for event in tournament.events.order_by(Event.event_type, Event.name, Event.gender).all():
-        mismatched = 0
-        for heat in event.heats.all():
+    # 1) Heat JSON vs HeatAssignment divergence.
+    # Previously: events × heats per-event lazy `event.heats.all()` plus
+    # one HeatAssignment query per heat — N+M queries on the longest
+    # user-visible request on race day. Replaced with two batch queries
+    # (Heat + HeatAssignment scoped to tournament) and an in-memory join.
+    all_events_ordered = tournament.events.order_by(
+        Event.event_type, Event.name, Event.gender,
+    ).all()
+    event_by_id = {e.id: e for e in all_events_ordered}
+    event_ids = list(event_by_id.keys())
+    if event_ids:
+        from collections import defaultdict
+        all_heats = (
+            Heat.query.filter(Heat.event_id.in_(event_ids)).all()
+        )
+        heat_ids = [h.id for h in all_heats]
+        assignments_by_heat: dict[int, set[int]] = defaultdict(set)
+        if heat_ids:
+            for a in HeatAssignment.query.filter(HeatAssignment.heat_id.in_(heat_ids)).all():
+                assignments_by_heat[a.heat_id].add(a.competitor_id)
+        mismatched_by_event: dict[int, int] = defaultdict(int)
+        for heat in all_heats:
             json_ids = set(heat.get_competitors())
-            table_ids = set(a.competitor_id for a in HeatAssignment.query.filter_by(heat_id=heat.id).all())
+            table_ids = assignments_by_heat.get(heat.id, set())
             if json_ids != table_ids:
-                mismatched += 1
-        if mismatched:
-            issues.append({
-                'severity': 'high',
-                'code': 'heat_sync_mismatch',
-                'title': 'Heat assignment mismatch',
-                'detail': f'{event.display_name}: {mismatched} heat(s) have JSON/table mismatch.',
-                'autofix': True,
-            })
+                mismatched_by_event[heat.event_id] += 1
+        # Emit issues in the same order the original loop produced.
+        for event in all_events_ordered:
+            count = mismatched_by_event.get(event.id, 0)
+            if count:
+                issues.append({
+                    'severity': 'high',
+                    'code': 'heat_sync_mismatch',
+                    'title': 'Heat assignment mismatch',
+                    'detail': f'{event.display_name}: {count} heat(s) have JSON/table mismatch.',
+                    'autofix': True,
+                })
 
     # 2) Partner completeness for pro partnered events
     partnered_events = tournament.events.filter_by(event_type='pro', is_partnered=True).all()

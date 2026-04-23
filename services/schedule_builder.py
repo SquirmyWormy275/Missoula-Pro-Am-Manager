@@ -8,7 +8,7 @@ import os
 import re
 
 import config
-from config import DAY_SPLIT_EVENT_NAMES
+from config import DAY_SPLIT_EVENT_NAMES, LIST_ONLY_EVENT_NAMES
 from models import Event, Flight, Tournament
 
 
@@ -254,13 +254,20 @@ def _to_schedule_entries(events: list[Event], start_slot: int = 1) -> list[dict]
 
 
 def _college_friday_sort_key(event: Event):
-    # OPEN events run first.
+    # Signup-only events (Axe Throw / Caber Toss / Peavey Log Roll / Pulp Toss)
+    # run first as come-and-go format. Use name-based LIST_ONLY_EVENT_NAMES
+    # rather than event.is_open — operators are allowed to toggle these to
+    # CLOSED on the setup page (CLAUDE.md §3 "to save time"), and they still
+    # run signup-list format. Same root failure class as the V2.14.2 schedule
+    # status fix (docs/solutions/logic-errors/schedule-status-warning-false-positive-list-only-events-2026-04-22.md).
     # Chokerman's Race Run 1 goes at end of day, BEFORE Birling.
     # Birling is always the absolute last event on Friday.
     is_birling = 2 if 'birling' in event.name.lower() else 0
     is_chokerman = 1 if "chokerman" in event.name.lower() else 0
     end_of_day = max(is_birling, is_chokerman)
-    open_rank = 0 if event.is_open else 1
+    normalized = re.sub(r'[^a-z0-9]+', '', str(event.name or '').lower())
+    is_signup_only = normalized in LIST_ONLY_EVENT_NAMES or bool(getattr(event, 'is_open', False))
+    open_rank = 0 if is_signup_only else 1
     event_rank = _college_name_rank(event.name)
     gender_rank = _gender_rank(event.gender)
     return (end_of_day, open_rank, event_rank, gender_rank)

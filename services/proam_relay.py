@@ -331,36 +331,60 @@ class ProAmRelay:
             raise ValueError("At least one team is required.")
 
         teams = []
-        all_pro_ids = set()
-        all_college_ids = set()
+        all_pro_ids: set[int] = set()
+        all_college_ids: set[int] = set()
+
+        # Pre-pass: collect every pro/college ID across all teams, then resolve
+        # them in TWO bulk queries instead of one query per ID. The previous
+        # per-id loop issued len(teams) * 8 queries for the typical 2-team
+        # 4-pro+4-college lottery (~16 queries) — small absolute count but
+        # the manual-team-builder UX path runs interactively.
+        for assignment in team_assignments:
+            for pid in assignment.get('pro_member_ids', []):
+                all_pro_ids.add(pid)
+            for cid in assignment.get('college_member_ids', []):
+                all_college_ids.add(cid)
+
+        pro_lookup: dict[int, ProCompetitor] = {}
+        if all_pro_ids:
+            for comp in ProCompetitor.query.filter(
+                ProCompetitor.id.in_(all_pro_ids),
+                ProCompetitor.tournament_id == self.tournament.id,
+                ProCompetitor.status == 'active',
+                ProCompetitor.pro_am_lottery_opt_in.is_(True),
+            ).all():
+                pro_lookup[comp.id] = comp
+
+        college_lookup: dict[int, CollegeCompetitor] = {}
+        if all_college_ids:
+            for comp in CollegeCompetitor.query.filter(
+                CollegeCompetitor.id.in_(all_college_ids),
+                CollegeCompetitor.tournament_id == self.tournament.id,
+                CollegeCompetitor.status == 'active',
+            ).all():
+                college_lookup[comp.id] = comp
+
+        # Re-validate dup-across-teams using the bulk-resolved set; same error
+        # surface as the original per-id loop, just rolled into one pass.
+        seen_pro: set[int] = set()
+        seen_college: set[int] = set()
 
         for idx, assignment in enumerate(team_assignments, start=1):
             pro_ids = assignment.get('pro_member_ids', [])
             college_ids = assignment.get('college_member_ids', [])
 
-            # Validate no duplicate assignments across teams.
             for pid in pro_ids:
-                if pid in all_pro_ids:
+                if pid in seen_pro:
                     raise ValueError(f"Pro competitor {pid} is assigned to multiple teams.")
-                all_pro_ids.add(pid)
+                seen_pro.add(pid)
             for cid in college_ids:
-                if cid in all_college_ids:
+                if cid in seen_college:
                     raise ValueError(f"College competitor {cid} is assigned to multiple teams.")
-                all_college_ids.add(cid)
+                seen_college.add(cid)
 
-            # Resolve competitor objects. Every lookup MUST filter on
-            # tournament_id + status='active' + pro_am_lottery_opt_in so
-            # a tampered POST cannot inject a competitor from another
-            # tournament, a scratched competitor, or someone who never
-            # opted into the relay lottery.
             pro_members = []
             for pid in pro_ids:
-                comp = ProCompetitor.query.filter_by(
-                    id=pid,
-                    tournament_id=self.tournament.id,
-                    status='active',
-                    pro_am_lottery_opt_in=True,
-                ).first()
+                comp = pro_lookup.get(pid)
                 if not comp:
                     raise ValueError(
                         f"Pro competitor ID {pid} not found, not active, "
@@ -370,11 +394,7 @@ class ProAmRelay:
 
             college_members = []
             for cid in college_ids:
-                comp = CollegeCompetitor.query.filter_by(
-                    id=cid,
-                    tournament_id=self.tournament.id,
-                    status='active',
-                ).first()
+                comp = college_lookup.get(cid)
                 if not comp:
                     raise ValueError(
                         f"College competitor ID {cid} not found in this "

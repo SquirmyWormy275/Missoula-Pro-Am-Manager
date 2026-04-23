@@ -819,7 +819,15 @@ def pro_gear_sync_heats(tournament_id):
         })
     except Exception as e:
         db.session.rollback()
-        flash(f'Heat sync error: {e}', 'error')
+        current_app.logger.exception('Gear-sharing heat sync failed for tournament %s', tournament_id)
+        log_action('gear_heat_sync_failed', 'tournament', tournament_id, {
+            'error_type': type(e).__name__,
+        })
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        flash('Heat sync failed — check application logs and contact admin.', 'error')
     return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
 
 
@@ -1405,7 +1413,13 @@ def scratch_pro_competitor(tournament_id, competitor_id):
 
 
 def _remove_college_competitor_from_unfinished_heats(competitor_id: int, tournament_id: int):
-    """Remove a competitor from uncompleted college heats and stand assignments."""
+    """Remove a competitor from uncompleted college heats and stand assignments.
+
+    Calls heat.sync_assignments after each mutation so HeatAssignment rows stay
+    aligned with the authoritative Heat.competitors JSON. Without the sync,
+    validation reports false positives and judge sheets keep showing the
+    scratched competitor.
+    """
     heats = Heat.query.join(Event).filter(
         Event.tournament_id == tournament_id,
         Event.id == Heat.event_id,
@@ -1421,10 +1435,16 @@ def _remove_college_competitor_from_unfinished_heats(competitor_id: int, tournam
             if str(competitor_id) in assignments:
                 del assignments[str(competitor_id)]
                 heat.stand_assignments = json.dumps(assignments)
+            heat.sync_assignments('college')
 
 
 def _remove_pro_competitor_from_unfinished_heats(competitor_id: int, tournament_id: int):
-    """Remove a competitor from uncompleted pro heats and stand assignments."""
+    """Remove a competitor from uncompleted pro heats and stand assignments.
+
+    Calls heat.sync_assignments after each mutation so HeatAssignment rows stay
+    aligned with the authoritative Heat.competitors JSON. See companion docstring
+    on the college variant above.
+    """
     heats = Heat.query.join(Event).filter(
         Event.tournament_id == tournament_id,
         Event.id == Heat.event_id,
@@ -1440,6 +1460,7 @@ def _remove_pro_competitor_from_unfinished_heats(competitor_id: int, tournament_
             if str(competitor_id) in assignments:
                 del assignments[str(competitor_id)]
                 heat.stand_assignments = json.dumps(assignments)
+            heat.sync_assignments('pro')
 
 
 # ---------------------------------------------------------------------------

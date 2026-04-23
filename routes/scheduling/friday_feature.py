@@ -6,6 +6,7 @@ import config
 from database import db
 from models import Event, Tournament
 from services.audit import log_action
+from services.cache_invalidation import invalidate_tournament_caches
 from services.print_catalog import record_print
 
 from . import scheduling_bp
@@ -56,6 +57,7 @@ def _load_fnf_config(tournament: Tournament) -> dict:
         schedule_config['friday_feature_notes'] = str(legacy.get('notes', '') or '')
         tournament.set_schedule_config(schedule_config)
         db.session.commit()
+        invalidate_tournament_caches(tournament.id)
         return {
             'event_ids': schedule_config['friday_pro_event_ids'],
             'notes': schedule_config['friday_feature_notes'],
@@ -155,6 +157,7 @@ def friday_feature(tournament_id):
         session.modified = True
         tournament.set_schedule_config(db_cfg)
         db.session.commit()
+        invalidate_tournament_caches(tournament_id)
 
         if stand_updates:
             summary = ', '.join(f'{n}: {v} stands' for n, v in stand_updates)
@@ -180,6 +183,7 @@ def friday_feature(tournament_id):
                 except Exception as exc:
                     errors.append(f'{event.display_name}: {exc}')
             db.session.commit()
+            invalidate_tournament_caches(tournament_id)
             if errors:
                 for err in errors:
                     flash(f'Heat generation error — {err}', 'error')
@@ -198,6 +202,7 @@ def friday_feature(tournament_id):
                 'stand_updates': [{'event': n, 'max_stands': v} for n, v in stand_updates],
             })
             db.session.commit()
+            invalidate_tournament_caches(tournament_id)
             flash('Friday Showcase & Saturday spillover saved.', 'success')
         return redirect(url_for('scheduling.friday_feature', tournament_id=tournament_id))
 

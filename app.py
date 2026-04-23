@@ -277,17 +277,12 @@ def _create_app_inner():
         if isinstance(lock_until, (int, float)):
             remaining = max(0, int(lock_until - time.time()))
 
-        # Unscored heat count for sidebar badge — only when inside a tournament route
-        unscored_heats = 0
-        try:
-            tid = request.view_args.get('tournament_id') if request.view_args else None
-            if tid:
-                from models import Event as _Event
-                from models import Heat
-                unscored_heats = Heat.query.join(_Event, Heat.event_id == _Event.id) \
-                    .filter(_Event.tournament_id == tid, Heat.status == 'pending').count()
-        except Exception:
-            pass
+        # Unscored heat count for sidebar badge — only when inside a tournament route.
+        # DB query lives in services/sidebar_aggregator.py so app.py stays free of
+        # ORM logic per CLAUDE.md §6 development rule.
+        from services.sidebar_aggregator import unscored_heats_count
+        tid = request.view_args.get('tournament_id') if request.view_args else None
+        unscored_heats = unscored_heats_count(tid) if tid else 0
 
         # Public languages always available; restricted languages (Arapaho) only for judge/admin.
         available_languages = dict(text.PUBLIC_LANGUAGES)

@@ -124,9 +124,9 @@ body {
         <div class="event-name">{{ er.event.display_name }}</div>
         {% for r in er.results %}
         <div class="result-row">
-            {% if r.final_position == 1 %}<span class="medal-1">🥇</span>
-            {% elif r.final_position == 2 %}<span class="medal-2">🥈</span>
-            {% elif r.final_position == 3 %}<span class="medal-3">🥉</span>
+            {% if r.final_position == 1 %}<span class="medal-1"><i class="bi bi-trophy-fill"></i></span>
+            {% elif r.final_position == 2 %}<span class="medal-2"><i class="bi bi-award-fill"></i></span>
+            {% elif r.final_position == 3 %}<span class="medal-3"><i class="bi bi-award"></i></span>
             {% else %}<span style="display:inline-block;width:1.5rem;">{{ r.final_position }}.</span>{% endif %}
             {{ r.competitor_name }}
             {% if r.result_value %}<span class="text-muted ms-2 small">

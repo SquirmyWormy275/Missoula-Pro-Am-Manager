@@ -815,15 +815,34 @@ def import_results_from_csv(event: Event, csv_text: str) -> dict:
         ).all()
 
     event_id = event.id
+    # Per CLAUDE.md §4, both college and pro competitors store events_entered
+    # as a JSON list of NAMES (Excel/Google Forms imports), not numeric IDs.
+    # Resolving by integer ID alone silently drops every competitor whose
+    # entries are name-keyed — same failure shape as the V2.8.2 Woodboss
+    # zero-count bug. Build BOTH an int-id set and a normalised-name set,
+    # accept a row if either matches.
+    import re as _re
+
+    def _normalize_event_name(s: str) -> str:
+        return _re.sub(r'[^a-z0-9]+', '', str(s or '').lower())
+
+    target_aliases = {
+        _normalize_event_name(event.name),
+        _normalize_event_name(event.display_name),
+    }
     comp_by_name = {}
     for c in all_comps:
-        entered = set()
+        entered_ids: set[int] = set()
+        entered_names: set[str] = set()
         for raw in c.get_events_entered():
-            try:
-                entered.add(int(raw))
-            except (TypeError, ValueError):
+            s = str(raw).strip()
+            if not s:
                 continue
-        if event_id not in entered:
+            try:
+                entered_ids.add(int(s))
+            except (TypeError, ValueError):
+                entered_names.add(_normalize_event_name(s))
+        if event_id not in entered_ids and not (entered_names & target_aliases):
             continue
         # Gender filter: refuse to import men's results into a women's
         # event and vice versa. Open events (event.gender is None) accept

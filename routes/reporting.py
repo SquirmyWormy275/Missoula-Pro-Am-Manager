@@ -777,7 +777,12 @@ def ala_membership_report_pdf(tournament_id):
     try:
         path = generate_ala_pdf(report)
     except Exception as exc:
-        flash(f'PDF generation failed: {exc}', 'error')
+        current_app.logger.exception('ALA PDF generation failed for tournament %s', tournament_id)
+        log_action('ala_report_pdf_failed', 'tournament', tournament.id, {
+            'error_type': type(exc).__name__,
+        })
+        db.session.commit()
+        flash('PDF generation failed — check application logs and contact admin.', 'error')
         return redirect(url_for('reporting.ala_membership_report', tournament_id=tournament_id))
 
     @after_this_request
@@ -815,7 +820,12 @@ def ala_email_report(tournament_id):
     try:
         path = generate_ala_pdf(report)
     except Exception as exc:
-        flash(f'PDF generation failed: {exc}', 'error')
+        current_app.logger.exception('ALA PDF generation failed for tournament %s', tournament_id)
+        log_action('ala_report_pdf_failed', 'tournament', tournament.id, {
+            'error_type': type(exc).__name__,
+        })
+        db.session.commit()
+        flash('PDF generation failed — check application logs and contact admin.', 'error')
         return redirect(url_for('reporting.ala_membership_report', tournament_id=tournament_id))
 
     try:
@@ -828,13 +838,18 @@ def ala_email_report(tournament_id):
         flash(f'ALA report emailed to {ALA_EMAIL}.', 'success')
     except Exception as exc:
         db.session.rollback()
+        current_app.logger.exception('ALA email send failed for tournament %s', tournament_id)
         log_action('ala_report_email_failed', 'tournament', tournament.id, {
             'tournament_id': tournament.id,
             'recipient': ALA_EMAIL,
-            'error': str(exc),
+            'error_type': type(exc).__name__,
         })
         db.session.commit()
-        flash(f'Email failed: {exc}', 'error')
+        flash(
+            'Email send failed — check application logs and contact admin. '
+            'PDF is available via Download button.',
+            'error',
+        )
     finally:
         try:
             os.remove(path)

@@ -7,16 +7,26 @@ then record match results to advance competitors through the bracket.
 """
 from flask import abort, flash, jsonify, redirect, render_template, request, url_for
 from markupsafe import Markup, escape
+from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
 from models import Event, EventResult, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.birling_print import build_birling_print_context
+from services.cache_invalidation import invalidate_tournament_caches
 from services.print_catalog import record_print
 from services.print_response import weasyprint_or_html
 
 from . import _signed_up_competitors, scheduling_bp
+
+# Shared message for the concurrent-edit case — surfaced when SQLAlchemy
+# version_id detects a parallel update has advanced the row. See companion
+# constant in routes/proam_relay.py and routes/partnered_axe.py.
+_STALE_DATA_FLASH = (
+    'Another judge updated this in parallel. Reload the page and try again — '
+    'your last input was not saved.'
+)
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling', methods=['GET'])
@@ -165,6 +175,7 @@ def birling_generate(tournament_id, event_id):
         'competitors': len(comp_dicts),
         'event_name': event.display_name,
     })
+    invalidate_tournament_caches(tournament_id)
     flash(f'Bracket generated with {len(comp_dicts)} competitors.', 'success')
     return redirect(url_for('scheduling.birling_manage',
                             tournament_id=tournament_id, event_id=event_id))
@@ -198,6 +209,11 @@ def birling_record_match(tournament_id, event_id):
 
     try:
         bb.record_match_result(match_id, winner_id)
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
     except ValueError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('scheduling.birling_manage',
@@ -212,6 +228,7 @@ def birling_record_match(tournament_id, event_id):
         'winner_id': winner_id,
         'winner_name': winner_name,
     })
+    invalidate_tournament_caches(tournament_id)
     flash(f'{winner_name} wins match {match_id}.', 'success')
     return redirect(url_for('scheduling.birling_manage',
                             tournament_id=tournament_id, event_id=event_id))
@@ -245,6 +262,11 @@ def birling_record_fall(tournament_id, event_id):
 
     try:
         result = bb.record_fall(match_id, fall_winner_id)
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
     except ValueError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('scheduling.birling_manage',
@@ -276,6 +298,7 @@ def birling_record_fall(tournament_id, event_id):
         'fall_winner_name': fall_winner_name,
         'match_decided': result['match_decided'],
     })
+    invalidate_tournament_caches(tournament_id)
     return redirect(url_for('scheduling.birling_manage',
                             tournament_id=tournament_id, event_id=event_id))
 
@@ -310,6 +333,11 @@ def birling_undo_match(tournament_id, event_id):
 
     try:
         result = bb.undo_match_result(match_id)
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
     except ValueError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('scheduling.birling_manage',
@@ -324,6 +352,7 @@ def birling_undo_match(tournament_id, event_id):
         'previous_loser': prev_loser,
         'previous_loser_name': comp_lookup.get(prev_loser, '?') if prev_loser else None,
     })
+    invalidate_tournament_caches(tournament_id)
     flash(f'Match {match_id} result undone.', 'success')
     return redirect(url_for('scheduling.birling_manage',
                             tournament_id=tournament_id, event_id=event_id))
@@ -343,6 +372,7 @@ def birling_reset(tournament_id, event_id):
     log_action('birling_bracket_reset', 'event', event_id, {
         'event_name': event.display_name,
     })
+    invalidate_tournament_caches(tournament_id)
     flash('Bracket has been reset.', 'success')
     return redirect(url_for('scheduling.birling_manage',
                             tournament_id=tournament_id, event_id=event_id))
@@ -376,6 +406,7 @@ def birling_finalize(tournament_id, event_id):
         'placements': len(placements),
         'event_name': event.display_name,
     })
+    invalidate_tournament_caches(tournament_id)
     flash(f'Bracket finalized with {len(placements)} placements.', 'success')
     return redirect(url_for('scheduling.birling_manage',
                             tournament_id=tournament_id, event_id=event_id))

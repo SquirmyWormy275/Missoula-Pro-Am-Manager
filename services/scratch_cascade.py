@@ -416,6 +416,10 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                 if str(competitor.id) in assignments:
                     del assignments[str(competitor.id)]
                     heat.stand_assignments = json.dumps(assignments)
+                # Keep HeatAssignment rows aligned with the JSON source-of-truth.
+                # Without this, validation/judge sheets show the scratched competitor
+                # until someone manually clicks the heat-sync recovery button.
+                heat.sync_assignments(heat_type)
 
         # --- Audit log -------------------------------------------------------
         log_action(

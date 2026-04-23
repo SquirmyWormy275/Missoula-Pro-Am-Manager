@@ -14,6 +14,7 @@ from database import db
 from models import Event, Flight, Heat, HeatAssignment, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
+from services.cache_invalidation import invalidate_tournament_caches
 
 from . import (
     _build_assignment_details,
@@ -151,6 +152,7 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
                 }
                 session.modified = True
             trigger_saw_block_recompute(tournament)
+            invalidate_tournament_caches(tournament_id)
         except Exception as exc:
             db.session.rollback()
             flash(f'Heat/flight generation failed and was rolled back: {exc}', 'error')
@@ -176,6 +178,7 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
                 }
                 session.modified = True
             trigger_saw_block_recompute(tournament)
+            invalidate_tournament_caches(tournament_id)
         except Exception as exc:
             db.session.rollback()
             flash(f'Flight rebuild failed and was rolled back: {exc}', 'error')
@@ -191,6 +194,7 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
             if integration['integrated_heats'] > 0:
                 flash(f"Integrated {integration['integrated_heats']} heat(s) into flights.", 'success')
             trigger_saw_block_recompute(tournament)
+            invalidate_tournament_caches(tournament_id)
         except Exception as exc:
             db.session.rollback()
             flash(f'Spillover integration failed: {exc}', 'error')
@@ -318,6 +322,7 @@ def setup_events(tournament_id):
                 )
 
         db.session.commit()
+        invalidate_tournament_caches(tournament_id)
         if action_scope == 'college':
             flash('College event configuration saved.', 'success')
         elif action_scope == 'pro':
@@ -602,6 +607,7 @@ def reorder_friday_events(tournament_id):
     tournament.set_schedule_config(cfg)
     db.session.commit()
     log_action('friday_event_order_set', 'tournament', tournament_id, {'order': event_ids})
+    invalidate_tournament_caches(tournament_id)
 
     from services.saw_block_assignment import trigger_saw_block_recompute
     trigger_saw_block_recompute(tournament)
@@ -625,6 +631,7 @@ def reorder_saturday_events(tournament_id):
     tournament.set_schedule_config(cfg)
     db.session.commit()
     log_action('saturday_event_order_set', 'tournament', tournament_id, {'order': event_ids})
+    invalidate_tournament_caches(tournament_id)
     return jsonify({'ok': True})
 
 
@@ -653,6 +660,7 @@ def reset_event_order(tournament_id):
     tournament.set_schedule_config(cfg)
     db.session.commit()
     log_action('event_order_reset', 'tournament', tournament_id, {'day': day or 'both'})
+    invalidate_tournament_caches(tournament_id)
 
     from services.saw_block_assignment import trigger_saw_block_recompute
     trigger_saw_block_recompute(tournament)
@@ -824,5 +832,6 @@ def apply_saturday_priority(tournament_id):
     log_action('saturday_priority_applied', 'tournament', tournament_id, {
         'priority_count': len(priority_tuples),
     })
+    invalidate_tournament_caches(tournament_id)
     flash(f'Saturday priority applied to {reordered} heats across {len(priority_tuples)} event(s).', 'success')
     return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
