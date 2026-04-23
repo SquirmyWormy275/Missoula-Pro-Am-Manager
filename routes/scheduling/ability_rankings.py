@@ -12,7 +12,7 @@ from models import Event, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 
-from . import _signed_up_competitors, scheduling_bp
+from . import _competitor_entered_event, _signed_up_competitors, scheduling_bp
 
 # ---------------------------------------------------------------------------
 # Ability Rankings — per-event judge-assigned ranks for heat snake-draft sort
@@ -146,12 +146,17 @@ def ability_rankings(tournament_id):
 
     # GET — build display data.
     # ── Pro ability rankings ────────────────────────────────────────────
+    # Only show competitors who actually signed up for an event in each
+    # category, segregated by the event's gender. Jack & Jill is mixed —
+    # both genders appear in one 'open' list.
     pro_events = tournament.events.filter_by(event_type='pro').all()
-    active_categories: set = set()
+
+    # Group events by ability-ranking category.
+    category_events: dict = {}
     for event in pro_events:
         cat = _event_rank_category(event)
         if cat:
-            active_categories.add(cat)
+            category_events.setdefault(cat, []).append(event)
 
     # Load existing ranks for this tournament.
     existing_ranks = ProEventRank.query.filter_by(tournament_id=tournament_id).all()
@@ -159,33 +164,54 @@ def ability_rankings(tournament_id):
         (r.competitor_id, r.event_category): r.rank for r in existing_ranks
     }
 
-    # Build category_groups: {category: {'M': [...], 'F': [...]}}
-    # Always segregate by competitor gender, regardless of whether the event is gendered.
-    # Jack & Jill is the only mixed-gender exception — show as 'open'.
+    # Pre-fetch active pros once so each category lookup is in-memory.
     all_active_comps = ProCompetitor.query.filter_by(
         tournament_id=tournament_id,
         status='active',
     ).order_by(ProCompetitor.name).all()
 
+    # Build category_groups: {category: {'M': [...], 'F': [...], 'open': [...]}}.
+    # A pro appears in a category only if they signed up for at least one event
+    # of that category matching their gender (or mixed, for jack_jill).
     category_groups: dict = {}
-    for category in active_categories:
+    for category, events_in_cat in category_events.items():
         group: dict = {}
-        if category == 'jack_jill':
-            # Mixed-gender event — show all competitors in one list.
-            for comp in all_active_comps:
-                group.setdefault('open', []).append({
-                    'competitor': comp,
-                    'rank': rank_map.get((comp.id, category)),
-                })
-        else:
-            # Gender-segregated ranking.
-            for comp in all_active_comps:
-                gender_key = comp.gender if comp.gender else 'open'
-                group.setdefault(gender_key, []).append({
-                    'competitor': comp,
-                    'rank': rank_map.get((comp.id, category)),
-                })
-        # Sort each gender group by current rank (ranked first, then unranked alphabetically).
+        # Track competitor IDs already placed per bucket so the same pro
+        # doesn't appear twice when multiple events map to one category
+        # (e.g. Standing Block Speed + Standing Block Hard Hit).
+        seen: dict = {'M': set(), 'F': set(), 'open': set()}
+        for comp in all_active_comps:
+            entered = comp.get_events_entered()
+            # Check each event in this category. The event-level gender
+            # filter (Men's Underhand excludes women, etc.) is enforced
+            # here the same way _signed_up_competitors does it.
+            matched_any = False
+            for event in events_in_cat:
+                if event.gender and comp.gender != event.gender:
+                    continue
+                if _competitor_entered_event(event, entered):
+                    matched_any = True
+                    break
+            if not matched_any:
+                continue
+
+            if category == 'jack_jill':
+                gender_key = 'open'
+            elif comp.gender in ('M', 'F'):
+                gender_key = comp.gender
+            else:
+                gender_key = 'open'
+
+            if comp.id in seen[gender_key]:
+                continue
+            seen[gender_key].add(comp.id)
+            group.setdefault(gender_key, []).append({
+                'competitor': comp,
+                'rank': rank_map.get((comp.id, category)),
+            })
+
+        # Sort each gender group by current rank (ranked first, then
+        # unranked alphabetically).
         for gk in group:
             group[gk].sort(key=lambda e: (
                 e['rank'] if e['rank'] is not None else float('inf'),
