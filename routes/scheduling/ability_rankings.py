@@ -11,6 +11,7 @@ from database import db
 from models import Event, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
+from services.cache_invalidation import invalidate_tournament_caches
 
 from . import _competitor_entered_event, _signed_up_competitors, scheduling_bp
 
@@ -95,6 +96,7 @@ def ability_rankings(tournament_id):
                 deleted_count += 1
 
         db.session.commit()
+        invalidate_tournament_caches(tournament_id)
         log_action('ability_rankings_saved', 'tournament', tournament_id, {
             'saved': saved_count,
             'cleared': deleted_count,
@@ -139,6 +141,7 @@ def ability_rankings(tournament_id):
 
         if birling_saved:
             db.session.commit()
+            invalidate_tournament_caches(tournament_id)
 
         total_saved = saved_count + birling_saved
         flash(f'Rankings saved ({total_saved} set, {deleted_count} cleared).', 'success')
