@@ -31,6 +31,29 @@
         border-bottom: 1px solid var(--sx-border, #252a38);
     }
     .rank-section-header h6 { color: var(--sx-text, #ece8e0) !important; }
+    .ranked-zone {
+        border: 1px dashed var(--sx-border-bright, #363e52);
+        border-radius: 4px;
+        padding: 0.5rem;
+        margin-bottom: 0.5rem;
+        background: rgba(239, 43, 22, 0.04);
+    }
+    .ranked-label {
+        font-size: 0.75rem;
+        color: var(--sx-gold-bright, #ffd94a);
+        text-transform: uppercase; letter-spacing: 0.05em;
+        margin-bottom: 0.35rem; padding-left: 0.25rem;
+        font-weight: 700;
+    }
+    .ranked-zone .rank-list:empty::before {
+        content: "Drag competitors here to rank them";
+        display: block;
+        padding: 0.75rem;
+        color: var(--sx-text-2, #8c95aa);
+        font-style: italic;
+        text-align: center;
+        font-size: 0.85rem;
+    }
     .unranked-zone { border-top: 2px dashed var(--sx-border-bright, #363e52); margin-top: 0.5rem; padding-top: 0.5rem; }
     .unranked-label {
         font-size: 0.75rem;
@@ -127,24 +150,27 @@
 
                     {# Ranked zone #}
                     <div class="px-3 pt-2">
-                        <ul class="rank-list" id="ranked_{{ category }}_{{ gender_key }}"
-                            data-category="{{ category }}" data-gender="{{ gender_key }}" data-zone="ranked">
-                            {% for entry in ranked_entries %}
-                            <li class="rank-item" data-id="{{ entry.competitor.id }}">
-                                <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
-                                <span class="rank-number">{{ loop.index }}</span>
-                                <span class="comp-name">
-                                    {{ entry.competitor.display_name }}
-                                    {% if entry.competitor.springboard_slow_heat and 'springboard' in category %}
-                                        <span class="badge bg-warning text-dark ms-1 small">Slow heat</span>
-                                    {% endif %}
-                                    {% if entry.competitor.is_left_handed_springboard and 'springboard' in category %}
-                                        <span class="badge bg-info text-dark ms-1 small">Left-handed</span>
-                                    {% endif %}
-                                </span>
-                            </li>
-                            {% endfor %}
-                        </ul>
+                        <div class="ranked-zone">
+                            <div class="ranked-label">Ranked</div>
+                            <ul class="rank-list" id="ranked_{{ category }}_{{ gender_key }}"
+                                data-category="{{ category }}" data-gender="{{ gender_key }}" data-zone="ranked">
+                                {% for entry in ranked_entries %}
+                                <li class="rank-item" data-id="{{ entry.competitor.id }}">
+                                    <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
+                                    <span class="rank-number">{{ loop.index }}</span>
+                                    <span class="comp-name">
+                                        {{ entry.competitor.display_name }}
+                                        {% if entry.competitor.springboard_slow_heat and 'springboard' in category %}
+                                            <span class="badge bg-warning text-dark ms-1 small">Slow heat</span>
+                                        {% endif %}
+                                        {% if entry.competitor.is_left_handed_springboard and 'springboard' in category %}
+                                            <span class="badge bg-info text-dark ms-1 small">Left-handed</span>
+                                        {% endif %}
+                                    </span>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
                     </div>
 
                     {# Unranked zone #}
