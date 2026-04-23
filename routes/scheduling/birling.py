@@ -413,6 +413,72 @@ def birling_finalize(tournament_id, event_id):
 
 
 # ---------------------------------------------------------------------------
+# Birling index — landing page listing every college birling event.
+#
+# Before this route existed, the sidebar "Birling Brackets" link went straight
+# to ``birling_print_all`` (combined PDF).  That route silently skipped any
+# event whose bracket had not been seeded yet.  If an operator seeded one
+# gender first, clicking the sidebar produced a PDF showing only that gender
+# and the other gender's seeding page looked unreachable.  This page makes
+# both events visible with a Seed/Manage button each.
+# ---------------------------------------------------------------------------
+
+
+@scheduling_bp.route('/<int:tournament_id>/birling', methods=['GET'])
+def birling_index(tournament_id):
+    """Landing page listing every college birling event in the tournament."""
+    import json as _json
+    tournament = Tournament.query.get_or_404(tournament_id)
+    events = (
+        Event.query
+        .filter_by(tournament_id=tournament_id)
+        .filter(Event.scoring_type == 'bracket')
+        .order_by(Event.event_type, Event.name, Event.gender)
+        .all()
+    )
+
+    rows = []
+    for event in events:
+        try:
+            payload = _json.loads(event.payouts or '{}')
+        except (ValueError, TypeError):
+            payload = {}
+        bracket = payload.get('bracket') or {}
+        has_bracket = bool(bracket.get('winners'))
+        placements = payload.get('placements') or {}
+        competitors = payload.get('competitors') or []
+        seeded_count = len(_signed_up_competitors(event))
+        total = len(competitors) if has_bracket else seeded_count
+        completed = has_bracket and total > 0 and len(placements) >= total
+
+        if completed:
+            status = 'completed'
+            status_label = 'Complete'
+        elif has_bracket:
+            status = 'in_progress'
+            status_label = 'Seeded'
+        else:
+            status = 'not_seeded'
+            status_label = 'Not seeded'
+
+        rows.append({
+            'event': event,
+            'has_bracket': has_bracket,
+            'status': status,
+            'status_label': status_label,
+            'entrant_count': seeded_count,
+            'placement_count': len(placements),
+            'total_competitors': total,
+        })
+
+    return render_template(
+        'scheduling/birling_index.html',
+        tournament=tournament,
+        events=rows,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Blank bracket print (show-prep)
 # ---------------------------------------------------------------------------
 
