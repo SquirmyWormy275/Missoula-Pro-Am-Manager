@@ -35,7 +35,9 @@ class PartneredAxeThrow:
             raw = self.event.payouts
         try:
             self.state = json.loads(raw or '{}')
-        except:
+        except (json.JSONDecodeError, TypeError):
+            # Specific catch only — bare except masks KeyboardInterrupt and
+            # SystemExit and hides unrelated failures during state load.
             self.state = {}
 
         if 'stage' not in self.state:

@@ -1,4 +1,10 @@
-"""Phase 2 workflow integration QA tests."""
+"""Phase 2 workflow integration QA tests.
+
+DEPRECATED FIXTURE PATTERN: this file copies instance/proam.db (production
+data). See tests/test_edge_cases.py module docstring for the full rationale.
+For new tests, use tests/fixtures/synthetic_data.py + create_test_app().
+The fixture below now SKIPs cleanly when SOURCE_DB is absent (CI default).
+"""
 from __future__ import annotations
 
 import re
@@ -17,7 +23,16 @@ TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
 
 @pytest.fixture()
 def qa_env(monkeypatch):
-    """Return a fresh app/client pair backed by a copied real database."""
+    """Return a fresh app/client pair backed by a copied real database.
+
+    Skips cleanly when SOURCE_DB is absent so CI without prod data passes.
+    See module docstring for the deprecation context.
+    """
+    if not SOURCE_DB.exists():
+        pytest.skip(
+            f"SOURCE_DB ({SOURCE_DB}) is absent; "
+            "test relies on local prod-data copy, see deprecation in module docstring"
+        )
     TMP_ROOT.mkdir(exist_ok=True)
     temp_dir = TMP_ROOT / f"integration-qa-{uuid.uuid4().hex}"
     temp_dir.mkdir()

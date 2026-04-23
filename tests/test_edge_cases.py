@@ -1,4 +1,21 @@
-"""Phase 3 edge-case QA tests."""
+"""Phase 3 edge-case QA tests.
+
+DEPRECATED FIXTURE PATTERN: this file copies instance/proam.db (production
+data) into a tempfile to seed each test. The 4-layer test isolation defense
+(CLAUDE.md §6) blocks WRITES to the prod DB, but the copy still pulls real
+competitor names, contact info, and admin credentials into the test process.
+Risks: (a) confidentiality leakage in CI logs / pytest tracebacks, (b)
+one-regression-from-prod-write if the 4-layer guard is ever weakened,
+(c) tests fail in CI without prod data unless gracefully skipped.
+
+For new tests: use ``tests/fixtures/synthetic_data.py`` and the
+``tests/db_test_utils.py::create_test_app()`` helper, which builds an
+isolated SQLite DB from migrations + a synthetic seed. Migration of the
+existing tests in this file is tracked as follow-up tech debt.
+
+The tests below now SKIP cleanly when ``instance/proam.db`` is absent
+(CI default, since the file is gitignored).
+"""
 from __future__ import annotations
 
 import shutil
@@ -16,7 +33,16 @@ TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
 
 @pytest.fixture()
 def qa_env(monkeypatch):
-    """Return a fresh app/client pair backed by a copied real database."""
+    """Return a fresh app/client pair backed by a copied real database.
+
+    Skips cleanly when SOURCE_DB is absent so CI without prod data passes.
+    See module docstring for the deprecation context.
+    """
+    if not SOURCE_DB.exists():
+        pytest.skip(
+            f"SOURCE_DB ({SOURCE_DB}) is absent; "
+            "test relies on local prod-data copy, see deprecation in module docstring"
+        )
     TMP_ROOT.mkdir(exist_ok=True)
     temp_dir = TMP_ROOT / f"edge-qa-{uuid.uuid4().hex}"
     temp_dir.mkdir()

@@ -66,9 +66,22 @@ EVENT_SPACING_TIERS: dict[str, tuple[int, int]] = {
     'stock_saw':      (4, 5),
 }
 
-_CONFLICTING_STANDS: dict[str, str] = {
-    'standing_block': 'cookie_stack',
-    'cookie_stack': 'standing_block',
+_CONFLICTING_STANDS: dict[str, set[str]] = {
+    # Cookie Stack and Standing Block share 5 physical stands. Original entry.
+    'standing_block': {'cookie_stack'},
+    'cookie_stack': {'standing_block'},
+    # Stock Saw uses physical stands 1-2; Hot Saw uses 1-4. They share
+    # stands 1-2 — back-to-back scheduling forces a stand changeover with
+    # no break for the crowd. Same physical-clash class as Cookie/Standing.
+    # Identified by 2026-04-23 audit.
+    'stock_saw': {'hot_saw'},
+    'hot_saw': {'stock_saw'},
+    # Obstacle Pole uses Pole 1 + Pole 2; Speed Climb uses Pole 2 + Pole 4.
+    # Shared Pole 2 means simultaneous use is impossible. Speed Climb is a
+    # day-split run-2 spillover so the collision is rare on Saturday but
+    # real when both events land in adjacent flight slots after spillover.
+    'obstacle_pole': {'speed_climb'},
+    'speed_climb': {'obstacle_pole'},
 }
 # Minimum gap between conflicting stand types (approximately one flight block)
 _STAND_CONFLICT_GAP = 8
@@ -748,12 +761,15 @@ def _calculate_heat_score(competitors: set, competitor_last_heat: dict,
     """
     stand_type = getattr(event, 'stand_type', None)
 
-    # Enforce stand type conflict: cookie_stack and standing_block share physical stands
+    # Enforce stand type conflicts (events that share physical stands).
+    # _CONFLICTING_STANDS is now dict[str, set[str]] so a single stand_type
+    # can have multiple physical conflicts (e.g. obstacle_pole shares Pole 2
+    # with speed_climb; future events may add more shared-stand pairs).
     if stand_type and stand_type in _CONFLICTING_STANDS and stand_type_last_position is not None:
-        conflict_type = _CONFLICTING_STANDS[stand_type]
-        last_conflict = stand_type_last_position.get(conflict_type)
-        if last_conflict is not None and (current_position - last_conflict) < _STAND_CONFLICT_GAP:
-            return -1.0
+        for conflict_type in _CONFLICTING_STANDS[stand_type]:
+            last_conflict = stand_type_last_position.get(conflict_type)
+            if last_conflict is not None and (current_position - last_conflict) < _STAND_CONFLICT_GAP:
+                return -1.0
 
     min_sp, target_sp = _get_spacing(event)
 

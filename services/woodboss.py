@@ -588,13 +588,21 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
 
         # Gendered events emit separate M/F rows; open events collapse all genders.
         # Emit rows for both college and pro divisions separately.
-        is_gendered = fragment in ('single buck', 'double buck', 'stock saw', 'obstacle pole')
+        # Per-division gendering: 'obstacle pole' is gendered in COLLEGE (M and F
+        # categories per config.py COLLEGE_CLOSED_EVENTS) but NOT in PRO (single
+        # open Obstacle Pole event in config.PRO_EVENTS, no is_gendered flag).
+        # The flat is_gendered set previously applied 'obstacle pole' to both
+        # divisions, splitting Pro Obstacle Pole into phantom M+F rows. Same
+        # category-mismatch class as the V2.11.x Pro 1-Board fix.
+        college_gendered = fragment in ('single buck', 'double buck', 'stock saw', 'obstacle pole')
+        pro_gendered = fragment in ('single buck', 'double buck', 'stock saw')
 
         # Determine which (comp_type, gender) combos to emit.
         # Always include college and pro rows (even if zero) for visibility.
         rows_to_emit = []
         for comp_type in ('college', 'pro'):
-            if is_gendered:
+            is_gendered_here = college_gendered if comp_type == 'college' else pro_gendered
+            if is_gendered_here:
                 for g in ('M', 'F'):
                     rows_to_emit.append((comp_type, g))
             else:
