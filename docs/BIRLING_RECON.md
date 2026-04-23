@@ -146,9 +146,9 @@ The grep for `match` and `fall` returned 83 files. After review, none contain bi
 
 The `BirlingBracket` class implements:
 
-- **Bracket generation** (`generate_bracket`, L47-148): Takes competitor list + optional seeding. Computes bracket size as next power of 2. Creates standard 1-vs-N pairing. Auto-advances byes. Generates winners bracket rounds, losers bracket rounds, finals, and true finals.
-- **Bye handling** (`_propagate_byes`, L150-156): After generation, propagates bye winners into round 2 slots.
-- **Losers bracket generation** (`_generate_losers_bracket`, L158-194): Creates losers bracket structure. Match count per round based on `bracket_size // (2 ** (w_round + 2))`.
+- **Bracket generation** (`generate_bracket`, L47-148): Takes competitor list + optional seeding. Uses actual competitor count for compact scaling. For even fields, standard mirrored seed pairings (1 vs N, 2 vs N-1). For odd fields, top seed gets first-round bye. Generates winners bracket rounds with ceil division, losers bracket based on actual winners round counts, finals, and true finals.
+- **Bye handling** (`_propagate_byes`, L150-156): Sweeps both winners and losers brackets for auto-advancement when opponents won't arrive.
+- **Losers bracket generation** (`_generate_losers_bracket`, L158-194): Creates losers bracket structure based on actual winners round counts, alternating consolidation and drop-down rounds.
 - **Match result recording** (`record_match_result`, L196-246): Sets winner/loser on match dict. Dispatches to advancement logic based on match_id prefix (W/L/F).
 - **Winner advancement** (`_advance_winner`, L270-298): `W{r}_{m}` winner goes to `winners[r][(m-1)//2]`. Odd match number -> `competitor1`, even -> `competitor2`. Final winners round champion goes to `finals.competitor1`.
 - **Loser drop-down** (`_drop_to_losers`, L300-332): `W{r}` loser drops to `losers[r-1][(m-1)//2]`. Fills first available slot.
