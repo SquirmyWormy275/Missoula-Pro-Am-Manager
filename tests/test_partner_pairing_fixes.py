@@ -475,8 +475,9 @@ class TestPreflightCollegePartnerChecks:
 
     def test_non_reciprocal_partnership_flagged(self, db_session):
         """A says B is partner, but B says someone else."""
-        from services.preflight import build_preflight_report
         import json
+
+        from services.preflight import build_preflight_report
 
         t = _make_tournament(db_session)
         team = _make_team(db_session, t)

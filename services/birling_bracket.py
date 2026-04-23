@@ -67,42 +67,49 @@ class BirlingBracket:
         else:
             self.bracket_data['seeding'] = [c['id'] for c in competitors]
 
-        # Calculate bracket size (next power of 2)
-        bracket_size = 2 ** math.ceil(math.log2(num_competitors))
-        num_byes = bracket_size - num_competitors
-
-        # Generate first round pairings (1 vs N, 2 vs N-1, etc.)
+        # Generate first round pairings using actual competitor count.
+        # For even fields, use standard mirrored seed pairings.
+        # For odd fields, give the top seed a first-round bye and mirror the rest.
         seeded = self.bracket_data['seeding']
-        pairings = []
+        first_round_matches = []
+        remaining = seeded[:]
 
-        for i in range(bracket_size // 2):
-            seed1 = i
-            seed2 = bracket_size - 1 - i
+        if num_competitors % 2 == 1:
+            first_round_matches.append({
+                'match_id': 'W1_1',
+                'round': 'winners_1',
+                'competitor1': remaining.pop(0),
+                'competitor2': None,
+                'winner': None,
+                'loser': None,
+                'falls': [],
+                'is_bye': True
+            })
 
-            comp1 = seeded[seed1] if seed1 < len(seeded) else None  # BYE
-            comp2 = seeded[seed2] if seed2 < len(seeded) else None  # BYE
-
-            pairings.append({
-                'match_id': f'W1_{i+1}',
+        while remaining:
+            comp1 = remaining.pop(0)
+            comp2 = remaining.pop(-1)
+            match_id = f'W1_{len(first_round_matches) + 1}'
+            first_round_matches.append({
+                'match_id': match_id,
                 'round': 'winners_1',
                 'competitor1': comp1,
                 'competitor2': comp2,
                 'winner': None,
                 'loser': None,
                 'falls': [],
-                'is_bye': comp1 is None or comp2 is None
+                'is_bye': False
             })
 
-            # Handle byes - auto-advance
-            if comp1 is None and comp2 is not None:
-                pairings[-1]['winner'] = comp2
-            elif comp2 is None and comp1 is not None:
-                pairings[-1]['winner'] = comp1
+        self.bracket_data['bracket']['winners'] = [first_round_matches]
 
-        self.bracket_data['bracket']['winners'] = [pairings]
+        # Auto-advance first-round byes immediately.
+        for match in first_round_matches:
+            if match.get('is_bye') and match.get('winner') is None:
+                match['winner'] = match['competitor1'] or match['competitor2']
 
-        # Generate subsequent winners bracket rounds
-        matches_in_round = len(pairings) // 2
+        # Generate subsequent winners bracket rounds using actual match counts.
+        matches_in_round = math.ceil(len(first_round_matches) / 2)
         round_num = 2
 
         while matches_in_round >= 1:
@@ -119,11 +126,13 @@ class BirlingBracket:
                     'is_bye': False
                 })
             self.bracket_data['bracket']['winners'].append(round_matches)
-            matches_in_round //= 2
+            matches_in_round = math.ceil(matches_in_round / 2)
             round_num += 1
 
-        # Generate losers bracket (more complex structure)
-        self._generate_losers_bracket(bracket_size)
+        # Generate losers bracket based on the actual winners bracket shape.
+        self._generate_losers_bracket(
+            [len(r) for r in self.bracket_data['bracket']['winners']]
+        )
 
         # Generate finals
         self.bracket_data['bracket']['finals'] = {
@@ -153,42 +162,28 @@ class BirlingBracket:
         self._save_bracket_data()
 
     def _propagate_byes(self):
-        """Advance bye winners from round 1 into their next-round match slots."""
-        winners = self.bracket_data['bracket']['winners']
-        first_round = winners[0] if winners else []
-        for match in first_round:
-            if match.get('is_bye') and match.get('winner') is not None:
-                self._advance_winner(match)
+        """Advance bye winners from both winners and losers brackets."""
+        self._sweep_winners_byes()
+        self._sweep_losers_byes()
 
-    def _generate_losers_bracket(self, bracket_size: int):
-        """Generate losers bracket structure for standard double elimination.
-
-        For bracket_size B with log2(B) winners rounds, the losers bracket
-        has 2*(log2(B)-1) rounds that alternate between two types:
-
-          Odd rounds (L1, L3, L5, ...): "consolidation" — LB survivors
-            play each other, halving the field.  L1 is special: W1 losers
-            play each other.
-
-          Even rounds (L2, L4, L6, ...): "drop-down" — winners bracket
-            losers from W{r} enter and face LB survivors from the
-            preceding consolidation round.
-
-        Match counts halve every 2 rounds:
-          L1-L2: B/4 matches each
-          L3-L4: B/8 matches each
-          L5-L6: B/16 matches each
-          ...final pair: 1 match each
-        """
-        num_winners_rounds = int(math.log2(bracket_size))
+    def _generate_losers_bracket(self, winners_round_counts: list):
+        """Generate losers bracket structure based on actual winners round counts."""
+        num_winners_rounds = len(winners_round_counts)
         num_losers_rounds = 2 * (num_winners_rounds - 1)
         losers_rounds = []
 
+        survivors = winners_round_counts[0]
         for lr in range(1, num_losers_rounds + 1):
-            # Match count: halves every 2 rounds starting at B/4
-            # Rounds 1-2: B/4, rounds 3-4: B/8, rounds 5-6: B/16, ...
-            pair_index = (lr - 1) // 2  # 0 for L1-L2, 1 for L3-L4, etc.
-            num_matches = max(1, bracket_size // (2 ** (pair_index + 2)))
+            if lr % 2 == 1:
+                # Consolidation round: losers bracket survivors play each other.
+                num_matches = math.ceil(survivors / 2)
+                survivors = num_matches
+            else:
+                # Drop-down round: losers from the next winners round enter.
+                w_round_idx = lr // 2
+                w_losers = winners_round_counts[w_round_idx]
+                num_matches = min(survivors, w_losers)
+                survivors = num_matches
 
             round_matches = []
             for i in range(num_matches):
@@ -234,6 +229,57 @@ class BirlingBracket:
         else:
             prev = losers[lr - 2] if (lr - 2) < len(losers) else []
             return [_safe(prev, 2 * m - 2), _safe(prev, 2 * m - 1)]
+
+    def _get_wb_sources(self, r, m):
+        """Get the two source matches that feed winners bracket match W{r}_{m}."""
+        winners = self.bracket_data['bracket']['winners']
+        if r <= 1:
+            return []
+
+        prev = winners[r - 2] if (r - 2) < len(winners) else []
+
+        def _safe(lst, idx):
+            return lst[idx] if 0 <= idx < len(lst) else None
+
+        return [_safe(prev, 2 * m - 2), _safe(prev, 2 * m - 1)]
+
+    def _sweep_winners_byes(self):
+        """Auto-advance winners bracket competitors when a match has a single live slot."""
+        changed = True
+        while changed:
+            changed = False
+            winners = self.bracket_data['bracket']['winners']
+            for round_idx, round_matches in enumerate(winners):
+                for match in round_matches:
+                    if match['winner'] is not None:
+                        continue
+
+                    c1, c2 = match['competitor1'], match['competitor2']
+                    if (c1 is None) == (c2 is None):
+                        continue  # both present or both absent
+
+                    r = round_idx + 1
+                    m = int(match['match_id'].split('_')[1])
+                    sources = self._get_wb_sources(r, m)
+
+                    stalled = True
+                    for src in sources:
+                        if src is None:
+                            continue
+                        if src['winner'] is not None:
+                            continue
+                        if src['competitor1'] is not None or src['competitor2'] is not None:
+                            stalled = False
+                            break
+                        stalled = False
+                        break
+
+                    if stalled:
+                        winner = c1 if c1 is not None else c2
+                        match['winner'] = winner
+                        match['is_bye'] = True
+                        self._advance_winner(match)
+                        changed = True
 
     def _sweep_losers_byes(self):
         """Auto-advance lone competitors in losers bracket matches where

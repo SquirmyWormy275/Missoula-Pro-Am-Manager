@@ -223,6 +223,11 @@ routes/scheduling/birling.py
   birling_finalize      POST — finalize_to_event_results()
   birling_print_blank   GET  — WeasyPrint PDF of blank bracket
   birling_print_all     GET  — combined PDF across every birling event
+                               (NOTE: as of V2.14.9 the sidebar-canonical entry
+                               is birling_index; birling_print_all is reached
+                               via the hub's "Print All" action + direct URL)
+  birling_index         GET  — hub listing every birling event w/ per-event
+                               Seed/Manage + Print Blank actions (V2.14.9)
 
 templates/scheduling/birling_manage.html
   ├─ Seeding table (typed ranks, falls back to pre_seedings)

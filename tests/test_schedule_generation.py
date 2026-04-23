@@ -144,12 +144,15 @@ def test_generate_tournament_schedule_artifacts_orchestrates_heat_and_flight_gen
         _db.session.flush()
 
     # MOCK FIDELITY: build_pro_flights real signature is
-    # (tournament, num_flights=None, commit=True). The 1-positional lambda
-    # below matches the current call site at services/schedule_generation.py
-    # but a future caller adding num_flights= would crash the mock without
-    # exposing whether production is broken. See trilogy doc.
+    # (tournament, num_flights=None, commit=True). Mock must match — the
+    # prior 1-positional lambda broke silently when V2.14.2 threaded
+    # num_flights= through the caller in services/schedule_generation.py.
+    # See feedback_mock_signature_matches_bug.md in memory.
     monkeypatch.setattr('services.heat_generator.generate_event_heats', _fake_generate)
-    monkeypatch.setattr('services.flight_builder.build_pro_flights', lambda _tournament: 2)
+    monkeypatch.setattr(
+        'services.flight_builder.build_pro_flights',
+        lambda tournament, num_flights=None, commit=True: 2,
+    )
 
     result = generate_tournament_schedule_artifacts(tournament.id)
 
