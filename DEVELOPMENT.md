@@ -592,6 +592,20 @@ STAND_CONFIGS = {
 
 ## Changelog
 
+### 2026-04-23 (V2.14.3)
+
+**What changed for you.** Judges running the Pro-Am Relay can now pick the number of teams when they Redraw, instead of being locked to whatever count was drawn first. On the Relay dashboard, the Redraw Lottery form now exposes the same **Number of Teams** dropdown as the initial Draw form, defaulting to the currently-drawn count but letting you pick anything up to `capacity.max_teams`. So: judge drew 2 teams, later realizes the opt-in pool supports 3, clicks Redraw, picks 3, done. No more manual state reset, no more judges stuck at 2 teams because the bottleneck pool shifted overnight.
+
+**Patch — Relay redraw accepts operator-chosen num_teams.** Race-weekend operator reported the `/tournament/<tid>/proam-relay/` page showed "Max Possible Teams: 3" alongside "Teams Formed: 2" with no visible way to expand. `POST /proam-relay/redraw` was hard-coded to `num_teams=existing_team_count or 2`, so clicking Redraw just re-rolled the same 2-team split. The initial Draw form at `status=not_drawn` already had a team-count dropdown; the Redraw form at `status=drawn` did not.
+
+- `routes/proam_relay.py::redraw_lottery` now reads `num_teams` from POST, falls back to the existing team count when the field is absent (legacy form submissions still work), rejects non-int / zero / negative input with a flash + redirect (no 500), and echoes the chosen count in the success flash so operators see confirmation of what was drawn.
+- `templates/proam_relay/dashboard.html` adds a `<select name="num_teams">` inside the Redraw form capped at `capacity.max_teams`. Default clamped to `min(teams|length, capacity.max_teams)` so a shrunken pool (competitors scratched between draw and redraw) never leaves zero options selected and defaults to a valid choice.
+- 8 new regression tests in `tests/test_proam_relay_redraw_route.py`: 2→3 team escalation via POST, legacy empty-form fallback, parametrized invalid-input matrix (five, 0, -1, 3.5, empty) each preserving state, and HTML assertion that the selector + capacity note render on the drawn-state dashboard. Uses a dedicated module-scoped app fixture + login-based `auth_client` so committing routes (`run_lottery`, `redraw_lottery`) do not collide with the shared conftest `admin_user` fixture.
+
+**Also shipped — operations documentation.** `docs/solutions/best-practices/railway-ssh-base64-python-pattern-2026-04-22.md` captures the base64-encoded-Python-through-remote-pipeline pattern used during the 2026-04-22 production admin password reset. The three independent obstacles solved: (1) internal-only `DATABASE_URL` hostnames that only resolve inside the Railway container network, (2) PowerShell → Railway CLI → remote `sh` quoting chain corruption that mangles `python -c "..."`, (3) Railway's TTY allocation on `railway ssh` that makes `@'...'@ | python` drop into the interactive REPL instead of reading stdin. Base64 alphabet has zero shell metacharacters and the `echo ... | base64 -d | python` pipeline gives Python a non-TTY stdin. All credentials are placeholder strings, no real secrets embedded.
+
+---
+
 ### 2026-04-22 (V2.14.2)
 
 **What changed for you.** The Run Show page (`/scheduling/<tid>/events`) no longer flashes "X events have no heats yet" warnings for events that intentionally never produce heats — Axe Throw, Caber Toss, Peavey Log Roll, and Pulp Toss (college come-and-go signup format) plus Partnered Axe Throw and Pro-Am Relay (state-machine events that store progression in `Event.payouts` JSON). The Current Schedule status panel now reflects actual schedule readiness instead of crying wolf on every page load. Same release also surfaces the flight sizing controls (mode toggle, num_flights, target minutes per flight, minutes per heat) directly on the Run Show page above the Generate buttons — no more bouncing to `/flights/build` to retune flight count between Generate clicks. Both pages share the same persisted `schedule_config`, so changing flight count in either place updates the other.

@@ -65,11 +65,23 @@ def redraw_lottery(tournament_id):
     tournament = Tournament.query.get_or_404(tournament_id)
     relay = get_proam_relay(tournament)
 
+    existing_team_count = len(relay.get_teams()) or 2
+    raw = request.form.get('num_teams')
+    if raw is None or raw == '':
+        num_teams = existing_team_count
+    else:
+        try:
+            num_teams = int(raw)
+            if num_teams < 1:
+                raise ValueError('num_teams must be at least 1')
+        except (TypeError, ValueError):
+            flash('Invalid number of teams.', 'error')
+            return redirect(url_for('proam_relay.relay_dashboard', tournament_id=tournament_id))
+
     try:
-        existing_team_count = len(relay.get_teams()) or 2
-        result = relay.redraw_lottery(num_teams=existing_team_count)
+        result = relay.redraw_lottery(num_teams=num_teams)
         invalidate_tournament_caches(tournament_id)
-        flash('Lottery has been redrawn!', 'success')
+        flash(f"Lottery has been redrawn with {num_teams} team(s).", 'success')
     except ValueError as e:
         flash(str(e), 'danger')
 
