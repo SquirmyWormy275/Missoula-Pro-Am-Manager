@@ -1,6 +1,7 @@
 ---
 module: workflow/multi-session
 date: 2026-04-23
+last_updated: 2026-04-23
 problem_type: best_practice
 component: development_workflow
 severity: high
@@ -228,8 +229,26 @@ Option C. Five reasons:
 | V2.14.1 | #80 | `e476e12` | `d08c7656` | FNF per-event stand count override |
 | V2.14.2 | #81 | `68e78ca` | `4855294e` (sibling) | Schedule-status warning scope fix (list-only events) |
 | V2.14.3 | #82 | `279f0d2` | `8fa4f1a6` (rebased) | Pro-Am Relay redraw accepts operator-chosen num_teams |
+| V2.14.4 | #84 | `1b81dca` | (subsequent) | Solo competitor closes the event, not opens it |
+| V2.14.5 | #85 | `eafa69c` | (parallel A) | Payout templates Jinja sort-filter crash fix |
+| V2.14.6 | #86 | `bbe59a5` | (parallel B, rebased) | Run Show warning panel CTAs actually generate |
 
-Prod went `2.14.1 → 2.14.2 → 2.14.3` cleanly. No force-push. No three-way merge. No data loss.
+Prod went `2.14.1 → 2.14.2 → 2.14.3 → 2.14.4 → 2.14.5 → 2.14.6` cleanly. No force-push. No three-way merge. No data loss.
+
+### V2.14.5 / V2.14.6 — second positive confirmation (added 2026-04-23 evening)
+
+The pattern was applied a second time the same day with the same result. User had two parallel sessions running — one fixing payout-template Jinja crashes (eventually V2.14.5), one fixing the Run Show warning-button-does-nothing bug (eventually V2.14.6). Coordination protocol followed:
+
+1. **User stated the no-touch zone at session start** for the warning-button session: "another claude code session happening unfucking errors with the event payout configuration page... do NOT touch routes/services related to payouts." This is the human-relayed equivalent of `git status` surfacing sibling state — the explicit no-touch zone replaces the post-hoc detection step.
+2. **Warning-button session staged its 4 files locally without committing** while the payout session worked. No version bump, no `routes/main.py` literal change, no `DEVELOPMENT.md` entry — the slot was deliberately left unclaimed.
+3. **User signaled "wait until it is done"** when payout session was about to merge.
+4. **Payout session merged as V2.14.5** (PR #85, `eafa69c`). User signaled "good to go."
+5. **Warning-button session ran the protocol**: `git fetch && git status` confirmed clean main at V2.14.5, `git show --stat eafa69c` confirmed zero file overlap with the 4 staged files (PR #85 touched payout templates / model / test; PR #86 touched schedule_status / events.html / scheduling routes / schedule_status test). Created `fix/run-show-warning-button-actually-generates`, bumped V2.14.5 → V2.14.6 across `pyproject.toml` + both `routes/main.py` `/health` literals + `DEVELOPMENT.md` changelog, ran `pytest` against schedule_status + adjacent suites + the V2.14.5 payout test (41 passed), pushed, opened PR #86.
+6. **PR #86 merged as `bbe59a5`** at 06:52 UTC. Railway deploy poll confirmed `/health` flipped `2.14.5 → 2.14.6` at 00:55:43 local (under 3 min).
+
+Total wall-clock cost of waiting: ~10 minutes. Wall-clock cost of a three-way merge across both sessions' shared files (`pyproject.toml`, `routes/main.py`, `DEVELOPMENT.md`) had they shipped concurrently: estimated 30+ min plus changelog provenance loss. Sequential paid for itself again.
+
+The novel signal in this run: **"do NOT touch routes/services related to payouts" upfront from the user is just as strong a coordination primitive as `git status` showing sibling state.** When the user names the no-touch zone at session start, the warning-button session never even opens the at-risk files — collision is prevented, not just resolved. Add to the trigger phrases below.
 
 ### The antipattern that preceded and motivated this pattern
 

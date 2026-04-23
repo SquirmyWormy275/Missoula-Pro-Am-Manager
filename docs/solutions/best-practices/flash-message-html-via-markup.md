@@ -1,6 +1,7 @@
 ---
 module: routes
 date: 2026-04-21
+last_updated: 2026-04-23
 problem_type: best_practice
 component: flash_messages
 severity: low
@@ -57,10 +58,15 @@ Template side stays unchanged — no `|safe` filter in `base.html`. A plain-stri
 - **No new dependency.** `markupsafe` is a Flask transitive dep; no `requirements.txt` change.
 - **Works with Bootstrap toasts.** The base toast uses `bg-warning` / `bg-danger` (white text). `.alert-link` is scoped to `.alert` elements, not toasts — use inline Bootstrap utility classes (`text-white fw-semibold text-decoration-underline`) to make the link visible on the colored background.
 
-## Reference implementation
+## Reference implementations
 
 - `routes/scheduling/birling.py::birling_print_all` — first Markup flash in the codebase (V2.12.1, commit `017eebc`). Both the "all ungenerated → 302 warning" flash and the "mixed skip info" flash use this pattern.
-- Tests — `tests/test_routes_birling_print.py::TestPrintAll::test_all_ungenerated_flash_contains_seed_links` and `test_mixed_skip_flash_contains_seed_links` assert on the presence of `href="..."` in the flash body read back from `session['_flashes']`.
+- `routes/scheduling/__init__.py::_generate_all_heats` — second use (V2.14.6, commit `bbe59a5`). When `Generate All Heats + Build Flights` skips events because no competitors entered them, the wrapper now emits two distinct `Markup`-flashed warnings (one per division) that name every skipped event and link to the matching registration page (`registration.pro_registration` / `registration.college_registration`). Replaced the previous "Skipped N without entrants" silent flash. The split-by-division pattern is the right shape when an operation can fail across two distinct user-facing surfaces — emit one Markup flash per surface, each carrying its own targeted link, instead of one combined message.
+- Tests — `tests/test_routes_birling_print.py::TestPrintAll::test_all_ungenerated_flash_contains_seed_links` and `test_mixed_skip_flash_contains_seed_links` assert on the presence of `href="..."` in the flash body read back from `session['_flashes']`. The V2.14.6 ship adds inline end-to-end verification through the Flask test client (GET → POST → 302 → follow-up GET asserts skipped event name + registration link both present in flash body).
+
+## Promote-to-helper threshold
+
+Two use sites is "document the pattern, keep inline." If a third call site appears, promote to a helper — likely `services/flash_helpers.py::flash_with_links(message_template, links_dict, category)` — so the `Markup` + `escape` boilerplate doesn't get copy-pasted into every new caller. Don't pre-build the helper now; the two existing call sites have meaningfully different shapes (birling enumerates events into one inline message; `_generate_all_heats` splits into two separate flashes) and the abstraction would cost more than it saves at N=2.
 
 ## Reading flash bodies in tests
 

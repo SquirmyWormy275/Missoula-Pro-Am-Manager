@@ -153,3 +153,9 @@ def test_queue_document_email_passes_label_to_submit(monkeypatch, smtp_env):
 **A unit test isn't evidence production works — it's evidence that the test and the code agree.** When both come from the same author in the same session, they can agree on a lie. An outside reviewer who reads the callee's signature independently is irreplaceable. Codex's one-shot read-only review caught three bugs my 3199-test suite missed — this one, a `User.email` AttributeError swallowed by an over-broad `except Exception`, and a security gate that the email POST wasn't enforcing but the GET route was.
 
 When you're about to merge a large PR: get an outside-voice diff review. Not for style, not for opinions — for the cross-reference reading that a same-session author can't do on their own work.
+
+## Related
+
+- [test-shape-matches-bug-shape-trilogy-2026-04-23.md](test-shape-matches-bug-shape-trilogy-2026-04-23.md) — This bug is **Instance 1** of a three-instance meta-pattern that shipped in nine days (V2.13.0, V2.14.0 codex hotfix, V2.14.5). The trilogy doc extracts the underlying class: "the test harness's shape matches the buggy code's shape, so both sides agree on the bug."
+- [hand-written-fixture-shape-divergence-2026-04-22.md](hand-written-fixture-shape-divergence-2026-04-22.md) — Instance 2, same family (hand-written JSON fixture key the real service never emits).
+- [../best-practices/traceback-before-repro-2026-04-23.md](../best-practices/traceback-before-repro-2026-04-23.md) — Investigation-process lesson from Instance 3: when prod disagrees with your tests, pull the traceback before synthesizing more local tests.
