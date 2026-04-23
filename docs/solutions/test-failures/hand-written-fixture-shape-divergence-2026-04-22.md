@@ -132,3 +132,4 @@ Two instances is a pattern. Add new rows here when the same thing happens again.
 - [docs/FLIGHT_FIXES_RECON.md](../../FLIGHT_FIXES_RECON.md) — the recon that scoped V2.14.0 Phase 4
 - [services/proam_relay.py](../../../services/proam_relay.py) — the real emitter (run_lottery + set_teams_manually)
 - `tests/test_proam_relay_placement.py::TestRelayTeamsSheetRendersRealShape` — the content-assertion guard added after codex caught it
+- [../best-practices/sequential-ship-pattern-parallel-claude-sessions-2026-04-23.md](../best-practices/sequential-ship-pattern-parallel-claude-sessions-2026-04-23.md) — same meta-principle at the workflow layer: **verify against the real artifact, not its description.** That doc applies the rule to version-slot collision detection (`git status` the worktree, don't trust the relay message). This doc applies it to fixture/service shape (read the emitter, don't imagine the key).
