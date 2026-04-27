@@ -408,6 +408,7 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                 Heat.status != "completed",
             )
         )
+        touched_event_ids: set[int] = set()
         for heat in heats_q.all():
             comp_ids = heat.get_competitors()
             if competitor.id in comp_ids:
@@ -420,6 +421,31 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                 # Without this, validation/judge sheets show the scratched competitor
                 # until someone manually clicks the heat-sync recovery button.
                 heat.sync_assignments(heat_type)
+                touched_event_ids.add(heat.event_id)
+
+        # --- Stock Saw solo-stand rebalance ----------------------------------
+        # The V2.14.13 rebalance is wired into the heats-page scratch route but
+        # NOT this cascade path. Without it, scratching the stand-7 seat from a
+        # pair heat leaves the survivor stuck on stand 8, and judges end up
+        # running six solo heats in a row on the same physical stand. Walk the
+        # events we actually mutated above and re-alternate 7/8 for each.
+        # Scope is gated by `rebalance_stock_saw_solo_stands` itself — only
+        # college Stock Saw is affected; everything else early-returns.
+        if touched_event_ids:
+            try:
+                from services.heat_generator import rebalance_stock_saw_solo_stands
+                for ev_id in touched_event_ids:
+                    ev = Event.query.get(ev_id)
+                    if ev is not None:
+                        rebalance_stock_saw_solo_stands(ev)
+            except Exception:
+                # Rebalance must never break a scratch — log and continue.
+                logger.warning(
+                    "scratch_cascade: stock saw rebalance failed for competitor %s; "
+                    "stands left as-is",
+                    competitor.id,
+                    exc_info=True,
+                )
 
         # --- Audit log -------------------------------------------------------
         log_action(

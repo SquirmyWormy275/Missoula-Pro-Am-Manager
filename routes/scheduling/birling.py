@@ -39,6 +39,25 @@ def birling_manage(tournament_id, event_id):
 
     from services.birling_bracket import BirlingBracket
     bb = BirlingBracket(event)
+    # Auto-migrate any bracket generated with the pre-V2.14.14 power-of-two
+    # upsize code (8 round-1 matches for 9 entrants with seeds 8+9 stacked
+    # in W1_8) to the compact shape (5 round-1 matches: 1 bye + 4 pairs).
+    # Guarded: only runs when no results have been recorded yet, so an
+    # in-progress bracket is never silently torn down. See
+    # services/birling_bracket.py::rebuild_if_stale_shape.
+    if bb.rebuild_if_stale_shape():
+        flash(
+            'Bracket was generated with the pre-V2.14.14 layout and has been '
+            'rebuilt in the compact shape (no more stacked slots).',
+            'success',
+        )
+    elif bb.is_stale_power_of_two_shape():
+        flash(
+            'This bracket uses the pre-V2.14.14 layout and already has results '
+            'recorded. Reset the bracket to rebuild it in the compact shape '
+            'if you need to clear the stacked-slot rendering.',
+            'warning',
+        )
     bracket_data = bb.bracket_data
     has_bracket = bool(bracket_data.get('bracket', {}).get('winners'))
 

@@ -85,11 +85,29 @@ def ability_rankings(tournament_id):
                 saved_count += 1
 
         # Delete ranks for competitors that were NOT in any ordered list for their category.
+        #
+        # BUG HISTORY: previously this used `if ranked_ids else True` as the
+        # filter clause — passing Python True makes SQLAlchemy emit WHERE TRUE,
+        # which SILENTLY WIPED every rank in that category whenever the form
+        # submitted an empty Ranked zone. The user's symptom was "I set my
+        # rankings, save, and they go back to whatever your preset was."
+        # Root cause: the form always submits every rendered Ranked zone's
+        # hidden input, and empty ones were treated as "clear everything."
+        #
+        # Fix: ONLY run the stale-cleanup when the user's Ranked zone(s) for
+        # that category actually contain competitor IDs. An empty Ranked zone
+        # is preserved — the user can still unrank an INDIVIDUAL by dragging
+        # them out (remaining items are submitted; the dropped one is not in
+        # ranked_ids so it's deleted). Mass-clearing a whole category requires
+        # unranking each competitor explicitly, which is rare and safer than
+        # auto-wipe.
         for category, ranked_ids in all_comp_ids_by_cat.items():
+            if not ranked_ids:
+                continue
             stale = ProEventRank.query.filter(
                 ProEventRank.tournament_id == tournament_id,
                 ProEventRank.event_category == category,
-                ~ProEventRank.competitor_id.in_(ranked_ids) if ranked_ids else True,
+                ~ProEventRank.competitor_id.in_(ranked_ids),
             ).all()
             for r in stale:
                 db.session.delete(r)

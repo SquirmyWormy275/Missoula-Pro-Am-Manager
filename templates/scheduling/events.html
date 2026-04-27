@@ -239,8 +239,29 @@
                                     / {{ schedule_status.friday.events_configured }}</div>
                                 <div><span class="text-muted">Total heats:</span>
                                     <strong>{{ schedule_status.friday.heats_total }}</strong></div>
-                                <div><span class="text-muted">Placed:</span>
-                                    <strong>{{ schedule_status.friday.competitors_placed }}</strong> competitors</div>
+                                <div><span class="text-muted">In heats:</span>
+                                    <strong>{{ schedule_status.friday.competitors_placed }}</strong>
+                                    / {{ schedule_status.friday.competitors_total }} competitors</div>
+                            </div>
+                            {% set f = schedule_status.friday %}
+                            {% set f_accounted = f.competitors_placed + f.competitors_non_heat_only + f.competitors_no_events + f.competitors_missing_from_heats %}
+                            <div class="small text-muted mt-1" style="font-size:0.8rem;">
+                                {% if f.competitors_non_heat_only %}
+                                <span title="Signed up only for list-only events (Axe Throw, Peavey Log Roll, Caber Toss, Pulp Toss) or Birling — these never generate heats by design">
+                                    <i class="bi bi-info-circle me-1"></i>{{ f.competitors_non_heat_only }} list-only / birling only
+                                </span>
+                                {% endif %}
+                                {% if f.competitors_no_events %}
+                                <span class="ms-2" title="Competitor record exists but events_entered is empty or matches no configured event">
+                                    <i class="bi bi-dash-circle me-1"></i>{{ f.competitors_no_events }} with no events
+                                </span>
+                                {% endif %}
+                                {% if f.competitors_missing_from_heats %}
+                                <span class="ms-2 text-danger fw-semibold"
+                                      title="Signed up for a heat-generating event but absent from every heat — likely a heat-generation gap. Sample: {{ f.competitors_missing_sample | join(', ') }}">
+                                    <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ f.competitors_missing_from_heats }} MISSING FROM HEATS
+                                </span>
+                                {% endif %}
                             </div>
                             <a href="{{ schedule_status.friday.detail_link }}"
                                class="small text-decoration-none mt-1 d-inline-block">
@@ -262,8 +283,28 @@
                                     {% endif %}</div>
                                 <div><span class="text-muted">Total heats:</span>
                                     <strong>{{ schedule_status.saturday.heats_total }}</strong></div>
-                                <div><span class="text-muted">Placed:</span>
-                                    <strong>{{ schedule_status.saturday.competitors_placed }}</strong> competitors</div>
+                                <div><span class="text-muted">In heats:</span>
+                                    <strong>{{ schedule_status.saturday.competitors_placed }}</strong>
+                                    / {{ schedule_status.saturday.competitors_total }} competitors</div>
+                            </div>
+                            {% set s = schedule_status.saturday %}
+                            <div class="small text-muted mt-1" style="font-size:0.8rem;">
+                                {% if s.competitors_non_heat_only %}
+                                <span title="Signed up only for Partnered Axe Throw or Pro-Am Relay — these run off a state machine, not heats">
+                                    <i class="bi bi-info-circle me-1"></i>{{ s.competitors_non_heat_only }} relay / partnered axe only
+                                </span>
+                                {% endif %}
+                                {% if s.competitors_no_events %}
+                                <span class="ms-2" title="Competitor record exists but events_entered is empty or matches no configured event">
+                                    <i class="bi bi-dash-circle me-1"></i>{{ s.competitors_no_events }} with no events
+                                </span>
+                                {% endif %}
+                                {% if s.competitors_missing_from_heats %}
+                                <span class="ms-2 text-danger fw-semibold"
+                                      title="Signed up for a heat-generating event but absent from every heat — likely a heat-generation gap. Sample: {{ s.competitors_missing_sample | join(', ') }}">
+                                    <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ s.competitors_missing_from_heats }} MISSING FROM HEATS
+                                </span>
+                                {% endif %}
                             </div>
                             <a href="{{ schedule_status.saturday.detail_link }}"
                                class="small text-decoration-none mt-1 d-inline-block">

@@ -293,6 +293,9 @@
     }
 
     // ── Pro ability ranking lists (ranked/unranked zones) ──
+    // NOTE: no `handle:` option — the whole row is draggable. Past behavior
+    // restricted drag to a tiny grip icon, which caused users to think the
+    // UI was broken when their clicks outside the icon didn't register.
     document.querySelectorAll('.rank-list[data-category]').forEach(function(list) {
         var cat = list.dataset.category;
         var gender = list.dataset.gender;
@@ -301,7 +304,6 @@
         Sortable.create(list, {
             group: groupName,
             animation: 150,
-            handle: '.drag-handle',
             ghostClass: 'sortable-ghost',
             chosenClass: 'sortable-chosen',
             onEnd: function() {
@@ -317,7 +319,6 @@
     document.querySelectorAll('.birling-school-list').forEach(function(list) {
         Sortable.create(list, {
             animation: 150,
-            handle: '.drag-handle',
             ghostClass: 'sortable-ghost',
             chosenClass: 'sortable-chosen',
             onEnd: function() { renumber(list); }

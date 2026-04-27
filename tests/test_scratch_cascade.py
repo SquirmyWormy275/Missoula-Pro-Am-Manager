@@ -793,3 +793,298 @@ class TestExecuteReverseRoundTrip:
             final_r2 = EventResult.query.get(r2_id)
             assert final_r1.status == original_r1_status
             assert final_r2.status == original_r2_status
+
+
+# ---------------------------------------------------------------------------
+# Stock Saw stand alternation after scratch cascade
+# ---------------------------------------------------------------------------
+
+
+class TestStockSawRebalanceAfterCascadeScratch:
+    """Regression: scratching a pair-heat member via the scratch cascade
+    (`/scoring/.../scratch`) used to leave the survivor stuck on whatever stand
+    they started on. On college Men's Stock Saw, every scratched partner
+    happened to be the stand-7 seat, so six consecutive solos all parked on
+    stand 8 in the printed Friday schedule.
+
+    V2.14.13 wired rebalance into `routes/scheduling/heats.scratch_competitor`
+    but NOT into this cascade service. This guard ensures the cascade path
+    also re-alternates 7/8 across surviving solos.
+    """
+
+    def _seed_stock_saw_with_pair_heats(self, app, num_pairs=6):
+        """Create a college Men's Stock Saw event with `num_pairs` pair heats.
+
+        Each heat: two male competitors on stands [7, 8] in order. Returns
+        (tournament, event, list_of_scratched_victims_from_stand_7).
+        """
+        import json as _json
+
+        from database import db
+        from models.competitor import CollegeCompetitor
+        from models.event import Event, EventResult
+        from models.heat import Heat
+        from models.team import Team
+        from models.tournament import Tournament
+
+        t = Tournament(name="StockSawRebalance 2026", year=2026, status="active")
+        db.session.add(t)
+        db.session.flush()
+
+        team = Team(
+            tournament_id=t.id,
+            team_code="CSU-A",
+            school_name="CSU",
+            school_abbreviation="CSU",
+        )
+        db.session.add(team)
+        db.session.flush()
+
+        ev = Event(
+            tournament_id=t.id,
+            name="Stock Saw",
+            event_type="college",
+            gender="M",
+            scoring_type="time",
+            scoring_order="lowest_wins",
+            stand_type="stock_saw",
+            max_stands=2,
+            status="pending",
+        )
+        db.session.add(ev)
+        db.session.flush()
+
+        stand_7_victims = []
+        for heat_num in range(1, num_pairs + 1):
+            c7 = CollegeCompetitor(
+                tournament_id=t.id,
+                team_id=team.id,
+                name=f"Stand7_{heat_num}",
+                gender="M",
+                events_entered=_json.dumps(["Stock Saw"]),
+                status="active",
+            )
+            c8 = CollegeCompetitor(
+                tournament_id=t.id,
+                team_id=team.id,
+                name=f"Stand8_{heat_num}",
+                gender="M",
+                events_entered=_json.dumps(["Stock Saw"]),
+                status="active",
+            )
+            db.session.add_all([c7, c8])
+            db.session.flush()
+            stand_7_victims.append(c7)
+
+            h = Heat(
+                event_id=ev.id,
+                heat_number=heat_num,
+                run_number=1,
+                competitors=_json.dumps([c7.id, c8.id]),
+                stand_assignments=_json.dumps({str(c7.id): 7, str(c8.id): 8}),
+            )
+            db.session.add(h)
+            # Add EventResult rows so compute_scratch_effects() sees them.
+            db.session.add(
+                EventResult(
+                    event_id=ev.id,
+                    competitor_id=c7.id,
+                    competitor_type="college",
+                    competitor_name=c7.name,
+                    status="pending",
+                )
+            )
+            db.session.add(
+                EventResult(
+                    event_id=ev.id,
+                    competitor_id=c8.id,
+                    competitor_type="college",
+                    competitor_name=c8.name,
+                    status="pending",
+                )
+            )
+        db.session.flush()
+        return t, ev, stand_7_victims
+
+    def test_cascade_scratch_triggers_stock_saw_rebalance(self, app):
+        """Exact race-day reproduction: six pair heats all with stands [7, 8];
+        scratch the stand-7 seat of every heat via execute_cascade; assert
+        surviving solos alternate 7, 8, 7, 8, 7, 8 across heats 1-6.
+        Without the rebalance hook, all six survivors stay on stand 8."""
+        from database import db
+        from models.heat import Heat
+        from services.scratch_cascade import (
+            compute_scratch_effects,
+            execute_cascade,
+        )
+
+        with app.app_context():
+            t, ev, victims = self._seed_stock_saw_with_pair_heats(app, num_pairs=6)
+            db.session.commit()
+
+            for victim in victims:
+                effects = compute_scratch_effects(victim, t)
+                execute_cascade(victim, effects, judge_user_id=1, tournament=t)
+            db.session.commit()
+
+            heats = (
+                Heat.query.filter_by(event_id=ev.id, run_number=1)
+                .order_by(Heat.heat_number)
+                .all()
+            )
+            solo_stands = []
+            for h in heats:
+                assignments = h.get_stand_assignments()
+                assert len(assignments) == 1, (
+                    f"heat {h.heat_number} should be solo after scratch; "
+                    f"got {assignments}"
+                )
+                (stand,) = assignments.values()
+                solo_stands.append(int(stand))
+
+            # Guard against the exact race-day printout: [8, 8, 8, 8, 8, 8].
+            assert solo_stands != [8, 8, 8, 8, 8, 8], (
+                "cascade scratch left every survivor on stand 8 — rebalance "
+                "was not applied"
+            )
+            # Consecutive heats must use different stands.
+            for i in range(1, len(solo_stands)):
+                assert solo_stands[i] != solo_stands[i - 1], (
+                    f"solos {i} and {i+1} on same stand {solo_stands[i]}; "
+                    f"full list: {solo_stands}"
+                )
+            # Only stands 7 and 8 allowed.
+            assert set(solo_stands) <= {7, 8}
+
+    def test_cascade_scratch_unrelated_event_untouched(self, app):
+        """Rebalance must be scoped — scratching a competitor from a non-Stock
+        Saw event (e.g. Underhand) should NOT touch any Stock Saw heat.
+        Regression guard for accidental over-scoping if the rebalance filter
+        ever gets weakened."""
+        import json as _json
+
+        from database import db
+        from models.competitor import CollegeCompetitor
+        from models.event import Event, EventResult
+        from models.heat import Heat
+        from models.team import Team
+        from models.tournament import Tournament
+        from services.scratch_cascade import (
+            compute_scratch_effects,
+            execute_cascade,
+        )
+
+        with app.app_context():
+            t = Tournament(name="Scoped 2026", year=2026, status="active")
+            db.session.add(t)
+            db.session.flush()
+            team = Team(
+                tournament_id=t.id,
+                team_code="CSU-A",
+                school_name="CSU",
+                school_abbreviation="CSU",
+            )
+            db.session.add(team)
+            db.session.flush()
+
+            # Set up an unrelated underhand event + an independent stock saw
+            # event. Scratch happens on underhand; stock saw heats must be
+            # byte-for-byte identical afterward.
+            underhand = Event(
+                tournament_id=t.id,
+                name="Underhand Hard Hit",
+                event_type="college",
+                gender="M",
+                scoring_type="hits",
+                scoring_order="highest_wins",
+                stand_type="underhand",
+                status="pending",
+            )
+            stock_saw = Event(
+                tournament_id=t.id,
+                name="Stock Saw",
+                event_type="college",
+                gender="M",
+                scoring_type="time",
+                scoring_order="lowest_wins",
+                stand_type="stock_saw",
+                max_stands=2,
+                status="pending",
+            )
+            db.session.add_all([underhand, stock_saw])
+            db.session.flush()
+
+            # Two competitors in underhand only.
+            uh1 = CollegeCompetitor(
+                tournament_id=t.id, team_id=team.id, name="UH_Victim", gender="M",
+                events_entered=_json.dumps(["Underhand Hard Hit"]),
+                status="active",
+            )
+            uh2 = CollegeCompetitor(
+                tournament_id=t.id, team_id=team.id, name="UH_Bystander", gender="M",
+                events_entered=_json.dumps(["Underhand Hard Hit"]),
+                status="active",
+            )
+            db.session.add_all([uh1, uh2])
+            db.session.flush()
+            db.session.add_all([
+                EventResult(event_id=underhand.id, competitor_id=uh1.id,
+                            competitor_type="college", competitor_name=uh1.name,
+                            status="pending"),
+                EventResult(event_id=underhand.id, competitor_id=uh2.id,
+                            competitor_type="college", competitor_name=uh2.name,
+                            status="pending"),
+            ])
+            db.session.add(Heat(
+                event_id=underhand.id, heat_number=1, run_number=1,
+                competitors=_json.dumps([uh1.id, uh2.id]),
+                stand_assignments=_json.dumps({str(uh1.id): 1, str(uh2.id): 2}),
+            ))
+
+            # Independent pair of stock saw competitors in one heat on [7, 8].
+            # These competitors are NOT entered in Underhand, so the scratch
+            # cascade on uh1 must not touch their heat.
+            ss1 = CollegeCompetitor(
+                tournament_id=t.id, team_id=team.id, name="SS_A", gender="M",
+                events_entered=_json.dumps(["Stock Saw"]),
+                status="active",
+            )
+            ss2 = CollegeCompetitor(
+                tournament_id=t.id, team_id=team.id, name="SS_B", gender="M",
+                events_entered=_json.dumps(["Stock Saw"]),
+                status="active",
+            )
+            db.session.add_all([ss1, ss2])
+            db.session.flush()
+            db.session.add_all([
+                EventResult(event_id=stock_saw.id, competitor_id=ss1.id,
+                            competitor_type="college", competitor_name=ss1.name,
+                            status="pending"),
+                EventResult(event_id=stock_saw.id, competitor_id=ss2.id,
+                            competitor_type="college", competitor_name=ss2.name,
+                            status="pending"),
+            ])
+            ss_heat_id = db.session.add(Heat(
+                event_id=stock_saw.id, heat_number=1, run_number=1,
+                competitors=_json.dumps([ss1.id, ss2.id]),
+                stand_assignments=_json.dumps({str(ss1.id): 7, str(ss2.id): 8}),
+            ))
+            db.session.flush()
+            db.session.commit()
+
+            effects = compute_scratch_effects(uh1, t)
+            execute_cascade(uh1, effects, judge_user_id=1, tournament=t)
+            db.session.commit()
+
+            # Stock saw heat must be unchanged.
+            ss_heat = (
+                Heat.query.filter_by(event_id=stock_saw.id, run_number=1)
+                .order_by(Heat.heat_number)
+                .first()
+            )
+            assert ss_heat is not None
+            assert ss_heat.get_competitors() == [ss1.id, ss2.id]
+            assert ss_heat.get_stand_assignments() == {
+                str(ss1.id): 7,
+                str(ss2.id): 8,
+            }
