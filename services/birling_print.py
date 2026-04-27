@@ -46,6 +46,14 @@ def build_birling_print_context(event: Event) -> dict | None:
         return None
 
     bb = BirlingBracket(event)
+    # Migrate a stale pre-V2.14.14 power-of-two bracket (9 entrants squeezed
+    # into 8 matches with seeds 8 and 9 stacked into one slot) to the
+    # compact shape before rendering the printable. Guarded: only runs when
+    # no results have been recorded, so in-progress brackets are never torn
+    # down. The manage route runs the same migration with a user-facing flash
+    # message; this keeps the printable in sync when someone prints before
+    # ever loading the manage page.
+    bb.rebuild_if_stale_shape()
     data = bb.bracket_data
     winners = data.get("bracket", {}).get("winners") or []
     if not winners:

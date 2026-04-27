@@ -1094,6 +1094,14 @@ def rebalance_stock_saw_solo_stands(event: Event) -> int:
         if not comp_ids:
             continue
 
+        # Completed heats are historical record — their stands match what was
+        # actually run, and the score sheet is already keyed to those stands.
+        # Walk through them so the alternation counter advances correctly for
+        # the NEXT pending heat, but never mutate them. Without this guard a
+        # mid-event scratch via services/scratch_cascade.py silently rewrites
+        # past stand assignments. (Codex P2 finding, V2.14.15.)
+        is_locked = (getattr(heat, 'status', None) or '').lower() == 'completed'
+
         assignments = heat.get_stand_assignments()
 
         if len(comp_ids) == 1:
@@ -1102,7 +1110,7 @@ def rebalance_stock_saw_solo_stands(event: Event) -> int:
                 current_stand = int(assignments.get(str(sole_id)) or 0)
             except (TypeError, ValueError):
                 current_stand = 0
-            if current_stand != next_solo_stand:
+            if not is_locked and current_stand != next_solo_stand:
                 heat.set_stand_assignment(sole_id, next_solo_stand)
                 changed_heats.add(heat.id)
             next_solo_stand = 8 if next_solo_stand == 7 else 7
@@ -1116,7 +1124,7 @@ def rebalance_stock_saw_solo_stands(event: Event) -> int:
                     current_stand = int(assignments.get(str(cid)) or 0)
                 except (TypeError, ValueError):
                     current_stand = 0
-                if current_stand != desired[i]:
+                if not is_locked and current_stand != desired[i]:
                     heat.set_stand_assignment(cid, desired[i])
                     changed_heats.add(heat.id)
 

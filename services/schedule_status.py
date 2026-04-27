@@ -23,6 +23,7 @@ from flask import url_for
 
 from config import LIST_ONLY_EVENT_NAMES
 from database import db
+from models.competitor import CollegeCompetitor, ProCompetitor
 from models.event import Event
 from models.heat import Flight, Heat
 from models.tournament import Tournament
@@ -53,7 +54,12 @@ class DayStatus(TypedDict):
     events_configured: int
     events_with_heats: int
     heats_total: int
+    competitors_total: int
     competitors_placed: int
+    competitors_non_heat_only: int  # only signed up for list-only / bracket / state-machine events
+    competitors_no_events: int  # entered no events at all
+    competitors_missing_from_heats: int  # entered a heat event but not in any heat — BUG surface
+    competitors_missing_sample: list[str]  # up to 10 names for drill-down
     detail_link: str
     detail_label: str
 
@@ -81,17 +87,26 @@ def build_schedule_status(tournament: Tournament) -> ScheduleStatus:
 
     heats_by_event = _heats_by_event(tournament.id)
 
+    college_competitors = CollegeCompetitor.query.filter_by(
+        tournament_id=tournament.id, status="active",
+    ).all()
+    pro_competitors = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status="active",
+    ).all()
+
     friday = _day_status(
         tournament_id=tournament.id,
         events=college_events,
         heats_by_event=heats_by_event,
         detail_endpoint="scheduling.day_schedule",
+        competitors=college_competitors,
     )
     saturday = _day_status(
         tournament_id=tournament.id,
         events=pro_events,
         heats_by_event=heats_by_event,
         detail_endpoint="scheduling.flight_list",
+        competitors=pro_competitors,
     )
 
     flight_count, avg_heats_per_flight = _flight_stats(tournament.id)
@@ -141,11 +156,36 @@ def _day_status(
     events: list[Event],
     heats_by_event: dict[int, list[Heat]],
     detail_endpoint: str,
+    competitors: list,
 ) -> DayStatus:
+    # Local import to avoid circular dependency at module load.
+    from routes.scheduling import _competitor_entered_event, _is_list_only_event
+
     heats_total = 0
     events_with_heats = 0
-    competitor_ids: set[tuple[str, int]] = set()
+    placed_ids: set[int] = set()
 
+    # Classify every event as heat / non-heat (list-only, bracket, pro state machine).
+    heat_event_ids: set[int] = set()
+    non_heat_event_ids: set[int] = set()
+    for ev in events:
+        name_norm = _norm_event_name(ev.name)
+        is_list_only = _is_list_only_event(ev)
+        is_bracket = ev.scoring_type == "bracket"
+        is_state_machine = (
+            ev.event_type == "pro" and name_norm in _STATE_MACHINE_PRO_NAMES
+        )
+        if is_list_only or is_bracket or is_state_machine:
+            non_heat_event_ids.add(ev.id)
+        else:
+            heat_event_ids.add(ev.id)
+
+    # Bound placement counting to the ACTIVE competitor population.
+    # Without this, a competitor scratched mid-event still appears in the
+    # heats they were originally assigned to, inflating the numerator above
+    # the active denominator (e.g. "38 / 37"). The four buckets must always
+    # sum to competitors_total exactly — and competitors_total is "active".
+    active_ids = {c.id for c in competitors}
     for ev in events:
         ev_heats = heats_by_event.get(ev.id, [])
         if ev_heats:
@@ -153,18 +193,78 @@ def _day_status(
             heats_total += len(ev_heats)
             for h in ev_heats:
                 for cid in h.get_competitors():
-                    competitor_ids.add((ev.event_type, int(cid)))
+                    cid_int = int(cid)
+                    if cid_int in active_ids:
+                        placed_ids.add(cid_int)
+
+    # Classify each competitor against THIS day's events.
+    non_heat_only = 0
+    no_events = 0
+    missing_from_heats = 0
+    missing_sample: list[str] = []
+
+    for comp in competitors:
+        if comp.id in placed_ids:
+            continue
+
+        try:
+            entered = comp.get_events_entered() if hasattr(comp, "get_events_entered") else []
+        except Exception:
+            entered = []
+        if not isinstance(entered, list) or not entered:
+            no_events += 1
+            continue
+
+        entered_heat_event = False
+        entered_non_heat_event = False
+        for ev in events:
+            # Apply the same gender filter that _signed_up_competitors uses
+            # when building the actual heat list. Without this, a Men's
+            # competitor entered in "Underhand" matches BOTH the Men's and
+            # Women's "Underhand" event records by name, and a heatless
+            # opposite-gender event silently flags them as MISSING FROM HEATS.
+            ev_gender = getattr(ev, "gender", None)
+            comp_gender = getattr(comp, "gender", None)
+            if ev_gender and comp_gender and ev_gender != comp_gender:
+                continue
+            if not _competitor_entered_event(ev, entered):
+                continue
+            if ev.id in heat_event_ids:
+                entered_heat_event = True
+            elif ev.id in non_heat_event_ids:
+                entered_non_heat_event = True
+
+        if entered_heat_event:
+            missing_from_heats += 1
+            if len(missing_sample) < 10:
+                missing_sample.append(comp.name)
+        elif entered_non_heat_event:
+            non_heat_only += 1
+        else:
+            # Entered events that don't belong to THIS day
+            # (e.g. pro competitor whose events_entered only matches Saturday pro
+            # when we're tallying Friday). Treat as "no events for this day".
+            no_events += 1
 
     return {
         "events_configured": len(events),
         "events_with_heats": events_with_heats,
         "heats_total": heats_total,
-        "competitors_placed": len(competitor_ids),
+        "competitors_total": len(competitors),
+        "competitors_placed": len(placed_ids),
+        "competitors_non_heat_only": non_heat_only,
+        "competitors_no_events": no_events,
+        "competitors_missing_from_heats": missing_from_heats,
+        "competitors_missing_sample": missing_sample,
         "detail_link": url_for(detail_endpoint, tournament_id=tournament_id),
         "detail_label": (
             "Day schedule" if detail_endpoint.endswith("day_schedule") else "Flights"
         ),
     }
+
+
+def _norm_event_name(value: str) -> str:
+    return "".join(ch.lower() for ch in (value or "") if ch.isalnum())
 
 
 def _flight_stats(tournament_id: int) -> tuple[int, float]:
