@@ -18,7 +18,6 @@ from services.gear_sharing import (
     strip_using_prefix,
 )
 
-
 # Issue codes that hard-block heat / flight generation. Anything not listed
 # here is advisory — generation can still run, the warning informs the
 # operator of a quality concern.

@@ -12,7 +12,6 @@ from services.domain_conflicts import (
     update_conflict,
 )
 
-
 bp = Blueprint('domain_conflicts', __name__, url_prefix='/admin/domain-conflicts')
 
 

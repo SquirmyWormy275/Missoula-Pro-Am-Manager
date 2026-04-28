@@ -9,7 +9,6 @@ from pathlib import Path
 
 from flask import current_app
 
-
 VALID_STATUSES = {
     'needs_decision': 'Needs Decision',
     'accepted_contract': 'Accepted Contract',
