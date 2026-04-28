@@ -182,16 +182,18 @@ def test_all_solos_alternate_7_8_7_8(db_session, tournament):
     assert solo_stands == [7, 8, 7, 8, 7]
 
 
-def test_pro_stock_saw_is_not_touched(db_session, tournament):
-    """Only college Stock Saw follows the 7/8 convention."""
+def test_pro_stock_saw_is_rebalanced_to_7_8(db_session, tournament):
+    """DOMAIN_CONTRACT (2026-04-27): ALL Stock Saw — pro and college —
+    runs on stands 7-8. Pro events with off-stand assignments are pulled
+    onto 7."""
     from services.heat_generator import rebalance_stock_saw_solo_stands
 
     ev = _make_event(db_session, tournament, "Stock Saw", "pro", "M")
-    _make_heat(db_session, ev, 1, [201], {"201": 3})  # intentionally weird stand
+    _make_heat(db_session, ev, 1, [201], {"201": 3})  # off-stand → must move
     changed = rebalance_stock_saw_solo_stands(ev)
-    assert changed == 0
+    assert changed == 1
     stands = _stands_in_order(ev)
-    assert stands[0][2] == [3]  # unchanged
+    assert stands[0][2] == [7]
 
 
 def test_non_stock_saw_event_is_not_touched(db_session, tournament):
@@ -218,6 +220,22 @@ def test_pair_heat_with_corrupted_stands_gets_fixed(db_session, tournament):
     rebalance_stock_saw_solo_stands(ev)
     stands = _stands_in_order(ev)
     assert stands[0][2] == [7, 8], "pair heat with bad stands should be normalized"
+
+
+def test_pro_stock_saw_solo_alternates_7_8(db_session, tournament):
+    """DOMAIN_CONTRACT (2026-04-27): pro Stock Saw solos alternate 7, 8, 7, 8
+    just like college, so the off-stand can reset between heats."""
+    from services.heat_generator import rebalance_stock_saw_solo_stands
+
+    ev = _make_event(db_session, tournament, "Stock Saw", "pro", "M")
+    _make_heat(db_session, ev, 1, [701], {"701": 8})
+    _make_heat(db_session, ev, 2, [702], {"702": 8})
+    _make_heat(db_session, ev, 3, [703], {"703": 8})
+
+    rebalance_stock_saw_solo_stands(ev)
+    stands = _stands_in_order(ev)
+    solo_stands = [s[0] for _, _, s in stands]
+    assert solo_stands == [7, 8, 7]
 
 
 def test_idempotent(db_session, tournament):

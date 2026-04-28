@@ -132,6 +132,10 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
     if action == 'generate_all':
         try:
             _generate_all_heats(tournament, generate_event_heats)
+            raw_sizing_mode = (request.form.get('flight_sizing_mode') or '').strip().lower()
+            if raw_sizing_mode and raw_sizing_mode != 'count':
+                from .flights import _resolve_num_flights_from_persisted_config
+                num_flights_override = _resolve_num_flights_from_persisted_config(tournament)
             pre_snap = _snapshot_flights(tournament_id)
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights, num_flights=num_flights_override)
             if flights is not None:

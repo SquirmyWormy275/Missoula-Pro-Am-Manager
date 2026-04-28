@@ -335,8 +335,8 @@ STAND_CONFIGS = {
     },
     'stock_saw': {
         'total': 2,
-        'specific_stands': [1, 2],
-        'labels': ['Stand 1', 'Stand 2']
+        'specific_stands': [7, 8],
+        'labels': ['Stand 7', 'Stand 8']
     },
     'hot_saw': {
         'total': 4,

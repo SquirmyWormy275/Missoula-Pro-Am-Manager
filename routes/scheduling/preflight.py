@@ -76,7 +76,7 @@ def preflight_check(tournament_id):
 @scheduling_bp.route('/<int:tournament_id>/preflight-json')
 def preflight_json(tournament_id):
     """JSON endpoint: inline preflight status for the events page."""
-    from services.preflight import build_preflight_report
+    from services.preflight import BLOCKING_CODES, build_preflight_report
     tournament = Tournament.query.get_or_404(tournament_id)
     session_key = f'schedule_options_{tournament_id}'
     saved = tournament.get_schedule_config() or session.get(session_key, {})
@@ -85,12 +85,16 @@ def preflight_json(tournament_id):
     return jsonify({
         'issue_count': report['issue_count'],
         'severity': report['severity'],
+        'has_blockers': report.get('has_blockers', False),
+        'blocking_count': len(report.get('blocking') or []),
         'issues': [
             {
                 'severity': i['severity'],
                 'title': i['title'],
                 'detail': i.get('detail', ''),
                 'autofix': i.get('autofix', False),
+                'code': i.get('code', ''),
+                'blocking': i.get('code') in BLOCKING_CODES,
             }
             for i in report['issues']
         ],

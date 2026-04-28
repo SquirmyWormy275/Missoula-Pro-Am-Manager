@@ -29,7 +29,8 @@ _last_lh_overflow_warnings: dict[int, list[dict]] = {}
 
 # Per-event unpaired-partnered-competitor log, populated by
 # _build_partner_units() when a partnered-event entrant cannot be paired
-# (partner_name blank, unresolved against the event pool, or self-reference).
+# (partner_name blank, unresolved against the event pool, self-reference, or
+# nonreciprocal).
 # When skip_unpaired=True (default) these competitors are HELD BACK from heat
 # generation rather than placed solo on a stand. Routes call
 # get_last_unpaired_partnered() after generate_event_heats() to surface a
@@ -56,7 +57,7 @@ def get_last_unpaired_partnered(event_id: int) -> list[dict]:
     recent generate_event_heats(event) call for this event_id, or an empty
     list. Each entry is a dict with keys: comp_id, comp_name, partner_name
     (raw string from partners JSON, possibly empty), reason ('blank' |
-    'unresolved' | 'self_reference')."""
+    'unresolved' | 'self_reference' | 'nonreciprocal')."""
     return list(_last_unpaired_partnered.get(event_id, []))
 
 
@@ -171,7 +172,8 @@ def generate_event_heats(event: Event) -> int:
     _last_lh_overflow_warnings.pop(event.id, None)
 
     # Per-event unpaired-partnered-competitor list. Populated when a partnered
-    # event entrant has a blank, unresolved, or self-referential partner_name.
+    # event entrant has a blank, unresolved, self-referential, or nonreciprocal
+    # partner_name.
     # Held-back competitors are excluded from heats so a partnered event never
     # has a solo person on a stand. Surfaced via flash + Preflight.
     unpaired_log: list[dict] = []
@@ -375,7 +377,7 @@ def generate_event_heats(event: Event) -> int:
     # can offer a resolution UI. These competitors were intentionally HELD BACK
     # from heat generation rather than placed solo on a stand. Each entry has:
     # comp_id, comp_name, partner_name (raw), reason ('blank'|'unresolved'|
-    # 'self_reference').
+    # 'self_reference'|'nonreciprocal').
     if unpaired_log:
         _last_unpaired_partnered[event.id] = list(unpaired_log)
         for u in unpaired_log:
@@ -647,7 +649,11 @@ def _rebuild_pair_units(heat_competitors: list, event: Event) -> list:
             continue
         partner_name = comp.get('partner_name')
         partner = _find_partner(partner_name, heat_competitors, comp)
-        if partner and partner['id'] not in used:
+        if (
+            partner
+            and partner['id'] not in used
+            and _partner_points_back(partner, comp, heat_competitors)
+        ):
             units.append([comp, partner])
             used.add(comp['id'])
             used.add(partner['id'])
@@ -655,6 +661,15 @@ def _rebuild_pair_units(heat_competitors: list, event: Event) -> list:
         units.append([comp])
         used.add(comp['id'])
     return units
+
+
+def _partner_points_back(partner: dict, comp: dict, pool: list) -> bool:
+    """Return True when partner's partner string resolves back to comp."""
+    reciprocal_name = (partner.get('partner_name') or '').strip()
+    if not reciprocal_name:
+        return False
+    reciprocal = _find_partner(reciprocal_name, pool, partner)
+    return bool(reciprocal and reciprocal.get('id') == comp.get('id'))
 
 
 def _build_partner_units(
@@ -678,6 +693,11 @@ def _build_partner_units(
     the route can surface them to the operator and Preflight can offer a
     resolution UI before the next generate run.
 
+    Domain-contract tightening (2026-04-27): one-sided partner references are
+    not a valid generated pair. A says B only pairs when B's partner string
+    resolves back to A. Otherwise A is held back as ``nonreciprocal`` and B is
+    evaluated normally.
+
     When ``skip_unpaired`` is False (legacy behaviour), unpaired competitors
     fall through to a solo unit and the snake-draft places them on their own
     stand. The legacy path is preserved so callers that need it (e.g. unit
@@ -698,18 +718,25 @@ def _build_partner_units(
 
         raw_partner_name = (comp.get('partner_name') or '').strip()
         partner = _find_partner(raw_partner_name, competitors, comp)
-        if partner and partner['id'] not in used and partner['id'] != comp_id:
+        if (
+            partner
+            and partner['id'] not in used
+            and partner['id'] != comp_id
+            and _partner_points_back(partner, comp, competitors)
+        ):
             units.append([comp, partner])
             used.add(comp_id)
             used.add(partner['id'])
             continue
 
-        # No resolvable partner — classify the failure for the operator log.
+        # No valid reciprocal partner: classify the failure for the operator log.
         partner_norm = _norm_name(raw_partner_name)
         if not raw_partner_name:
             reason = 'blank'
         elif partner_norm and partner_norm == self_norm_lookup.get(comp_id, ''):
             reason = 'self_reference'
+        elif partner and partner['id'] != comp_id:
+            reason = 'nonreciprocal'
         else:
             reason = 'unresolved'
 
@@ -1040,8 +1067,9 @@ def _is_list_only_event(event: Event) -> bool:
 
 
 def _stand_numbers_for_event(event: Event, max_per_heat: int, stand_config: dict) -> list[int]:
-    if event.event_type == 'college' and _normalize_name(event.name) == _normalize_name('Stock Saw'):
-        # Missoula rule: college stock saw runs only on saw stands 7 and 8.
+    # Missoula rule (DOMAIN_CONTRACT): ALL stock saw — pro and college — runs
+    # on saw stands 7 and 8 only.
+    if _normalize_name(event.name) == _normalize_name('Stock Saw'):
         return [7, 8][:max_per_heat]
 
     specific = stand_config.get('specific_stands')
@@ -1052,10 +1080,7 @@ def _stand_numbers_for_event(event: Event, max_per_heat: int, stand_config: dict
 
 
 def _is_stock_saw(event: Event) -> bool:
-    return (
-        event.event_type == 'college'
-        and _normalize_name(event.name) == _normalize_name('Stock Saw')
-    )
+    return _normalize_name(event.name) == _normalize_name('Stock Saw')
 
 
 def rebalance_stock_saw_solo_stands(event: Event) -> int:
@@ -1063,11 +1088,12 @@ def rebalance_stock_saw_solo_stands(event: Event) -> int:
     alternate 7, 8, 7, 8... across the event in heat_number order so the
     off-stand can be set up while the on-stand runs.
 
-    Scope: Missoula college Stock Saw only (stands 7 + 8). Called at the end
-    of heat generation and after any mutation (scratch, move, add). Also
-    repairs the `_next_stand` bug in the flight-builder move route which
-    starts counting from 1 instead of 7 — any competitor mis-assigned to a
-    stand outside [7, 8] is pulled back onto 7 or 8 here.
+    Scope (DOMAIN_CONTRACT): ALL Stock Saw — pro and college — runs on
+    stands 7 and 8 only. Called at the end of heat generation and after any
+    mutation (scratch, move, add). Also repairs the `_next_stand` bug in the
+    flight-builder move route which starts counting from 1 instead of 7 — any
+    competitor mis-assigned to a stand outside [7, 8] is pulled back onto
+    7 or 8 here.
 
     Walks heats per (run_number, heat_number). Flips the next-solo stand each
     time a solo is encountered. Runs are balanced independently so run 2

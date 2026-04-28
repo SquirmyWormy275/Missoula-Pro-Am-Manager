@@ -1,9 +1,9 @@
 # Flight Logic — Missoula Pro Am Manager
 
-This document is the **source of truth** for all rules governing how flights are built, ordered,
-and displayed for the Missoula Pro Am. Update this file when rules change. The code in
-`services/flight_builder.py` and `services/heat_generator.py` is expected to match what is
-written here. If you find a conflict, this document wins — fix the code.
+`docs/DOMAIN_CONTRACT.md` is the canonical operating contract for core tournament behavior.
+This document is the detailed reference for flight-builder and heat-generation algorithms.
+Update both files when flight or heat rules change. If this document conflicts with
+`docs/DOMAIN_CONTRACT.md`, the domain contract wins.
 
 ---
 
@@ -315,9 +315,10 @@ Hand saw events (Single Buck, Double Buck, Jack & Jill) use stands in two groups
 For partnered events (Double Buck, Jack & Jill, Peavey Log Roll, Pulp Toss, Partnered Axe):
 
 - Partners are identified from `competitor.partners` JSON (`{event_id: partner_name}`).
-- The heat generator attempts to find bidirectional partner references (A lists B, and/or B lists A).
+- The heat generator requires reciprocal partner references (A lists B and B lists A).
 - Recognized pairs are kept **together** in the same heat as a single unit during snake draft.
-- An unpaired competitor (no recognized partner) is treated as a solo unit and placed normally.
+- An unpaired competitor (blank, unresolved, self-referential, or nonreciprocal partner data)
+  is held back from heat generation and must be resolved before the event is complete.
 - Gear sharing conflicts are still checked — even a recognized pair cannot be placed in a heat
   where one of them would share gear with another competitor already in that heat.
 
@@ -343,7 +344,7 @@ Stand capacities and physical constraints per event type, as defined in `config.
 | `standing_block` | 5 | Shares physical location with `cookie_stack` — mutually exclusive |
 | `cookie_stack` | 5 | Shares physical location with `standing_block` — mutually exclusive |
 | `saw_hand` | 8 | Two groups of 4 (Stands 1–4 and 5–8); 4 per heat max |
-| `stock_saw` | 2 | Stands 1–2 only |
+| `stock_saw` | 2 | ALL Stock Saw (pro + college) uses physical saw stands 7-8 |
 | `hot_saw` | 4 | Stands 1–4 only |
 | `obstacle_pole` | 2 | Pole 1 and Pole 2 |
 | `speed_climb` | 2 | Pole 2 and Pole 4 |
@@ -352,8 +353,10 @@ Stand capacities and physical constraints per event type, as defined in `config.
 `Event.max_stands` overrides the `total` from `STAND_CONFIGS` when set. If neither is set,
 the default is 4.
 
-**College Stock Saw special rule:** College Stock Saw runs on stands 7 and 8 only
-(the remaining saw stands after hand saw groups), not stands 1–2.
+**Stock Saw rule (DOMAIN_CONTRACT, 2026-04-27):** ALL Stock Saw — pro and
+college — runs on physical saw stands 7 and 8 only. Solo heats alternate 7/8
+across the event so the off-stand can be set up while the on-stand runs.
+Pair heats use 7 + 8.
 
 ---
 

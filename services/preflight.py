@@ -1,5 +1,11 @@
 """
 Preflight checks for scheduling and registration consistency.
+
+DOMAIN_CONTRACT (2026-04-27): preflight is a safety gate, not a substitute
+for service-layer validation. The codes listed in ``BLOCKING_CODES`` are
+hard-blockers — generation services already refuse to place affected
+competitors, so the dashboard surfaces them as red banners with a
+click-path fix rather than as advisory warnings.
 """
 from __future__ import annotations
 
@@ -11,6 +17,28 @@ from services.gear_sharing import (
     normalize_person_name,
     strip_using_prefix,
 )
+
+
+# Issue codes that hard-block heat / flight generation. Anything not listed
+# here is advisory — generation can still run, the warning informs the
+# operator of a quality concern.
+BLOCKING_CODES = frozenset({
+    'unresolved_partner_name',
+    'self_reference_partner',
+    'non_reciprocal_partnership',
+    'heat_sync_mismatch',
+})
+
+
+def get_blocking_issues(report: dict) -> list[dict]:
+    """Return the subset of report['issues'] whose ``code`` is a hard blocker.
+
+    Routes that trigger generation should call this and refuse to proceed
+    while the list is non-empty, redirecting the operator to the preflight
+    page with the blocking issues highlighted.
+    """
+    issues = report.get('issues') or []
+    return [i for i in issues if i.get('code') in BLOCKING_CODES]
 
 
 def _signed_up_pro_count(event: Event) -> int:
@@ -516,9 +544,12 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
     for item in issues:
         by_severity[item.get('severity', 'low')] = by_severity.get(item.get('severity', 'low'), 0) + 1
 
+    blocking = [i for i in issues if i.get('code') in BLOCKING_CODES]
     return {
         'issue_count': len(issues),
         'issues': issues,
         'severity': by_severity,
         'has_autofixable': any(i.get('autofix') for i in issues),
+        'blocking': blocking,
+        'has_blockers': bool(blocking),
     }

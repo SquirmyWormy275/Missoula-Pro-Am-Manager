@@ -70,11 +70,15 @@ _CONFLICTING_STANDS: dict[str, set[str]] = {
     # Cookie Stack and Standing Block share 5 physical stands. Original entry.
     'standing_block': {'cookie_stack'},
     'cookie_stack': {'standing_block'},
-    # Stock Saw uses physical stands 1-2; Hot Saw uses 1-4. They share
-    # stands 1-2 — back-to-back scheduling forces a stand changeover with
-    # no break for the crowd. Same physical-clash class as Cookie/Standing.
-    # Identified by 2026-04-23 audit.
-    'stock_saw': {'hot_saw'},
+    # Stock Saw uses saw stands 7-8 (DOMAIN_CONTRACT, both pro and college).
+    # Hand saw events (Single Buck, Double Buck, Jack & Jill) use the same
+    # physical 8-stand set in two groups of 4 — group [5-8] overlaps with
+    # the stock-saw stands. Back-to-back scheduling forces a changeover
+    # with no break for the crowd. Same physical-clash class as
+    # Cookie/Standing. Hot Saw kept as a defensive entry — historic
+    # adjacency penalty preserved.
+    'stock_saw': {'saw_hand', 'hot_saw'},
+    'saw_hand': {'stock_saw'},
     'hot_saw': {'stock_saw'},
     # Obstacle Pole uses Pole 1 + Pole 2; Speed Climb uses Pole 2 + Pole 4.
     # Shared Pole 2 means simultaneous use is impossible. Speed Climb is a

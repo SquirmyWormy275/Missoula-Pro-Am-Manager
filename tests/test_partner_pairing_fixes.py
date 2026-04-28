@@ -316,6 +316,32 @@ class TestBuildPartnerUnitsSkipUnpaired:
         assert units == []
         assert unpaired_log[0]["reason"] == "self_reference"
 
+    def test_one_sided_partner_reference_held_back_as_nonreciprocal(self):
+        from services.heat_generator import _build_partner_units
+
+        event = self._event_stub()
+        comps = [
+            {
+                "id": 1,
+                "name": "Alice",
+                "base_name": "Alice One",
+                "partner_name": "Bob Two",
+            },
+            {
+                "id": 2,
+                "name": "Bob",
+                "base_name": "Bob Two",
+                "partner_name": "",
+            },
+        ]
+        unpaired_log: list = []
+        units = _build_partner_units(comps, event, unpaired_log=unpaired_log)
+
+        assert units == []
+        reasons = {entry["comp_id"]: entry["reason"] for entry in unpaired_log}
+        assert reasons[1] == "nonreciprocal"
+        assert reasons[2] == "blank"
+
     def test_skip_unpaired_false_preserves_legacy(self):
         """Opt-in legacy mode places solo (still records the violation)."""
         from services.heat_generator import _build_partner_units
