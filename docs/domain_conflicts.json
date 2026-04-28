@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "conflicts": [
+    {
+      "id": "partner-unpaired-solo-vs-held-back",
+      "title": "Partnered entrants placed solo vs held back",
+      "category": "partnered_events",
+      "severity": "critical",
+      "status": "implemented",
+      "contract_rule": "Partnered entrants with blank, unresolved, self-referential, or nonreciprocal partner data are held back from heat generation.",
+      "conflicting_sources": [
+        {
+          "file": "FlightLogic.md",
+          "line": 320,
+          "text": "Older rule allowed an unpaired competitor to be treated as a solo unit."
+        }
+      ],
+      "proposed_resolution": "Use docs/DOMAIN_CONTRACT.md as authority and keep FlightLogic.md aligned with the held-back rule.",
+      "decision": "Accepted contract rule and implemented reciprocal enforcement in services/heat_generator.py.",
+      "decision_note": "BUILD A BETTER PARSER THAT IS ABLE TO FUCKING INTUIT WHO IS SIGNED UP FOR EVENTS.  The majority of the issues I have seen though are shitty parsers (not recognizing first names or minor mis spellings) or weak pairings (ie partner A lists partner B but partner B doesnt list partner A and is still signed up for the event and not listed \"needs partner\". Partners should be auto-assigned if there are available *actually* unpaired partnerers. The final unpairable people need to be dropped with a proper notification. That being said, BE SURE to write something that checks if someone else has already claimed a partner before you throw them into the unpaired pool.",
+      "test_coverage": [
+        "tests/test_partner_pairing_fixes.py::TestBuildPartnerUnitsSkipUnpaired::test_one_sided_partner_reference_held_back_as_nonreciprocal"
+      ],
+      "updated_at": "2026-04-27T23:58:26+00:00",
+      "updated_by": "STRATHEX"
+    },
+    {
+      "id": "stock-saw-stands-pro-vs-college",
+      "title": "Stock Saw stands 1-2 vs College Stock Saw 7-8",
+      "category": "physical_stands",
+      "severity": "high",
+      "status": "implemented",
+      "contract_rule": "ALL Stock Saw (pro + college) runs on physical saw stands 7-8 only.",
+      "conflicting_sources": [
+        {
+          "file": "FlightLogic.md",
+          "line": 346,
+          "text": "Older stand table said stock_saw uses stands 1-2 only."
+        },
+        {
+          "file": "docs/Alex's Docs/ProAM requirements",
+          "line": 173,
+          "text": "Requirement language mentions Stock Saw on stands 1 and 2 without pro/college distinction."
+        }
+      ],
+      "proposed_resolution": "Keep the pro/college distinction explicit in the contract and in FlightLogic.md.",
+      "decision": "Accepted pro/college distinction.",
+      "decision_note": "I dont know how many fucking times I have to say this. ALL stock saw will be done on stands 7 and 8",
+      "test_coverage": [
+        "tests/test_stock_saw_stand_rebalance.py",
+        "tests/test_stock_saw_solo_alternation_bug.py"
+      ],
+      "updated_at": "2026-04-27T23:59:02+00:00",
+      "updated_by": "STRATHEX"
+    },
+    {
+      "id": "preflight-warning-vs-generation-enforcement",
+      "title": "Preflight warnings vs service-layer blocking",
+      "category": "preflight",
+      "severity": "critical",
+      "status": "implemented",
+      "contract_rule": "Preflight reports blocking data problems, but generation services must enforce those invariants too.",
+      "conflicting_sources": [
+        {
+          "file": "FlightLogic.md",
+          "line": 470,
+          "text": "Preflight is described as optional but recommended."
+        },
+        {
+          "file": "services/preflight.py",
+          "line": 198,
+          "text": "Preflight reports nonreciprocal partner problems without itself blocking route actions."
+        }
+      ],
+      "proposed_resolution": "Decide which preflight issue codes are hard blockers and make generation enforce each one directly.",
+      "decision": "Yes we need to decide which ones a re hard blockers and provide a solid way to rectify them with an easy click path. The majority of the issues I have seen though are shitty parsers (not recognizing first names or minor mis spellings) or weak pairings (ie partner A lists partner B but partner B doesnt list partner A and is still signed up for the event and not listed \"needs partner\". Most of the gear sharing issues come from weak issues on your end and not reading and fully understanding the GearSHaring markdown file.",
+      "decision_note": "",
+      "test_coverage": [
+        "tests/test_preflight.py",
+        "tests/test_partner_pairing_fixes.py"
+      ],
+      "updated_at": "2026-04-27T23:51:43+00:00",
+      "updated_by": "STRATHEX"
+    },
+    {
+      "id": "fresh-minutes-sizing-route-order",
+      "title": "Minutes-mode flight sizing before fresh heat generation",
+      "category": "flight_generation",
+      "severity": "critical",
+      "status": "implemented",
+      "contract_rule": "Minutes mode computes flight count from generated pro run-1 heats, so fresh one-click and Run Show flows must resolve sizing after heat generation.",
+      "conflicting_sources": [
+        {
+          "file": "routes/scheduling/flights.py",
+          "line": 42,
+          "text": "Older one-click route resolved persisted flight sizing before heats existed."
+        },
+        {
+          "file": "routes/scheduling/events.py",
+          "line": 130,
+          "text": "Run Show form resolution could compute minutes-mode against zero existing heats on a fresh run."
+        }
+      ],
+      "proposed_resolution": "Resolve minutes-mode flight count after heat generation in every generate-all route.",
+      "decision": "Implemented for one-click and Run Show generate_all.",
+      "decision_note": "Count mode keeps the operator-selected count; minutes mode recomputes after fresh heats exist.",
+      "test_coverage": [
+        "tests/test_one_click_and_fnf.py::TestOneClickHonorsPersistedFlightCount::test_route_resolves_minutes_mode_after_fresh_heat_generation",
+        "tests/test_flight_sizing_modes.py::TestRunShowGenerateAllSizing::test_minutes_mode_resolves_after_fresh_heat_generation"
+      ],
+      "updated_at": "2026-04-27T23:52:43+00:00",
+      "updated_by": "STRATHEX"
+    },
+    {
+      "id": "heat-json-vs-assignment-rows",
+      "title": "Heat.competitors JSON vs HeatAssignment rows",
+      "category": "data_integrity",
+      "severity": "high",
+      "status": "implemented",
+      "contract_rule": "Heat.competitors, stand assignments, and HeatAssignment rows must stay in sync before schedule state is valid.",
+      "conflicting_sources": [
+        {
+          "file": "docs/solutions/data-integrity/heat-competitors-vs-heatassignment-sync.md",
+          "line": 21,
+          "text": "The JSON field is authoritative, but HeatAssignment rows can drift unless explicit sync runs."
+        }
+      ],
+      "proposed_resolution": "Create workflow tests around every route that edits heat competitors or stand assignments directly.",
+      "decision": "",
+      "decision_note": "",
+      "test_coverage": [
+        "tests/test_schedule_generation.py::test_run_preflight_autofix_syncs_heat_assignments"
+      ],
+      "updated_at": "2026-04-27T23:51:52+00:00",
+      "updated_by": "STRATHEX"
+    },
+    {
+      "id": "local-sqlite-vs-production-postgres",
+      "title": "Local SQLite confidence vs production PostgreSQL behavior",
+      "category": "production_parity",
+      "severity": "critical",
+      "status": "accepted_contract",
+      "contract_rule": "SQLite-local validation must not be described as production-ready evidence unless PostgreSQL/Railway behavior is separately verified.",
+      "conflicting_sources": [
+        {
+          "file": "docs/QA_REPORT.md",
+          "line": 9,
+          "text": "QA report explicitly caveats local SQLite validation."
+        },
+        {
+          "file": "docs/solutions/integration-issues/postgres-migration-compatibility.md",
+          "line": 26,
+          "text": "SQLite-compatible migrations previously failed under PostgreSQL."
+        }
+      ],
+      "proposed_resolution": "Add a production-shape validation lane or force every summary to state the SQLite/PostgreSQL gap.",
+      "decision": "",
+      "decision_note": "",
+      "test_coverage": [
+        "tests/test_postgres_compat.py",
+        "tests/test_postgres_runtime_smoke.py"
+      ],
+      "updated_at": "2026-04-27T23:51:33+00:00",
+      "updated_by": "STRATHEX"
+    },
+    {
+      "id": "contract-authority-vs-historical-docs",
+      "title": "Contract authority vs historical docs",
+      "category": "documentation",
+      "severity": "high",
+      "status": "implemented",
+      "contract_rule": "docs/DOMAIN_CONTRACT.md is the canonical operating contract when older docs conflict.",
+      "conflicting_sources": [
+        {
+          "file": "CLAUDE.md",
+          "line": 171,
+          "text": "Older text made FlightLogic.md the sole source of truth."
+        },
+        {
+          "file": "FlightLogic.md",
+          "line": 3,
+          "text": "Older header claimed FlightLogic.md always wins."
+        }
+      ],
+      "proposed_resolution": "Keep DOMAIN_CONTRACT as authority and use FlightLogic.md for algorithm details.",
+      "decision": "Accepted docs/DOMAIN_CONTRACT.md as authority order.",
+      "decision_note": "CLAUDE.md and FlightLogic.md were updated to point at the contract. Flight logic needs to provide the basis for the algorithm.",
+      "test_coverage": [],
+      "updated_at": "2026-04-27T23:52:31+00:00",
+      "updated_by": "STRATHEX"
+    }
+  ]
+}

@@ -639,3 +639,51 @@ class TestCleanupNonEnrolledGearEntries:
         assert result['cleaned'] == 0
         remaining = json.loads(alice.gear_sharing)
         assert 'category:crosscut' in remaining
+
+
+# ---------------------------------------------------------------------------
+# BLOCKING_CODES helper
+# ---------------------------------------------------------------------------
+
+
+class TestBlockingCodes:
+    """V2.14.16: hard-blocker codes are surfaced in report['blocking'].
+
+    DOMAIN_CONTRACT (2026-04-27): unresolved partners, self-references,
+    non-reciprocal pairs, and heat sync mismatches are not allowed to slip
+    into the schedule. Generation enforces this; the preflight dashboard
+    surfaces the same set as a red banner with click-path fixes.
+    """
+
+    def test_blocking_codes_constant_includes_partner_invariants(self):
+        from services.preflight import BLOCKING_CODES
+
+        assert 'unresolved_partner_name' in BLOCKING_CODES
+        assert 'self_reference_partner' in BLOCKING_CODES
+        assert 'non_reciprocal_partnership' in BLOCKING_CODES
+        assert 'heat_sync_mismatch' in BLOCKING_CODES
+
+    def test_get_blocking_issues_filters_advisory(self):
+        from services.preflight import get_blocking_issues
+
+        report = {
+            'issues': [
+                {'code': 'odd_partner_pool', 'severity': 'medium'},
+                {'code': 'unresolved_partner_name', 'severity': 'high'},
+                {'code': 'non_reciprocal_partnership', 'severity': 'high'},
+                {'code': 'gear_partner_mismatch', 'severity': 'low'},
+            ],
+        }
+        blocking = get_blocking_issues(report)
+
+        assert len(blocking) == 2
+        codes = {b['code'] for b in blocking}
+        assert codes == {'unresolved_partner_name', 'non_reciprocal_partnership'}
+
+    def test_clean_tournament_has_no_blockers(self, db_session, tournament):
+        from services.preflight import build_preflight_report
+
+        report = build_preflight_report(tournament)
+
+        assert report['has_blockers'] is False
+        assert report['blocking'] == []

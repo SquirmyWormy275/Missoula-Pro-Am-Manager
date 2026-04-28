@@ -24,8 +24,8 @@ from database import db as _db
 
 @pytest.fixture()
 def app():
-    from tests.db_test_utils import create_test_app
     from models.user import User
+    from tests.db_test_utils import create_test_app
 
     _app, db_path = create_test_app()
     with _app.app_context():

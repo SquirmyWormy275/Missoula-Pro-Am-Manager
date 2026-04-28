@@ -39,10 +39,12 @@ def one_click_generate(tournament_id):
 
     db_config = tournament.get_schedule_config() or {}
     saturday_college_event_ids = [int(i) for i in db_config.get('saturday_college_event_ids', [])]
-    num_flights_override = _resolve_num_flights_from_persisted_config(tournament)
 
     try:
         _generate_all_heats(tournament, generate_event_heats)
+        # Minutes-mode sizing depends on generated heat count. Resolve after
+        # fresh heat generation so first-use one-click honors persisted config.
+        num_flights_override = _resolve_num_flights_from_persisted_config(tournament)
         flights_built = _build_pro_flights_if_possible(
             tournament, build_pro_flights, num_flights=num_flights_override,
         )
@@ -66,9 +68,13 @@ def one_click_generate(tournament_id):
         log_action('one_click_generate', 'tournament', tournament_id, {
             'flights_built': flights_built,
         })
-    except Exception as exc:
+    except Exception:
         db.session.rollback()
-        flash(f'One-click generate failed and was rolled back: {exc}', 'error')
+        from flask import current_app
+        current_app.logger.exception(
+            'One-click generate failed for tournament %s', tournament_id,
+        )
+        flash('One-click generate failed and was rolled back. See application logs.', 'error')
 
     return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 

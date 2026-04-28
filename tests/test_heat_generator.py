@@ -231,12 +231,13 @@ class TestStandNumbersForEvent:
         numbers = _stand_numbers_for_event(ev, 2, stand_config)
         assert numbers == [1, 2]
 
-    def test_pro_stock_saw_not_overridden(self):
-        # Only college stock saw uses stands 7-8; pro uses default or config
+    def test_pro_stock_saw_uses_stands_7_and_8(self):
+        # DOMAIN_CONTRACT (2026-04-27): ALL Stock Saw runs on stands 7-8.
+        # Pro events override the stand_config specific_stands too.
         ev = _event(name='Stock Saw', event_type='pro', stand_type='stock_saw')
-        stand_config = {'specific_stands': [1, 2]}
+        stand_config = {'specific_stands': [7, 8]}
         numbers = _stand_numbers_for_event(ev, 2, stand_config)
-        assert numbers == [1, 2]
+        assert numbers == [7, 8]
 
 
 # ---------------------------------------------------------------------------

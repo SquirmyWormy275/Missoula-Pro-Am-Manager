@@ -171,13 +171,13 @@ def main() -> int:
                 else:
                     list_only_or_bracket += 1
 
-            print(f"  BREAKDOWN:")
+            print("  BREAKDOWN:")
             print(f"    in at least one heat:               {in_heat}")
             print(f"    only list-only / bracket signup:    {list_only_or_bracket}")
             print(f"    no events entered:                  {no_events}")
             print(f"    *** entered heat event but missing: {missing}")
             if missing_sample:
-                print(f"    MISSING FROM HEATS (sample):")
+                print("    MISSING FROM HEATS (sample):")
                 for pid, pname, pevs in missing_sample:
                     print(f"       id={pid}  {pname[:35]:35s}  {json.dumps(pevs)}")
             print()
