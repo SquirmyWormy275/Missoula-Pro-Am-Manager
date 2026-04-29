@@ -37,6 +37,18 @@
         </div>
     </div>
 
+    {% if report.has_blockers %}
+    <div class="alert alert-danger d-flex align-items-start" role="alert">
+        <i class="bi bi-shield-exclamation me-2 fs-4"></i>
+        <div class="flex-grow-1">
+            <strong>{{ report.blocking|length }} hard blocker(s) — heat generation will hold these competitors back.</strong>
+            Resolve the items below before generating heats. Per DOMAIN_CONTRACT,
+            unresolved partners, self-references, non-reciprocal pairs, and heat sync
+            mismatches are not allowed to slip into the schedule.
+        </div>
+    </div>
+    {% endif %}
+
     <div class="row mb-4">
         <div class="col-md-3">
             <div class="card text-center">

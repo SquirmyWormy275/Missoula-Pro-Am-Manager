@@ -664,6 +664,57 @@ class TestOneClickHonorsPersistedFlightCount:
                 f"one-click ignored persisted num_flights=3; got {len(flights)} flights"
             )
 
+    def test_route_resolves_minutes_mode_after_fresh_heat_generation(
+        self, app, auth_client
+    ):
+        """Fresh one-click runs must size flights from the heats they just made.
+
+        This is the real operator path: settings are saved, no heats exist yet,
+        then the operator presses one-click generate. Resolving minutes-mode
+        flight count before heat generation returns None and silently falls
+        back to the builder's 8-heats-per-flight default.
+        """
+        from models import Flight
+
+        with app.app_context():
+            t = _make_tournament(_db.session, name="Fresh Minutes One-Click")
+            underhand = _make_pro_event(
+                _db.session, t, "Underhand", "underhand", max_stands=1
+            )
+            standing = _make_pro_event(
+                _db.session, t, "Standing Block", "standing_block", max_stands=1
+            )
+            for i in range(12):
+                comp = _make_pro_comp(_db.session, t, f"Minutes Pro {i + 1}")
+                comp.set_events_entered([
+                    underhand.name if i < 6 else standing.name
+                ])
+            t.set_schedule_config({
+                "flight_sizing_mode": "minutes",
+                "target_minutes_per_flight": 60,
+                "minutes_per_heat": 15.0,
+                "num_flights": 4,
+                "friday_pro_event_ids": [],
+            })
+            _db.session.commit()
+            tid = t.id
+
+        resp = auth_client.post(
+            f"/scheduling/{tid}/flights/one-click-generate",
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+
+        with app.app_context():
+            flights = Flight.query.filter_by(tournament_id=tid).all()
+            # 12 generated heats * 15 minutes / 60 target = 3 flights.
+            # If one-click resolves before generating heats, it gets None and
+            # the builder default creates 2 flights instead.
+            assert len(flights) == 3, (
+                "fresh one-click minutes mode must use generated heat count; "
+                f"got {len(flights)} flights"
+            )
+
     def test_resolver_returns_persisted_count(self, db_session):
         from routes.scheduling.flights import _resolve_num_flights_from_persisted_config
 

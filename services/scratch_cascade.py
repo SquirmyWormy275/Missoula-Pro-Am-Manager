@@ -429,8 +429,9 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
         # pair heat leaves the survivor stuck on stand 8, and judges end up
         # running six solo heats in a row on the same physical stand. Walk the
         # events we actually mutated above and re-alternate 7/8 for each.
-        # Scope is gated by `rebalance_stock_saw_solo_stands` itself — only
-        # college Stock Saw is affected; everything else early-returns.
+        # Scope is gated by `rebalance_stock_saw_solo_stands` itself —
+        # all Stock Saw (pro + college) runs on stands 7-8 per
+        # DOMAIN_CONTRACT; non-stock-saw events early-return.
         if touched_event_ids:
             try:
                 from services.heat_generator import rebalance_stock_saw_solo_stands

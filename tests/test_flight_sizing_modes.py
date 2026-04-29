@@ -355,6 +355,47 @@ class TestBuildFlightsRouteModes:
         assert built == 3
 
 
+class TestRunShowGenerateAllSizing:
+    def test_minutes_mode_resolves_after_fresh_heat_generation(
+        self, db_session, client
+    ):
+        from models import Flight
+
+        t = _make_tournament(db_session, name="Run Show Fresh Minutes")
+        underhand = _make_pro_event(
+            db_session, t, "Underhand", "underhand", max_stands=1
+        )
+        standing = _make_pro_event(
+            db_session, t, "Standing Block", "standing_block", max_stands=1
+        )
+        for i in range(12):
+            comp = _make_pro(db_session, t, f"Run Show Pro {i + 1}")
+            comp.set_events_entered([
+                underhand.name if i < 6 else standing.name
+            ])
+        _db.session.commit()
+
+        resp = client.post(
+            f"/scheduling/{t.id}/events",
+            data={
+                "csrf_token": "x",
+                "action": "generate_all",
+                "flight_sizing_mode": "minutes",
+                "target_minutes_per_flight": "60",
+                "minutes_per_heat": "15.0",
+                "num_flights": "4",
+            },
+            follow_redirects=False,
+        )
+
+        assert resp.status_code in (302, 303), resp.data[:200]
+        built = Flight.query.filter_by(tournament_id=t.id).count()
+        assert built == 3, (
+            "Run Show generate_all must size minutes mode from freshly "
+            f"generated heats; got {built} flights"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Clamp behaviour via HTTP
 # ---------------------------------------------------------------------------

@@ -117,7 +117,7 @@ login_manager.login_view = 'auth.login'
 login_manager.login_message = 'Please log in to continue.'
 login_manager.login_message_category = 'warning'
 
-MANAGEMENT_BLUEPRINTS = {'main', 'registration', 'scheduling', 'scoring', 'reporting', 'proam_relay', 'partnered_axe', 'validation', 'import_pro', 'woodboss', 'demo', 'strathmark'}
+MANAGEMENT_BLUEPRINTS = {'main', 'registration', 'scheduling', 'scoring', 'reporting', 'proam_relay', 'partnered_axe', 'validation', 'import_pro', 'woodboss', 'demo', 'strathmark', 'domain_conflicts'}
 BLUEPRINT_PERMISSIONS = {
     'main': 'is_judge',
     'registration': 'can_register',
@@ -131,6 +131,7 @@ BLUEPRINT_PERMISSIONS = {
     'woodboss': 'is_judge',
     'demo': 'is_judge',
     'strathmark': 'is_judge',
+    'domain_conflicts': 'can_manage_users',
     'auth': 'can_manage_users',
 }
 
@@ -325,6 +326,7 @@ def _create_app_inner():
 
     # Register blueprints
     from routes.demo_data import demo_bp
+    from routes.domain_conflicts import bp as domain_conflicts_bp
     from routes.import_routes import import_pro_bp
     from routes.main import main_bp
     from routes.partnered_axe import bp as partnered_axe_bp
@@ -360,6 +362,7 @@ def _create_app_inner():
     app.register_blueprint(woodboss_public_bp, url_prefix='/woodboss')
     app.register_blueprint(strathmark_bp, url_prefix='/strathmark')
     app.register_blueprint(demo_bp, url_prefix='/demo')
+    app.register_blueprint(domain_conflicts_bp)
     if HAS_FLASK_LOGIN:
         app.register_blueprint(auth_bp, url_prefix='/auth')
         app.register_blueprint(portal_bp, url_prefix='/portal')

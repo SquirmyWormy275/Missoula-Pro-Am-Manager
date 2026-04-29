@@ -1005,11 +1005,28 @@ def auto_assign_pro_partners_route(tournament_id):
     db.session.commit()
     invalidate_tournament_caches(tournament_id)
     log_action('pro_partners_auto_assigned', 'tournament', tournament_id, summary)
-    flash(
-        f"Auto-assigned {summary['assigned_pairs']} partner pair(s) across {summary['event_count']} event(s). "
-        f"Unmatched competitors: {summary['unmatched']}.",
-        'success'
-    )
+    confirmed = summary.get('confirmed_pairs', 0)
+    new_pairs = summary.get('assigned_pairs', 0)
+    one_sided = summary.get('one_sided_claims', 0)
+    unmatched = summary.get('unmatched', 0)
+    parts = [
+        f"Confirmed {confirmed} reciprocal pair(s)",
+        f"auto-paired {new_pairs} new pair(s)",
+        f"across {summary['event_count']} event(s)",
+    ]
+    flash('. '.join(parts) + '.', 'success')
+    if one_sided:
+        flash(
+            f"{one_sided} one-sided claim(s) need operator review (partner field references "
+            f"a name that doesn't reciprocate). Open the partnered event preflight to resolve.",
+            'warning',
+        )
+    if unmatched:
+        flash(
+            f"{unmatched} competitor(s) could not be paired (odd pool or gender imbalance). "
+            f"Drop or pair manually before generating heats.",
+            'warning',
+        )
     return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
 
 
