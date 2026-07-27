@@ -1,0 +1,686 @@
+{% extends "base.html" %}
+{% block title %}Heat Sheets - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Stand color palette ─────────────────────────────────────────────── */
+.stand-1  { background:#1a6fa8 !important; color:#fff !important; }
+.stand-2  { background:#2a9d8f !important; color:#fff !important; }
+.stand-3  { background:#8d3a6e !important; color:#fff !important; }
+.stand-4  { background:#e07c2b !important; color:#fff !important; }
+.stand-5  { background:#5c6bc0 !important; color:#fff !important; }
+.stand-6  { background:#388e3c !important; color:#fff !important; }
+.stand-7  { background:#c0392b !important; color:#fff !important; }
+.stand-8  { background:#6d4c41 !important; color:#fff !important; }
+
+/* ── Shared heat card ──────────────────────────────────────────────────── */
+.heat-card {
+    border: 1px solid #dee2e6;
+    border-radius: 5px;
+    margin-bottom: 10px;
+    overflow: hidden;
+    break-inside: avoid;
+    page-break-inside: avoid;
+}
+.heat-card-head {
+    padding: 5px 10px;
+    border-bottom: 1px solid #dee2e6;
+    background: #f8f9fa;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+/* Event-type color band on left edge of header */
+.heat-card-head.head-pro     { border-left: 4px solid #1a3a5c; }
+.heat-card-head.head-college { border-left: 4px solid #8d3a6e; }
+
+.heat-drag-handle {
+    cursor: grab;
+    color: #adb5bd;
+    padding: 2px 4px;
+    flex-shrink: 0;
+}
+.heat-drag-handle:hover { color: #6c757d; }
+
+.heat-card-event {
+    font-weight: 800;
+    font-size: 0.93rem;
+    line-height: 1.25;
+    color: #212529;
+    flex: 1;
+}
+.event-type-badge {
+    display: inline-block;
+    font-size: 0.60rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-right: 5px;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+.event-type-badge.pro     { background: #0b5ed7; color: #fff; }
+.event-type-badge.college { background: #8d3a6e; color: #fff; }
+.heat-card-sub {
+    font-size: 0.70rem;
+    color: #6c757d;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-top: 1px;
+    white-space: nowrap;
+}
+.heat-tbl {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.87rem;
+}
+.heat-tbl thead th {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+    background: #f1f3f5;
+    padding: 3px 10px;
+    border-bottom: 1px solid #dee2e6;
+}
+.heat-tbl .td-stand {
+    width: 36px;
+    text-align: center;
+    font-weight: 800;
+    font-size: 0.83rem;
+    border-right: 1px solid #e9ecef;
+    padding: 5px 4px;
+    color: #343a40;
+    background: #f8f9fa;
+}
+.heat-tbl td { padding: 5px 10px; }
+.heat-tbl tbody tr + tr td { border-top: 1px solid #f1f3f5; }
+
+/* ── Section banners ───────────────────────────────────────────────────── */
+.section-banner {
+    padding: 6px 14px;
+    border-radius: 4px;
+    margin: 18px 0 8px;
+    font-weight: 800;
+    font-size: 0.93rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.section-banner.flight  { background: #1a3a5c; }
+.section-banner.college { background: #6d3a7c; }
+
+/* ── Sortable ghost ─────────────────────────────────────────────────────── */
+.sortable-ghost { opacity: 0.35; background: #e9f0fb !important; }
+
+/* ── Print overrides ───────────────────────────────────────────────────── */
+@media print {
+    .no-print { display: none !important; }
+
+    body {
+        font-size: 9.5pt;
+        background: #fff !important;
+        color: #000 !important;
+    }
+    .container-fluid { padding: 0 4mm; }
+
+    .section-banner {
+        background: #111 !important;
+        color: #fff !important;
+        border-radius: 0 !important;
+        margin: 8px 0 5px !important;
+        padding: 4px 10px !important;
+        font-size: 0.82rem !important;
+        page-break-after: avoid;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    /* Bold black borders around heat divisions — every heat card is an
+       unambiguous block on paper, survives photocopy + fax. */
+    .heat-card {
+        border: 2.5px solid #000 !important;
+        margin-bottom: 6px !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    .heat-card-head {
+        background: #e4e4e4 !important;
+        border-bottom: 2.5px solid #000 !important;
+        padding: 3px 8px !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    .heat-card-head.head-pro     { border-left: 6px solid #1a3a5c !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .heat-card-head.head-college { border-left: 6px solid #8d3a6e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .heat-card-event { color: #000 !important; font-size: 0.85rem !important; }
+    .heat-card-sub   { color: #333 !important; }
+    .heat-tbl { font-size: 0.80rem !important; }
+    .heat-tbl thead th {
+        background: #d4d4d4 !important;
+        color: #000 !important;
+        border-bottom: 1px solid #777 !important;
+        padding: 2px 8px !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    .heat-tbl .td-stand {
+        background: #ebebeb !important;
+        border-right: 1px solid #999 !important;
+        color: #000 !important;
+        padding: 3px 4px !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    .heat-tbl tbody tr + tr td { border-top: 1px solid #ccc !important; }
+    .heat-tbl td { padding: 3px 8px !important; }
+
+    /* Stand colors in print */
+    .stand-1 { background:#1a6fa8 !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-2 { background:#2a9d8f !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-3 { background:#8d3a6e !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-4 { background:#e07c2b !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-5 { background:#5c6bc0 !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-6 { background:#388e3c !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-7 { background:#c0392b !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .stand-8 { background:#6d4c41 !important; color:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+    /* Pro flights: 2 columns per row on paper */
+    .pro-grid  { columns: 2; column-gap: 6mm; }
+    /* College: 3 columns */
+    .coll-grid { columns: 3; column-gap: 5mm; }
+    .pro-grid .heat-card,
+    .coll-grid .heat-card {
+        display: inline-block;
+        width: 100%;
+    }
+
+    /* Notes-lines mode: add a ruled space after each heat card */
+    .notes-mode .heat-card::after {
+        content: '';
+        display: block;
+        height: 26px;
+        border-top: 1px dashed #bbb;
+        margin: 0 6px 3px;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+
+    {# ── Toolbar (screen only) ── #}
+    <div class="d-flex justify-content-between align-items-center mb-2 no-print flex-wrap gap-2">
+        <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Heat Sheets</h4>
+        <div class="d-flex gap-2 flex-wrap">
+            <label class="d-flex align-items-center gap-2 mb-0" style="font-size:0.85rem; cursor:pointer; font-weight:500;">
+                <input type="checkbox" id="notesToggle" data-toggle-body-class="notes-mode">
+                Notes lines
+            </label>
+            <button id="printFlightBtn" class="btn btn-outline-primary btn-sm" data-print style="display:none;">
+                <i class="bi bi-printer"></i> Print This Flight
+            </button>
+            <button type="button" data-print class="btn btn-primary btn-sm">
+                <i class="bi bi-printer"></i> Print All
+            </button>
+            <a href="?autoprint=1" class="btn btn-outline-secondary btn-sm" title="Reload and auto-open print dialog">
+                <i class="bi bi-printer-fill"></i> Auto-Print
+            </a>
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+               class="btn btn-outline-secondary btn-sm">Back</a>
+        </div>
+    </div>
+
+    {# ── Flight Filter Strip (screen only) ── #}
+    {% if flight_data %}
+    <div class="no-print mb-3 d-flex flex-wrap gap-1 align-items-center">
+        <span class="text-muted me-1" style="font-size:0.8rem; font-weight:600;">Filter:</span>
+        <button class="btn btn-sm btn-primary flight-filter-btn" data-filter="all" data-filter-flights="all">All Flights</button>
+        {% for fd in flight_data %}
+        <button class="btn btn-sm btn-outline-secondary flight-filter-btn" data-filter="{{ fd.flight.id }}" data-filter-flights="{{ fd.flight.id }}">
+            Flight {{ fd.flight.flight_number }}
+        </button>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ── Print title (print only) ── #}
+    <div class="text-center mb-2 d-none d-print-block">
+        <h4 style="margin:0 0 2px;">{{ tournament.name }} {{ tournament.year }} — Heat Sheets</h4>
+        {% if now %}<div style="font-size:0.8rem; color:#555;">Printed {{ now.strftime('%B %d, %Y at %I:%M %p') }}</div>{% endif %}
+    </div>
+
+    {# ══════════════════════════════════════════════════════════════════
+       PRO FLIGHTS
+    ══════════════════════════════════════════════════════════════════ #}
+    {% if flight_data %}
+    {% for fd in flight_data %}
+
+    <div class="flight-block" data-flight-id="{{ fd.flight.id }}">
+
+        <div class="section-banner flight">
+            <i class="bi bi-layers"></i>
+            Flight {{ fd.flight.flight_number }}
+            {% if fd.flight.name %}&mdash; {{ fd.flight.name }}{% endif %}
+            <span style="font-weight:400; font-size:0.78rem; opacity:0.75; margin-left:auto;">
+                {{ fd.heats|length }} heat{{ 's' if fd.heats|length != 1 else '' }}
+            </span>
+        </div>
+
+        {# Stand conflict warning (screen only) #}
+        {% if fd.stand_conflicts %}
+        <div class="no-print alert alert-warning py-2 px-3 mb-2" style="font-size:0.82rem;">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            <strong>{{ fd.stand_conflicts|length }} stand conflict{{ 's' if fd.stand_conflicts|length != 1 else '' }}</strong>
+            — Cookie Stack and Standing Block appear within {{ stand_conflict_gap }} heats of each other.
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="ms-2 alert-link">Rebuild flights</a> to auto-resolve.
+        </div>
+        {% endif %}
+
+        {# Screen view: Bootstrap grid + drag handles #}
+        <div class="row no-print flight-screen-grid" data-flight-id="{{ fd.flight.id }}">
+            {% for row in fd.heats %}
+            <div class="col-md-6 col-lg-4 mb-0" data-heat-id="{{ row.heat.id }}">
+                <div class="heat-card">
+                    <div class="heat-card-head head-{{ 'college' if row.event.event_type == 'college' else 'pro' }}">
+                        <span class="heat-drag-handle no-print" title="Drag to reorder"><i class="bi bi-grip-vertical"></i></span>
+                        <div style="flex:1;">
+                            <div class="heat-card-event">
+                                <span class="event-type-badge {{ 'college' if row.event.event_type == 'college' else 'pro' }}">
+                                    {{ 'COLLEGE' if row.event.event_type == 'college' else 'PRO' }}
+                                </span>{{ row.event.display_name }}
+                            </div>
+                            <div class="heat-card-sub">
+                                Heat {{ row.heat.heat_number }}
+                                {% if row.heat.run_number > 1 %}&nbsp;&bull;&nbsp;Run {{ row.heat.run_number }}{% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <table class="heat-tbl">
+                        <thead><tr><th class="td-stand">Std</th><th>Competitor</th></tr></thead>
+                        <tbody>
+                        {% for comp in row.competitors %}
+                            {% set sn = comp.stand | string | int if comp.stand else 0 %}
+                            <tr>
+                                <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
+                                <td{% if comp.status in ('scratched', 'dnf', 'dq') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}>{{ comp.name }}{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% elif comp.status == 'dq' %} <small>(DQ)</small>{% endif %}</td>
+                            </tr>
+                        {% else %}
+                            <tr><td colspan="2" class="text-muted px-3 py-2 fst-italic">No competitors</td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {# Print view: CSS columns #}
+        {% set hc = fd.heats|length %}
+        {% set col_count = 3 if hc >= 12 else (2 if hc >= 6 else 1) %}
+        <div class="pro-grid d-none d-print-block" style="columns:{{ col_count }}; column-gap:5mm;">
+            {% for row in fd.heats %}
+            <div class="heat-card">
+                <div class="heat-card-head head-{{ 'college' if row.event.event_type == 'college' else 'pro' }}">
+                    <div style="flex:1;">
+                        <div class="heat-card-event">
+                            <span class="event-type-badge {{ 'college' if row.event.event_type == 'college' else 'pro' }}">
+                                {{ 'COLLEGE' if row.event.event_type == 'college' else 'PRO' }}
+                            </span>{{ row.event.display_name }}
+                        </div>
+                        <div class="heat-card-sub">
+                            Heat {{ row.heat.heat_number }}
+                            {% if row.heat.run_number > 1 %}&bull; Run {{ row.heat.run_number }}{% endif %}
+                        </div>
+                    </div>
+                </div>
+                <table class="heat-tbl">
+                    <thead><tr><th class="td-stand">Std</th><th>Competitor</th></tr></thead>
+                    <tbody>
+                    {% for comp in row.competitors %}
+                        {% set sn = comp.stand | string | int if comp.stand else 0 %}
+                        <tr>
+                            <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
+                            <td{% if comp.status in ('scratched', 'dnf', 'dq') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}>{{ comp.name }}{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% elif comp.status == 'dq' %} <small>(DQ)</small>{% endif %}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="2" class="text-muted fst-italic px-3">No competitors</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endfor %}
+        </div>
+
+    </div>{# end .flight-block #}
+
+    {% endfor %}
+    {% endif %}
+
+    {# ══════════════════════════════════════════════════════════════════
+       COLLEGE / UNSCHEDULED EVENTS
+    ══════════════════════════════════════════════════════════════════ #}
+    {% if no_flight_heats %}
+    {% for ed in no_flight_heats %}
+
+    <div class="section-banner college">
+        <i class="bi bi-mortarboard"></i>
+        {{ ed.event.display_name }}
+    </div>
+
+    {# Screen #}
+    <div class="row no-print">
+        {% for row in ed.heats %}
+        <div class="col-md-4 col-lg-3 mb-0">
+            <div class="heat-card">
+                <div class="heat-card-head head-college">
+                    <div style="flex:1;">
+                        <div class="heat-card-event">
+                            <span class="event-type-badge college">COLLEGE</span>{{ ed.event.display_name }}
+                        </div>
+                        <div class="heat-card-sub">
+                            Heat {{ row.heat.heat_number }}
+                            {% if row.heat.run_number > 1 %}&nbsp;&bull;&nbsp;Run {{ row.heat.run_number }}{% endif %}
+                        </div>
+                    </div>
+                </div>
+                <table class="heat-tbl">
+                    <thead><tr><th class="td-stand">Std</th><th>Competitor</th></tr></thead>
+                    <tbody>
+                    {% for comp in row.competitors %}
+                        {% set sn = comp.stand | string | int if comp.stand else 0 %}
+                        <tr>
+                            <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
+                            <td{% if comp.status in ('scratched', 'dnf', 'dq') %} style="text-decoration:line-through; opacity:0.5;"{% endif %}>{{ comp.name }}{% if comp.status == 'scratched' %} <small>(SCR)</small>{% elif comp.status == 'dnf' %} <small>(DNF)</small>{% elif comp.status == 'dq' %} <small>(DQ)</small>{% endif %}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="2" class="text-muted px-3 py-2 fst-italic">No competitors</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {# Print #}
+    <div class="coll-grid d-none d-print-block">
+        {% for row in ed.heats %}
+        <div class="heat-card">
+            <div class="heat-card-head head-college">
+                <div style="flex:1;">
+                    <div class="heat-card-event">
+                        <span class="event-type-badge college">COLLEGE</span>{{ ed.event.display_name }}
+                    </div>
+                    <div class="heat-card-sub">
+                        Heat {{ row.heat.heat_number }}
+                        {% if row.heat.run_number > 1 %}&bull; Run {{ row.heat.run_number }}{% endif %}
+                    </div>
+                </div>
+            </div>
+            <table class="heat-tbl">
+                <thead><tr><th class="td-stand">Std</th><th>Competitor</th></tr></thead>
+                <tbody>
+                {% for comp in row.competitors %}
+                    {% set sn = comp.stand | string | int if comp.stand else 0 %}
+                    <tr>
+                        <td class="td-stand stand-{{ sn }}">{{ comp.stand if comp.stand else '?' }}</td>
+                        <td>{{ comp.name }}</td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="2" class="text-muted fst-italic px-3">No competitors</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% endfor %}
+    {% endif %}
+
+    {# ══════════════════════════════════════════════════════════════════
+       BIRLING BRACKETS
+    ══════════════════════════════════════════════════════════════════ #}
+    {% if birling_brackets %}
+    {% for bb in birling_brackets %}
+    <div class="section-banner college">
+        <i class="bi bi-diagram-3"></i>
+        {{ bb.event.display_name }} — Double Elimination Bracket
+    </div>
+
+    <style>
+    .hs-bracket-container { overflow-x: auto; padding: 8px 0; }
+    .hs-bracket-section { margin-bottom: 16px; }
+    .hs-bracket-section-title {
+        display: inline-block; padding: 4px 12px; border-radius: 4px;
+        font-size: 0.8rem; font-weight: 700; color: #fff; margin-bottom: 8px;
+    }
+    .hs-bracket-section-title.winners { background: #1a6fa8; }
+    .hs-bracket-section-title.losers  { background: #8d3a6e; }
+    .hs-bracket-section-title.finals  { background: #388e3c; }
+    .hs-bracket-row { display: flex; gap: 6px; align-items: stretch; }
+    .hs-bracket-round { display: flex; flex-direction: column; justify-content: space-around; min-width: 170px; flex-shrink: 0; }
+    .hs-bracket-round-label { text-align: center; font-size: 0.7rem; font-weight: 700; color: #888; text-transform: uppercase; margin-bottom: 4px; }
+    .hs-match {
+        border: 1px solid #dee2e6; border-radius: 4px; margin: 4px 0;
+        overflow: hidden; font-size: 0.82rem; background: #fff;
+    }
+    .hs-match.is-bye { opacity: 0.5; }
+    .hs-match-header { background: #f0f0f0; padding: 1px 8px; font-size: 0.68rem; color: #888; display: flex; justify-content: space-between; }
+    .hs-match-slot { padding: 4px 8px; display: flex; justify-content: space-between; align-items: center; min-height: 28px; }
+    .hs-match-slot + .hs-match-slot { border-top: 1px solid #dee2e6; }
+    .hs-match-slot.winner { background: rgba(25,135,84,0.1); font-weight: 700; }
+    .hs-match-slot.loser { opacity: 0.45; text-decoration: line-through; }
+    .hs-match-slot .tbd { color: #aaa; font-style: italic; }
+    .hs-match-slot .bye { color: #bbb; font-style: italic; }
+    .hs-placements { margin-top: 12px; }
+    .hs-placements table { width: auto; min-width: 250px; }
+    .hs-place-badge { display: inline-block; width: 24px; height: 24px; line-height: 24px;
+        text-align: center; border-radius: 50%; font-weight: 700; font-size: 0.8rem; }
+    .hs-place-1 { background: #ffd700; color: #000; }
+    .hs-place-2 { background: #c0c0c0; color: #000; }
+    .hs-place-3 { background: #cd7f32; color: #fff; }
+    </style>
+
+    {# ── Bracket macro ── #}
+    {% macro bracket_slot(comp_id, winner_id, loser_id, lookup) %}
+        {% set name = lookup.get(comp_id|string, '???') if comp_id else '' %}
+        {% if comp_id and comp_id == winner_id %}
+            <div class="hs-match-slot winner"><span>{{ name }}</span> <i class="bi bi-check-circle-fill text-success" style="font-size:0.75rem"></i></div>
+        {% elif comp_id and comp_id == loser_id %}
+            <div class="hs-match-slot loser"><span>{{ name }}</span></div>
+        {% elif comp_id %}
+            <div class="hs-match-slot"><span>{{ name }}</span></div>
+        {% else %}
+            <div class="hs-match-slot"><span class="tbd">TBD</span></div>
+        {% endif %}
+    {% endmacro %}
+
+    {% macro bracket_match(match, lookup) %}
+        <div class="hs-match {{ 'is-bye' if match.get('is_bye') else '' }}">
+            <div class="hs-match-header">
+                <span>{{ match.match_id }}
+                {% if match.winner and match.get('falls', []) %}
+                    {% set falls = match.get('falls', []) %}
+                    {% set w_falls = falls|selectattr('winner', 'equalto', match.winner)|list|length %}
+                    {% set l_falls = falls|length - w_falls %}
+                    ({{ w_falls }}-{{ l_falls }})
+                {% endif %}
+                </span>
+                {% if match.winner %}<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>{% endif %}
+            </div>
+            {{ bracket_slot(match.competitor1, match.winner, match.loser, lookup) }}
+            {{ bracket_slot(match.competitor2, match.winner, match.loser, lookup) }}
+        </div>
+    {% endmacro %}
+
+    {# Winners bracket #}
+    {% if bb.bracket.winners %}
+    <div class="hs-bracket-section">
+        <span class="hs-bracket-section-title winners">Winners Bracket</span>
+        <div class="hs-bracket-container">
+            <div class="hs-bracket-row">
+                {% for round_matches in bb.bracket.winners %}
+                <div class="hs-bracket-round">
+                    <div class="hs-bracket-round-label">{% if loop.last %}Final{% else %}Round {{ loop.index }}{% endif %}</div>
+                    {% for match in round_matches %}
+                        {{ bracket_match(match, bb.comp_lookup) }}
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Losers bracket #}
+    {% if bb.bracket.losers %}
+    <div class="hs-bracket-section">
+        <span class="hs-bracket-section-title losers">Losers Bracket</span>
+        <div class="hs-bracket-container">
+            <div class="hs-bracket-row">
+                {% for round_matches in bb.bracket.losers %}
+                <div class="hs-bracket-round">
+                    <div class="hs-bracket-round-label">L Round {{ loop.index }}</div>
+                    {% for match in round_matches %}
+                        {{ bracket_match(match, bb.comp_lookup) }}
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Grand finals #}
+    {% if bb.bracket.finals %}
+    <div class="hs-bracket-section">
+        <span class="hs-bracket-section-title finals">Grand Finals</span>
+        <div class="hs-bracket-container">
+            <div class="hs-bracket-row">
+                <div class="hs-bracket-round">
+                    <div class="hs-bracket-round-label">Finals</div>
+                    {{ bracket_match(bb.bracket.finals, bb.comp_lookup) }}
+                </div>
+                {% if bb.bracket.true_finals and bb.bracket.true_finals.needed %}
+                <div class="hs-bracket-round">
+                    <div class="hs-bracket-round-label">True Finals</div>
+                    {{ bracket_match(bb.bracket.true_finals, bb.comp_lookup) }}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Placements #}
+    {% if bb.placements %}
+    <div class="hs-placements">
+        <table class="table table-sm">
+            <thead class="table-light"><tr><th style="width:60px">Place</th><th>Competitor</th></tr></thead>
+            <tbody>
+            {% for comp_id, pos in bb.placements.items()|sort(attribute='1') %}
+            <tr>
+                <td>{% if pos <= 3 %}<span class="hs-place-badge hs-place-{{ pos }}">{{ pos }}</span>{% else %}{{ pos }}{% endif %}</td>
+                <td>{{ bb.comp_lookup.get(comp_id, comp_id) }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <div class="no-print mb-3 mt-2">
+        <a href="{{ url_for('scheduling.birling_manage', tournament_id=tournament.id, event_id=bb.event.id) }}"
+           class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-diagram-3 me-1"></i> Manage Bracket
+        </a>
+    </div>
+
+    {% endfor %}
+    {% endif %}
+
+    {% if not flight_data and not no_flight_heats and not birling_brackets %}
+    <div class="alert alert-info mt-3">No heats have been generated yet for this tournament.</div>
+    {% endif %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+// ── Auto-print ────────────────────────────────────────────────────────────
+if (new URLSearchParams(window.location.search).get('autoprint') === '1') {
+    window.addEventListener('load', function () { window.print(); });
+}
+
+// ── Per-flight filter ────────────────────────────────────────────────────
+function filterFlights(filter, btn) {
+    document.querySelectorAll('.flight-filter-btn').forEach(function(b) {
+        b.classList.remove('active', 'btn-primary');
+        b.classList.add('btn-outline-secondary');
+    });
+    btn.classList.add('active', 'btn-primary');
+    btn.classList.remove('btn-outline-secondary');
+
+    document.querySelectorAll('.flight-block').forEach(function(block) {
+        block.style.display = (filter === 'all' || block.dataset.flightId === String(filter)) ? '' : 'none';
+    });
+
+    const printBtn = document.getElementById('printFlightBtn');
+    if (printBtn) printBtn.style.display = (filter === 'all') ? 'none' : '';
+    window._currentFlightFilter = filter;
+}
+
+// ── Drag-and-drop reorder ────────────────────────────────────────────────
+{% if flight_data %}
+document.querySelectorAll('.flight-screen-grid').forEach(function(grid) {
+    var flightId = grid.dataset.flightId;
+    new Sortable(grid, {
+        animation: 150,
+        handle: '.heat-drag-handle',
+        ghostClass: 'sortable-ghost',
+        onEnd: function() {
+            var cards = grid.querySelectorAll('[data-heat-id]');
+            var heatIds = Array.from(cards).map(function(c) { return parseInt(c.dataset.heatId); });
+            var csrf = document.querySelector('meta[name="csrf-token"]');
+            var csrfToken = csrf ? csrf.getAttribute('content') : '';
+            fetch('/scheduling/{{ tournament.id }}/flights/' + flightId + '/reorder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                },
+                body: JSON.stringify({heat_ids: heatIds})
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (!data.ok) {
+                    alert('Reorder failed: ' + (data.error || 'unknown error') + '. Refresh to see current order.');
+                }
+            }).catch(function() {
+                alert('Reorder request failed. Check your connection and refresh.');
+            });
+        }
+    });
+});
+{% endif %}
+document.addEventListener('click', function (e) {
+    var ff = e.target.closest('[data-filter-flights]');
+    if (ff) { filterFlights(ff.dataset.filterFlights, ff); }
+    var pb = e.target.closest('[data-print]');
+    if (pb) { window.print(); }
+});
+document.addEventListener('change', function (e) {
+    var t = e.target.closest('[data-toggle-body-class]');
+    if (t) { document.body.classList.toggle(t.dataset.toggleBodyClass, t.checked); }
+});
+</script>
+{% endblock %}

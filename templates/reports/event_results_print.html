@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ event.display_name }} - {{ tournament.name }} {{ tournament.year }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            padding: 0.5in;
+            color: #111;
+            line-height: 1.35;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 18px;
+            border-bottom: 2px solid #111;
+            padding-bottom: 10px;
+        }
+        .header h1 { font-size: 20pt; color: #000; }
+        .header h2 { font-size: 13pt; font-weight: normal; color: #444; }
+        .event-type {
+            display: inline-block;
+            margin-top: 6px;
+            padding: 3px 10px;
+            border: 1px solid #888;
+            background: #efefef;
+            color: #111;
+            border-radius: 3px;
+            font-size: 9pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+            table-layout: fixed;
+            border: 1px solid #999;
+        }
+        th, td {
+            padding: 7px 9px;
+            text-align: left;
+            border-bottom: 1px solid #c7c7c7;
+            border-right: 1px solid #d5d5d5;
+            vertical-align: top;
+        }
+        tr td:last-child, tr th:last-child { border-right: none; }
+        th {
+            background-color: #efefef;
+            color: #111;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            font-size: 9pt;
+        }
+        tr:nth-child(even) { background-color: #fafafa; }
+        .rank { text-align: center; width: 70px; font-weight: 700; }
+        .result { text-align: right; }
+        .points, .payout { text-align: right; font-weight: 700; width: 110px; }
+        .footer {
+            margin-top: 24px;
+            text-align: center;
+            font-size: 9pt;
+            color: #555;
+        }
+        @media print {
+            body { padding: 0; }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{ event.display_name }}</h1>
+        <h2>{{ tournament.name }} {{ tournament.year }}</h2>
+        <span class="event-type">{{ event.event_type|capitalize }} Competition</span>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th class="rank">Pos</th>
+                <th>Competitor</th>
+                {% if event.is_partnered %}
+                <th>Partner</th>
+                {% endif %}
+                <th class="result">Result</th>
+                {% if event.event_type == 'college' %}
+                <th class="points">Points</th>
+                {% else %}
+                <th class="payout">Payout</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in results %}
+            <tr>
+                <td class="rank">
+                    {% if r.final_position %}
+                        {{ r.final_position }}{{ 'st' if r.final_position == 1 else 'nd' if r.final_position == 2 else 'rd' if r.final_position == 3 else 'th' }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td><strong>{{ r.competitor_name }}</strong></td>
+                {% if event.is_partnered %}
+                <td>{{ r.partner_name or '-' }}</td>
+                {% endif %}
+                <td class="result">
+                    {% if r.result_value %}
+                        {% if event.scoring_type == 'time' %}
+                            {{ "%.2f"|format(r.result_value) }}s
+                        {% elif event.scoring_type == 'hits' %}
+                            {{ r.result_value|int }} hits
+                        {% elif event.scoring_type == 'distance' %}
+                            {{ "%.1f"|format(r.result_value) }} ft
+                        {% else %}
+                            {{ r.result_value }}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                {% if event.event_type == 'college' %}
+                <td class="points">{{ r.points_awarded or '-' }}</td>
+                {% else %}
+                <td class="payout">{% if r.payout_amount %}${{ "%.2f"|format(r.payout_amount) }}{% else %}-{% endif %}</td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer">
+        <p>Missoula Pro Am Tournament Manager</p>
+    </div>
+
+    <button class="no-print" data-print style="position: fixed; top: 10px; right: 10px; padding: 10px 20px;">Print</button>
+    <script>
+    document.querySelectorAll('[data-print]').forEach(function(btn) {
+        btn.addEventListener('click', function() { window.print(); });
+    });
+    </script>
+</body>
+</html>

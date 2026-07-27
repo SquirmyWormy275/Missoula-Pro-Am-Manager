@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+{% block title %}Ability Rankings — {{ tournament.name }} {{ tournament.year }}{% endblock %}
+{% block content %}
+<style>
+    .rank-list { list-style: none; padding: 0; margin: 0; min-height: 48px; }
+    .rank-item {
+        display: flex; align-items: center; gap: 0.5rem;
+        padding: 0.5rem 0.75rem; margin-bottom: 3px;
+        background: var(--sx-surface-2, #1b1f2a);
+        color: var(--sx-text, #ece8e0);
+        border: 1px solid var(--sx-border, #252a38);
+        border-radius: 4px; cursor: grab; user-select: none;
+        font-size: 0.95rem;
+    }
+    .rank-item:hover { background: var(--sx-surface-3, #222737); border-color: var(--sx-border-bright, #363e52); }
+    .rank-item:active { cursor: grabbing; }
+    .rank-item .rank-number {
+        min-width: 28px; text-align: center; font-weight: 700;
+        color: var(--sx-gold-bright, #ffd94a); font-size: 0.9rem;
+    }
+    .rank-item .comp-name { flex: 1; color: var(--sx-text, #ece8e0); }
+    .rank-item .drag-handle { color: var(--sx-text-2, #8c95aa); font-size: 1rem; }
+    .sortable-ghost { opacity: 0.45; background: var(--sx-fire-glow, rgba(239,43,22,0.34)) !important; }
+    .sortable-chosen { border-color: var(--sx-fire, #ef2b16) !important; }
+    .rank-section { margin-bottom: 1rem; }
+    .rank-section-header {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 0.5rem 0.75rem;
+        background: var(--sx-surface, #13161d);
+        color: var(--sx-text, #ece8e0);
+        border-bottom: 1px solid var(--sx-border, #252a38);
+    }
+    .rank-section-header h6 { color: var(--sx-text, #ece8e0) !important; }
+    .ranked-zone {
+        border: 1px dashed var(--sx-border-bright, #363e52);
+        border-radius: 4px;
+        padding: 0.5rem;
+        margin-bottom: 0.5rem;
+        background: rgba(239, 43, 22, 0.04);
+    }
+    .ranked-label {
+        font-size: 0.75rem;
+        color: var(--sx-gold-bright, #ffd94a);
+        text-transform: uppercase; letter-spacing: 0.05em;
+        margin-bottom: 0.35rem; padding-left: 0.25rem;
+        font-weight: 700;
+    }
+    .ranked-zone .rank-list:empty::before {
+        content: "Drag competitors here to rank them";
+        display: block;
+        padding: 0.75rem;
+        color: var(--sx-text-2, #8c95aa);
+        font-style: italic;
+        text-align: center;
+        font-size: 0.85rem;
+    }
+    .unranked-zone { border-top: 2px dashed var(--sx-border-bright, #363e52); margin-top: 0.5rem; padding-top: 0.5rem; }
+    .unranked-label {
+        font-size: 0.75rem;
+        color: var(--sx-text-2, #8c95aa);
+        text-transform: uppercase; letter-spacing: 0.05em;
+        margin-bottom: 0.35rem; padding-left: 0.75rem;
+        font-weight: 600;
+    }
+</style>
+
+<div class="container-fluid py-3">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Ability Rankings</h4>
+            <p class="text-muted small mb-0 mt-1">
+                Drag competitors into rank order within each event category.
+                Competitors in the <strong>Ranked</strong> zone are distributed via skill-balanced snake draft.
+                Competitors left in <strong>Unranked</strong> are placed after all ranked competitors.
+            </p>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm"
+           href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">
+            <i class="bi bi-arrow-left me-1"></i> Back to Events
+        </a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'error' else ('warning' if category == 'warning' else 'success') }} alert-dismissible fade show py-2" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endwith %}
+
+    {% if not category_groups and not birling_events_data %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-1"></i>
+            No rankable events are configured for this tournament.
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Configure events</a> first,
+            then return here to set ability rankings.
+        </div>
+    {% else %}
+
+    <form method="POST" id="rankingsForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        {# ═══════════ PRO ABILITY RANKINGS ═══════════ #}
+        {% if category_groups %}
+        <h5 class="text-muted fw-semibold mb-3 mt-2"><i class="bi bi-bar-chart-steps me-1"></i> Pro Ability Rankings</h5>
+
+        {# Iterate categories in a fixed display order #}
+        {% set ordered_cats = ['springboard', 'pro_1board', '3board_jigger', 'underhand', 'standing_block', 'singlebuck', 'doublebuck', 'jack_jill', 'obstacle_pole', 'birling'] %}
+        {% for category in ordered_cats %}
+        {% if category in category_groups %}
+        {% set genders = category_groups[category] %}
+        <div class="card shadow-sm mb-4">
+            <div class="card-header card-header-proam d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">
+                    <i class="bi bi-bar-chart-steps me-1"></i>
+                    {{ category_display_names[category] }}
+                </h6>
+                <span class="badge bg-secondary fw-normal small">{{ category_descriptions[category] }}</span>
+            </div>
+            <div class="card-body p-0">
+
+                {% for gender_key in ['M', 'F', 'open'] %}
+                {% if gender_key in genders and genders[gender_key] %}
+                {% set entries = genders[gender_key] %}
+                {% set ranked_entries = [] %}
+                {% set unranked_entries = [] %}
+                {% for entry in entries %}
+                    {% if entry.rank is not none %}
+                        {% set _ = ranked_entries.append(entry) %}
+                    {% else %}
+                        {% set _ = unranked_entries.append(entry) %}
+                    {% endif %}
+                {% endfor %}
+                <div class="rank-section">
+                    <div class="rank-section-header">
+                        <h6 class="text-muted fw-semibold small mb-0 text-uppercase">
+                            {% if gender_key == 'M' %}Men
+                            {% elif gender_key == 'F' %}Women
+                            {% else %}Open
+                            {% endif %}
+                            <span class="badge bg-light text-dark fw-normal ms-1">{{ entries | length }} competitor{{ 's' if entries | length != 1 }}</span>
+                        </h6>
+                        <span class="text-muted small">Drag to rank</span>
+                    </div>
+
+                    {# Hidden input populated by JS on submit #}
+                    <input type="hidden" name="order_{{ category }}_{{ gender_key }}" id="order_{{ category }}_{{ gender_key }}">
+
+                    {# Ranked zone #}
+                    <div class="px-3 pt-2">
+                        <div class="ranked-zone">
+                            <div class="ranked-label">Ranked</div>
+                            <ul class="rank-list" id="ranked_{{ category }}_{{ gender_key }}"
+                                data-category="{{ category }}" data-gender="{{ gender_key }}" data-zone="ranked">
+                                {% for entry in ranked_entries %}
+                                <li class="rank-item" data-id="{{ entry.competitor.id }}">
+                                    <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
+                                    <span class="rank-number">{{ loop.index }}</span>
+                                    <span class="comp-name">
+                                        {{ entry.competitor.display_name }}
+                                        {% if entry.competitor.springboard_slow_heat and 'springboard' in category %}
+                                            <span class="badge bg-warning text-dark ms-1 small">Slow heat</span>
+                                        {% endif %}
+                                        {% if entry.competitor.is_left_handed_springboard and 'springboard' in category %}
+                                            <span class="badge bg-info text-dark ms-1 small">Left-handed</span>
+                                        {% endif %}
+                                    </span>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+
+                    {# Unranked zone #}
+                    <div class="px-3 pb-2">
+                        <div class="unranked-zone">
+                            <div class="unranked-label">Unranked</div>
+                            <ul class="rank-list" id="unranked_{{ category }}_{{ gender_key }}"
+                                data-category="{{ category }}" data-gender="{{ gender_key }}" data-zone="unranked">
+                                {% for entry in unranked_entries %}
+                                <li class="rank-item" data-id="{{ entry.competitor.id }}">
+                                    <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
+                                    <span class="rank-number">-</span>
+                                    <span class="comp-name">
+                                        {{ entry.competitor.display_name }}
+                                        {% if entry.competitor.springboard_slow_heat and 'springboard' in category %}
+                                            <span class="badge bg-warning text-dark ms-1 small">Slow heat</span>
+                                        {% endif %}
+                                        {% if entry.competitor.is_left_handed_springboard and 'springboard' in category %}
+                                            <span class="badge bg-info text-dark ms-1 small">Left-handed</span>
+                                        {% endif %}
+                                    </span>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+            </div>{# /card-body #}
+        </div>{# /card #}
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+
+        {# ═══════════ COLLEGE BIRLING SEEDINGS ═══════════ #}
+        {% if birling_events_data %}
+        <h5 class="text-muted fw-semibold mb-3 mt-4"><i class="bi bi-diagram-3 me-1"></i> College Birling Seedings</h5>
+        <p class="text-muted small mb-3">
+            Drag competitors within each school to set birling order.
+            The #1 competitor from each school receives a top seed; #2 receives a middle seed.
+            Schools with only one competitor are fine — they just get seed #1.
+        </p>
+
+        {% for bdata in birling_events_data %}
+        <div class="card shadow-sm mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center" style="background: var(--surface-200, #8d3a6e); color: #fff;">
+                <h6 class="mb-0">
+                    <i class="bi bi-diagram-3 me-1"></i>
+                    {{ bdata.event.display_name }}
+                </h6>
+                <span class="badge bg-light text-dark fw-normal small">{{ bdata.total_competitors }} competitor{{ 's' if bdata.total_competitors != 1 }}</span>
+            </div>
+            <div class="card-body p-0">
+                {# Hidden input: JSON of {school: [comp_ids in order]} populated by JS #}
+                <input type="hidden" name="birling_schools_{{ bdata.event.id }}" id="birling_schools_{{ bdata.event.id }}">
+
+                {% for sg in bdata.school_groups %}
+                <div class="rank-section">
+                    <div class="rank-section-header">
+                        <h6 class="text-muted fw-semibold small mb-0">
+                            {{ sg.school }}
+                            <span class="badge bg-light text-dark fw-normal ms-1">{{ sg.competitors | length }}</span>
+                        </h6>
+                        <span class="text-muted small">Drag to set order</span>
+                    </div>
+                    <div class="px-3 py-2">
+                        <ul class="rank-list birling-school-list"
+                            id="birling_{{ bdata.event.id }}_{{ sg.school | replace(' ', '_') }}"
+                            data-event-id="{{ bdata.event.id }}"
+                            data-school="{{ sg.school }}">
+                            {% for comp in sg.competitors %}
+                            <li class="rank-item" data-id="{{ comp.id }}">
+                                <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
+                                <span class="rank-number">{{ loop.index }}</span>
+                                <span class="comp-name">{{ comp.name }}</span>
+                                {% if comp.seed %}
+                                <span class="badge bg-primary ms-auto small">Seed #{{ comp.seed }}</span>
+                                {% endif %}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        <div class="d-flex gap-2 mt-2 mb-5">
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-floppy me-1"></i> Save Rankings
+            </button>
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+               class="btn btn-outline-secondary">Cancel</a>
+        </div>
+
+    </form>
+    {% endif %}
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+(function() {
+    // Renumber rank badges in a list.
+    function renumber(list) {
+        list.querySelectorAll('.rank-item').forEach(function(item, i) {
+            item.querySelector('.rank-number').textContent = i + 1;
+        });
+    }
+
+    // Clear rank numbers in the unranked list.
+    function clearNumbers(list) {
+        list.querySelectorAll('.rank-item .rank-number').forEach(function(el) {
+            el.textContent = '-';
+        });
+    }
+
+    // ── Pro ability ranking lists (ranked/unranked zones) ──
+    // NOTE: no `handle:` option — the whole row is draggable. Past behavior
+    // restricted drag to a tiny grip icon, which caused users to think the
+    // UI was broken when their clicks outside the icon didn't register.
+    document.querySelectorAll('.rank-list[data-category]').forEach(function(list) {
+        var cat = list.dataset.category;
+        var gender = list.dataset.gender;
+        var groupName = cat + '_' + gender;
+
+        Sortable.create(list, {
+            group: groupName,
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            chosenClass: 'sortable-chosen',
+            onEnd: function() {
+                var ranked = document.getElementById('ranked_' + cat + '_' + gender);
+                var unranked = document.getElementById('unranked_' + cat + '_' + gender);
+                if (ranked) renumber(ranked);
+                if (unranked) clearNumbers(unranked);
+            }
+        });
+    });
+
+    // ── College birling school lists ──
+    document.querySelectorAll('.birling-school-list').forEach(function(list) {
+        Sortable.create(list, {
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            chosenClass: 'sortable-chosen',
+            onEnd: function() { renumber(list); }
+        });
+    });
+
+    // ── On form submit, populate all hidden inputs ──
+    document.getElementById('rankingsForm').addEventListener('submit', function() {
+        // Pro rankings: ranked zone IDs.
+        document.querySelectorAll('.rank-list[data-zone="ranked"]').forEach(function(list) {
+            var cat = list.dataset.category;
+            var gender = list.dataset.gender;
+            var ids = [];
+            list.querySelectorAll('.rank-item').forEach(function(item) {
+                ids.push(item.dataset.id);
+            });
+            var input = document.getElementById('order_' + cat + '_' + gender);
+            if (input) input.value = ids.join(',');
+        });
+
+        // Birling school lists: build JSON per event.
+        var birlingData = {};  // eventId → {school: [ids]}
+        document.querySelectorAll('.birling-school-list').forEach(function(list) {
+            var eventId = list.dataset.eventId;
+            var school = list.dataset.school;
+            if (!birlingData[eventId]) birlingData[eventId] = {};
+            var ids = [];
+            list.querySelectorAll('.rank-item').forEach(function(item) {
+                ids.push(parseInt(item.dataset.id));
+            });
+            birlingData[eventId][school] = ids;
+        });
+        for (var eventId in birlingData) {
+            var input = document.getElementById('birling_schools_' + eventId);
+            if (input) input.value = JSON.stringify(birlingData[eventId]);
+        }
+    });
+})();
+</script>
+{% endblock %}

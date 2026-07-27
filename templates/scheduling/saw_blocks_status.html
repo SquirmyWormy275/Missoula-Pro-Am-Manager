@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Saw Stand Block Assignments — {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+    <nav aria-label="breadcrumb" class="mb-2">
+        <ol class="breadcrumb" style="font-size:0.85rem;">
+            <li class="breadcrumb-item">
+                <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
+                    {{ tournament.name }} {{ tournament.year }}
+                </a>
+            </li>
+            <li class="breadcrumb-item active" aria-current="page">Saw Block Status</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-start flex-wrap mb-3">
+        <div>
+            <h1 class="h3 mb-1">Saw Stand Block Assignments</h1>
+            <p class="text-muted mb-0" style="font-size:0.9rem;">
+                Block A = stands 1–4 &middot; Block B = stands 5–8 &middot;
+                Consecutive hand-saw heats alternate blocks so the next team sets in
+                while the current team runs.
+            </p>
+        </div>
+        <form method="POST"
+              action="{{ url_for('scheduling.recompute_saw_blocks', tournament_id=tournament.id) }}"
+              class="mt-2 mt-md-0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-arrow-clockwise"></i> Recompute Now
+            </button>
+        </form>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ 'danger' if category == 'error' else category }} py-2">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    {# ── Friday ───────────────────────────────────────────────── #}
+    <section class="mb-4">
+        <h2 class="h5 mb-2">Friday</h2>
+        {% if friday_rows %}
+            <div class="table-responsive">
+                <table class="table table-sm table-striped align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width:5rem;">Run Order</th>
+                            <th>Event</th>
+                            <th style="width:5rem;">Heat</th>
+                            <th style="width:7rem;">Stand Block</th>
+                            <th>Stands</th>
+                            <th>Competitors</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in friday_rows %}
+                            <tr>
+                                <td>{{ row.run_order }}</td>
+                                <td>{{ row.event_name }}</td>
+                                <td>Heat {{ row.heat_number }}</td>
+                                <td>
+                                    <span class="badge {% if row.block == 'A' %}bg-primary{% elif row.block == 'B' %}bg-success{% else %}bg-secondary{% endif %}">
+                                        Block {{ row.block }}
+                                    </span>
+                                </td>
+                                <td style="font-variant-numeric:tabular-nums;">
+                                    {{ row.stands|join(', ') if row.stands else '—' }}
+                                </td>
+                                <td style="font-size:0.9rem;">
+                                    {{ row.competitors|join(', ') if row.competitors else '—' }}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="text-muted">No hand-saw heats scheduled.</p>
+        {% endif %}
+    </section>
+
+    {# ── Saturday ─────────────────────────────────────────────── #}
+    <section class="mb-4">
+        <h2 class="h5 mb-2">Saturday</h2>
+        {% if saturday_rows %}
+            <div class="table-responsive">
+                <table class="table table-sm table-striped align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width:5rem;">Run Order</th>
+                            <th>Event</th>
+                            <th style="width:5rem;">Heat</th>
+                            <th style="width:7rem;">Stand Block</th>
+                            <th>Stands</th>
+                            <th>Competitors</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in saturday_rows %}
+                            <tr>
+                                <td>{{ row.run_order }}</td>
+                                <td>{{ row.event_name }}</td>
+                                <td>Heat {{ row.heat_number }}</td>
+                                <td>
+                                    <span class="badge {% if row.block == 'A' %}bg-primary{% elif row.block == 'B' %}bg-success{% else %}bg-secondary{% endif %}">
+                                        Block {{ row.block }}
+                                    </span>
+                                </td>
+                                <td style="font-variant-numeric:tabular-nums;">
+                                    {{ row.stands|join(', ') if row.stands else '—' }}
+                                </td>
+                                <td style="font-size:0.9rem;">
+                                    {{ row.competitors|join(', ') if row.competitors else '—' }}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="text-muted">No hand-saw heats scheduled.</p>
+        {% endif %}
+    </section>
+
+    <div class="mt-4">
+        <a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}"
+           class="btn btn-link">
+            <i class="bi bi-arrow-left"></i> Back to Tournament
+        </a>
+    </div>
+</div>
+{% endblock %}

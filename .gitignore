@@ -1,0 +1,54 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Flask instance folder (local SQLite DB)
+instance/
+proam.db
+*.db
+*.sqlite3
+
+# Uploaded files
+uploads/
+
+# Large media files (too big for GitHub; keep locally only)
+static/video/
+
+# Environment secrets
+.env
+.env.*
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Distribution
+*.egg-info/
+*.egg
+dist/
+build/
+.gstack/
+.claude/
+.compound-engineering/*.local.yaml
+
+# Test / lint / coverage caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# gstack skill artifacts (retros, QA reports, checkpoints — local tooling output)
+.context/
+.gstack/
+
+# Logs
+*.log
+
+# Session handoff paste buffers — generated per session, not source
+SESSION_HANDOFF_*.md

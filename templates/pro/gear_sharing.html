@@ -1,0 +1,942 @@
+{% extends "base.html" %}
+
+{% block title %}Gear Sharing Manager - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro</a></li>
+            <li class="breadcrumb-item active">Gear Sharing Manager</li>
+        </ol>
+    </nav>
+
+    <!-- Header + action bar -->
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+        <div>
+            <h1 class="mb-0">Gear Sharing Manager</h1>
+            <p class="text-muted small mb-0">{{ tournament.name }} {{ tournament.year }} — Pro Division</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <!-- Print report -->
+            <a href="{{ url_for('registration.pro_gear_print', tournament_id=tournament.id) }}"
+               target="_blank" class="btn btn-outline-secondary btn-sm">
+                Print Report
+            </a>
+
+            <!-- Parse free-text: link to review page instead of committing directly -->
+            {% if report.unparsed_count > 0 %}
+            <a href="{{ url_for('registration.pro_gear_parse_review', tournament_id=tournament.id) }}"
+               class="btn btn-outline-warning btn-sm"
+               title="{{ report.unparsed_count }} competitor(s) have unstructured free-text detail fields">
+                Parse Free-Text ({{ report.unparsed_count }})
+            </a>
+            {% endif %}
+
+            <!-- Complete all one-sided pairs -->
+            <form method="POST"
+                  action="{{ url_for('registration.pro_gear_complete_pairs', tournament_id=tournament.id) }}"
+                  data-confirm="Write reciprocal entries for all one-sided gear pairs?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-primary btn-sm">Complete All Pairs</button>
+            </form>
+
+            <!-- Auto-populate partner fields from gear sharing -->
+            <form method="POST"
+                  action="{{ url_for('registration.pro_gear_auto_partners', tournament_id=tournament.id) }}"
+                  data-confirm="Copy gear-sharing entries into partner fields for partnered events?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-primary btn-sm">Auto-Populate Partners</button>
+            </form>
+
+            <!-- Cleanup scratched competitors' gear entries -->
+            <form method="POST"
+                  action="{{ url_for('registration.pro_gear_cleanup_scratched', tournament_id=tournament.id) }}"
+                  data-confirm="Remove all gear-sharing entries referencing scratched competitors?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-secondary btn-sm">Cleanup Scratched</button>
+            </form>
+
+            <!-- Cleanup gear entries for events competitor is not enrolled in -->
+            <form method="POST"
+                  action="{{ url_for('registration.pro_gear_cleanup_non_enrolled', tournament_id=tournament.id) }}"
+                  data-confirm="Remove gear-sharing entries pointing at events the competitor is not enrolled in?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-secondary btn-sm">Cleanup Non-Enrolled</button>
+            </form>
+
+            <!-- Auto-assign heat partners -->
+            <form method="POST"
+                  action="{{ url_for('registration.auto_assign_pro_partners_route', tournament_id=tournament.id) }}"
+                  data-confirm="Auto-assign partners for all partnered pro events? Existing assignments will not be overwritten.">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-primary btn-sm">Auto-Assign Partners</button>
+            </form>
+
+            <!-- Sync / fix heat conflicts -->
+            {% if report.stats.conflicts > 0 %}
+            <form method="POST"
+                  action="{{ url_for('registration.pro_gear_sync_heats', tournament_id=tournament.id) }}"
+                  data-confirm="Attempt to auto-fix {{ report.stats.conflicts }} gear conflict(s) by swapping competitors between heats?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger btn-sm">
+                    Sync Heat Conflicts ({{ report.stats.conflicts }})
+                </button>
+            </form>
+            {% else %}
+            <form method="POST"
+                  action="{{ url_for('registration.pro_gear_sync_heats', tournament_id=tournament.id) }}"
+                  data-confirm="Scan all pro heats for gear conflicts?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-secondary btn-sm">Sync Heats</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Summary stat cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card text-center border-success">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold text-success">{{ report.stats.groups }}</div>
+                    <div class="small text-muted">Gear Groups</div>
+                    {% if report.stats.unconfirmed > 0 %}
+                    <div class="small text-warning">({{ report.stats.unconfirmed }} unconfirmed)</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center {% if report.stats.unresolved > 0 %}border-warning{% endif %}">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold {% if report.stats.unresolved > 0 %}text-warning{% else %}text-muted{% endif %}">
+                        {{ report.stats.unresolved }}
+                    </div>
+                    <div class="small text-muted">Unresolved</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center {% if report.stats.conflicts > 0 %}border-danger{% endif %}">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold {% if report.stats.conflicts > 0 %}text-danger{% else %}text-muted{% endif %}">
+                        {{ report.stats.conflicts }}
+                    </div>
+                    <div class="small text-muted">Heat Conflicts</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold text-info">{{ report.stats.college }}</div>
+                    <div class="small text-muted">College Constraints</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Heat conflicts alert -->
+    {% if report.pro_conflicts %}
+    <div class="alert alert-danger mb-4">
+        <h6 class="alert-heading">{{ report.pro_conflicts|length }} Heat Conflict(s) Detected</h6>
+        <p class="mb-2 small">The following gear-sharing partners are in the same heat. Use <strong>Sync Heat Conflicts</strong> above to auto-resolve, or move competitors manually on the Heats page.</p>
+        <div class="table-responsive">
+            <table class="table table-sm table-danger mb-0 align-middle">
+                <thead>
+                    <tr>
+                        <th>Event</th>
+                        <th>Heat</th>
+                        <th>Competitor A</th>
+                        <th>Competitor B</th>
+                        <th>Run</th>
+                        <th>Suggestions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in report.pro_conflicts %}
+                    <tr>
+                        <td>
+                            <a href="{{ url_for('scheduling.event_heats', tournament_id=tournament.id, event_id=c.event.id) }}"
+                               class="text-danger fw-bold">{{ c.event.display_name }}</a>
+                        </td>
+                        <td>{{ c.heat.heat_number }}</td>
+                        <td>{{ c.comp_a.name }}</td>
+                        <td>{{ c.comp_b.name }}</td>
+                        <td>{{ c.heat.run_number }}</td>
+                        <td>
+                            {% if c.suggestions %}
+                            <ul class="mb-0 small list-unstyled">
+                                {% for s in c.suggestions %}
+                                <li>{{ s }}</li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Gear group size warnings -->
+    {% if report.group_warnings %}
+    <div class="alert alert-warning mb-4">
+        <h6 class="alert-heading">{{ report.group_warnings|length }} Gear Group Size Warning(s)</h6>
+        <ul class="mb-0 small">
+            {% for w in report.group_warnings %}
+            <li>
+                Group <strong>{{ w.group_name }}</strong> ({{ w.event_label }}): {{ w.issue }}
+                Members: {{ w.members|join(', ') }}.
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Unresolved entries (missing partner, unknown partner, self-reference only — one_sided is now treated as a valid pair) -->
+    {% if report.pro_unresolved %}
+    <div class="card mb-4 border-warning">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">Unresolved Gear Entries ({{ report.pro_unresolved|length }})</h6>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0" id="unresolvedGearTable">
+                <thead class="table-light">
+                    <tr>
+                        <th>Competitor</th>
+                        <th>Event</th>
+                        <th>Partner (stored)</th>
+                        <th>Issue</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in report.pro_unresolved %}
+                    <tr data-comp-id="{{ entry.competitor.id }}"
+                        data-event-key="{{ entry.event_key }}"
+                        data-comp-name="{{ entry.competitor.display_name|e }}">
+                        <td><strong>{{ entry.competitor.display_name }}</strong></td>
+                        <td>{{ entry.event_label }}</td>
+                        <td class="partner-cell">
+                            <span class="partner-display">
+                                {% if entry.partner_raw %}
+                                    <span class="text-danger">{{ entry.partner_raw }}</span>
+                                {% else %}
+                                    <span class="text-muted fst-italic">none</span>
+                                {% endif %}
+                            </span>
+                            <span class="partner-edit d-none">
+                                <input type="text" class="form-control form-control-sm partner-input"
+                                       value="{{ entry.partner_raw or '' }}"
+                                       list="editCompNames" autocomplete="off"
+                                       style="min-width:160px">
+                            </span>
+                        </td>
+                        <td>
+                            {% for issue in entry.issues %}
+                            <span class="badge bg-danger me-1">{{ issue }}</span>
+                            {% endfor %}
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm view-mode">
+                                <button type="button" class="btn btn-outline-primary btn-inline-edit">
+                                    Quick Edit
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary"
+                                        data-bs-toggle="modal" data-bs-target="#editGearModal"
+                                        data-competitor-id="{{ entry.competitor.id }}"
+                                        data-competitor-name="{{ entry.competitor.display_name }}"
+                                        data-event-key="{{ entry.event_key }}"
+                                        data-event-label="{{ entry.event_label }}"
+                                        data-partner="{{ entry.partner_raw }}">
+                                    Full Edit
+                                </button>
+                                <form method="POST"
+                                      action="{{ url_for('registration.pro_gear_remove', tournament_id=tournament.id) }}"
+                                      class="d-inline"
+                                      data-confirm="Remove this gear sharing entry for {{ entry.competitor.display_name }}?">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="competitor_id" value="{{ entry.competitor.id }}">
+                                    <input type="hidden" name="event_key" value="{{ entry.event_key }}">
+                                    <button type="submit" class="btn btn-outline-danger">Remove</button>
+                                </form>
+                            </div>
+                            <div class="btn-group btn-group-sm edit-mode d-none">
+                                <button type="button" class="btn btn-success btn-inline-save">Save</button>
+                                <button type="button" class="btn btn-secondary btn-inline-cancel">Cancel</button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Gear Sharing Groups (aggregated from pairs — supports groups of 2, 3, 4+) -->
+    {% if report.pro_groups %}
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">Gear Sharing Groups ({{ report.pro_groups|length }})</h6>
+            <button class="btn btn-sm btn-outline-secondary" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#groupsTable">
+                Toggle
+            </button>
+        </div>
+        <div class="collapse show" id="groupsTable">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Members</th>
+                            <th>Size</th>
+                            <th>Equipment / Event</th>
+                            <th>Status</th>
+                            <th>Heat Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for group in report.pro_groups %}
+                        <tr class="{{ 'table-danger' if group.heat_conflict else ('table-warning' if group.has_unconfirmed else '') }}">
+                            <td>
+                                {% for member in group.members %}
+                                <span class="d-block">{{ member.name }}</span>
+                                {% endfor %}
+                            </td>
+                            <td>
+                                <span class="badge {{ 'bg-info' if group.member_count > 2 else 'bg-secondary' }}">
+                                    {{ group.member_count }}
+                                </span>
+                            </td>
+                            <td>{{ group.event_label }}</td>
+                            <td>
+                                {% if group.has_unconfirmed %}
+                                <span class="badge bg-warning text-dark" title="Some members in this group have unconfirmed (one-sided) entries. Use Complete All Pairs to write both sides.">Unconfirmed</span>
+                                {% else %}
+                                <span class="badge bg-success">Confirmed</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if group.heat_conflict %}
+                                <span class="badge bg-danger">Conflict</span>
+                                {% else %}
+                                <span class="badge bg-success">OK</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                                            data-bs-toggle="modal" data-bs-target="#editGearModal"
+                                            data-competitor-id="{{ group.members[0].id }}"
+                                            data-competitor-name="{{ group.members[0].name }}"
+                                            data-event-key="{{ group.event_keys|list|first }}"
+                                            data-event-label="{{ group.event_label }}"
+                                            data-partner="{{ group.members[1].name if group.members|length > 1 else '' }}">
+                                        Edit
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not report.pro_groups and not report.pro_unresolved %}
+    <div class="alert alert-info mb-4">
+        No pro gear-sharing entries found for this tournament.
+        {% if report.unparsed_count > 0 %}
+        Click <strong>Parse Free-Text</strong> above to extract structured entries from competitor detail notes.
+        {% endif %}
+        Use the <strong>Add / Update Gear Entry</strong> form below to add entries manually.
+    </div>
+    {% endif %}
+
+    <!-- Named Gear Groups (explicit group: entries — multiple pairs sharing one piece of equipment) -->
+    {% if gear_groups %}
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">Named Gear Groups ({{ gear_groups|length }})</h6>
+            <button class="btn btn-sm btn-outline-secondary" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#gearGroupsBody">
+                Toggle
+            </button>
+        </div>
+        <div class="collapse show" id="gearGroupsBody">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Group Name</th>
+                            <th>Members</th>
+                            <th>Event Key</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for gname, members in gear_groups.items() %}
+                        <tr>
+                            <td><strong>{{ gname }}</strong></td>
+                            <td>{{ members|map(attribute='competitor')|map(attribute='name')|join(', ') }}</td>
+                            <td><code>{{ members[0].event_key if members else '' }}</code></td>
+                            <td>
+                                <form method="POST"
+                                      action="{{ url_for('registration.pro_gear_group_remove', tournament_id=tournament.id) }}"
+                                      class="d-inline"
+                                      data-confirm="Remove all members from gear group {{ gname }}?">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group_name" value="{{ gname }}">
+                                    <input type="hidden" name="event_key" value="{{ members[0].event_key if members else '' }}">
+                                    <input type="hidden" name="remove_all" value="on">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm">Remove Group</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Create Gear Group -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h6 class="mb-0">Create Gear Group</h6>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">
+                Use gear groups when multiple partnered pairs share one saw (e.g., two Double Buck pairs using the same crosscut).
+                All members of the group will be placed in separate heats automatically.
+            </p>
+            <form method="POST" action="{{ url_for('registration.pro_gear_group_create', tournament_id=tournament.id) }}"
+                  class="row g-3">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-md-3">
+                    <label class="form-label form-label-sm">Group Name</label>
+                    <input type="text" name="group_name" class="form-control form-control-sm"
+                           placeholder="e.g. saw_1" required>
+                    <div class="form-text">Short identifier, no spaces.</div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label form-label-sm">Event</label>
+                    <select name="event_key" class="form-select form-select-sm" required>
+                        <option value="">-- select --</option>
+                        {% for e in pro_events %}
+                        <option value="{{ e.id }}">{{ e.display_name }}</option>
+                        {% endfor %}
+                        <option value="category:crosscut">Category: Crosscut / Handsaw</option>
+                        <option value="category:chainsaw">Category: Chainsaw / Power Saw</option>
+                        <option value="category:springboard">Category: Springboard</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label form-label-sm">Competitors in Group</label>
+                    <select name="competitor_ids" class="form-select form-select-sm" multiple required size="4">
+                        {% for c in pro_comps %}
+                        <option value="{{ c.id }}">{{ c.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Hold Ctrl / Cmd to select multiple.</div>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-warning btn-sm w-100">Create Group</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add / Update Gear Entry -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h6 class="mb-0">Add / Update Gear Entry</h6>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">
+                Reciprocal entry is written automatically — saving A + B here also saves B + A.
+            </p>
+            <form method="POST" action="{{ url_for('registration.pro_gear_update', tournament_id=tournament.id) }}"
+                  class="row g-3 align-items-end">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-md-3">
+                    <label class="form-label form-label-sm">Competitor</label>
+                    <select name="competitor_id" class="form-select form-select-sm" required>
+                        <option value="">-- select --</option>
+                        {% for c in pro_comps %}
+                        <option value="{{ c.id }}">{{ c.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label form-label-sm">Event</label>
+                    <select name="event_key" class="form-select form-select-sm" required>
+                        <option value="">-- select --</option>
+                        {% for e in pro_events %}
+                        <option value="{{ e.id }}">{{ e.display_name }}</option>
+                        {% endfor %}
+                        <option value="category:springboard">Category: Springboard (all)</option>
+                        <option value="category:crosscut">Category: Crosscut / Handsaw (all)</option>
+                        <option value="category:chainsaw">Category: Chainsaw / Power Saw (all)</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label form-label-sm">Gear Partner Name</label>
+                    <input type="text" name="partner_name" class="form-control form-control-sm"
+                           placeholder="Exact name as registered" list="addCompNames">
+                    <datalist id="addCompNames">
+                        {% for c in pro_comps %}
+                        <option value="{{ c.name }}">
+                        {% endfor %}
+                    </datalist>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-warning btn-sm w-100">Save Entry</button>
+                    <div class="form-text">Leave partner blank to remove the entry.</div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- College gear constraints (with inline edit/remove) -->
+    {% if report.college_constraints or (college_comps is defined and college_comps) %}
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">College Gear Constraints ({{ report.college_constraints|length }})</h6>
+            <button class="btn btn-sm btn-outline-secondary" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#collegeGearTable">
+                Toggle
+            </button>
+        </div>
+        <div class="collapse" id="collegeGearTable">
+            {% if report.college_constraints %}
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0" id="collegeGearTableBody">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Competitor</th>
+                            <th>Team</th>
+                            <th>Event</th>
+                            <th>Gear Partner</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in report.college_constraints %}
+                        <tr data-comp-id="{{ row.competitor.id }}"
+                            data-event-key="{{ row.event_key }}"
+                            data-comp-name="{{ row.competitor.display_name|e }}">
+                            <td>
+                                {% if row.competitor.team %}
+                                <a href="{{ url_for('registration.team_detail', tournament_id=tournament.id, team_id=row.competitor.team.id) }}">{{ row.competitor.display_name }}</a>
+                                {% else %}
+                                {{ row.competitor.display_name }}
+                                {% endif %}
+                            </td>
+                            <td><span class="badge bg-secondary">{{ row.team_code }}</span></td>
+                            <td>{{ row.event_label }}</td>
+                            <td class="college-partner-cell">
+                                <span class="college-partner-display">
+                                    {{ row.partner if row.partner else '<span class="text-muted fst-italic">none</span>'|safe }}
+                                </span>
+                                <span class="college-partner-edit d-none">
+                                    <input type="text" class="form-control form-control-sm college-partner-input"
+                                           value="{{ row.partner or '' }}" style="min-width:140px">
+                                </span>
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm college-view-mode">
+                                    <button type="button" class="btn btn-outline-primary btn-sm btn-college-inline-edit">
+                                        Quick Edit
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                                            data-bs-toggle="modal" data-bs-target="#editCollegeGearModal"
+                                            data-competitor-id="{{ row.competitor.id }}"
+                                            data-competitor-name="{{ row.competitor.display_name }}"
+                                            data-event-key="{{ row.event_key }}"
+                                            data-event-label="{{ row.event_label }}"
+                                            data-partner="{{ row.partner }}">
+                                        Edit
+                                    </button>
+                                    <form method="POST"
+                                          action="{{ url_for('registration.college_gear_remove', tournament_id=tournament.id) }}"
+                                          class="d-inline"
+                                          data-confirm="Remove this college gear entry for {{ row.competitor.display_name }}?">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="competitor_id" value="{{ row.competitor.id }}">
+                                        <input type="hidden" name="event_key" value="{{ row.event_key }}">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">Remove</button>
+                                    </form>
+                                </div>
+                                <div class="btn-group btn-group-sm college-edit-mode d-none">
+                                    <button type="button" class="btn btn-success btn-sm btn-college-inline-save">Save</button>
+                                    <button type="button" class="btn btn-secondary btn-sm btn-college-inline-cancel">Cancel</button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+            <!-- Add college gear entry inline -->
+            <div class="card-body border-top">
+                <h6 class="text-muted small mb-2">Add / Update College Gear Entry</h6>
+                <form method="POST" action="{{ url_for('registration.college_gear_update', tournament_id=tournament.id) }}"
+                      class="row g-2 align-items-end">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="col-md-3">
+                        <label class="form-label form-label-sm">Competitor</label>
+                        <select name="competitor_id" class="form-select form-select-sm" required>
+                            <option value="">-- select --</option>
+                            {% if college_comps is defined %}
+                            {% for c in college_comps %}
+                            <option value="{{ c.id }}">{{ c.display_name }}</option>
+                            {% endfor %}
+                            {% endif %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label form-label-sm">Event Key</label>
+                        <select name="event_key" class="form-select form-select-sm" required>
+                            <option value="">-- select --</option>
+                            {% for e in college_events %}
+                            <option value="{{ e.id }}">{{ e.display_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label form-label-sm">Partner Name</label>
+                        <input type="text" name="partner_name" class="form-control form-control-sm"
+                               placeholder="Partner name" required>
+                    </div>
+                    <div class="col-md-3">
+                        <button type="submit" class="btn btn-outline-info btn-sm w-100">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+<!-- Edit Pro Gear Modal -->
+<div class="modal fade" id="editGearModal" tabindex="-1" aria-labelledby="editGearModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('registration.pro_gear_update', tournament_id=tournament.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="competitor_id" id="modalCompetitorId">
+                <input type="hidden" name="event_key" id="modalEventKey">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editGearModalLabel">Edit Gear Sharing</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Competitor</label>
+                        <div id="modalCompetitorName" class="form-control-plaintext"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Event</label>
+                        <div id="modalEventLabel" class="form-control-plaintext"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="modalPartnerName">Gear Partner Name</label>
+                        <input type="text" class="form-control" id="modalPartnerName"
+                               name="partner_name" placeholder="Exact name as registered"
+                               list="editCompNames" autocomplete="off">
+                        <datalist id="editCompNames">
+                            {% for c in pro_comps %}
+                            <option value="{{ c.name }}">
+                            {% endfor %}
+                        </datalist>
+                        <div class="form-text">
+                            Leave blank to remove this entry. Reciprocal entry on the partner will also be written.
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit College Gear Modal -->
+<div class="modal fade" id="editCollegeGearModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('registration.college_gear_update', tournament_id=tournament.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="competitor_id" id="collegeModalCompId">
+                <input type="hidden" name="event_key" id="collegeModalEventKey">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit College Gear Entry</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Competitor</label>
+                        <div id="collegeModalCompName" class="form-control-plaintext"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Event</label>
+                        <div id="collegeModalEventLabel" class="form-control-plaintext"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Gear Partner Name</label>
+                        <input type="text" class="form-control" name="partner_name"
+                               id="collegeModalPartnerName" placeholder="Partner name" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-info">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    'use strict';
+
+    // Pro gear edit modal (Full Edit button)
+    var gearModal = document.getElementById('editGearModal');
+    if (gearModal) {
+        gearModal.addEventListener('show.bs.modal', function (event) {
+            var btn = event.relatedTarget;
+            if (!btn) return;
+            document.getElementById('modalCompetitorId').value = btn.dataset.competitorId || '';
+            document.getElementById('modalEventKey').value = btn.dataset.eventKey || '';
+            document.getElementById('modalCompetitorName').textContent = btn.dataset.competitorName || '';
+            document.getElementById('modalEventLabel').textContent = btn.dataset.eventLabel || '';
+            document.getElementById('modalPartnerName').value = btn.dataset.partner || '';
+        });
+    }
+
+    // College gear edit modal
+    var collegeModal = document.getElementById('editCollegeGearModal');
+    if (collegeModal) {
+        collegeModal.addEventListener('show.bs.modal', function (event) {
+            var btn = event.relatedTarget;
+            if (!btn) return;
+            document.getElementById('collegeModalCompId').value = btn.dataset.competitorId || '';
+            document.getElementById('collegeModalEventKey').value = btn.dataset.eventKey || '';
+            document.getElementById('collegeModalCompName').textContent = btn.dataset.competitorName || '';
+            document.getElementById('collegeModalEventLabel').textContent = btn.dataset.eventLabel || '';
+            document.getElementById('collegeModalPartnerName').value = btn.dataset.partner || '';
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Inline AJAX editing for unresolved gear entries
+    // -----------------------------------------------------------------------
+    var CSRF_TOKEN = '{{ csrf_token() }}';
+    var UPDATE_AJAX_URL = '{{ url_for("registration.pro_gear_update_ajax", tournament_id=tournament.id) }}';
+
+    // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
+    function escapeHtml(s) {
+        if (s === null || s === undefined) return '';
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // showInlineFlash accepts either a plain text message (default, safest)
+    // or an already-escaped HTML fragment when isHtml=true. Callers passing
+    // user-controlled data MUST escape before setting isHtml=true.
+    function showInlineFlash(type, msg, isHtml) {
+        var div = document.createElement('div');
+        div.className = 'alert alert-' + type + ' alert-dismissible fade show position-fixed bottom-0 end-0 m-3 shadow';
+        div.style.zIndex = '9999';
+        div.style.maxWidth = '380px';
+        // SECURITY FIX (CSO #1): default to escaping to prevent stored XSS
+        var safeMsg = isHtml ? msg : escapeHtml(msg);
+        div.innerHTML = safeMsg + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+        document.body.appendChild(div);
+        setTimeout(function () { if (div.parentNode) div.remove(); }, 4500);
+    }
+
+    document.addEventListener('click', function (e) {
+        // Quick Edit: switch row to edit mode
+        if (e.target.classList.contains('btn-inline-edit')) {
+            var row = e.target.closest('tr');
+            row.querySelector('.partner-display').classList.add('d-none');
+            row.querySelector('.partner-edit').classList.remove('d-none');
+            row.querySelector('.view-mode').classList.add('d-none');
+            row.querySelector('.edit-mode').classList.remove('d-none');
+            row.querySelector('.partner-input').focus();
+            return;
+        }
+
+        // Cancel: revert to display mode
+        if (e.target.classList.contains('btn-inline-cancel')) {
+            var row = e.target.closest('tr');
+            row.querySelector('.partner-display').classList.remove('d-none');
+            row.querySelector('.partner-edit').classList.add('d-none');
+            row.querySelector('.view-mode').classList.remove('d-none');
+            row.querySelector('.edit-mode').classList.add('d-none');
+            return;
+        }
+
+        // Save: AJAX POST
+        if (e.target.classList.contains('btn-inline-save')) {
+            var btn = e.target;
+            var row = btn.closest('tr');
+            var compId = row.dataset.compId;
+            var eventKey = row.dataset.eventKey;
+            var compName = row.dataset.compName || '';
+            var partnerName = row.querySelector('.partner-input').value.trim();
+
+            btn.disabled = true;
+            btn.textContent = 'Saving\u2026';
+
+            var fd = new FormData();
+            fd.append('csrf_token', CSRF_TOKEN);
+            fd.append('competitor_id', compId);
+            fd.append('event_key', eventKey);
+            fd.append('partner_name', partnerName);
+
+            fetch(UPDATE_AJAX_URL, { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.ok) {
+                        row.remove();
+                        var tbody = document.querySelector('#unresolvedGearTable tbody');
+                        if (tbody && tbody.querySelectorAll('tr').length === 0) {
+                            tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-3">All entries resolved.</td></tr>';
+                        }
+                        // SECURITY FIX (CSO #1): escape server-supplied compName before innerHTML
+                        showInlineFlash('success', 'Gear entry updated for <strong>' + escapeHtml(compName) + '</strong>. Reload to see updated pairs.', true);
+                    } else {
+                        showInlineFlash('danger', 'Error: ' + (data.error || 'Unknown error'));
+                        btn.disabled = false;
+                        btn.textContent = 'Save';
+                    }
+                })
+                .catch(function (err) {
+                    showInlineFlash('danger', 'Network error: ' + err.message);
+                    btn.disabled = false;
+                    btn.textContent = 'Save';
+                });
+        }
+    });
+
+    // Allow Enter key in the partner input to trigger save
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target.classList.contains('partner-input')) {
+            e.preventDefault();
+            var saveBtn = e.target.closest('tr').querySelector('.btn-inline-save');
+            if (saveBtn) saveBtn.click();
+        }
+        if (e.key === 'Escape' && e.target.classList.contains('partner-input')) {
+            var cancelBtn = e.target.closest('tr').querySelector('.btn-inline-cancel');
+            if (cancelBtn) cancelBtn.click();
+        }
+        // College inline editing keyboard shortcuts
+        if (e.key === 'Enter' && e.target.classList.contains('college-partner-input')) {
+            e.preventDefault();
+            var saveBtn = e.target.closest('tr').querySelector('.btn-college-inline-save');
+            if (saveBtn) saveBtn.click();
+        }
+        if (e.key === 'Escape' && e.target.classList.contains('college-partner-input')) {
+            var cancelBtn = e.target.closest('tr').querySelector('.btn-college-inline-cancel');
+            if (cancelBtn) cancelBtn.click();
+        }
+    });
+
+    // -----------------------------------------------------------------------
+    // Inline AJAX editing for college gear entries
+    // -----------------------------------------------------------------------
+    var COLLEGE_UPDATE_AJAX_URL = '{{ url_for("registration.college_gear_update_ajax", tournament_id=tournament.id) }}';
+
+    document.addEventListener('click', function (e) {
+        // College Quick Edit: switch row to edit mode
+        if (e.target.classList.contains('btn-college-inline-edit')) {
+            var row = e.target.closest('tr');
+            row.querySelector('.college-partner-display').classList.add('d-none');
+            row.querySelector('.college-partner-edit').classList.remove('d-none');
+            row.querySelector('.college-view-mode').classList.add('d-none');
+            row.querySelector('.college-edit-mode').classList.remove('d-none');
+            row.querySelector('.college-partner-input').focus();
+            return;
+        }
+
+        // College Cancel: revert to display mode
+        if (e.target.classList.contains('btn-college-inline-cancel')) {
+            var row = e.target.closest('tr');
+            row.querySelector('.college-partner-display').classList.remove('d-none');
+            row.querySelector('.college-partner-edit').classList.add('d-none');
+            row.querySelector('.college-view-mode').classList.remove('d-none');
+            row.querySelector('.college-edit-mode').classList.add('d-none');
+            return;
+        }
+
+        // College Save: AJAX POST
+        if (e.target.classList.contains('btn-college-inline-save')) {
+            var btn = e.target;
+            var row = btn.closest('tr');
+            var compId = row.dataset.compId;
+            var eventKey = row.dataset.eventKey;
+            var compName = row.dataset.compName || '';
+            var partnerName = row.querySelector('.college-partner-input').value.trim();
+
+            btn.disabled = true;
+            btn.textContent = 'Saving\u2026';
+
+            var fd = new FormData();
+            fd.append('csrf_token', CSRF_TOKEN);
+            fd.append('competitor_id', compId);
+            fd.append('event_key', eventKey);
+            fd.append('partner_name', partnerName);
+
+            fetch(COLLEGE_UPDATE_AJAX_URL, { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.ok) {
+                        row.querySelector('.college-partner-display').textContent = data.partner || partnerName;
+                        row.querySelector('.college-partner-display').classList.remove('d-none');
+                        row.querySelector('.college-partner-edit').classList.add('d-none');
+                        row.querySelector('.college-view-mode').classList.remove('d-none');
+                        row.querySelector('.college-edit-mode').classList.add('d-none');
+                        showInlineFlash('success', 'College gear entry updated for <strong>' + compName + '</strong>.');
+                    } else {
+                        showInlineFlash('danger', 'Error: ' + (data.error || 'Unknown error'));
+                        btn.disabled = false;
+                        btn.textContent = 'Save';
+                    }
+                })
+                .catch(function (err) {
+                    showInlineFlash('danger', 'Network error: ' + err.message);
+                    btn.disabled = false;
+                    btn.textContent = 'Save';
+                });
+        }
+    });
+}());
+</script>
+{% endblock %}

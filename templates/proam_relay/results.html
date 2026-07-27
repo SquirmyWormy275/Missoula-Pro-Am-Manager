@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Pro-Am Relay Results Entry - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}">Pro-Am Relay</a></li>
+                    <li class="breadcrumb-item active">Enter Results</li>
+                </ol>
+            </nav>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>Enter Relay Times</h1>
+                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
+                </div>
+                <a href="{{ url_for('proam_relay.standings', tournament_id=tournament.id) }}" class="btn btn-info">
+                    View Standings
+                </a>
+            </div>
+        </div>
+    </div>
+
+    {% if teams %}
+    <div class="row">
+        {% for team in teams %}
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">{{ team.name }}</h5>
+                </div>
+                <div class="card-body">
+                    {% if team.total_time is not none %}
+                    <p class="mb-3">
+                        Current time: <strong>{{ "%.2f"|format(team.total_time) }}s</strong>
+                        <span class="text-muted">(submit a new time to overwrite)</span>
+                    </p>
+                    {% endif %}
+                    <form action="{{ url_for('proam_relay.enter_results', tournament_id=tournament.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="team_number" value="{{ team.team_number }}">
+                        <div class="input-group">
+                            <input type="text" name="time_seconds" class="form-control form-control-lg"
+                                   placeholder="e.g., 45.67 or 1:23.45"
+                                   pattern="(\d+:\d+\.?\d*|\d+\.?\d*)"
+                                   title="Enter seconds (45.67) or MM:SS.ms (1:23.45)"
+                                   required>
+                            <button type="submit" class="btn btn-success btn-lg">Save Time</button>
+                        </div>
+                        <div class="form-text">Enter total relay time in seconds or MM:SS.ms format.</div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <h4>No Teams Drawn Yet</h4>
+                    <p class="text-muted">You need to draw teams before entering results.</p>
+                    <a href="{{ url_for('proam_relay.relay_dashboard', tournament_id=tournament.id) }}" class="btn btn-warning btn-lg">
+                        Go to Lottery
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

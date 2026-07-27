@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="{{ CURRENT_LANG }}" style="color-scheme: dark;">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta name="theme-color" content="#ef2b16">
+    <title>{% block title %}{{ COMPETITION.app_title }}{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Orbitron:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Pro-Am design system -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}?v={{ STATIC_VERSION }}">
+    <!-- Resolve Jinja2 URL dependency used by the Arapaho language mode CSS variable -->
+    <style>:root { --arp-flag-url: url("{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}"); }</style>
+
+    
+
+    {% block extra_css %}{% endblock %}
+</head>
+<body class="{% if CURRENT_LANG != 'en' %}lang-{{ CURRENT_LANG }}{% endif %}{% if mobile_view %} portal-mobile{% endif %}">
+
+    <!-- ── SKIP TO MAIN CONTENT (accessibility) ─────── -->
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <!-- ── TOP ACCENT STRIPE (slim branding line + live indicator) ──── -->
+    <div class="ownership-bar no-print">
+        <div class="container-fluid ownership-inner">
+            {% if tournament is defined and tournament and tournament.status in ('college_active', 'pro_active') %}
+            <span class="status-beacon">
+                <span class="status-beacon-dot"></span>
+                {{ 'College Active' if tournament.status == 'college_active' else 'Pro Show Live' }}
+            </span>
+            {% else %}
+            <span class="ownership-label">Missoula Pro-Am</span>
+            {% endif %}
+            <div class="ms-auto ownership-copy" style="font-size:0.6rem;">by STRATHEX</div>
+        </div>
+    </div>
+
+    <!-- ── NAVBAR ─────────────────────────────────────── -->
+    <nav class="navbar navbar-expand-lg navbar-dark navbar-proam no-print">
+        <div class="container-fluid px-3">
+            <a class="navbar-brand" href="{{ url_for('main.index') }}">
+                <span class="brand-logo-wrap">
+                    <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
+                         alt="Missoula Pro Am"
+                         onerror="this.style.opacity='0';">
+                </span>
+                <span class="brand-title">
+                    <strong>{{ NAV.brand }}</strong>
+                    <small>Tournament Operations System</small>
+                </span>
+            </a>
+
+            <button class="navbar-toggler border-0 shadow-none" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                    aria-controls="navbarNav" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            {% if tournament is defined and tournament and current_user.is_authenticated and current_user.is_judge %}
+            <!-- Mobile sidebar drawer toggle (improvement #9) -->
+            <button id="mobileNavToggle" type="button" aria-label="Open navigation menu" title="Menu">
+                <i class="bi bi-layout-sidebar-reverse"></i>
+            </button>
+            {% endif %}
+
+            <div class="collapse navbar-collapse" id="navbarNav">
+                {% if tournament is defined and tournament %}
+                <ul class="navbar-nav me-auto ms-2 gap-1">
+                    {% if current_user.is_authenticated and current_user.is_judge %}
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">
+                                <i class="bi bi-house-door"></i> {{ NAV.dashboard }}
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">
+                                <i class="bi bi-mortarboard"></i> {{ NAV.college }}
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">
+                                <i class="bi bi-trophy"></i> {{ NAV.pro }}
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">
+                                <i class="bi bi-calendar-event"></i> {{ NAV.events }}
+                            </a>
+                        </li>
+                    {% endif %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id) }}">
+                            <i class="bi bi-broadcast"></i> Spectator
+                        </a>
+                    </li>
+                    {% if current_user.is_authenticated and current_user.is_competitor %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('portal.competitor_dashboard') }}">
+                            <i class="bi bi-person-badge"></i> My Profile
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+                <span class="navbar-text me-2 d-none d-xl-inline">
+                    <i class="bi bi-circle-fill me-1"
+                       style="font-size:0.4rem;color:var(--sx-success);vertical-align:middle;"></i>
+                    {{ tournament.name }} {{ tournament.year }}
+                </span>
+                {% else %}
+                <ul class="navbar-nav me-auto ms-2">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('main.index') }}">
+                            <i class="bi bi-house-door"></i> {{ NAV.home }}
+                        </a>
+                    </li>
+                </ul>
+                {% endif %}
+
+                <!-- Right-side controls -->
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <a class="btn btn-outline-light btn-sm" href="{{ url_for('portal.user_guide') }}" title="User Guide">
+                        <i class="bi bi-question-circle"></i>
+                        <span class="d-none d-lg-inline"> Help</span>
+                    </a>
+                    <div class="strathex-chip no-print">
+                        <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                             alt="STRATHEX"
+                             onerror="this.parentElement.style.display='none';">
+                        <span>by STRATHEX</span>
+                    </div>
+
+                    <div class="dropdown">
+                        <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button"
+                                data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-translate"></i>
+                            <span class="d-none d-lg-inline"> {{ ui('language') }}</span>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            {% for lang_code, lang_name in LANGUAGES.items() %}
+                            <li>
+                                <a class="dropdown-item {% if CURRENT_LANG == lang_code %}active{% endif %}"
+                                   data-lang-switch="{{ lang_code }}"
+                                   href="{{ url_for('main.set_language', lang_code=lang_code, next=request.full_path if request.query_string else request.path) }}">
+                                    {{ lang_name }}
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+
+                    {% if current_user.is_authenticated and current_user.can_manage_users %}
+                    <a class="btn btn-outline-light btn-sm" href="{{ url_for('auth.manage_users') }}">
+                        <i class="bi bi-people"></i>
+                        <span class="d-none d-lg-inline"> Users</span>
+                    </a>
+                    {% endif %}
+
+                    {% if current_user.is_authenticated %}
+                    <form method="POST" action="{{ url_for('auth.logout') }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-outline-light btn-sm" type="submit">
+                            <i class="bi bi-box-arrow-right"></i>
+                            <span class="d-none d-lg-inline"> Logout</span>
+                        </button>
+                    </form>
+                    {% else %}
+                    <a class="btn btn-outline-light btn-sm" href="{{ url_for('auth.login') }}">
+                        <i class="bi bi-box-arrow-in-right"></i>
+                        <span class="d-none d-lg-inline"> Login</span>
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ── ARAPAHO FLAG LOADING BAR ──────────────────── -->
+    <div id="arpLoadingBar" class="arp-loading-bar no-print" aria-hidden="true"></div>
+
+    <!-- ── TOAST NOTIFICATIONS ────────────────────────── -->
+    {% if CURRENT_LANG == 'arp' and ARAPAHO_LOCK_REMAINING > 0 %}
+    <div id="arapahoLockBanner" class="arapaho-lock-banner no-print" data-seconds="{{ ARAPAHO_LOCK_REMAINING }}">
+        Northern Arapaho mode is locked. Language changes disabled for
+        <span id="arapahoLockCountdown" class="time"></span>
+    </div>
+    {% endif %}
+    <!-- Mobile sidebar drawer backdrop (improvement #9) -->
+    <div id="mobileNavBackdrop" aria-hidden="true"></div>
+
+    <!-- ── TOAST NOTIFICATIONS (improvement #8: bottom-right) ─── -->
+    <div class="position-fixed bottom-0 end-0 p-3 no-print" style="z-index:1100;" id="toastContainer">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+            <div class="toast align-items-center text-white border-0 {{ 'bg-success' if category == 'success' else 'bg-danger' if category == 'error' else 'bg-warning' }}"
+                 role="alert" aria-live="assertive" aria-atomic="true"
+                 style="background:{% if category == 'success' %}rgba(45,168,94,0.95){% elif category == 'error' %}rgba(232,53,53,0.95){% else %}rgba(232,144,18,0.95){% endif %} !important; backdrop-filter:blur(12px); border:1px solid rgba(255,255,255,0.12) !important; border-radius:10px;">
+                <div class="d-flex">
+                    <div class="toast-body">
+                        <i class="bi {{ 'bi-check-circle-fill' if category == 'success' else 'bi-x-circle-fill' if category == 'error' else 'bi-exclamation-triangle-fill' }} me-2"></i>
+                        {{ message }}
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto"
+                            data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+            </div>
+            {% endfor %}
+        {% endwith %}
+    </div>
+
+    <!-- ── MAIN CONTENT ───────────────────────────────── -->
+    <div class="d-flex" style="min-height: calc(100vh - 90px);">
+        {% if tournament is defined and tournament and current_user.is_authenticated and current_user.is_judge %}
+        {% include '_sidebar.html' %}
+        {% endif %}
+        <main id="main-content" class="flex-grow-1" style="min-width: 0; overflow-x: hidden;">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <!-- ── FOOTER ─────────────────────────────────────── -->
+    <footer class="mt-5 no-print" style="background:#07080b; border-top:none;">
+        <div class="footer-divider-line"></div>
+        <div class="container py-2">
+            <div class="footer-inner">
+
+                <!-- Left: Pro Am identity -->
+                <div class="footer-col-left">
+                    <img src="{{ url_for('static', filename='img/missoula-pro-am-logo.png') }}"
+                         alt="Missoula Pro Am"
+                         class="footer-proam-logo"
+                         onerror="this.style.display='none';">
+                    <div>
+                        <div class="footer-event-name">Missoula Pro Am</div>
+                        <div class="footer-tagline">International Timbersports Competition</div>
+                    </div>
+                </div>
+
+                <!-- Center: copyright -->
+                <div class="footer-col-center">
+                    <div class="footer-meta" style="font-size:0.72rem; color:var(--sx-text-3);">
+                        {{ COMPETITION.app_footer }} &copy; 2026
+                    </div>
+                    <div style="color:var(--sx-text-3);font-size:0.6rem;opacity:0.6;margin-top:2px;letter-spacing:0.04em;">
+                        Tournament Management Platform
+                    </div>
+                </div>
+
+                <!-- Right: STRATHEX -->
+                <div class="footer-col-right">
+                    <div>
+                        <div class="footer-powered-label">Powered by</div>
+                        <img src="{{ url_for('static', filename='img/strathex-logo.png') }}"
+                             alt="STRATHEX"
+                             class="footer-strathex-logo"
+                             onerror="this.style.display='none';">
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <audio id="arapahoModeAudio" src="{{ url_for('static', filename='audio/arapaho_mode_loop.mp3') }}" preload="auto" loop></audio>
+    <div id="brainrotLayer" aria-hidden="true"></div>
+    <div id="brainrotUnlock" aria-live="polite" aria-hidden="true">
+        <div class="inner">
+            <img class="flag" src="{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}" alt="Arapaho Nation Flag">
+            <label for="brainrotPassword">Emergency Brainrot Shutdown</label>
+            <input id="brainrotPassword" type="password" autocomplete="off" spellcheck="false">
+            <button type="button" id="brainrotSubmit">Revert To Arapaho Mode</button>
+            <div class="error" id="brainrotError"></div>
+        </div>
+    </div>
+    <div id="brainrotPromptReadout">Emergency Brainrot Shutdown. Enter password: neyooxetgreymorning</div>
+    <script>
+        // Arapaho audio management
+        (function () {
+            var audio = document.getElementById('arapahoModeAudio');
+            if (!audio) return;
+            var isArapahoMode = document.body.classList.contains('lang-arp');
+
+            function playArapahoAudio() {
+                audio.loop = true;
+                audio.volume = 1.0;
+                var p = audio.play();
+                if (p && typeof p.catch === 'function') {
+                    p.catch(function () {
+                        var resumeOnInteract = function () {
+                            audio.play().finally(function () {
+                                document.removeEventListener('click', resumeOnInteract);
+                                document.removeEventListener('keydown', resumeOnInteract);
+                            });
+                        };
+                        document.addEventListener('click', resumeOnInteract);
+                        document.addEventListener('keydown', resumeOnInteract);
+                    });
+                }
+            }
+
+            function stopArapahoAudio() { audio.pause(); audio.currentTime = 0; }
+
+            document.querySelectorAll('[data-lang-switch]').forEach(function (link) {
+                link.addEventListener('click', function () {
+                    var lang = link.getAttribute('data-lang-switch');
+                    if (lang !== 'arp') { stopArapahoAudio(); }
+                });
+            });
+
+            if (isArapahoMode) { playArapahoAudio(); }
+            else { stopArapahoAudio(); }
+
+            document.addEventListener('visibilitychange', function () {
+                if (!document.body.classList.contains('lang-arp')) return;
+                audio.volume = 1.0;
+                if (audio.paused) { playArapahoAudio(); }
+            });
+            window.setInterval(function () {
+                if (!document.body.classList.contains('lang-arp')) return;
+                audio.volume = 1.0;
+                if (audio.paused) { playArapahoAudio(); }
+            }, 900);
+        })();
+
+        // Lightweight Arapaho brainrot (rebuilt)
+        (function () {
+            if (!document.body.classList.contains('lang-arp')) return;
+
+            var PASSWORD = 'neyooxetgreymorning';
+            var overlay = document.getElementById('brainrotLayer');
+            var unlock = document.getElementById('brainrotUnlock');
+            var prompt = document.getElementById('brainrotPromptReadout');
+            var passwordInput = document.getElementById('brainrotPassword');
+            var submitBtn = document.getElementById('brainrotSubmit');
+            var errorEl = document.getElementById('brainrotError');
+            if (!overlay || !unlock || !prompt || !passwordInput || !submitBtn || !errorEl) return;
+
+            var audioSources = [
+                "{{ url_for('static', filename='video/brainrot/A Rainy Day - Neyooxet Greymorning (720p, h264).mp4') }}",
+                "{{ url_for('static', filename='video/brainrot/Law Lost Riders - Neyooxet Greymorning (480p, h264).mp4') }}",
+                "{{ url_for('static', filename='video/brainrot/Spirit Trailer in Arapaho Language - Neyooxet Greymorning (1080p, h264).mp4') }}"
+            ];
+
+            // Assumed visual pair from provided sports clips.
+            var visualSources = [
+                "{{ url_for('static', filename='video/brainrot/1st place 1 meter, 2014 Pan Pacific Games, Queensland Australia, 301A - Neyooxet Sports Channel (480p, h264).mp4') }}",
+                "{{ url_for('static', filename='video/brainrot/1st place 2025 World Masters Games Taipei - Neyooxet Sports Channel (720p, h264).mp4') }}"
+            ];
+
+            var words = [
+                "heenetiit nih'ookuuni3i'", "nihonoo3eitiit", "bee3osohoot", "hii3enoo",
+                "nih'oo3ou", "heni'ei", "hoowu", "wonoono"
+            ];
+
+            var active = false;
+            var started = false;
+            var rafId = null;
+            var unlockTimer = null;
+            var timers = [];
+            var audioNodes = [];
+            var visualNodes = [];
+            var visualState = [];
+            var flagNodes = [];
+            var unlockState = null;
+
+            function rand(min, max) { return min + Math.random() * (max - min); }
+            function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+            function trackTimer(t) { timers.push(t); return t; }
+
+            function spawnAudioLayers() {
+                audioSources.forEach(function (src) {
+                    var v = document.createElement('video');
+                    v.src = src;
+                    v.autoplay = true;
+                    v.loop = true;
+                    v.muted = false;
+                    v.volume = 1.0;
+                    v.preload = 'auto';
+                    v.playsInline = true;
+                    v.style.position = 'fixed';
+                    v.style.width = '2px';
+                    v.style.height = '2px';
+                    v.style.left = '-200vw';
+                    v.style.top = '-200vh';
+                    v.style.opacity = '0';
+                    document.body.appendChild(v);
+                    audioNodes.push(v);
+                    var p = v.play();
+                    if (p && typeof p.catch === 'function') { p.catch(function () {}); }
+                });
+            }
+
+            function spawnVisualVideo(src) {
+                var v = document.createElement('video');
+                v.className = 'brainrot-video brainrot-video-crystal';
+                v.src = src;
+                v.autoplay = true;
+                v.loop = true;
+                v.muted = true;
+                v.preload = 'auto';
+                v.playsInline = true;
+                v.volume = 0.0;
+                v.style.left = randInt(0, Math.max(0, window.innerWidth - 360)) + 'px';
+                v.style.top = randInt(0, Math.max(0, window.innerHeight - 220)) + 'px';
+                overlay.appendChild(v);
+                visualNodes.push(v);
+                visualState.push({
+                    node: v,
+                    x: parseFloat(v.style.left),
+                    y: parseFloat(v.style.top),
+                    vx: rand(-3.2, 3.2),
+                    vy: rand(-2.8, 2.8),
+                    rot: rand(-10, 10),
+                    vr: rand(-0.7, 0.7)
+                });
+                var p = v.play();
+                if (p && typeof p.catch === 'function') { p.catch(function () {}); }
+            }
+
+            function spawnFlag() {
+                var f = document.createElement('img');
+                f.className = 'brainrot-flag-storm';
+                f.src = "{{ url_for('static', filename='img/flag_of_arapaho_nation.svg') }}";
+                f.alt = '';
+                f.style.left = rand(-80, window.innerWidth + 80) + 'px';
+                f.style.top = rand(-180, -20) + 'px';
+                overlay.appendChild(f);
+                flagNodes.push({
+                    node: f,
+                    x: parseFloat(f.style.left),
+                    y: parseFloat(f.style.top),
+                    vx: rand(-2.2, 2.2),
+                    vy: rand(1.6, 5.0),
+                    rot: rand(-80, 80),
+                    vr: rand(-2.3, 2.3),
+                    scale: rand(0.6, 1.3)
+                });
+                if (flagNodes.length > 220) {
+                    var old = flagNodes.shift();
+                    if (old && old.node && old.node.isConnected) old.node.remove();
+                }
+            }
+
+            function spawnInterrupt(kind) {
+                var el = document.createElement('div');
+                if (kind === 'pronounce') {
+                    el.className = 'brainrot-pronounce';
+                    el.style.left = randInt(4, 70) + 'vw';
+                    el.style.top = randInt(8, 72) + 'vh';
+                    el.innerHTML = '<div class="hint">Pronunciation Challenge</div><div class="line">' + words[randInt(0, words.length - 1)] + '</div>';
+                } else {
+                    el.className = 'brainrot-word-popup';
+                    el.textContent = words[randInt(0, words.length - 1)];
+                    el.style.left = randInt(2, 84) + 'vw';
+                    el.style.top = randInt(8, 88) + 'vh';
+                    el.style.fontSize = rand(1.0, 2.5).toFixed(2) + 'rem';
+                    el.style.transform = 'rotate(' + rand(-20, 20).toFixed(1) + 'deg)';
+                }
+                document.body.appendChild(el);
+                trackTimer(window.setTimeout(function () {
+                    if (el && el.isConnected) el.remove();
+                }, randInt(1400, 3200)));
+            }
+
+            function showUnlock() {
+                if (!active) return;
+                unlock.classList.add('active');
+                prompt.classList.add('active');
+                unlock.setAttribute('aria-hidden', 'false');
+                unlockState = {
+                    x: randInt(20, Math.max(20, window.innerWidth - 460)),
+                    y: randInt(20, Math.max(20, window.innerHeight - 260)),
+                    vx: rand(-3.4, 3.4),
+                    vy: rand(-3.0, 3.0),
+                    rot: rand(-8, 8),
+                    vr: rand(-0.7, 0.7)
+                };
+                passwordInput.focus();
+            }
+
+            function updateUnlock() {
+                if (!unlockState) return;
+                var w = unlock.offsetWidth || 390;
+                var h = unlock.offsetHeight || 220;
+                unlockState.x += unlockState.vx;
+                unlockState.y += unlockState.vy;
+                unlockState.rot += unlockState.vr;
+                if (unlockState.x < 10 || unlockState.x + w > window.innerWidth - 10) unlockState.vx *= -1;
+                if (unlockState.y < 10 || unlockState.y + h > window.innerHeight - 10) unlockState.vy *= -1;
+                unlockState.x = Math.max(10, Math.min(unlockState.x, window.innerWidth - w - 10));
+                unlockState.y = Math.max(10, Math.min(unlockState.y, window.innerHeight - h - 10));
+                unlock.style.left = unlockState.x + 'px';
+                unlock.style.top = unlockState.y + 'px';
+                unlock.style.transform = 'rotate(' + unlockState.rot.toFixed(2) + 'deg)';
+            }
+
+            function tick() {
+                if (!active) return;
+                var ww = window.innerWidth;
+                var wh = window.innerHeight;
+                for (var i = 0; i < visualState.length; i++) {
+                    var it = visualState[i];
+                    var n = it.node;
+                    if (!n || !n.isConnected) continue;
+                    var w = n.offsetWidth || 320;
+                    var h = n.offsetHeight || 180;
+                    it.x += it.vx;
+                    it.y += it.vy;
+                    it.rot += it.vr;
+                    if (it.x < 0 || it.x + w > ww) it.vx *= -1;
+                    if (it.y < 0 || it.y + h > wh) it.vy *= -1;
+                    n.style.left = Math.max(0, Math.min(it.x, ww - w)) + 'px';
+                    n.style.top = Math.max(0, Math.min(it.y, wh - h)) + 'px';
+                    n.style.transform = 'rotate(' + it.rot.toFixed(2) + 'deg) scale(1,1)';
+                }
+                for (var j = 0; j < flagNodes.length; j++) {
+                    var f = flagNodes[j];
+                    if (!f.node || !f.node.isConnected) continue;
+                    f.x += f.vx;
+                    f.y += f.vy;
+                    f.rot += f.vr;
+                    f.node.style.left = f.x + 'px';
+                    f.node.style.top = f.y + 'px';
+                    f.node.style.transform = 'rotate(' + f.rot.toFixed(2) + 'deg) scale(' + f.scale.toFixed(2) + ')';
+                    if (f.y > wh + 140) {
+                        f.y = rand(-180, -20);
+                        f.x = rand(-80, ww + 80);
+                    }
+                }
+                updateUnlock();
+                rafId = window.requestAnimationFrame(tick);
+            }
+
+            function clearTimers() {
+                timers.forEach(function (t) { window.clearTimeout(t); window.clearInterval(t); });
+                timers = [];
+                if (unlockTimer) {
+                    window.clearTimeout(unlockTimer);
+                    unlockTimer = null;
+                }
+            }
+
+            function stopBrainrot() {
+                active = false;
+                document.body.classList.remove('brainrot-active');
+                clearTimers();
+                if (rafId) {
+                    window.cancelAnimationFrame(rafId);
+                    rafId = null;
+                }
+                visualNodes.forEach(function (n) { try { n.pause(); n.remove(); } catch (_e) {} });
+                audioNodes.forEach(function (n) { try { n.pause(); n.remove(); } catch (_e) {} });
+                flagNodes.forEach(function (f) { try { if (f.node && f.node.isConnected) f.node.remove(); } catch (_e) {} });
+                visualNodes = [];
+                visualState = [];
+                audioNodes = [];
+                flagNodes = [];
+                unlockState = null;
+                overlay.classList.remove('active');
+                unlock.classList.remove('active');
+                unlock.setAttribute('aria-hidden', 'true');
+                prompt.classList.remove('active');
+                errorEl.textContent = '';
+                passwordInput.value = '';
+            }
+
+            function startBrainrot() {
+                if (started) return;
+                started = true;
+                active = true;
+                document.body.classList.add('brainrot-active');
+                overlay.classList.add('active');
+                spawnAudioLayers();
+                visualSources.forEach(spawnVisualVideo);
+                for (var i = 0; i < 40; i++) spawnFlag();
+                trackTimer(window.setInterval(spawnFlag, 520));
+                trackTimer(window.setInterval(function () { spawnInterrupt('translate'); }, 6200));
+                trackTimer(window.setInterval(function () { spawnInterrupt('pronounce'); }, 8800));
+                trackTimer(window.setInterval(function () {
+                    spawnVisualVideo(visualSources[randInt(0, visualSources.length - 1)]);
+                    if (visualNodes.length > 6) {
+                        var old = visualNodes.shift();
+                        var oldState = visualState.shift();
+                        if (old && old.isConnected) old.remove();
+                        if (oldState && oldState.node && oldState.node.isConnected) oldState.node.remove();
+                    }
+                }, 12000));
+                rafId = window.requestAnimationFrame(tick);
+                unlockTimer = window.setTimeout(showUnlock, 60000);
+            }
+
+            function tryPassword() {
+                if (passwordInput.value.trim().toLowerCase() === PASSWORD) {
+                    stopBrainrot();
+                } else {
+                    errorEl.textContent = 'Incorrect password.';
+                    passwordInput.select();
+                }
+            }
+
+            document.addEventListener('keydown', function () {
+                startBrainrot();
+            }, { once: true });
+            submitBtn.addEventListener('click', tryPassword);
+            passwordInput.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    tryPassword();
+                }
+            });
+            window.addEventListener('beforeunload', stopBrainrot);
+        })();
+    </script>
+
+    <!-- Reusable Confirmation Modal (supports data-confirm-title and data-confirm-danger) -->
+    <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content" id="confirmModalContent">
+                <div class="modal-header border-bottom" style="border-color:var(--sx-border)!important;">
+                    <h5 class="modal-title" id="confirmModalTitle">
+                        <i class="bi bi-exclamation-triangle text-warning me-2" id="confirmModalIcon"></i><span id="confirmModalTitleText">Confirm Action</span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="confirmModalBody" style="color:var(--sx-text-2);">
+                    Are you sure?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger btn-sm" id="confirmModalBtn">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Tournament Modal (type-to-confirm) -->
+    <div class="modal fade" id="deleteTournamentModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content" style="border-color:var(--sx-danger);">
+                <div class="modal-header" style="background:rgba(232,53,53,0.12);border-bottom-color:rgba(232,53,53,0.35);">
+                    <h5 class="modal-title" style="color:var(--sx-danger);">
+                        <i class="bi bi-trash3-fill me-2"></i>Delete Tournament
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-1" style="color:var(--sx-text);">This will permanently delete <strong id="deleteTournamentName"></strong> and all associated data. This cannot be undone.</p>
+                    <p class="mb-3 small" style="color:var(--sx-text-2);">Type <code style="color:var(--sx-danger);">DELETE</code> to confirm:</p>
+                    <input type="text" class="form-control" id="deleteTournamentInput" placeholder="Type DELETE" autocomplete="off">
+                    <div class="mt-2 small" id="deleteTournamentError" style="color:var(--sx-danger);display:none;">Please type DELETE to confirm.</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger btn-sm" id="deleteTournamentConfirmBtn" disabled>
+                        <i class="bi bi-trash3 me-1"></i>Delete Permanently
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Arapaho language lock countdown + language menu block
+        (function () {
+            var banner = document.getElementById('arapahoLockBanner');
+            if (!banner) return;
+
+            var countdown = document.getElementById('arapahoLockCountdown');
+            var remaining = parseInt(banner.getAttribute('data-seconds') || '0', 10);
+            if (!remaining || remaining <= 0) return;
+
+            var links = document.querySelectorAll('[data-lang-switch]');
+            links.forEach(function (link) {
+                if (link.getAttribute('data-lang-switch') !== 'arp') {
+                    link.classList.add('language-locked');
+                    link.setAttribute('aria-disabled', 'true');
+                    link.setAttribute('tabindex', '-1');
+                    link.addEventListener('click', function (event) {
+                        event.preventDefault();
+                    });
+                }
+            });
+
+            function renderTime(seconds) {
+                var mins = Math.floor(seconds / 60);
+                var secs = seconds % 60;
+                return mins + ':' + String(secs).padStart(2, '0');
+            }
+
+            function tick() {
+                if (remaining <= 0) {
+                    banner.remove();
+                    return;
+                }
+                countdown.textContent = renderTime(remaining);
+                remaining -= 1;
+                window.setTimeout(tick, 1000);
+            }
+
+            tick();
+        })();
+
+        // Initialize toasts
+        document.querySelectorAll('#toastContainer .toast').forEach(function (el) {
+            new bootstrap.Toast(el, { delay: 5000 }).show();
+        });
+
+        // Navbar active-link detection — mark the link whose path matches current page
+        (function () {
+            var currentPath = window.location.pathname;
+            document.querySelectorAll('.navbar-proam .nav-link').forEach(function (link) {
+                var href = link.getAttribute('href');
+                if (!href || href === '#') return;
+                // Exact match, or path-prefix match for non-root links
+                if (href === currentPath || (href.length > 1 && currentPath.startsWith(href))) {
+                    link.classList.add('active');
+                }
+            });
+        }());
+
+        // Universal confirm modal — supports data-confirm, data-confirm-title, data-confirm-danger
+        (function () {
+            function showConfirmModal(msg, title, isDanger, onConfirm) {
+                document.getElementById('confirmModalBody').textContent = msg;
+                var titleEl   = document.getElementById('confirmModalTitleText');
+                var iconEl    = document.getElementById('confirmModalIcon');
+                var contentEl = document.getElementById('confirmModalContent');
+                var confirmBtn = document.getElementById('confirmModalBtn');
+
+                titleEl.textContent = title || 'Confirm Action';
+
+                if (isDanger) {
+                    iconEl.className = 'bi bi-trash3-fill me-2';
+                    iconEl.style.color = 'var(--sx-danger)';
+                    contentEl.style.borderColor = 'var(--sx-danger)';
+                    confirmBtn.className = 'btn btn-danger btn-sm';
+                } else {
+                    iconEl.className = 'bi bi-exclamation-triangle me-2';
+                    iconEl.style.color = 'var(--sx-amber)';
+                    contentEl.style.borderColor = '';
+                    confirmBtn.className = 'btn btn-danger btn-sm';
+                }
+
+                var btn = document.getElementById('confirmModalBtn');
+                var newBtn = btn.cloneNode(true);
+                btn.parentNode.replaceChild(newBtn, btn);
+                newBtn.addEventListener('click', function () {
+                    bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+                    onConfirm();
+                });
+                new bootstrap.Modal(document.getElementById('confirmModal')).show();
+            }
+
+            // Form-level data-confirm
+            document.addEventListener('submit', function (e) {
+                var form = e.target;
+                var msg = form.getAttribute('data-confirm');
+                if (!msg) return;
+                e.preventDefault();
+                var title   = form.getAttribute('data-confirm-title') || 'Confirm Action';
+                var isDanger = form.hasAttribute('data-confirm-danger');
+                showConfirmModal(msg, title, isDanger, function () {
+                    form.removeAttribute('data-confirm');
+                    form.submit();
+                });
+            });
+
+            // Button-level data-confirm (for multi-submit forms)
+            document.addEventListener('click', function (e) {
+                var btn = e.target.closest('button[type="submit"][data-confirm]');
+                if (!btn) return;
+                e.preventDefault();
+                var msg     = btn.getAttribute('data-confirm');
+                var title   = btn.getAttribute('data-confirm-title') || 'Confirm Action';
+                var isDanger = btn.hasAttribute('data-confirm-danger');
+                showConfirmModal(msg, title, isDanger, function () {
+                    btn.removeAttribute('data-confirm');
+                    btn.click();
+                });
+            });
+        }());
+
+        // Delete Tournament modal — type-to-confirm
+        (function () {
+            var modal = document.getElementById('deleteTournamentModal');
+            if (!modal) return;
+            var input     = document.getElementById('deleteTournamentInput');
+            var confirmBtn = document.getElementById('deleteTournamentConfirmBtn');
+            var nameEl    = document.getElementById('deleteTournamentName');
+            var errorEl   = document.getElementById('deleteTournamentError');
+            var _form     = null;
+
+            input.addEventListener('input', function () {
+                var ok = input.value.trim() === 'DELETE';
+                confirmBtn.disabled = !ok;
+                errorEl.style.display = 'none';
+            });
+
+            confirmBtn.addEventListener('click', function () {
+                if (input.value.trim() !== 'DELETE') {
+                    errorEl.style.display = '';
+                    return;
+                }
+                if (_form) {
+                    _form.removeAttribute('data-delete-tournament');
+                    _form.submit();
+                }
+                bootstrap.Modal.getInstance(modal).hide();
+            });
+
+            // Reset on close
+            modal.addEventListener('hidden.bs.modal', function () {
+                input.value = '';
+                confirmBtn.disabled = true;
+                errorEl.style.display = 'none';
+                _form = null;
+            });
+
+            // Intercept forms with data-delete-tournament attribute
+            document.addEventListener('submit', function (e) {
+                var form = e.target;
+                if (!form.hasAttribute('data-delete-tournament')) return;
+                e.preventDefault();
+                _form = form;
+                if (nameEl) nameEl.textContent = form.getAttribute('data-tournament-name') || 'this tournament';
+                new bootstrap.Modal(modal).show();
+                setTimeout(function () { input.focus(); }, 350);
+            });
+        }());
+
+        // Arapaho flag loading bar — activates on any form with data-loading attribute
+        (function () {
+            var bar = document.getElementById('arpLoadingBar');
+            if (!bar) return;
+            document.addEventListener('submit', function (e) {
+                var form = e.target;
+                if (!form.hasAttribute('data-loading')) return;
+                bar.classList.add('active');
+            });
+        }());
+
+        // Button loading state — disable + show spinner on submit for data-loading forms (item 16)
+        (function () {
+            document.addEventListener('submit', function (e) {
+                var form = e.target;
+                if (!form.hasAttribute('data-loading')) return;
+                // Find the clicked submit button (set by click listener)
+                var clicked = form._clickedBtn;
+                var btns = clicked ? [clicked] : Array.from(form.querySelectorAll('button[type="submit"]'));
+                btns.forEach(function (btn) {
+                    var orig = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.classList.add('btn-loading');
+                    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>' + btn.textContent.trim();
+                    // Restore on page show (back/forward cache)
+                    window.addEventListener('pageshow', function () {
+                        btn.disabled = false;
+                        btn.classList.remove('btn-loading');
+                        btn.innerHTML = orig;
+                    }, { once: true });
+                });
+            });
+            // Track which button was clicked
+            document.addEventListener('click', function (e) {
+                var btn = e.target.closest('button[type="submit"]');
+                if (!btn) return;
+                var form = btn.closest('form');
+                if (form) form._clickedBtn = btn;
+            }, true);
+        }());
+    </script>
+
+    {% block extra_js %}{% endblock %}
+
+    <!-- Mobile sidebar drawer JS + swipe-to-close (items 9, 23) -->
+    <script>
+    (function () {
+        var sidebar  = document.getElementById('appSidebar');
+        var toggle   = document.getElementById('mobileNavToggle');
+        var backdrop = document.getElementById('mobileNavBackdrop');
+        if (!sidebar || !toggle || !backdrop) return;
+
+        function openDrawer() {
+            sidebar.classList.add('mobile-open');
+            backdrop.classList.add('active');
+            document.body.style.overflow = 'hidden';
+            toggle.setAttribute('aria-label', 'Close navigation menu');
+        }
+        function closeDrawer() {
+            sidebar.classList.remove('mobile-open');
+            backdrop.classList.remove('active');
+            document.body.style.overflow = '';
+            toggle.setAttribute('aria-label', 'Open navigation menu');
+        }
+        toggle.addEventListener('click', function () {
+            sidebar.classList.contains('mobile-open') ? closeDrawer() : openDrawer();
+        });
+        backdrop.addEventListener('click', closeDrawer);
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && sidebar.classList.contains('mobile-open')) closeDrawer();
+        });
+
+        // Swipe-left-on-sidebar to close (item 23)
+        var touchStartX = 0;
+        sidebar.addEventListener('touchstart', function (e) {
+            touchStartX = e.touches[0].clientX;
+        }, { passive: true });
+        sidebar.addEventListener('touchend', function (e) {
+            var dx = e.changedTouches[0].clientX - touchStartX;
+            if (dx < -48 && sidebar.classList.contains('mobile-open')) closeDrawer();
+        }, { passive: true });
+    }());
+
+    // Global Bootstrap tooltip init (item 19)
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+        new bootstrap.Tooltip(el, { trigger: 'hover focus' });
+    });
+    </script>
+
+    <!-- #24 Service worker + offline score queue -->
+    <script src="{{ url_for('static', filename='offline_queue.js') }}" defer></script>
+    <!-- Onboarding guide engine -->
+    <script src="{{ url_for('static', filename='js/onboarding.js') }}" defer></script>
+    <!-- SECURITY FIX (CSO #7): global event delegation that replaces inline
+         onclick/onsubmit handlers; required for nonce-based CSP without
+         'unsafe-inline'. -->
+    <script src="{{ url_for('static', filename='js/csp_handlers.js') }}" defer></script>
+</body>
+</html>
+
+

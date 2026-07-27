@@ -1,0 +1,712 @@
+{% extends "base.html" %}
+
+{% block title %}{{ team.team_code }} - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+{% set validation_errors = team.get_validation_errors() %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">College</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}">Teams</a></li>
+                    <li class="breadcrumb-item active">{{ team.team_code }}</li>
+                </ol>
+            </nav>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-people-fill text-primary"></i>
+                        {{ team.team_code }}
+                    </h1>
+                    <p class="text-muted mb-0">{{ team.school_name }}</p>
+                </div>
+                <div>
+                    {% if team.is_override %}
+                        <span class="badge bg-warning text-dark fs-6"
+                              title="A judge has manually accepted this roster despite {{ validation_errors|length }} validation error(s). The team competes normally.">
+                            <i class="bi bi-shield-exclamation"></i>
+                            Admin Override — {{ validation_errors|length }} Error{% if validation_errors|length != 1 %}s{% endif %} Ignored
+                        </span>
+                    {% elif team.status == 'invalid' %}
+                        <span class="badge bg-danger fs-6">
+                            <i class="bi bi-exclamation-triangle-fill"></i>
+                            Invalid — {{ validation_errors|length }} Error{% if validation_errors|length != 1 %}s{% endif %}
+                        </span>
+                    {% elif team.is_valid %}
+                        <span class="badge bg-success fs-6"><i class="bi bi-check-circle"></i> Valid Team</span>
+                    {% else %}
+                        <span class="badge bg-danger fs-6"><i class="bi bi-x-circle"></i> Invalid - Check Requirements</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invalid team alert -->
+    {% if team.status == 'invalid' and validation_errors %}
+    <div class="alert alert-danger d-flex align-items-start gap-2" role="alert">
+        <i class="bi bi-exclamation-triangle-fill fs-5 mt-1 flex-shrink-0"></i>
+        <div>
+            <strong>This team has {{ validation_errors|length }} validation error{% if validation_errors|length != 1 %}s{% endif %}.</strong>
+            Use the fix forms below to correct each error, then click <strong>Re-validate Team</strong>.
+            This team is <em>not counted</em> in standings or scheduling until all errors are resolved.
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Override banner — team has accepted errors but competes normally -->
+    {% if team.is_override %}
+    <div class="alert alert-warning d-flex align-items-start gap-2" role="alert">
+        <i class="bi bi-shield-exclamation fs-5 mt-1 flex-shrink-0"></i>
+        <div class="flex-grow-1">
+            <strong>Admin override active — {{ validation_errors|length }} validation error{% if validation_errors|length != 1 %}s{% endif %} ignored.</strong>
+            This team competes normally: members appear in heats, earn points, and show in standings. The override persists through re-validation and Excel re-imports. Review the ignored errors below.
+        </div>
+        <form action="{{ url_for('registration.remove_team_override', tournament_id=tournament.id, team_id=team.id) }}" method="POST" class="ms-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-dark"
+                    onclick="return confirm('Remove the override and re-run validation? The team will flip back to invalid if errors remain.')">
+                <i class="bi bi-x-circle"></i> Remove Override
+            </button>
+        </form>
+    </div>
+    {% endif %}
+
+    <div class="row">
+        <!-- LEFT COLUMN -->
+        <div class="col-md-4 mb-4">
+
+            <!-- Team Stats -->
+            <div class="card">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0"><i class="bi bi-bar-chart"></i> Team Stats</h6>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>Total Members</span>
+                        <span class="badge bg-primary rounded-pill">{{ team.member_count }}</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>Men</span>
+                        <span class="badge {% if team.male_count >= 2 %}bg-success{% else %}bg-danger{% endif %} rounded-pill">
+                            {{ team.male_count }}{% if team.male_count < 2 %} (need 2){% endif %}
+                        </span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>Women</span>
+                        <span class="badge {% if team.female_count >= 2 %}bg-success{% else %}bg-danger{% endif %} rounded-pill">
+                            {{ team.female_count }}{% if team.female_count < 2 %} (need 2){% endif %}
+                        </span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span><strong>Team Points</strong></span>
+                        <span class="badge bg-warning text-dark fs-5">{{ team.total_points }}</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Requirements (full list) -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-info-circle"></i> Requirements</h6>
+                </div>
+                <div class="card-body pb-2">
+                    <p class="small fw-semibold text-muted text-uppercase mb-1" style="font-size:0.7rem;letter-spacing:.05em;">Team Roster</p>
+                    <ul class="list-unstyled mb-3">
+                        <li class="mb-1">
+                            <i class="bi bi-{% if team.male_count >= 2 %}check-circle text-success{% else %}x-circle text-danger{% endif %} me-1"></i>
+                            Minimum 2 men
+                        </li>
+                        <li class="mb-1">
+                            <i class="bi bi-{% if team.female_count >= 2 %}check-circle text-success{% else %}x-circle text-danger{% endif %} me-1"></i>
+                            Minimum 2 women
+                        </li>
+                        <li class="mb-1">
+                            <i class="bi bi-{% if team.member_count <= 8 %}check-circle text-success{% else %}x-circle text-danger{% endif %} me-1"></i>
+                            Maximum 8 members total
+                        </li>
+                    </ul>
+                    <p class="small fw-semibold text-muted text-uppercase mb-1" style="font-size:0.7rem;letter-spacing:.05em;">Per-Competitor Rules</p>
+                    <ul class="list-unstyled mb-3 small text-muted">
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Max 6 CLOSED events per competitor</li>
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Max 2 same-gender entries per event</li>
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Max 2 pairs per partnered event</li>
+                    </ul>
+                    <p class="small fw-semibold text-muted text-uppercase mb-1" style="font-size:0.7rem;letter-spacing:.05em;">Partner Rules</p>
+                    <ul class="list-unstyled mb-0 small text-muted">
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Partners must be on this team</li>
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Both athletes must enter the same event</li>
+                        <li class="mb-1"><i class="bi bi-dash me-1"></i>Partner assignments must be reciprocal (A lists B and B lists A)</li>
+                        <li class="mb-0"><i class="bi bi-dash me-1"></i>Mixed-gender events require one man and one woman</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Re-upload Corrected Excel -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-upload"></i> Re-upload Corrected Excel</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted mb-2">
+                        Fix your entry spreadsheet and re-upload. All teams found in the file will be updated.
+                    </p>
+                    <form action="{{ url_for('registration.upload_college_entry', tournament_id=tournament.id) }}"
+                          method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-2">
+                            <input type="file" name="file" class="form-control form-control-sm"
+                                   accept=".xlsx,.xls" required>
+                        </div>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-upload"></i> Upload and Re-import
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT COLUMN -->
+        <div class="col-md-8">
+
+            <!-- Team Members with inline event editors -->
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-person-lines-fill"></i> Team Members</h6>
+                    <span class="small text-muted">Click event count to view and edit events</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-proam">
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Gender</th>
+                                    <th>Events</th>
+                                    <th>Points</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for member in members %}
+                                {% set ev_details = member_event_details.get(member.id, []) %}
+                                {% set already_entered_keys = ev_details | map(attribute='key') | list %}
+
+                                <!-- Member row -->
+                                <tr class="{{ 'table-secondary' if member.status == 'scratched' else '' }}">
+                                    <td><strong>{{ member.name }}</strong></td>
+                                    <td>
+                                        {% if member.gender == 'M' %}
+                                            <span class="badge bg-primary">M</span>
+                                        {% else %}
+                                            <span class="badge bg-info">F</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if member.status == 'active' %}
+                                        <button class="btn btn-sm btn-link p-0 text-decoration-none fw-semibold"
+                                                data-bs-toggle="collapse"
+                                                data-bs-target="#ev-editor-{{ member.id }}"
+                                                aria-expanded="false">
+                                            {{ ev_details|length }} event{% if ev_details|length != 1 %}s{% endif %}
+                                            <i class="bi bi-pencil-square ms-1" style="font-size:.75rem;"></i>
+                                        </button>
+                                        {% else %}
+                                            {{ ev_details|length }} event{% if ev_details|length != 1 %}s{% endif %}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-warning text-dark">{{ member.individual_points }} pts</span>
+                                    </td>
+                                    <td>
+                                        {% if member.status == 'active' %}
+                                            <span class="badge bg-success">Active</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Scratched</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if member.status == 'active' %}
+                                        <form action="{{ url_for('registration.scratch_college_competitor', tournament_id=tournament.id, competitor_id=member.id) }}"
+                                              method="POST" class="d-inline"
+                                              data-confirm="Scratch {{ member.name }} and remove from unfinished heats?">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-warning">
+                                                <i class="bi bi-slash-circle"></i> Scratch
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+
+                                <!-- Inline event editor row (active members only) -->
+                                {% if member.status == 'active' %}
+                                <tr class="collapse" id="ev-editor-{{ member.id }}">
+                                    <td colspan="6" class="p-0 border-top-0">
+                                        <div class="p-3 bg-light border-top">
+                                            <div class="row g-3">
+
+                                                <!-- Current events with remove buttons -->
+                                                <div class="col-md-6">
+                                                    <p class="small fw-semibold mb-2">Current Events for {{ member.name }}</p>
+                                                    {% if ev_details %}
+                                                    <table class="table table-sm table-bordered bg-white mb-0">
+                                                        <tbody>
+                                                            {% for ev in ev_details %}
+                                                            <tr>
+                                                                <td class="small py-1 align-middle">
+                                                                    {{ ev.display }}
+                                                                    {% if ev.partner %}
+                                                                    <br><span class="text-muted" style="font-size:.75rem;">Partner: {{ ev.partner }}</span>
+                                                                    {% endif %}
+                                                                </td>
+                                                                <td class="py-1 text-end align-middle" style="width:1%;white-space:nowrap;">
+                                                                    <form action="{{ url_for('registration.remove_competitor_event', tournament_id=tournament.id, competitor_id=member.id) }}"
+                                                                          method="POST" class="d-inline"
+                                                                          data-confirm="Remove {{ ev.display }} from {{ member.name }}?">
+                                                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                                        <input type="hidden" name="event_name" value="{{ ev.key }}">
+                                                                        <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-1" title="Remove this event">
+                                                                            <i class="bi bi-x-lg"></i>
+                                                                        </button>
+                                                                    </form>
+                                                                </td>
+                                                            </tr>
+                                                            {% endfor %}
+                                                        </tbody>
+                                                    </table>
+                                                    {% else %}
+                                                    <p class="small text-muted mb-0">No events entered yet.</p>
+                                                    {% endif %}
+                                                </div>
+
+                                                <!-- Add event form -->
+                                                <div class="col-md-6">
+                                                    <p class="small fw-semibold mb-2">Add Event</p>
+                                                    <form action="{{ url_for('registration.add_competitor_event', tournament_id=tournament.id, competitor_id=member.id) }}"
+                                                          method="POST">
+                                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                        <div class="mb-2">
+                                                            <select name="event_name" class="form-select form-select-sm"
+                                                                    data-toggle-partner="{{ member.id }}" required>
+                                                                <option value="">-- select event --</option>
+                                                                {% for ev in college_events %}
+                                                                {%- if ev.name not in already_entered_keys and (ev.id | string) not in already_entered_keys %}
+                                                                {%- if ev.gender is none or ev.gender == member.gender or (ev.is_partnered and ev.partner_gender_requirement == 'mixed') %}
+                                                                <option value="{{ ev.name }}"
+                                                                        data-partnered="{{ 'true' if ev.is_partnered else 'false' }}">
+                                                                    {{ ev.display_name }}{% if ev.gender %} ({{ ev.gender }}){% endif %}
+                                                                </option>
+                                                                {%- endif %}
+                                                                {%- endif %}
+                                                                {% endfor %}
+                                                            </select>
+                                                        </div>
+                                                        <div id="partner-field-{{ member.id }}" class="mb-2 d-none">
+                                                            <input type="text" name="partner_name"
+                                                                   class="form-control form-control-sm"
+                                                                   placeholder="Partner's full name">
+                                                        </div>
+                                                        <button type="submit" class="btn btn-sm btn-success">
+                                                            <i class="bi bi-plus-circle"></i> Add Event
+                                                        </button>
+                                                    </form>
+                                                </div>
+
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endif %}
+
+                                {% else %}
+                                <tr>
+                                    <td colspan="6" class="text-center text-muted py-4">
+                                        No members registered yet.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Errors & Fixes section — shown for invalid OR overridden teams -->
+            {% if validation_errors and (team.status == 'invalid' or team.is_override) %}
+            <div class="card mt-4 {% if team.is_override %}border-warning{% else %}border-danger{% endif %}">
+                <div class="card-header {% if team.is_override %}bg-warning bg-opacity-10{% else %}bg-danger bg-opacity-10{% endif %}">
+                    <h6 class="mb-0 {% if team.is_override %}text-warning-emphasis{% else %}text-danger{% endif %}">
+                        <i class="bi bi-tools"></i>
+                        {% if team.is_override %}Errors (Overridden — Informational){% else %}Errors &amp; Fixes{% endif %}
+                        <span class="badge {% if team.is_override %}bg-warning text-dark{% else %}bg-danger{% endif %} ms-1">{{ validation_errors|length }}</span>
+                    </h6>
+                </div>
+                <div class="card-body p-0">
+                    <div class="accordion accordion-flush" id="errorsAccordion">
+
+                        {# Build a lookup: competitor_id -> member object #}
+                        {% set member_by_id = {} %}
+                        {% for m in members %}
+                            {% set _ = member_by_id.update({m.id: m}) %}
+                        {% endfor %}
+
+                        {% for err in validation_errors %}
+                        {% set ei = loop.index %}
+                        <div class="accordion-item border-0 border-bottom">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed bg-danger bg-opacity-5 text-danger fw-semibold"
+                                        type="button"
+                                        data-bs-toggle="collapse"
+                                        data-bs-target="#errFix{{ ei }}"
+                                        aria-expanded="false">
+                                    <i class="bi bi-exclamation-circle-fill me-2"></i>
+                                    {{ err.message }}
+                                </button>
+                            </h2>
+                            <div id="errFix{{ ei }}" class="accordion-collapse collapse">
+                                <div class="accordion-body bg-light">
+
+                                    {# --- too_many_events --- #}
+                                    {% if err.type == 'too_many_events' %}
+                                    {% set comp = member_by_id.get(err.competitor_id) %}
+                                    {% if comp %}
+                                    <p class="small text-muted mb-2">
+                                        Remove events until {{ comp.display_name }} has at most {{ err.max }}.
+                                    </p>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        {% for ev in err.events %}
+                                        <form action="{{ url_for('registration.remove_competitor_event', tournament_id=tournament.id, competitor_id=comp.id) }}"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ ev }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-x-circle"></i> Remove "{{ ev }}"
+                                            </button>
+                                        </form>
+                                        {% endfor %}
+                                    </div>
+                                    {% endif %}
+
+                                    {# --- too_many_chopping --- #}
+                                    {% elif err.type == 'too_many_chopping' %}
+                                    {% set comp = member_by_id.get(err.competitor_id) %}
+                                    {% if comp %}
+                                    <p class="small text-muted mb-2">
+                                        {{ comp.display_name }} may enter at most {{ err.max }} chopping event(s). Remove one:
+                                    </p>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        {% for ev in err.events %}
+                                        <form action="{{ url_for('registration.remove_competitor_event', tournament_id=tournament.id, competitor_id=comp.id) }}"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ ev }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-x-circle"></i> Remove "{{ ev }}"
+                                            </button>
+                                        </form>
+                                        {% endfor %}
+                                    </div>
+                                    {% endif %}
+
+                                    {# --- too_many_per_event --- #}
+                                    {% elif err.type == 'too_many_per_event' %}
+                                    <p class="small text-muted mb-2">
+                                        At most {{ err.max }} {{ err.gender }} competitor(s) may enter "{{ err.event_name }}".
+                                        Remove one:
+                                    </p>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        {% for c in err.competitors %}
+                                        <form action="{{ url_for('registration.remove_competitor_event', tournament_id=tournament.id, competitor_id=c.id) }}"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-x-circle"></i> Remove {{ c.display_name }}
+                                            </button>
+                                        </form>
+                                        {% endfor %}
+                                    </div>
+
+                                    {# --- too_many_pairs --- #}
+                                    {% elif err.type == 'too_many_pairs' %}
+                                    <p class="small text-muted mb-2">
+                                        At most {{ err.max }} pair(s) may enter "{{ err.event_name }}".
+                                        Remove a competitor's entry to drop a pair:
+                                    </p>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        {% for c in err.competitors %}
+                                        <form action="{{ url_for('registration.remove_competitor_event', tournament_id=tournament.id, competitor_id=c.id) }}"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-x-circle"></i> Remove {{ c.display_name }}
+                                            </button>
+                                        </form>
+                                        {% endfor %}
+                                    </div>
+
+                                    {# --- missing_partner --- #}
+                                    {% elif err.type == 'missing_partner' %}
+                                    <p class="small text-muted mb-2">
+                                        Enter the partner's name for <strong>{{ err.competitor_name }}</strong>
+                                        in "{{ err.event_name }}":
+                                    </p>
+                                    <form action="{{ url_for('registration.set_competitor_partner', tournament_id=tournament.id, competitor_id=err.competitor_id) }}"
+                                          method="POST" class="d-flex gap-2 align-items-end">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                        <div class="flex-grow-1">
+                                            <label class="form-label small mb-1">Partner name</label>
+                                            <input type="text" name="partner_name" class="form-control form-control-sm"
+                                                   placeholder="Full name as listed on roster" required>
+                                        </div>
+                                        <button type="submit" class="btn btn-sm btn-success">
+                                            <i class="bi bi-check-lg"></i> Save
+                                        </button>
+                                    </form>
+
+                                    {# --- partner_not_on_team --- #}
+                                    {% elif err.type == 'partner_not_on_team' %}
+                                    <p class="small text-muted mb-2">
+                                        <strong>{{ err.competitor_name }}</strong> listed "{{ err.partner_name }}" as partner
+                                        in "{{ err.event_name }}" but that person isn't on this team.
+                                        Select the correct partner:
+                                    </p>
+                                    <div class="d-flex flex-wrap gap-2 align-items-end">
+                                        <form action="{{ url_for('registration.set_competitor_partner', tournament_id=tournament.id, competitor_id=err.competitor_id) }}"
+                                              method="POST" class="d-flex gap-2 align-items-end flex-grow-1">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                            <div class="flex-grow-1">
+                                                <label class="form-label small mb-1">Correct partner</label>
+                                                <select name="partner_name" class="form-select form-select-sm" required>
+                                                    <option value="">— select —</option>
+                                                    {% for m in members %}
+                                                    {% if m.name != err.competitor_name and m.status == 'active' %}
+                                                    <option value="{{ m.name }}">{{ m.name }} ({{ m.gender }})</option>
+                                                    {% endif %}
+                                                    {% endfor %}
+                                                </select>
+                                            </div>
+                                            <button type="submit" class="btn btn-sm btn-success">
+                                                <i class="bi bi-check-lg"></i> Save
+                                            </button>
+                                        </form>
+                                        <form action="{{ url_for('registration.set_competitor_partner', tournament_id=tournament.id, competitor_id=err.competitor_id) }}"
+                                              method="POST">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                            <input type="hidden" name="partner_name" value="">
+                                            <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                                    title="Clear partner entry for this event">
+                                                <i class="bi bi-x-lg"></i> Clear
+                                            </button>
+                                        </form>
+                                    </div>
+
+                                    {# --- partner_not_in_event --- #}
+                                    {% elif err.type == 'partner_not_in_event' %}
+                                    <p class="small text-muted mb-2">
+                                        <strong>{{ err.competitor_name }}</strong> listed
+                                        <strong>{{ err.partner_name }}</strong> as partner in "{{ err.event_name }}"
+                                        but {{ err.partner_name }} is not entered in that event.
+                                        Choose a fix:
+                                    </p>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        {# Option 1: Clear this competitor's partner for the event #}
+                                        <form action="{{ url_for('registration.set_competitor_partner', tournament_id=tournament.id, competitor_id=err.competitor_id) }}"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                            <input type="hidden" name="partner_name" value="">
+                                            <button type="submit" class="btn btn-sm btn-outline-warning">
+                                                <i class="bi bi-person-x"></i>
+                                                Clear {{ err.competitor_name }}'s partner
+                                            </button>
+                                        </form>
+                                        {# Option 2: Remove this competitor from the event entirely #}
+                                        <form action="{{ url_for('registration.remove_competitor_event', tournament_id=tournament.id, competitor_id=err.competitor_id) }}"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-x-circle"></i>
+                                                Remove {{ err.competitor_name }} from "{{ err.event_name }}"
+                                            </button>
+                                        </form>
+                                        {# Option 3: Add the partner to this event #}
+                                        {% if err.partner_id %}
+                                        <form action="{{ url_for('registration.set_competitor_partner', tournament_id=tournament.id, competitor_id=err.partner_id) }}"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                            <input type="hidden" name="partner_name" value="{{ err.competitor_name }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-success"
+                                                    title="This will also add {{ err.partner_name }} to the event and set their partner to {{ err.competitor_name }}">
+                                                <i class="bi bi-person-plus"></i>
+                                                Add {{ err.partner_name }} to "{{ err.event_name }}"
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+
+                                    {# --- partner_mismatch --- #}
+                                    {% elif err.type == 'partner_mismatch' %}
+                                    <p class="small text-muted mb-2">
+                                        <strong>{{ err.competitor_name }}</strong> and
+                                        <strong>{{ err.partner_name }}</strong> don't have reciprocal partner entries
+                                        for "{{ err.event_name }}". Fix by setting the correct partner on each competitor,
+                                        or remove one from the event:
+                                    </p>
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-sm-6">
+                                            <div class="card border-warning h-100">
+                                                <div class="card-body p-2">
+                                                    <p class="small fw-semibold mb-1">{{ err.competitor_name }}</p>
+                                                    <form action="{{ url_for('registration.set_competitor_partner', tournament_id=tournament.id, competitor_id=err.competitor_id) }}"
+                                                          method="POST" class="d-flex gap-1 align-items-end">
+                                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                        <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                                        <div class="flex-grow-1">
+                                                            <select name="partner_name" class="form-select form-select-sm">
+                                                                <option value="">— no partner —</option>
+                                                                {% for m in members %}
+                                                                {% if m.name != err.competitor_name and m.status == 'active' %}
+                                                                <option value="{{ m.name }}"
+                                                                    {% if m.name == err.partner_name %}selected{% endif %}>
+                                                                    {{ m.name }}
+                                                                </option>
+                                                                {% endif %}
+                                                                {% endfor %}
+                                                            </select>
+                                                        </div>
+                                                        <button type="submit" class="btn btn-sm btn-success">
+                                                            <i class="bi bi-check-lg"></i>
+                                                        </button>
+                                                    </form>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {% if err.partner_id %}
+                                        <div class="col-sm-6">
+                                            <div class="card border-warning h-100">
+                                                <div class="card-body p-2">
+                                                    <p class="small fw-semibold mb-1">{{ err.partner_name }}</p>
+                                                    <form action="{{ url_for('registration.set_competitor_partner', tournament_id=tournament.id, competitor_id=err.partner_id) }}"
+                                                          method="POST" class="d-flex gap-1 align-items-end">
+                                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                        <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                                        <div class="flex-grow-1">
+                                                            <select name="partner_name" class="form-select form-select-sm">
+                                                                <option value="">— no partner —</option>
+                                                                {% for m in members %}
+                                                                {% if m.name != err.partner_name and m.status == 'active' %}
+                                                                <option value="{{ m.name }}"
+                                                                    {% if m.name == err.competitor_name %}selected{% endif %}>
+                                                                    {{ m.name }}
+                                                                </option>
+                                                                {% endif %}
+                                                                {% endfor %}
+                                                            </select>
+                                                        </div>
+                                                        <button type="submit" class="btn btn-sm btn-success">
+                                                            <i class="bi bi-check-lg"></i>
+                                                        </button>
+                                                    </form>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <form action="{{ url_for('registration.remove_competitor_event', tournament_id=tournament.id, competitor_id=err.competitor_id) }}"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-x-circle"></i> Remove {{ err.competitor_name }} from event
+                                            </button>
+                                        </form>
+                                        {% if err.partner_id %}
+                                        <form action="{{ url_for('registration.remove_competitor_event', tournament_id=tournament.id, competitor_id=err.partner_id) }}"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="event_name" value="{{ err.event_name }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-x-circle"></i> Remove {{ err.partner_name }} from event
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+
+                                    {% else %}
+                                    {# Fallback for unrecognised error types #}
+                                    <p class="small text-muted mb-0">
+                                        Please correct this issue in your entry spreadsheet and re-upload.
+                                    </p>
+                                    {% endif %}
+
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+
+                    </div><!-- /accordion -->
+
+                    <div class="p-3">
+                        <form action="{{ url_for('registration.revalidate_team', tournament_id=tournament.id, team_id=team.id) }}" method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-warning w-100">
+                                <i class="bi bi-arrow-repeat"></i> Re-validate Team After Fixes
+                            </button>
+                        </form>
+                        <form action="{{ url_for('registration.override_team_validation', tournament_id=tournament.id, team_id=team.id) }}" method="POST" class="mt-2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-danger w-100" onclick="return confirm('Override validation and mark this team as valid despite errors?')">
+                                <i class="bi bi-shield-exclamation"></i> Admin Override — Force Valid
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+        </div>
+    </div>
+</div>
+
+<script>
+function proamTogglePartner(select, memberId) {
+    var opt = select.options[select.selectedIndex];
+    var partnered = opt.getAttribute('data-partnered') === 'true';
+    var field = document.getElementById('partner-field-' + memberId);
+    if (field) {
+        field.classList.toggle('d-none', !partnered);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('form[data-confirm]').forEach(function (form) {
+        form.addEventListener('submit', function (e) {
+            if (!confirm(form.dataset.confirm)) {
+                e.preventDefault();
+            }
+        });
+    });
+});
+document.addEventListener('change', function (e) {
+    var t = e.target.closest('[data-toggle-partner]');
+    if (t) { proamTogglePartner(t, t.dataset.togglePartner); }
+});
+</script>
+{% endblock %}

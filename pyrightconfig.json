@@ -1,0 +1,8 @@
+{
+  "include": ["."],
+  "exclude": ["**/__pycache__", "uploads/**", "instance/**"],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": "none",
+  "reportMissingModuleSource": "none"
+}

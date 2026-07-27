@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}STRATHMARK Sync Status{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4" style="max-width:860px;">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item active">STRATHMARK Sync Status</li>
+                </ol>
+            </nav>
+            <div class="d-flex align-items-center gap-3 mb-1">
+                <div style="background:#000; border-radius:8px; padding:6px 12px; display:inline-flex; align-items:center;">
+                    <img src="{{ url_for('static', filename='strathmark_logo.png') }}"
+                         alt="STRATHMARK" style="height:28px; width:auto;">
+                </div>
+                <h1 class="mb-0">Sync Status</h1>
+            </div>
+            <p class="text-sx-muted small">Live integration dashboard — results pushed to the global STRATHMARK Supabase database.</p>
+        </div>
+    </div>
+
+    {# ── Configuration Status ── #}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header card-header-neutral">
+                    <i class="bi bi-plug me-2"></i>Integration Configuration
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-sm mb-0" style="font-size:0.88rem;">
+                        <tbody>
+                            <tr>
+                                <td class="ps-3 py-3 text-sx-muted fw-semibold" style="width:240px;">Environment vars configured</td>
+                                <td class="py-3">
+                                    {% if configured %}
+                                        <span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>Yes</span>
+                                    {% else %}
+                                        <span class="badge bg-danger"><i class="bi bi-x-lg me-1"></i>No</span>
+                                        <span class="text-sx-muted small ms-2">Set STRATHMARK_SUPABASE_URL and STRATHMARK_SUPABASE_KEY</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="ps-3 py-2 text-sx-muted fw-semibold">Last successful push</td>
+                                <td class="py-2">
+                                    {% if last_push == 'Never' %}
+                                        <span class="text-sx-muted fst-italic">Never</span>
+                                    {% else %}
+                                        <code style="font-size:0.84rem; color:var(--sx-text);">{{ last_push }}</code>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="ps-3 py-2 text-sx-muted fw-semibold">Records in last push</td>
+                                <td class="py-2">
+                                    <span class="fw-bold">{{ last_count }}</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="ps-3 py-2 text-sx-muted fw-semibold">Results in global DB <em class="fw-normal">({{ show_name }})</em></td>
+                                <td class="py-2">
+                                    {% if global_count is not none %}
+                                        <span class="fw-bold">{{ global_count }}</span>
+                                    {% elif global_count_error %}
+                                        <span class="text-danger small"><i class="bi bi-exclamation-triangle me-1"></i>{{ global_count_error }}</span>
+                                    {% else %}
+                                        <span class="text-sx-muted fst-italic">N/A (env vars not set)</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# ── Skipped College Competitors ── #}
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header card-header-neutral d-flex align-items-center justify-content-between">
+                    <span><i class="bi bi-person-x me-2"></i>Skipped College Competitors</span>
+                    {% if skipped %}
+                        <span class="badge bg-warning text-dark">{{ skipped|length }}</span>
+                    {% else %}
+                        <span class="badge bg-success">None</span>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    {% if skipped %}
+                        <p class="text-sx-muted small mb-3">
+                            These college competitors had no matching profile in the global STRATHMARK database.
+                            Their results were not pushed. Manually enroll them in STRATHMARK and re-finalize the event.
+                        </p>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover" style="font-size:0.87rem;">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Event</th>
+                                        <th>Skipped At (UTC)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for s in skipped %}
+                                    <tr>
+                                        <td class="fw-semibold">{{ s.get('name', '') }}</td>
+                                        <td class="text-sx-muted">{{ s.get('event', '') }}</td>
+                                        <td><code style="font-size:0.80rem; color:var(--sx-text-2);">{{ s.get('skipped_at', '') }}</code></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4 text-sx-muted">
+                            <i class="bi bi-check-circle-fill text-success fs-3 d-block mb-2"></i>
+                            No skipped competitors — all college results resolved successfully.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

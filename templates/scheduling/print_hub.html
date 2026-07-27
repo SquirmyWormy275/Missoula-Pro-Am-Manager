@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex align-items-center mb-3">
+        <h1 class="h3 mb-0">Print Hub</h1>
+        <span class="badge bg-secondary ms-3">{{ tournament.name }} {{ tournament.year }}</span>
+    </div>
+    <p class="text-muted small">
+        One place to print or email every tournament document. The status dot
+        tells you if the document is ready; the freshness column tells you if
+        the data has changed since it was last printed.
+    </p>
+
+    {% if not email_configured %}
+    <div class="alert alert-secondary py-2 small mb-3">
+        <i class="bi bi-envelope-slash me-1"></i>
+        Email delivery is disabled — the server does not have SMTP credentials
+        configured. Printing still works.
+    </div>
+    {% endif %}
+
+    {% for section in sections %}
+    {% if grouped[section] %}
+    <div class="card mb-3 shadow-sm">
+        <div class="card-header py-2">
+            <strong class="text-uppercase small">{{ section }}</strong>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 44px;">&nbsp;</th>
+                        <th>Document</th>
+                        <th style="width: 180px;">Freshness</th>
+                        <th style="width: 220px;">Last Printed</th>
+                        <th style="width: 200px;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in grouped[section] %}
+                    <tr>
+                        <td class="text-center">
+                            {% if row.status.configured %}
+                            <span class="badge rounded-circle bg-success"
+                                  style="width: 14px; height: 14px; display:inline-block;"
+                                  data-bs-toggle="tooltip" title="Configured — ready to print"></span>
+                            {% else %}
+                            <span class="badge rounded-circle bg-danger"
+                                  style="width: 14px; height: 14px; display:inline-block;"
+                                  data-bs-toggle="tooltip"
+                                  title="{{ row.status.reason or 'Not configured' }}"></span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div>{{ row.label }}</div>
+                            {% if row.doc.description %}
+                            <div class="text-muted small">{{ row.doc.description }}</div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if not row.status.configured %}
+                            <span class="text-muted small">Not ready</span>
+                            {% elif row.never_printed %}
+                            <span class="badge bg-secondary">Never printed</span>
+                            {% elif row.stale %}
+                            <span class="badge bg-warning text-dark"
+                                  data-bs-toggle="tooltip"
+                                  title="Data has changed since this document was last printed.">
+                                STALE
+                            </span>
+                            {% else %}
+                            <span class="badge bg-success-subtle text-success-emphasis">Fresh</span>
+                            {% endif %}
+                        </td>
+                        <td class="small text-muted">
+                            {% if row.last_printed_at %}
+                                {{ row.last_printed_at.strftime('%Y-%m-%d %H:%M UTC') }}
+                                {% if row.last_printed_by %}
+                                <br><span class="text-muted">by {{ row.last_printed_by }}</span>
+                                {% endif %}
+                            {% else %}
+                                &mdash;
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if row.status.configured %}
+                                <a class="btn btn-sm btn-outline-primary"
+                                   href="{{ row.print_url }}"
+                                   target="_blank" rel="noopener">
+                                    <i class="bi bi-printer"></i> Print
+                                </a>
+                                {% if email_configured %}
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        data-bs-toggle="modal"
+                                        data-bs-target="#emailModal"
+                                        data-doc-key="{{ row.doc.key }}"
+                                        data-entity-id="{{ row.entity.id if row.entity else '' }}"
+                                        data-label="{{ row.label }}">
+                                    <i class="bi bi-envelope"></i> Email
+                                </button>
+                                {% else %}
+                                <button type="button" class="btn btn-sm btn-outline-secondary" disabled
+                                        data-bs-toggle="tooltip"
+                                        title="SMTP not configured on this server">
+                                    <i class="bi bi-envelope-slash"></i> Email
+                                </button>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted small">&mdash;</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+
+{# ── Email modal ────────────────────────────────────────────────── #}
+{% if email_configured %}
+{% include "scheduling/_email_modal.html" %}
+{% endif %}
+
+<script id="print-hub-boot">
+(function () {
+    // Tooltip init.
+    if (typeof bootstrap !== 'undefined') {
+        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+            try { new bootstrap.Tooltip(el); } catch (e) { /* ignore */ }
+        });
+    }
+    // Wire modal open — stuff the clicked row's doc_key / entity_id / label
+    // into the modal form before it's shown.
+    var modal = document.getElementById('emailModal');
+    if (!modal) return;
+    modal.addEventListener('show.bs.modal', function (evt) {
+        var btn = evt.relatedTarget;
+        if (!btn) return;
+        var docKey = btn.getAttribute('data-doc-key') || '';
+        var entityId = btn.getAttribute('data-entity-id') || '';
+        var label = btn.getAttribute('data-label') || '';
+        modal.querySelector('input[name="doc_key"]').value = docKey;
+        modal.querySelector('input[name="entity_id"]').value = entityId;
+        modal.querySelector('.email-doc-label').textContent = label;
+    });
+})();
+</script>
+{% endblock %}

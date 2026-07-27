@@ -1,0 +1,418 @@
+"""
+Competitor models for both college and professional competitors.
+"""
+import json
+import logging
+
+import sqlalchemy as sa
+from sqlalchemy.orm import validates
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from database import db
+
+from ._types import BIG_ID
+from .competitor_identity import attach_identity_allocator
+
+logger = logging.getLogger(__name__)
+
+MAX_NAME_LENGTH = 100  # Hard cap; String(200) column has room but UI breaks above ~100 chars
+
+
+class CollegeCompetitor(db.Model):
+    """Represents a college competitor."""
+
+    __tablename__ = 'college_competitors'
+    __table_args__ = (
+        db.CheckConstraint("gender IN ('M', 'F')", name='ck_college_competitors_gender_valid'),
+        db.CheckConstraint("status IN ('active', 'scratched')", name='ck_college_competitors_status_valid'),
+        db.CheckConstraint('individual_points >= 0', name='ck_college_competitors_points_nonnegative'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    tournament_id = db.Column(db.Integer, db.ForeignKey('tournaments.id'), nullable=False)
+    team_id = db.Column(db.Integer, db.ForeignKey('teams.id'), nullable=False)
+
+    # Personal info
+    name = db.Column(db.String(200), nullable=False)
+    gender = db.Column(db.String(1), nullable=False)  # 'M' or 'F'
+
+    # Scoring.
+    # Changed Integer → Numeric(8, 2) in V2.8.0 (Phase 1B of scoring fix) so that
+    # the running total can hold fractional point values from split-tie placements
+    # (e.g., a competitor in a 3-way tie for 1st earns (10 + 7 + 5) / 3 = 7.33).
+    # Numeric(8, 2) supports values up to 999999.99 — far above any plausible
+    # season total even after many split ties.
+    individual_points = db.Column(
+        db.Numeric(8, 2),
+        nullable=False,
+        default=0,
+        server_default=sa.text("'0.00'"),
+    )
+
+    # Event tracking - stored as JSON
+    events_entered = db.Column(db.Text, nullable=False, default='[]')  # List of event IDs
+    partners = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> partner_name
+    gear_sharing = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> partner sharing gear
+    portal_pin_hash = db.Column(db.String(255), nullable=True)
+
+    # Headshot and SMS (#14, #2)
+    headshot_filename = db.Column(db.Text, nullable=True)
+    phone_opted_in = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
+
+    # Status
+    status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched
+
+    # STRATHMARK global database identifier (see ProCompetitor.strathmark_id for full docs).
+    # College competitors gain a strathmark_id only when their name is found in the global DB
+    # (typically because they also compete on the pro circuit).
+    strathmark_id = db.Column(db.String(50), nullable=True, index=True)
+
+    # Cross-discipline identity. See models/competitor_identity.py.
+    # A college `id` and a pro `id` can be the same integer (21 such collisions
+    # exist in the production mirror); `uid` cannot.
+    uid = db.Column(BIG_ID, db.ForeignKey('competitors.uid'),
+                    nullable=False, unique=True)
+
+    _PRO_AM_LOTTERY_META_KEY = '__pro_am_lottery_opt_in__'
+
+    @property
+    def display_name(self):
+        """Name with team designator, e.g. 'Alex Kaper (UM-A)'.
+
+        Guarded against DetachedInstanceError: when this competitor is read
+        from a cached report payload (session-less), lazy-loading `team`
+        would crash the template render. Falling back to the bare name keeps
+        the page usable.
+        """
+        try:
+            team = self.team
+        except Exception:
+            return self.name
+        if team:
+            return f'{self.name} ({team.team_code})'
+        return self.name
+
+    def __repr__(self):
+        try:
+            team_code = self.team.team_code if self.team else "no team"
+        except Exception:
+            team_code = "detached"
+        return f'<CollegeCompetitor {self.name} ({team_code})>'
+
+    @validates('name')
+    def validate_name(self, key, value):
+        if value and len(value) > MAX_NAME_LENGTH:
+            value = value[:MAX_NAME_LENGTH]
+        return value
+
+    def get_events_entered(self):
+        """Return list of event IDs this competitor is entered in."""
+        try:
+            return json.loads(self.events_entered or '[]')
+        except json.JSONDecodeError:
+            logger.warning('CollegeCompetitor id=%s: corrupt events_entered JSON; returning []', self.id)
+            return []
+
+    def set_events_entered(self, events):
+        """Set the list of event IDs."""
+        self.events_entered = json.dumps(events)
+
+    def get_partners(self):
+        """Return dict of event_id -> partner_name."""
+        try:
+            return json.loads(self.partners or '{}')
+        except json.JSONDecodeError:
+            logger.warning('CollegeCompetitor id=%s: corrupt partners JSON; returning {}', self.id)
+            return {}
+
+    def set_partner(self, event_id, partner_name):
+        """Set partner for a specific event."""
+        partners = self.get_partners()
+        partners[str(event_id)] = partner_name
+        self.partners = json.dumps(partners)
+
+    @property
+    def pro_am_lottery_opt_in(self) -> bool:
+        """Return whether this college competitor opted into the Pro-Am relay lottery."""
+        partners = self.get_partners()
+        value = str(partners.get(self._PRO_AM_LOTTERY_META_KEY, '')).strip().lower()
+        return value in {'true', '1', 'yes', 'y', 'x'}
+
+    @pro_am_lottery_opt_in.setter
+    def pro_am_lottery_opt_in(self, opted_in: bool):
+        """Persist Pro-Am relay lottery preference in the partners metadata payload."""
+        partners = self.get_partners()
+        if opted_in:
+            partners[self._PRO_AM_LOTTERY_META_KEY] = 'true'
+        else:
+            partners.pop(self._PRO_AM_LOTTERY_META_KEY, None)
+        self.partners = json.dumps(partners)
+
+    def get_gear_sharing(self):
+        """Return dict of event_id -> partner sharing gear."""
+        try:
+            return json.loads(self.gear_sharing or '{}')
+        except json.JSONDecodeError:
+            logger.warning('CollegeCompetitor id=%s: corrupt gear_sharing JSON; returning {}', self.id)
+            return {}
+
+    def set_gear_sharing(self, event_id, partner_name):
+        """Set gear sharing partner for a specific event."""
+        sharing = self.get_gear_sharing()
+        sharing[str(event_id)] = partner_name
+        self.gear_sharing = json.dumps(sharing)
+
+    def add_points(self, points):
+        """Add points to individual total and update team total."""
+        self.individual_points += points
+        if self.team:
+            self.team.recalculate_points()
+
+    @property
+    def closed_event_count(self):
+        """Return count of CLOSED events entered (max 6 allowed).
+
+        events_entered stores event NAMES on college competitors in real
+        data, but test fixtures and legacy rows may carry integer IDs.
+        We build BOTH an ID set and a name set of CLOSED college events
+        and match either form — mirrors the dual-lookup pattern in
+        `services/woodboss.py::_count_competitors`. Prior code built only
+        an ID set and compared against names, silently returning 0 for
+        every real competitor — so the 6-CLOSED-events enforcement was
+        never running.
+        """
+        from models.event import Event
+        closed_events = Event.query.filter_by(
+            tournament_id=self.tournament_id,
+            event_type='college',
+            is_open=False,
+        ).all()
+        closed_ids = {e.id for e in closed_events}
+        closed_names = {e.name.strip().lower() for e in closed_events}
+        count = 0
+        for entry in self.get_events_entered():
+            if isinstance(entry, int) and entry in closed_ids:
+                count += 1
+                continue
+            entry_str = str(entry).strip()
+            # Pure-digit strings may be IDs stored as strings.
+            if entry_str.isdigit() and int(entry_str) in closed_ids:
+                count += 1
+                continue
+            if entry_str.lower() in closed_names:
+                count += 1
+        return count
+
+    @property
+    def has_portal_pin(self) -> bool:
+        return bool(self.portal_pin_hash)
+
+    def set_portal_pin(self, pin: str):
+        self.portal_pin_hash = generate_password_hash(pin)
+
+    def check_portal_pin(self, pin: str) -> bool:
+        if not self.portal_pin_hash:
+            return False
+        return check_password_hash(self.portal_pin_hash, pin)
+
+
+class ProCompetitor(db.Model):
+    """Represents a professional competitor."""
+
+    __tablename__ = 'pro_competitors'
+    __table_args__ = (
+        db.CheckConstraint("gender IN ('M', 'F')", name='ck_pro_competitors_gender_valid'),
+        db.CheckConstraint("status IN ('active', 'scratched')", name='ck_pro_competitors_status_valid'),
+        db.CheckConstraint('total_earnings >= 0', name='ck_pro_competitors_earnings_nonnegative'),
+        db.CheckConstraint('total_fees >= 0', name='ck_pro_competitors_total_fees_nonnegative'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    tournament_id = db.Column(db.Integer, db.ForeignKey('tournaments.id'), nullable=False)
+
+    # Personal info
+    name = db.Column(db.String(200), nullable=False)
+    gender = db.Column(db.String(1), nullable=False)  # 'M' or 'F'
+
+    # Contact info
+    address = db.Column(db.Text, nullable=True)
+    phone = db.Column(db.String(50), nullable=True)
+    email = db.Column(db.String(200), nullable=True)
+    shirt_size = db.Column(db.String(10), nullable=True)
+
+    # Membership and lottery
+    is_ala_member = db.Column(db.Boolean, nullable=False, default=False)  # American Lumberjack Association
+    pro_am_lottery_opt_in = db.Column(db.Boolean, nullable=False, default=False)
+
+    # Springboard specific
+    is_left_handed_springboard = db.Column(db.Boolean, nullable=False, default=False)
+    springboard_slow_heat = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+
+    # Event and fee tracking - stored as JSON
+    events_entered = db.Column(db.Text, nullable=False, default='[]')  # List of event IDs
+    entry_fees = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> fee amount
+    fees_paid = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> True/False
+    gear_sharing = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> partner name
+    partners = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> partner_name
+    portal_pin_hash = db.Column(db.String(255), nullable=True)
+
+    # Earnings
+    total_earnings = db.Column(db.Float, nullable=False, default=0.0)
+    payout_settled = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )  # #21 payout settlement checklist
+
+    # Headshot and SMS (#14, #2)
+    headshot_filename = db.Column(db.Text, nullable=True)
+    phone_opted_in = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
+
+    # Status
+    status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched
+
+    # Import tracking (populated by Google Forms xlsx importer)
+    submission_timestamp = db.Column(db.DateTime, nullable=True)
+    gear_sharing_details = db.Column(db.Text, nullable=True)
+    waiver_accepted = db.Column(db.Boolean, nullable=False, default=False)
+    waiver_signature = db.Column(db.String(200), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    total_fees = db.Column(db.Integer, nullable=False, default=0)
+    import_timestamp = db.Column(db.DateTime, nullable=True)
+
+    # STRATHMARK global database identifier — deterministic, portable, non-autoincrement.
+    # Format: first_initial + last_name + gender_code (e.g. AKAPERM for Alex Kaper Male).
+    # Populated on registration; used to push results to the global STRATHMARK Supabase DB.
+    strathmark_id = db.Column(db.String(50), nullable=True, index=True)
+
+    # Cross-discipline identity. See models/competitor_identity.py.
+    # A college `id` and a pro `id` can be the same integer (21 such collisions
+    # exist in the production mirror); `uid` cannot.
+    uid = db.Column(BIG_ID, db.ForeignKey('competitors.uid'),
+                    nullable=False, unique=True)
+
+    @property
+    def display_name(self):
+        """Display name (same as name — pro competitors have no team)."""
+        return self.name
+
+    def __repr__(self):
+        return f'<ProCompetitor {self.name}>'
+
+    @validates('name')
+    def validate_name(self, key, value):
+        if value and len(value) > MAX_NAME_LENGTH:
+            value = value[:MAX_NAME_LENGTH]
+        return value
+
+    def get_events_entered(self):
+        """Return list of event IDs this competitor is entered in."""
+        try:
+            return json.loads(self.events_entered or '[]')
+        except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt events_entered JSON; returning []', self.id)
+            return []
+
+    def set_events_entered(self, events):
+        """Set the list of event IDs."""
+        self.events_entered = json.dumps(events)
+
+    def get_entry_fees(self):
+        """Return dict of event_id -> fee amount."""
+        try:
+            return json.loads(self.entry_fees or '{}')
+        except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt entry_fees JSON; returning {}', self.id)
+            return {}
+
+    def set_entry_fee(self, event_id, amount):
+        """Set entry fee for a specific event."""
+        fees = self.get_entry_fees()
+        fees[str(event_id)] = amount
+        self.entry_fees = json.dumps(fees)
+
+    def get_fees_paid(self):
+        """Return dict of event_id -> paid status."""
+        try:
+            return json.loads(self.fees_paid or '{}')
+        except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt fees_paid JSON; returning {}', self.id)
+            return {}
+
+    def set_fee_paid(self, event_id, paid=True):
+        """Set fee paid status for a specific event."""
+        paid_status = self.get_fees_paid()
+        paid_status[str(event_id)] = paid
+        self.fees_paid = json.dumps(paid_status)
+
+    def get_gear_sharing(self):
+        """Return dict of event_id -> partner sharing gear."""
+        try:
+            return json.loads(self.gear_sharing or '{}')
+        except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt gear_sharing JSON; returning {}', self.id)
+            return {}
+
+    def set_gear_sharing(self, event_id, partner_name):
+        """Set gear sharing partner for a specific event."""
+        sharing = self.get_gear_sharing()
+        sharing[str(event_id)] = partner_name
+        self.gear_sharing = json.dumps(sharing)
+
+    def get_partners(self):
+        """Return dict of event_id -> partner_name."""
+        try:
+            return json.loads(self.partners or '{}')
+        except json.JSONDecodeError:
+            logger.warning('ProCompetitor id=%s: corrupt partners JSON; returning {}', self.id)
+            return {}
+
+    def set_partner(self, event_id, partner_name):
+        """Set partner for a specific event."""
+        partners = self.get_partners()
+        partners[str(event_id)] = partner_name
+        self.partners = json.dumps(partners)
+
+    def add_earnings(self, amount):
+        """Add earnings to total."""
+        self.total_earnings += amount
+
+    @property
+    def total_fees_owed(self):
+        """Calculate total entry fees owed."""
+        return sum(self.get_entry_fees().values())
+
+    @property
+    def total_fees_paid(self):
+        """Calculate total fees that have been paid."""
+        fees = self.get_entry_fees()
+        paid = self.get_fees_paid()
+        return sum(fees.get(k, 0) for k, v in paid.items() if v)
+
+    @property
+    def fees_balance(self):
+        """Calculate remaining balance owed."""
+        return self.total_fees_owed - self.total_fees_paid
+
+    @property
+    def has_portal_pin(self) -> bool:
+        return bool(self.portal_pin_hash)
+
+    def set_portal_pin(self, pin: str):
+        self.portal_pin_hash = generate_password_hash(pin)
+
+    def check_portal_pin(self, pin: str) -> bool:
+        if not self.portal_pin_hash:
+            return False
+        return check_password_hash(self.portal_pin_hash, pin)
+
+
+# Auto-allocate `uid` on insert for both competitor tables. See
+# models/competitor_identity.py::attach_identity_allocator for why this is a
+# mapper event and not a call at each of the many insert sites.
+attach_identity_allocator(CollegeCompetitor, 'college')
+attach_identity_allocator(ProCompetitor, 'pro')

@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block title %}College Registration - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.college_dashboard', tournament_id=tournament.id) }}">College</a></li>
+                    <li class="breadcrumb-item active">Registration</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-upload text-primary"></i>
+                College Team Registration
+            </h1>
+            <p class="text-muted small mb-0">Upload the Google Forms entry spreadsheet (.xlsx) to bulk-register college teams and competitors.</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-4 mb-4">
+            <div class="card">
+                <div class="card-header card-header-proam">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-excel"></i> Import Entry Form</h6>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Upload an Excel file (.xlsx) with team entry information.</p>
+                    <form action="{{ url_for('registration.upload_college_entry', tournament_id=tournament.id) }}"
+                          method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label for="file" class="form-label">Select Entry Form</label>
+                            <input type="file" class="form-control" id="file" name="file" accept=".xlsx,.xls" required>
+                        </div>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-proam">
+                                <i class="bi bi-upload"></i> Upload & Import
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            {% if invalid_teams %}
+            <div class="card mt-3 border-warning">
+                <div class="card-header bg-warning bg-opacity-10">
+                    <h6 class="mb-0 text-warning"><i class="bi bi-exclamation-triangle"></i> Invalid Teams Present</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted mb-0">
+                        Fix invalid teams inline using the table filter below, or re-upload corrected sheets.
+                    </p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h6 class="mb-0"><i class="bi bi-people"></i> Registered Teams</h6>
+                    <div class="d-flex gap-1">
+                        <button type="button" class="btn btn-sm btn-outline-light team-filter active" data-filter="all">All</button>
+                        <button type="button" class="btn btn-sm btn-outline-success team-filter" data-filter="valid">Valid</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger team-filter" data-filter="invalid">Invalid</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    {% if all_teams %}
+                    <div class="mb-3">
+                        <input type="text" class="form-control" id="teamSearch" placeholder="Search by team code or school...">
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover" id="teamsTable">
+                            <thead class="table-proam">
+                                <tr>
+                                    <th>Team</th>
+                                    <th>School</th>
+                                    <th>Men</th>
+                                    <th>Women</th>
+                                    <th>Total</th>
+                                    <th>Status</th>
+                                    <th>Errors</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for t in all_teams %}
+                                {% set is_invalid = (t.status == 'invalid') %}
+                                {% set is_override = t.is_override %}
+                                {% set errs = t.get_validation_errors() if (is_invalid or is_override) else [] %}
+                                <tr data-validity="{{ 'invalid' if is_invalid else 'valid' }}">
+                                    <td><strong>{{ t.team_code }}</strong></td>
+                                    <td>{{ t.school_name }}</td>
+                                    <td>{{ t.male_count }}</td>
+                                    <td>{{ t.female_count }}</td>
+                                    <td>{{ t.member_count }}</td>
+                                    <td>
+                                        {% if is_override %}
+                                        <span class="badge bg-warning text-dark" title="Admin override — {{ errs|length }} error(s) ignored, team competes normally">
+                                            <i class="bi bi-shield-exclamation"></i> Override
+                                        </span>
+                                        {% elif is_invalid %}
+                                        <span class="badge bg-danger">Invalid</span>
+                                        {% else %}
+                                        <span class="badge bg-success">Valid</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if is_override %}
+                                        <span class="badge bg-warning text-dark" title="{{ errs|map(attribute='message')|join('; ') }}">
+                                            {{ errs|length }} ignored
+                                        </span>
+                                        {% elif is_invalid %}
+                                        <span class="badge bg-danger" title="{{ errs|map(attribute='message')|join('; ') }}">
+                                            {{ errs|length }} error{% if errs|length != 1 %}s{% endif %}
+                                        </span>
+                                        {% else %}
+                                        <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="{{ url_for('registration.team_detail', tournament_id=tournament.id, team_id=t.id) }}"
+                                           class="btn btn-sm {{ 'btn-warning' if is_invalid else 'btn-outline-primary' }}">
+                                            <i class="bi {{ 'bi-tools' if is_invalid else 'bi-eye' }}"></i> {{ 'Fix' if is_invalid else 'View' }}
+                                        </a>
+                                        <form action="{{ url_for('registration.delete_college_team', tournament_id=tournament.id, team_id=t.id) }}"
+                                              method="POST" class="d-inline"
+                                              data-confirm="Delete team {{ t.team_code }} and all competitors? This cannot be undone.">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-trash"></i> Delete
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="mt-3 p-3 bg-light rounded">
+                        <div class="row text-center">
+                            <div class="col">
+                                <h4 class="mb-0">{{ all_teams|length }}</h4>
+                                <small class="text-muted">Teams</small>
+                            </div>
+                            <div class="col">
+                                <h4 class="mb-0">{{ all_teams|sum(attribute='member_count') }}</h4>
+                                <small class="text-muted">Competitors</small>
+                            </div>
+                            <div class="col">
+                                <h4 class="mb-0">{{ teams|length }}</h4>
+                                <small class="text-muted">Valid Teams</small>
+                            </div>
+                            <div class="col">
+                                <h4 class="mb-0 text-danger">{{ invalid_teams|length }}</h4>
+                                <small class="text-muted">Invalid Teams</small>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-inbox display-4 text-muted"></i>
+                        <p class="mt-3 text-muted">No teams registered yet.</p>
+                        <p class="small text-muted">Upload an entry form to get started.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    var teamSearch = document.getElementById('teamSearch');
+    var currentFilter = 'all';
+
+    function applyTeamFilters() {
+        var q = teamSearch ? teamSearch.value.toLowerCase() : '';
+        document.querySelectorAll('#teamsTable tbody tr').forEach(function (row) {
+            var textMatch = row.textContent.toLowerCase().includes(q);
+            var valid = row.getAttribute('data-validity');
+            var filterMatch = (currentFilter === 'all') || (currentFilter === valid);
+            row.style.display = (textMatch && filterMatch) ? '' : 'none';
+        });
+    }
+
+    if (teamSearch) {
+        teamSearch.addEventListener('input', applyTeamFilters);
+    }
+
+    document.querySelectorAll('.team-filter').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            currentFilter = btn.getAttribute('data-filter');
+            document.querySelectorAll('.team-filter').forEach(function (b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            applyTeamFilters();
+        });
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,1892 @@
+"""
+Shared gear-sharing parsing and matching helpers.
+
+This module centralizes:
+- partner-name normalization/matching
+- event-key normalization/matching
+- free-text parsing of gear-sharing details
+- event-level conflict checks used by heat generation and validation
+"""
+from __future__ import annotations
+
+import difflib
+import json
+import logging
+import re
+from typing import Iterable
+
+logger = logging.getLogger(__name__)
+
+_CATEGORY_KEYS = {
+    'category:crosscut',
+    'category:chainsaw',
+    'category:springboard',
+    'category:op_saw',
+    'category:cookie_stack',
+    'category:climbing',
+}
+
+# Two form keywords distinguish two different domain meanings:
+#   USING   = partnered-event gear confirmation (e.g. "USING Jack and Jill saw
+#             with Karson Wilson"). The two competitors are already paired for
+#             the event by registration; this is redundancy/confirmation only,
+#             not a heat constraint.
+#   SHARING = cross-competitor gear dependency outside a partnered event (e.g.
+#             "SHARING Cookie Stack saw with Cody Labahn"). Two competitors
+#             share one physical piece of gear and CANNOT be in the same heat.
+#
+# USING entries are stored with this prefix on the partner-name value:
+#     "1027": "using:Karson Wilson"
+# competitors_share_gear_for_event and build_gear_conflict_pairs skip values
+# that carry this prefix, so they never become heat constraints.
+_USING_VALUE_PREFIX = 'using:'
+
+
+def is_using_value(value) -> bool:
+    """True if a gear_sharing value is a partnered-event USING confirmation."""
+    return isinstance(value, str) and value.lower().startswith(_USING_VALUE_PREFIX)
+
+
+def strip_using_prefix(value) -> str:
+    """Return the canonical partner name with any 'using:' prefix removed."""
+    if not isinstance(value, str):
+        return ''
+    if value.lower().startswith(_USING_VALUE_PREFIX):
+        return value[len(_USING_VALUE_PREFIX):].strip()
+    return value
+
+# Generational/ordinal suffixes that distinguish otherwise-identical names
+# (e.g. "David Moses" vs "David Moses Jr."). Two people sharing a stem but
+# differing only by a suffix are DIFFERENT people — never fuzzy-merge them.
+_NAME_SUFFIXES = frozenset({'jr', 'sr', 'ii', 'iii', 'iv', 'v'})
+
+
+def _name_tokens(value: str) -> list[str]:
+    """Return lowercase alphanumeric tokens from a name."""
+    return re.findall(r'[a-z0-9]+', str(value or '').lower())
+
+
+def _strip_name_suffix_tokens(tokens: list[str]) -> list[str]:
+    """Drop trailing generational suffixes (Jr/Sr/II/III/IV/V)."""
+    result = list(tokens)
+    while result and result[-1] in _NAME_SUFFIXES:
+        result.pop()
+    return result
+
+
+def _name_stem(value: str) -> str:
+    """Normalized name stem with generational suffixes removed."""
+    return ''.join(_strip_name_suffix_tokens(_name_tokens(value)))
+
+
+def _names_token_compatible(a: str, b: str) -> bool:
+    """True if two multi-token names are plausibly the same person.
+
+    Rejects the specific failure mode where two real people share a last name
+    but have divergent first names (e.g. "Eric Lavoie" vs "Erin Lavoie") —
+    difflib will happily fuzzy-match those because only one char differs, but
+    they are different people. Returns True for single-token inputs so that
+    downstream last-name / initial fallbacks can still run.
+    """
+    ta = _strip_name_suffix_tokens(_name_tokens(a))
+    tb = _strip_name_suffix_tokens(_name_tokens(b))
+    if len(ta) < 2 or len(tb) < 2:
+        return True
+    a_first, b_first = ta[0], tb[0]
+    a_last = ''.join(ta[1:])
+    b_last = ''.join(tb[1:])
+    if a_last != b_last:
+        return True
+    if a_first == b_first:
+        return True
+    # Same last name: allow prefix relationship ("Bri" → "Brianna") or a
+    # tight typo-fuzzy match on the first name itself (≥ 0.80). "Eric"/"Erin"
+    # scores 0.75 and is correctly rejected; "Imortol"/"Imortal" scores 0.86
+    # and passes as a valid typo.
+    if a_first.startswith(b_first) or b_first.startswith(a_first):
+        return True
+    return difflib.SequenceMatcher(None, a_first, b_first).ratio() >= 0.80
+
+
+def _suffix_mismatch(candidate: str, canonical: str) -> bool:
+    """True if two names share a stem but differ only by a generational suffix.
+
+    Used to reject fuzzy/last-name/initial matches that would silently merge
+    "David Moses" and "David Moses Jr." into the same person.
+    """
+    cand_norm = normalize_person_name(candidate)
+    match_norm = normalize_person_name(canonical)
+    if cand_norm == match_norm:
+        return False
+    return _name_stem(candidate) == _name_stem(canonical)
+
+
+# ---------------------------------------------------------------------------
+# Gear family helpers
+# ---------------------------------------------------------------------------
+
+def get_gear_family(event):
+    """Return (family_name, family_dict) for the event, or (None, None).
+
+    Respects the ``pro_only`` flag — a college event whose stand_type belongs
+    to a pro_only family returns (None, None).
+    """
+    import config
+    st = str(getattr(event, 'stand_type', '') or '').strip().lower()
+    if not st:
+        return None, None
+    event_type = str(getattr(event, 'event_type', '') or '').strip().lower()
+    for name, fam in config.GEAR_FAMILIES.items():
+        if st in fam['stand_types']:
+            if fam.get('pro_only') and event_type == 'college':
+                return None, None
+            return name, fam
+    return None, None
+
+
+def get_family_events(event, all_events):
+    """Return other events in the same cascade gear family.
+
+    Only returns results when the family has ``cascade=True``.  An empty list
+    means no cascade siblings (or the family is non-cascade / not found).
+    """
+    family_name, family = get_gear_family(event)
+    if not family_name or not family.get('cascade'):
+        return []
+    result = []
+    for other in all_events:
+        if getattr(other, 'id', None) == getattr(event, 'id', None):
+            continue
+        other_family, _ = get_gear_family(other)
+        if other_family == family_name:
+            result.append(other)
+    return result
+
+
+def is_no_constraint_event(event):
+    """Return True if this event requires no gear-sharing constraints.
+
+    True for stand types in ``NO_CONSTRAINT_STAND_TYPES`` (stock_saw, birling,
+    etc.) and for college events whose gear family is ``pro_only``.
+    """
+    import config
+    st = str(getattr(event, 'stand_type', '') or '').strip().lower()
+    if st in config.NO_CONSTRAINT_STAND_TYPES:
+        return True
+    event_type = str(getattr(event, 'event_type', '') or '').strip().lower()
+    for fam in config.GEAR_FAMILIES.values():
+        if st in fam['stand_types'] and fam.get('pro_only') and event_type == 'college':
+            return True
+    return False
+
+
+def normalize_person_name(value: str) -> str:
+    """Normalize a person name for tolerant matching."""
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+
+def normalize_event_text(value: str) -> str:
+    """Normalize event text for tolerant matching."""
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+
+def build_name_index(names: Iterable[str]) -> dict[str, str]:
+    """Build normalized-name -> canonical-name index."""
+    index: dict[str, str] = {}
+    for raw in names:
+        name = str(raw or '').strip()
+        if not name:
+            continue
+        key = normalize_person_name(name)
+        if key and key not in index:
+            index[key] = name
+    return index
+
+
+def resolve_partner_name(raw_name: str, name_index: dict[str, str], cutoff: float = 0.86) -> str:
+    """Resolve raw partner text to the closest known competitor name when possible.
+
+    Matching order:
+    1. Exact normalized match
+    2. difflib fuzzy match at `cutoff`
+    3. Last-name-only match (e.g. "Smith") — only when unambiguous
+    4. First-initial + last-name match (e.g. "J. Smith" or "J Smith") — only when unambiguous
+    """
+    candidate = str(raw_name or '').strip()
+    if not candidate:
+        return ''
+
+    direct = name_index.get(normalize_person_name(candidate))
+    if direct:
+        # Auditable log line so a judge reviewing import logs can spot a wrong
+        # match before race day (gear audit fix G8 — 2026-04-07).
+        logger.info(
+            "Gear partner resolved: %r -> %r (method: exact, score: 1.00)",
+            candidate, direct,
+        )
+        return direct
+
+    keys = list(name_index.keys())
+    if not keys:
+        return candidate
+
+    wanted = normalize_person_name(candidate)
+    if not wanted:
+        return candidate
+
+    close = difflib.get_close_matches(wanted, keys, n=3, cutoff=cutoff)
+    # Reject fuzzy candidates that differ from the input only by a generational
+    # suffix ("David Moses" vs "David Moses Jr." — different people) or that
+    # share a last name with a divergent first name ("Eric"/"Erin" Lavoie).
+    close = [
+        k for k in close
+        if not _suffix_mismatch(candidate, name_index[k])
+        and _names_token_compatible(candidate, name_index[k])
+    ]
+    if close:
+        score = difflib.SequenceMatcher(None, wanted, close[0]).ratio()
+        resolved = name_index[close[0]]
+        # Guard against ambiguous fuzzy matches: if multiple candidates score
+        # above the cutoff and point at different people, refuse to pick one.
+        if len(close) > 1:
+            distinct = {name_index[k] for k in close}
+            if len(distinct) > 1:
+                logger.info(
+                    "Gear partner ambiguous fuzzy: %r -> %s (returning raw)",
+                    candidate, sorted(distinct),
+                )
+                return candidate
+        logger.info(
+            "Gear partner resolved: %r -> %r (method: fuzzy, score: %.2f)",
+            candidate, resolved, score,
+        )
+        return resolved
+
+    # Single-token fallbacks (last-name OR first-name): "Smith" → "John Smith",
+    # "Cody" → "Cody Labahn". Combined into one ambiguity check: a single token
+    # that matches one canonical via last-name AND a different canonical via
+    # first-name is genuinely ambiguous and must return raw. Only fires when
+    # exactly ONE roster member matches across both methods.
+    candidate_tokens = candidate.strip().split()
+    if len(candidate_tokens) == 1:
+        single_norm = normalize_person_name(candidate_tokens[-1])
+        if len(single_norm) >= 3:
+            last_matches = [name_index[k] for k in keys if k.endswith(single_norm)]
+            # First-name fallback requires 4+ chars to avoid resolving short
+            # English-word collisions like "she" → "Shea Warren". The last-name
+            # path keeps its existing 3-char threshold because last-name suffix
+            # matches are already constrained by the `endswith` check.
+            first_name_matches: list[str] = []
+            if len(single_norm) >= 4:
+                for canonical in name_index.values():
+                    canon_tokens = _strip_name_suffix_tokens(_name_tokens(canonical))
+                    if len(canon_tokens) < 2:
+                        continue
+                    canon_first = canon_tokens[0]
+                    # Exact OR prefix ("Bri" → "Brianna"). Mirrors the prefix
+                    # rule used by the two-token initial+last fallback below.
+                    if canon_first == single_norm or canon_first.startswith(single_norm):
+                        first_name_matches.append(canonical)
+            all_matches = set(last_matches) | set(first_name_matches)
+            if len(all_matches) == 1:
+                resolved = next(iter(all_matches))
+                if _suffix_mismatch(candidate, resolved):
+                    return candidate
+                method = 'last_name_only' if resolved in last_matches else 'first_name_only'
+                logger.info(
+                    "Gear partner resolved: %r -> %r (method: %s, score: 1.00)",
+                    candidate, resolved, method,
+                )
+                return resolved
+            elif len(all_matches) > 1:
+                logger.info(
+                    "Gear partner ambiguous single token: %r -> %s (returning raw)",
+                    candidate, sorted(all_matches),
+                )
+
+    # Two-token fallback: "A. Smith" / "Bri Kvinge" → "Alice Smith" / "Brianna
+    # Kvinge" when unambiguous. Matching rules, designed to reject first-name
+    # collisions like "Eric Lavoie" vs "Erin Lavoie":
+    #   * last names must match exactly (after normalization)
+    #   * first tokens must be compatible: either a real initial (1–2 chars,
+    #     matched by first letter) OR one first-name is a proper prefix of the
+    #     other (so "Bri" → "Brianna" works, but "Eric" → "Erin" does not).
+    if len(candidate_tokens) == 2:
+        first_token_norm = normalize_person_name(candidate_tokens[0])
+        last_norm = normalize_person_name(candidate_tokens[1])
+        if first_token_norm and len(last_norm) >= 3:
+            matches: list[str] = []
+            for canonical in name_index.values():
+                canon_tokens = _name_tokens(canonical)
+                canon_tokens = _strip_name_suffix_tokens(canon_tokens)
+                if len(canon_tokens) < 2:
+                    continue
+                canon_first = canon_tokens[0]
+                canon_last_joined = ''.join(canon_tokens[1:])
+                if canon_last_joined != last_norm:
+                    continue
+                if len(first_token_norm) <= 2:
+                    # real initial: match by first letter
+                    if canon_first.startswith(first_token_norm):
+                        matches.append(canonical)
+                else:
+                    # full first name: require prefix relationship in either
+                    # direction — rejects "Eric"/"Erin" because neither is a
+                    # prefix of the other.
+                    if (canon_first.startswith(first_token_norm) or
+                            first_token_norm.startswith(canon_first)):
+                        matches.append(canonical)
+            if len(matches) == 1:
+                resolved = matches[0]
+                if _suffix_mismatch(candidate, resolved):
+                    return candidate
+                logger.info(
+                    "Gear partner resolved: %r -> %r (method: initial_last, score: 1.00)",
+                    candidate, resolved,
+                )
+                return resolved
+
+    # Three-or-more-token fallback (audit gap #5): when scrub-regex bleed leaves
+    # something like "OP Cody Labahn" (3 tokens), slide a 2-token window across
+    # the input and re-run the two-token resolver on each slice. Accept only
+    # when every successful slice resolves to the same canonical (so an
+    # ambiguous leftover like "Cody Labahn Karson Wilson" returns raw).
+    if len(candidate_tokens) >= 3:
+        slice_resolutions: set[str] = set()
+        for i in range(len(candidate_tokens) - 1):
+            slice_text = ' '.join(candidate_tokens[i:i + 2])
+            # Recurse with the same cutoff (0.86 default). The two-token
+            # fallback inside the recursive call has its own ambiguity guards
+            # (last-name exact match, first-name prefix rule) which prevent
+            # divergent-first-name false positives like Eric/Erin Lavoie.
+            resolved = resolve_partner_name(slice_text, name_index, cutoff)
+            if resolved and normalize_person_name(resolved) != normalize_person_name(slice_text):
+                # Only count slices that actually resolved to a roster name.
+                slice_resolutions.add(resolved)
+        if len(slice_resolutions) == 1:
+            resolved = next(iter(slice_resolutions))
+            logger.info(
+                "Gear partner resolved: %r -> %r (method: multi_token_slice, score: 1.00)",
+                candidate, resolved,
+            )
+            return resolved
+
+    return candidate
+
+
+def infer_equipment_categories(text: str) -> set[str]:
+    """Infer broad equipment categories from free-text detail strings."""
+    normalized = str(text or '').strip().lower()
+    categories = set()
+    if any(token in normalized for token in ['single buck', 'double buck', 'crosscut', 'jack & jill', 'jack and jill', 'handsaw', 'hand saw']):
+        categories.add('crosscut')
+    if any(token in normalized for token in ['hot saw', 'chainsaw', 'power saw', 'powersaw']):
+        categories.add('chainsaw')
+    if any(token in normalized for token in ['springboard', 'board']):
+        categories.add('springboard')
+    if any(token in normalized for token in ['obstacle pole', 'op saw', 'opsaw', 'obstaclepole']):
+        categories.add('op_saw')
+    if any(token in normalized for token in ['cookie stack', 'cookie saw', 'cookiestack', 'cookiesaw']):
+        categories.add('cookie_stack')
+    if any(token in normalized for token in ['speed climb', 'pole climb', 'speedclimb', 'poleclimb', 'spurs', 'climbing rope', 'caulks', 'corks']):
+        categories.add('climbing')
+    return categories
+
+
+def _event_name_aliases(event) -> set[str]:
+    """Return normalized aliases for an event (including legacy import labels)."""
+    aliases = {
+        normalize_event_text(getattr(event, 'name', '')),
+        normalize_event_text(getattr(event, 'display_name', '')),
+    }
+    event_name = normalize_event_text(getattr(event, 'name', ''))
+    stand_type = str(getattr(event, 'stand_type', '') or '').strip().lower()
+
+    if event_name == 'springboard':
+        aliases.update({'springboardl', 'springboardr'})
+    elif event_name in {'pro1board', '1boardspringboard'}:
+        aliases.update({'intermediate1boardspringboard', 'pro1board', '1boardspringboard'})
+    elif event_name == 'jackjillsawing':
+        aliases.update({'jackjill', 'jackandjill'})
+    elif event_name in {'poleclimb', 'speedclimb'}:
+        aliases.update({'poleclimb', 'speedclimb'})
+    elif event_name == 'partneredaxethrow':
+        aliases.update({'partneredaxethrow', 'axethrow'})
+
+    if stand_type == 'saw_hand':
+        aliases.update({'singlebuck', 'doublebuck', 'jackjill', 'jackandjill', 'crosscut'})
+    elif stand_type == 'hot_saw':
+        aliases.update({'hotsaw', 'chainsaw', 'powersaw'})
+    elif stand_type == 'springboard':
+        aliases.update({'springboard', '1boardspringboard', 'pro1board'})
+    elif stand_type == 'cookie_stack':
+        aliases.update({'cookiestack', 'cookiesaw'})
+    elif stand_type == 'obstacle_pole':
+        aliases.update({'obstaclepole', 'opsaw'})
+    elif stand_type == 'speed_climb':
+        aliases.update({'speedclimb', 'poleclimb', 'climbingrope', 'climbingspurs'})
+
+    return {a for a in aliases if a}
+
+
+def _short_event_codes(event) -> set[str]:
+    """Return short token codes frequently used in manual notes/spreadsheets."""
+    name = normalize_event_text(getattr(event, 'name', ''))
+    display = normalize_event_text(getattr(event, 'display_name', ''))
+    combined = f'{name} {display}'
+    codes = set()
+    if 'underhand' in combined:
+        codes.add('uh')
+    if 'obstaclepole' in combined:
+        codes.add('op')
+    if 'hotsaw' in combined:
+        codes.add('hs')
+    if 'springboard' in combined:
+        codes.add('sb')
+    if 'singlebuck' in combined:
+        codes.update({'sbu', 'singlebuck'})
+    if 'doublebuck' in combined:
+        codes.add('db')
+    if 'poleclimb' in combined or 'speedclimb' in combined:
+        codes.update({'pc', 'sc'})
+    if 'stocksaw' in combined:
+        codes.add('ss')
+    if 'cookiestack' in combined:
+        codes.add('cs')
+    return codes
+
+
+def event_matches_gear_key(event, raw_key: str) -> bool:
+    """Return True when a stored gear-sharing key applies to the given event."""
+    if event is None:
+        return False
+
+    key = str(raw_key or '').strip().lower()
+    if not key:
+        return False
+    if key == str(getattr(event, 'id', '')).strip():
+        return True
+
+    if key in _CATEGORY_KEYS:
+        stand_type = str(getattr(event, 'stand_type', '') or '').strip().lower()
+        event_text = normalize_event_text(getattr(event, 'display_name', '') or getattr(event, 'name', ''))
+        if key == 'category:crosscut':
+            return stand_type == 'saw_hand' or any(token in event_text for token in ['buck', 'jackjill', 'saw'])
+        if key == 'category:chainsaw':
+            return stand_type == 'hot_saw' or any(token in event_text for token in ['hotsaw', 'powersaw', 'chainsaw'])
+        if key == 'category:springboard':
+            return stand_type == 'springboard' or 'springboard' in event_text or '1board' in event_text
+        if key == 'category:op_saw':
+            return stand_type == 'obstacle_pole' or 'obstaclepole' in event_text or 'opsaw' in event_text
+        if key == 'category:cookie_stack':
+            return stand_type == 'cookie_stack' or 'cookiestack' in event_text or 'cookiesaw' in event_text
+        if key == 'category:climbing':
+            return stand_type == 'speed_climb' or any(token in event_text for token in ['speedclimb', 'poleclimb'])
+        return False
+
+    norm_key = normalize_event_text(key)
+    return norm_key in _event_name_aliases(event)
+
+
+def parse_gear_sharing_details(
+    details_text: str,
+    event_pool: list,
+    name_index: dict[str, str],
+    self_name: str = '',
+    entered_event_names: list[str] | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """
+    Parse free-text gear sharing detail text into a structured mapping.
+
+    Returns:
+        (gear_map, warnings)
+    where gear_map is dict(event_key -> canonical partner name).
+    """
+    text = str(details_text or '').strip()
+    if not text:
+        return {}, ['missing_details']
+
+    warnings: list[str] = []
+    parsed: dict[str, str] = {}
+    lowered = text.lower()
+    self_norm = normalize_person_name(self_name)
+    entered_norm = {normalize_event_text(v) for v in (entered_event_names or []) if str(v or '').strip()}
+
+    # USING vs SHARING domain distinction (2026 form). USING means partnered-event
+    # confirmation (no heat constraint); SHARING means cross-competitor heat
+    # constraint. We detect the leading keyword token here; per-event logic below
+    # applies the 'using:' value prefix only to events that are actually
+    # partnered (is_partnered=True), so a misuse like "USING Hot Saw with X"
+    # falls back to SHARING semantics for the non-partnered event.
+    leading_token_match = re.match(r'\s*([A-Za-z]+)', text)
+    leading_keyword_using = bool(
+        leading_token_match and leading_token_match.group(1).lower() == 'using'
+    )
+
+    # Detect partner name from known competitor names mentioned in details.
+    # Token-sequence match (not normalized substring) so that "David Moses Jr."
+    # in the text never silently matches a separate "David Moses" entry — if
+    # the text continues into a generational suffix the canonical does not
+    # carry, the shorter name is rejected at that position.
+    text_tokens = _name_tokens(text)
+    mentioned = []
+    for norm_name, canonical_name in name_index.items():
+        if not norm_name or norm_name == self_norm:
+            continue
+        canon_tokens = _name_tokens(canonical_name)
+        if not canon_tokens:
+            continue
+        n = len(canon_tokens)
+        canon_has_suffix = canon_tokens[-1] in _NAME_SUFFIXES
+        for i in range(len(text_tokens) - n + 1):
+            if text_tokens[i:i + n] != canon_tokens:
+                continue
+            next_tok = text_tokens[i + n] if i + n < len(text_tokens) else None
+            if next_tok in _NAME_SUFFIXES and not canon_has_suffix:
+                # Text says "...David Moses Jr..." but this canonical is just
+                # "David Moses" — a different person; skip this position.
+                continue
+            mentioned.append((len(norm_name), canonical_name))
+            break
+    partner_name = ''
+    if mentioned:
+        mentioned.sort(reverse=True)
+        partner_name = mentioned[0][1]
+
+    # Fallback: try every comma/semicolon-delimited segment in turn (audit gap
+    # #13 follow-up). Previously only the FIRST segment was tried, so input
+    # like "SHARING Op saw, single saw with Cody" silently dropped because the
+    # partner name lived in the second segment.
+    if not partner_name:
+        # Bare equipment qualifiers (single, double, stock, power) are stripped
+        # ALONE so that "single saw" reduces to "" (not "single"). Multi-word
+        # compounds (single buck, double buck, etc) still match higher up in
+        # the alternation. We deliberately do NOT strip "hot", "jack", "jill",
+        # "hand" alone — those occur as real first/last names ("Jack Love").
+        scrub_re = re.compile(
+            r'\b(using|sharing|with|gear|events?|springboard|crosscut|underhand|standing\s*block|'
+            r'single\s*buck|double\s*buck|jack\s*(?:&|and)\s*jill|hot\s*saw|stock\s*saw|'
+            r'chainsaw|power\s*saw|hand\s*saw|board|axe|saw|speed|hard\s*hit|'
+            r'cookie\s*stack|cookie|obstacle\s*pole|obstacle|op\s*saw|op|'
+            r'pole\s*climb|speed\s*climb|spurs|climbing\s*rope|climbing|'
+            r'caulks|corks|rope|single|double|stock|power)\b',
+            re.IGNORECASE,
+        )
+        for segment in re.split(r'[-—:;,]', text):
+            scrubbed = scrub_re.sub('', segment).strip()
+            scrubbed = re.sub(r'\s{2,}', ' ', scrubbed).strip()
+            if not scrubbed:
+                continue
+            tokens = scrubbed.split()
+            # Try multi-token first (more reliable), then single-token first-name
+            # / last-name fallback for bare names like "Cody".
+            if len(tokens) >= 2:
+                resolved = resolve_partner_name(scrubbed, name_index)
+            elif len(tokens) == 1 and len(tokens[0]) >= 3:
+                resolved = resolve_partner_name(tokens[0], name_index)
+            else:
+                resolved = ''
+            if resolved and normalize_person_name(resolved) != normalize_person_name(scrubbed):
+                partner_name = resolved
+                break
+
+    if not partner_name:
+        warnings.append('partner_not_resolved')
+        # Audit gap #12: log silently-dropped entries so a judge reviewing the
+        # logs can see which competitors had unparseable gear text. Truncate
+        # the source text so a runaway field never blows up the log line.
+        logger.info(
+            "Gear parse failure (partner_not_resolved): self=%r text=%r",
+            self_name, text[:200],
+        )
+        return {}, warnings
+
+    # Event-specific extraction from known event aliases.
+    matched_any_event = False
+    normalized_text = normalize_event_text(text)
+    raw_tokens = set(re.findall(r'[a-z0-9]+', lowered))
+
+    candidates = list(event_pool)
+    if entered_norm:
+        filtered = []
+        for event in candidates:
+            aliases = _event_name_aliases(event)
+            if any(a in entered_norm for a in aliases):
+                filtered.append(event)
+        if filtered:
+            candidates = filtered
+
+    sb_matches = [event for event in candidates if 'sb' in _short_event_codes(event)]
+    for event in candidates:
+        aliases = _event_name_aliases(event)
+        short_codes = _short_event_codes(event)
+        alias_match = any(alias and alias in normalized_text for alias in aliases if len(alias) >= 4)
+        short_match = any(code in raw_tokens for code in short_codes)
+
+        # "SB" is ambiguous; only accept when narrowed by entered-events context.
+        if short_match and 'sb' in short_codes and len(sb_matches) > 1 and not entered_norm:
+            short_match = False
+
+        if alias_match or short_match:
+            # Apply USING prefix only when the leading keyword was USING AND
+            # this event is partnered (Jack & Jill, Double Buck partner, etc).
+            # Misuse like "USING Hot Saw with X" stays as a SHARING constraint
+            # because Hot Saw is not partnered.
+            event_is_partnered = bool(getattr(event, 'is_partnered', False))
+            if leading_keyword_using and event_is_partnered:
+                parsed[str(event.id)] = f'{_USING_VALUE_PREFIX}{partner_name}'
+            else:
+                parsed[str(event.id)] = partner_name
+            matched_any_event = True
+
+    # Equipment category extraction when explicit event names are absent/incomplete.
+    # Categories are family-wide SHARING buckets (crosscut, chainsaw, ...) — by
+    # construction they cannot carry USING semantics. When the leading keyword
+    # was USING, the user's intent was partnered confirmation; emitting a
+    # broad category SHARING entry would override the USING flag we just set
+    # and put the partnered pair into the flight-builder conflict pairs, which
+    # is exactly the bug we are fixing. Skip categories in that case.
+    categories = set() if leading_keyword_using else infer_equipment_categories(text)
+    for category in categories:
+        parsed[f'category:{category}'] = partner_name
+
+    if not matched_any_event and not categories:
+        warnings.append('events_not_resolved')
+        # Audit gap #12: surface the unresolved-event case in logs so a judge
+        # can spot competitors whose partner was identified but whose
+        # equipment intent was unparseable.
+        logger.info(
+            "Gear parse failure (events_not_resolved): self=%r partner=%r text=%r",
+            self_name, partner_name, text[:200],
+        )
+
+    return parsed, warnings
+
+
+def competitors_share_gear_for_event(comp1_name: str, comp1_gear: dict, comp2_name: str, comp2_gear: dict, event, all_events=None) -> bool:
+    """Check if two competitors have a gear-sharing conflict for the given event.
+
+    When *all_events* is provided and the event belongs to a cascade gear
+    family, also checks whether the two competitors share gear for ANY sibling
+    event in that family (e.g. sharing an axe for Springboard creates a
+    conflict in Underhand and Standing Block too).
+    """
+    sharing1 = comp1_gear if isinstance(comp1_gear, dict) else {}
+    sharing2 = comp2_gear if isinstance(comp2_gear, dict) else {}
+    name1 = normalize_person_name(comp1_name)
+    name2 = normalize_person_name(comp2_name)
+
+    if event is None:
+        for value in sharing1.values():
+            if is_using_value(value):
+                continue  # USING is partnered confirmation, not a constraint
+            partner1 = normalize_person_name(str(value or '').strip())
+            if partner1 and partner1 == name2:
+                return True
+        for value in sharing2.values():
+            if is_using_value(value):
+                continue
+            partner2 = normalize_person_name(str(value or '').strip())
+            if partner2 and partner2 == name1:
+                return True
+
+    # Build the list of events to check: the primary event + cascade siblings.
+    events_to_check = [event] if event is not None else []
+    if event is not None and all_events is not None:
+        events_to_check.extend(get_family_events(event, all_events))
+
+    for check_event in events_to_check:
+        for key1, value1 in sharing1.items():
+            if not event_matches_gear_key(check_event, key1):
+                continue
+            if is_using_value(value1):
+                continue  # USING is partnered confirmation, not a constraint
+            partner1 = normalize_person_name(str(value1 or '').strip())
+            if not partner1:
+                continue
+            if partner1 == name2:
+                return True
+            if partner1.startswith('group:'):
+                for key2, value2 in sharing2.items():
+                    if is_using_value(value2):
+                        continue
+                    if event_matches_gear_key(check_event, key2) and str(value2 or '').strip() == str(value1 or '').strip():
+                        return True
+
+        for key2, value2 in sharing2.items():
+            if not event_matches_gear_key(check_event, key2):
+                continue
+            if is_using_value(value2):
+                continue  # USING is partnered confirmation, not a constraint
+            partner2 = normalize_person_name(str(value2 or '').strip())
+            if partner2 == name1:
+                return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional sync primitives
+# ---------------------------------------------------------------------------
+
+def sync_gear_bidirectional(comp_a, comp_b, event_key: str) -> None:
+    """
+    Write gear-sharing entries on both sides.
+      comp_a.gear_sharing[event_key] = comp_b.name
+      comp_b.gear_sharing[event_key] = comp_a.name
+    Caller must commit.
+    """
+    sharing_a = comp_a.get_gear_sharing()
+    sharing_a[event_key] = str(comp_b.name or '').strip()
+    comp_a.gear_sharing = json.dumps(sharing_a)
+
+    sharing_b = comp_b.get_gear_sharing()
+    sharing_b[event_key] = str(comp_a.name or '').strip()
+    comp_b.gear_sharing = json.dumps(sharing_b)
+
+
+def normalize_gear_key_to_event_id(raw_key: str, pro_events: list) -> str:
+    """
+    Try to resolve raw_key to a numeric event ID string.
+    Category keys (category:*) and group keys (group:*) pass through unchanged.
+    Falls back to raw_key if no match.
+    """
+    key = str(raw_key or '').strip()
+    if not key or key.isdigit() or key.startswith('category:') or key.startswith('group:'):
+        return key
+    norm = normalize_event_text(key)
+    for event in pro_events:
+        if norm in _event_name_aliases(event):
+            return str(event.id)
+    return key
+
+
+def sync_all_gear_for_competitor(comp, pro_comps_by_norm: dict, old_gear: dict | None = None) -> None:
+    """
+    After updating comp's gear_sharing, write reciprocals on all referenced
+    partners.  If old_gear is given, also clear removed entries from partners.
+    Caller must commit.
+    """
+    gear = comp.get_gear_sharing()
+    comp_norm = normalize_person_name(comp.name)
+
+    # Write reciprocals for current entries.
+    for key, partner_text in gear.items():
+        # Resolve partner name (strip USING prefix for the lookup, but propagate
+        # USING semantics to the reciprocal so both sides stay consistent).
+        is_using = is_using_value(partner_text)
+        pt = strip_using_prefix(partner_text).strip() if is_using else str(partner_text or '').strip()
+        if not pt or pt.startswith('group:'):
+            continue
+        partner_comp = pro_comps_by_norm.get(normalize_person_name(pt))
+        if not partner_comp or partner_comp.id == comp.id:
+            continue
+        partner_gear = partner_comp.get_gear_sharing()
+        existing = partner_gear.get(key, '')
+        existing_partner = strip_using_prefix(existing) if is_using_value(existing) else str(existing or '')
+        if normalize_person_name(existing_partner) != comp_norm:
+            new_value = f'{_USING_VALUE_PREFIX}{comp.name}' if is_using else comp.name
+            partner_gear[key] = new_value
+            partner_comp.gear_sharing = json.dumps(partner_gear)
+
+    # Clear removed entries from partners.
+    if old_gear:
+        for key in set(old_gear.keys()) - set(gear.keys()):
+            for partner_comp in pro_comps_by_norm.values():
+                if partner_comp.id == comp.id:
+                    continue
+                partner_gear = partner_comp.get_gear_sharing()
+                if key in partner_gear:
+                    existing = partner_gear.get(key, '')
+                    existing_partner = strip_using_prefix(existing) if is_using_value(existing) else str(existing or '')
+                    if normalize_person_name(existing_partner) == comp_norm:
+                        del partner_gear[key]
+                        partner_comp.gear_sharing = json.dumps(partner_gear)
+
+
+# ---------------------------------------------------------------------------
+# Group gear sharing (multiple pairs sharing one piece of equipment)
+# ---------------------------------------------------------------------------
+
+def create_gear_group(comps: list, event_key: str, group_name: str) -> int:
+    """
+    Assign all listed competitors to a named gear-sharing group for the event.
+    Value stored as 'group:{group_name}'.
+
+    Use this for two or more partnered pairs (e.g. Double Buck or Jack & Jill)
+    that share one saw.  The heat generator treats intra-pair as a unit and only
+    fires the gear conflict check between units, so pairs sharing a saw will be
+    placed in separate heats automatically.
+
+    Caller must commit.  Returns count updated.
+    """
+    group_value = f'group:{group_name}'
+    for comp in comps:
+        sharing = comp.get_gear_sharing()
+        sharing[event_key] = group_value
+        comp.gear_sharing = json.dumps(sharing)
+    return len(comps)
+
+
+def get_gear_groups(tournament) -> dict:
+    """
+    Return a mapping group_name → list[{competitor, event_key}] for all
+    group: gear-sharing entries across active pro competitors.
+    """
+    from models.competitor import ProCompetitor
+
+    groups: dict = {}
+    for comp in ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all():
+        for key, value in comp.get_gear_sharing().items():
+            v = str(value or '').strip()
+            if v.startswith('group:'):
+                gname = v[len('group:'):]
+                groups.setdefault(gname, []).append({'competitor': comp, 'event_key': key})
+    return groups
+
+
+# ---------------------------------------------------------------------------
+# Utility batch operations
+# ---------------------------------------------------------------------------
+
+def complete_one_sided_pairs(tournament) -> dict:
+    """
+    Write reciprocal gear-sharing entries for all one-sided pairs (A lists B
+    but B does not list A back).  Always treating gear sharing as mutual.
+    Caller must commit.  Returns {completed: int}.
+    """
+    from models.competitor import ProCompetitor
+
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).all()
+    pro_by_norm = {normalize_person_name(c.name): c for c in pro_comps}
+    completed = 0
+
+    for comp in pro_comps:
+        comp_norm = normalize_person_name(comp.name)
+        for key, raw_partner in comp.get_gear_sharing().items():
+            pt = str(raw_partner or '').strip()
+            if not pt or pt.startswith('group:'):
+                continue
+            partner_comp = pro_by_norm.get(normalize_person_name(pt))
+            if not partner_comp or partner_comp.id == comp.id:
+                continue
+            partner_gear = partner_comp.get_gear_sharing()
+            already = any(normalize_person_name(str(v or '')) == comp_norm for v in partner_gear.values())
+            if not already:
+                partner_gear[key] = comp.name
+                partner_comp.gear_sharing = json.dumps(partner_gear)
+                completed += 1
+
+    return {'completed': completed}
+
+
+def cleanup_non_enrolled_gear_entries(tournament) -> dict:
+    """
+    Remove gear-sharing entries pointing at events the competitor is not
+    enrolled in. Handles both direct event-id keys (e.g. "82") and category
+    keys (e.g. "category:crosscut") — a category key is pruned only when the
+    competitor is enrolled in zero events of that category.
+
+    Does NOT touch USING-prefixed values on an event the competitor IS in;
+    the prefix is left as-is so partnered-confirmation semantics survive.
+
+    Caller must commit. Returns {cleaned, affected: [names], pro_cleaned,
+    college_cleaned}.
+    """
+    from models import Event
+    from models.competitor import CollegeCompetitor, ProCompetitor
+
+    all_events = Event.query.filter_by(tournament_id=tournament.id).all()
+    pro_events = [e for e in all_events if e.event_type == 'pro']
+    college_events = [e for e in all_events if e.event_type == 'college']
+
+    cleaned_total = 0
+    affected: list[str] = []
+
+    def _scan(rows, relevant_events):
+        nonlocal cleaned_total
+        local_cleaned = 0
+        for comp in rows:
+            gear = comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {}
+            if not isinstance(gear, dict) or not gear:
+                continue
+            entered_vals = {
+                str(v or '').strip()
+                for v in comp.get_events_entered()
+                if str(v or '').strip()
+            }
+            kept: dict = {}
+            removed_any = False
+            for key, val in gear.items():
+                matching = [e for e in relevant_events if event_matches_gear_key(e, key)]
+                if not matching:
+                    removed_any = True
+                    continue
+                enrolled = any(
+                    str(e.id) in entered_vals
+                    or e.name in entered_vals
+                    or e.display_name in entered_vals
+                    for e in matching
+                )
+                if enrolled:
+                    kept[key] = val
+                else:
+                    removed_any = True
+            if removed_any:
+                diff = len(gear) - len(kept)
+                comp.gear_sharing = json.dumps(kept)
+                cleaned_total += diff
+                local_cleaned += diff
+                if comp.name not in affected:
+                    affected.append(comp.name)
+        return local_cleaned
+
+    pro_cleaned = _scan(
+        ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(),
+        pro_events,
+    )
+    college_cleaned = _scan(
+        CollegeCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(),
+        college_events,
+    )
+
+    return {
+        'cleaned': cleaned_total,
+        'affected': affected,
+        'pro_cleaned': pro_cleaned,
+        'college_cleaned': college_cleaned,
+    }
+
+
+def cleanup_scratched_gear_entries(tournament, scratched_competitor=None, competitor_type: str = 'pro') -> dict:
+    """
+    Remove gear-sharing entries from active competitors that reference scratched
+    (or a specific given) competitor.
+
+    competitor_type: 'pro' (default) or 'college' — selects which competitor
+    table to scan for active/scratched rows.
+
+    Caller must commit.  Returns {cleaned: int, affected: list[str]}.
+    """
+    if competitor_type == 'college':
+        from models.competitor import CollegeCompetitor as CompModel
+    else:
+        from models.competitor import ProCompetitor as CompModel
+
+    active_comps = CompModel.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).all()
+    if scratched_competitor:
+        scratched_norms = {normalize_person_name(scratched_competitor.name)}
+    else:
+        scratched_norms = {
+            normalize_person_name(s.name)
+            for s in CompModel.query.filter_by(tournament_id=tournament.id, status='scratched').all()
+        }
+
+    cleaned = 0
+    affected: list = []
+    for comp in active_comps:
+        gear = comp.get_gear_sharing()
+        updated = {k: v for k, v in gear.items()
+                   if normalize_person_name(str(v or '')) not in scratched_norms}
+        if len(updated) != len(gear):
+            comp.gear_sharing = json.dumps(updated)
+            cleaned += len(gear) - len(updated)
+            if comp.name not in affected:
+                affected.append(comp.name)
+
+    return {'cleaned': cleaned, 'affected': affected}
+
+
+def auto_populate_partners_from_gear(tournament) -> dict:
+    """
+    For each pro competitor, copy gear_sharing entries into the partners dict
+    for partnered events without overwriting existing partner entries.
+    Caller must commit.  Returns {updated: int}.
+    """
+    from models import Event
+    from models.competitor import ProCompetitor
+
+    partnered_events = Event.query.filter_by(
+        tournament_id=tournament.id, event_type='pro', is_partnered=True
+    ).all()
+    # Build alias → event_id lookup (include numeric ID itself).
+    alias_to_id: dict = {}
+    for e in partnered_events:
+        alias_to_id[str(e.id)] = str(e.id)
+        for alias in _event_name_aliases(e):
+            alias_to_id[alias] = str(e.id)
+
+    updated = 0
+    for comp in ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all():
+        gear = comp.get_gear_sharing()
+        partners = comp.get_partners()
+        changed = False
+        for key, partner_text in gear.items():
+            pt = str(partner_text or '').strip()
+            if not pt or pt.startswith('group:'):
+                continue
+            resolved = alias_to_id.get(key) or alias_to_id.get(normalize_event_text(key))
+            if resolved and not str(partners.get(resolved, '')).strip():
+                partners[resolved] = pt
+                changed = True
+        if changed:
+            comp.partners = json.dumps(partners)
+            updated += 1
+
+    return {'updated': updated}
+
+
+def build_parse_review(tournament) -> list:
+    """
+    Return proposed gear_sharing parse results for competitors whose
+    gear_sharing_details are unstructured, WITHOUT committing.
+
+    Returns list of dicts per competitor:
+        {competitor, details_text, proposed_gear_map, warnings,
+         already_structured, event_labels}
+    """
+    from models import Event
+    from models.competitor import ProCompetitor
+
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).all()
+    pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
+    name_index = build_name_index(c.name for c in pro_comps)
+    event_labels = {str(e.id): e.display_name for e in pro_events}
+
+    results = []
+    for comp in pro_comps:
+        details = str(getattr(comp, 'gear_sharing_details', '') or '').strip()
+        if not details:
+            continue
+        entered = [str(v).strip() for v in comp.get_events_entered() if str(v).strip()]
+        gear_map, warnings = parse_gear_sharing_details(
+            details, pro_events, name_index,
+            self_name=comp.name, entered_event_names=entered,
+        )
+        results.append({
+            'competitor': comp,
+            'details_text': details,
+            'proposed_gear_map': gear_map,
+            'warnings': [w for w in warnings if w != 'missing_details'],
+            'already_structured': bool(comp.get_gear_sharing()),
+            'event_labels': event_labels,
+        })
+    return results
+
+
+def auto_parse_and_warn(competitor, tournament) -> list[str]:
+    """
+    Attempt to parse a competitor's gear_sharing_details free-text into structured
+    gear_sharing JSON at registration time.  Returns human-readable warning
+    strings for display (empty list = clean parse or nothing to parse).
+
+    Caller must commit.
+    """
+    from models import Event
+
+    details = str(getattr(competitor, 'gear_sharing_details', '') or '').strip()
+    if not details:
+        return []
+    if competitor.get_gear_sharing():
+        return []  # Already structured
+
+    from models.competitor import ProCompetitor
+
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).all()
+    pro_events = Event.query.filter_by(
+        tournament_id=tournament.id, event_type='pro'
+    ).all()
+    name_index = build_name_index(c.name for c in pro_comps)
+    entered = [str(v).strip() for v in competitor.get_events_entered() if str(v).strip()]
+
+    gear_map, warnings = parse_gear_sharing_details(
+        details, pro_events, name_index,
+        self_name=competitor.name, entered_event_names=entered,
+    )
+
+    messages: list[str] = []
+
+    if gear_map:
+        competitor.gear_sharing = json.dumps(gear_map)
+        event_labels = {str(e.id): e.display_name for e in pro_events}
+        parts = []
+        for k, v in gear_map.items():
+            label = event_labels.get(k, k)
+            parts.append(f'{label} with {v}')
+        messages.append('Gear details auto-parsed: ' + '; '.join(parts) + '.')
+
+    non_trivial = [w for w in warnings if w != 'missing_details']
+    if 'partner_not_resolved' in non_trivial:
+        messages.append('Gear parse warning: could not identify partner name from details.')
+    if 'events_not_resolved' in non_trivial:
+        messages.append('Gear parse warning: could not match any events from details.')
+
+    return messages
+
+
+def build_gear_completeness_check(event, pro_comps: list) -> dict:
+    """
+    For a given event, identify active entrants that lack any gear-sharing entry.
+    Returns {missing: list[{competitor, reason}], ok_count: int, total: int}.
+    Skips no-constraint events (stock_saw, birling, college obstacle pole, etc.).
+    """
+    if is_no_constraint_event(event):
+        return {'missing': [], 'ok_count': 0, 'total': 0, 'skipped': True}
+
+    event_aliases = _event_name_aliases(event)
+    entered = []
+    for c in pro_comps:
+        for v in c.get_events_entered():
+            val = str(v or '').strip()
+            if val == str(event.id) or normalize_event_text(val) in event_aliases:
+                entered.append(c)
+                break
+
+    missing = []
+    for comp in entered:
+        gear = comp.get_gear_sharing()
+        if not any(event_matches_gear_key(event, k) for k in gear):
+            missing.append({'competitor': comp, 'reason': 'no gear entry for this event'})
+
+    return {'missing': missing, 'ok_count': len(entered) - len(missing), 'total': len(entered)}
+
+
+# ---------------------------------------------------------------------------
+# Tournament-wide gear audit
+# ---------------------------------------------------------------------------
+
+def build_gear_conflict_pairs(tournament) -> dict[int, set[int]]:
+    """
+    Pre-compute a mapping of competitor_id -> set of competitor IDs they share
+    gear with (any event).  Used by the flight builder to penalize placing
+    gear-sharing partners in adjacent heats across different events.
+
+    Returns:
+        Dict mapping each pro competitor ID to the set of all competitor IDs
+        they share gear with.
+    """
+    import config
+    from models import Event
+    from models.competitor import ProCompetitor
+
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).all()
+    pro_by_norm = {normalize_person_name(c.name): c for c in pro_comps}
+
+    conflicts: dict[int, set[int]] = {}
+    for comp in pro_comps:
+        gear = comp.get_gear_sharing()
+        if not isinstance(gear, dict):
+            continue
+        for _key, raw_partner in gear.items():
+            # USING entries are partnered-event confirmations, NOT cross-competitor
+            # heat constraints. Skip them so the flight builder does not penalize
+            # a Jack & Jill pair for being placed in the same heat (which is
+            # exactly where they belong).
+            if is_using_value(raw_partner):
+                continue
+            pt = str(raw_partner or '').strip()
+            if not pt or pt.startswith('group:'):
+                # For group keys, find all group members.
+                if pt.startswith('group:'):
+                    for other in pro_comps:
+                        if other.id == comp.id:
+                            continue
+                        other_gear = other.get_gear_sharing()
+                        if any(str(v or '').strip() == pt for v in other_gear.values()
+                               if not is_using_value(v)):
+                            conflicts.setdefault(comp.id, set()).add(other.id)
+                            conflicts.setdefault(other.id, set()).add(comp.id)
+                continue
+            partner_comp = pro_by_norm.get(normalize_person_name(pt))
+            if partner_comp and partner_comp.id != comp.id:
+                conflicts.setdefault(comp.id, set()).add(partner_comp.id)
+                conflicts.setdefault(partner_comp.id, set()).add(comp.id)
+
+    # Cascade pass — ensures pairs that share gear in any cascade family
+    # (e.g. the chopping family: springboard / underhand / standing block)
+    # are paired in the conflict dict regardless of which event they declared
+    # the share on.  The dict is event-blind, so the existing pass already
+    # mirrors most cases; this pass uses the canonical config.GEAR_FAMILIES
+    # taxonomy as the source of truth and catches any pair that the literal
+    # name-match loop above missed (e.g. a comp with one declaration only
+    # whose declared key resolves to a cascade-family event id)
+    # — gear audit fix G6 — 2026-04-07.
+    cascade_stand_types: set[str] = set()
+    for fam in config.GEAR_FAMILIES.values():
+        if fam.get('cascade'):
+            cascade_stand_types.update(fam.get('stand_types', set()))
+
+    if cascade_stand_types:
+        try:
+            tournament_events = Event.query.filter_by(tournament_id=tournament.id).all()
+        except Exception:
+            tournament_events = []
+        cascade_event_ids: set[str] = {
+            str(ev.id) for ev in tournament_events
+            if str(getattr(ev, 'stand_type', '') or '').strip().lower() in cascade_stand_types
+        }
+
+        for comp in pro_comps:
+            gear = comp.get_gear_sharing()
+            if not isinstance(gear, dict):
+                continue
+            declares_cascade = False
+            for key in gear.keys():
+                key_str = str(key or '').strip()
+                if key_str in cascade_event_ids:
+                    declares_cascade = True
+                    break
+                # Category keys for cascade families also count.
+                if key_str in {'category:crosscut', 'category:springboard'}:
+                    declares_cascade = True
+                    break
+            if not declares_cascade:
+                continue
+            for raw_partner in gear.values():
+                if is_using_value(raw_partner):
+                    continue  # USING is partnered confirmation, not a constraint
+                pt = str(raw_partner or '').strip()
+                if not pt or pt.startswith('group:'):
+                    continue
+                partner_comp = pro_by_norm.get(normalize_person_name(pt))
+                if partner_comp and partner_comp.id != comp.id:
+                    conflicts.setdefault(comp.id, set()).add(partner_comp.id)
+                    conflicts.setdefault(partner_comp.id, set()).add(comp.id)
+
+    return conflicts
+
+
+def _aggregate_gear_groups(pro_pairs, pro_comps, all_events):
+    """Aggregate gear pairs into connected-component groups.
+
+    Instead of only showing 2-person pairs, this finds all competitors
+    who transitively share gear for the same equipment family and groups
+    them together.  A "group" of 2 is a normal pair; groups of 3+ mean
+    three or more competitors share one piece of equipment.
+
+    Returns a list of group dicts:
+        {members: [comp, ...], event_label, event_keys: set, heat_conflict: bool,
+         has_unconfirmed: bool}
+    """
+    from collections import defaultdict
+
+    # Map each event key to a "family key" so that different keys referencing
+    # the same equipment family get merged (e.g., category:springboard and
+    # a specific springboard event ID belong to the same family).
+    def _family_key(event_key):
+        ek = str(event_key or '').strip().lower()
+        if ek.startswith('category:'):
+            return ek
+        # Numeric event IDs: look up the event's stand_type to find its family.
+        for ev in all_events:
+            if str(ev.id) == ek:
+                st = str(getattr(ev, 'stand_type', '') or '').strip().lower()
+                if st in ('saw_hand',):
+                    return 'category:crosscut'
+                if st in ('hot_saw',):
+                    return 'category:chainsaw'
+                if st in ('springboard',):
+                    return 'category:springboard'
+                return f'event:{ek}'
+        return f'event:{ek}'
+
+    # Build adjacency graph per family key.
+    # Each node is a competitor id; edges connect gear-sharing partners.
+    comp_by_id = {c.id: c for c in pro_comps}
+    family_edges = defaultdict(list)   # family_key -> [(id_a, id_b, pair_dict)]
+    for pair in pro_pairs:
+        fk = _family_key(pair['event_key'])
+        family_edges[fk].append((pair['comp_a'].id, pair['comp_b'].id, pair))
+
+    # Union-Find to build connected components.
+    parent = {}
+    def find(x):
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    groups = []
+    for fk, edges in family_edges.items():
+        parent.clear()
+        for id_a, id_b, _ in edges:
+            parent.setdefault(id_a, id_a)
+            parent.setdefault(id_b, id_b)
+            union(id_a, id_b)
+
+        # Collect components.
+        components = defaultdict(set)
+        for cid in parent:
+            components[find(cid)].add(cid)
+
+        # Gather metadata from the pairs that formed each component.
+        for root, member_ids in components.items():
+            component_pairs = [p for (a, b, p) in edges if a in member_ids or b in member_ids]
+            members = [comp_by_id[mid] for mid in sorted(member_ids) if mid in comp_by_id]
+            if not members:
+                continue
+
+            event_keys = set()
+            has_conflict = False
+            has_unconfirmed = False
+            for p in component_pairs:
+                event_keys.add(p['event_key'])
+                if p.get('heat_conflict'):
+                    has_conflict = True
+                if p.get('paired_by') == 'inferred':
+                    has_unconfirmed = True
+
+            # Use the first pair's label; if there are multiple event keys
+            # in the same family, join their labels.
+            labels = []
+            seen_labels = set()
+            for p in component_pairs:
+                lbl = p.get('event_label', '')
+                if lbl and lbl not in seen_labels:
+                    labels.append(lbl)
+                    seen_labels.add(lbl)
+            event_label = ', '.join(labels) if labels else fk
+
+            groups.append({
+                'members': members,
+                'event_label': event_label,
+                'event_keys': event_keys,
+                'heat_conflict': has_conflict,
+                'has_unconfirmed': has_unconfirmed,
+                'member_count': len(members),
+            })
+
+    # Sort: largest groups first, then alphabetically by first member name.
+    groups.sort(key=lambda g: (-g['member_count'], g['members'][0].name if g['members'] else ''))
+    return groups
+
+
+def build_gear_report(tournament) -> dict:
+    """
+    Build a comprehensive gear-sharing audit for a tournament.
+
+    Returns a dict with:
+        pro_pairs         — confirmed bidirectional gear pairs (de-duped)
+        pro_unresolved    — one-sided, unknown, missing, or self-reference entries
+        pro_conflicts     — pairs whose two competitors appear in the same heat
+        unparsed_count    — competitors who have free-text details but no structured map
+        college_constraints — all college gear-sharing entries (read-only)
+        stats             — summary counts
+    """
+    from models import Event, Heat
+    from models.competitor import CollegeCompetitor, ProCompetitor
+
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).order_by(ProCompetitor.name).all()
+
+    college_comps = CollegeCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).order_by(CollegeCompetitor.name).all()
+
+    pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
+    college_events = Event.query.filter_by(tournament_id=tournament.id, event_type='college').all()
+
+    event_display_pro = {str(e.id): e.display_name for e in pro_events}
+    event_display_college = {str(e.id): e.display_name for e in college_events}
+
+    pro_by_norm = {normalize_person_name(c.name): c for c in pro_comps}
+    comp_gear_by_id = {c.id: c.get_gear_sharing() for c in pro_comps}
+
+    # Friendly fallback labels for category keys when no events match.
+    _CATEGORY_LABELS = {
+        'category:crosscut': 'Crosscut / Hand Saws',
+        'category:chainsaw': 'Chainsaws / Power Saws',
+        'category:springboard': 'Springboard',
+    }
+
+    def _resolve_pro_event_label(key):
+        label = event_display_pro.get(str(key))
+        if label:
+            return label
+        # For category keys, join all matching event display names.
+        if str(key).startswith('category:'):
+            matching = [e.display_name for e in pro_events if event_matches_gear_key(e, key)]
+            if matching:
+                return ', '.join(matching)
+            return _CATEGORY_LABELS.get(str(key), str(key))
+        ev = next((e for e in pro_events if event_matches_gear_key(e, key)), None)
+        return ev.display_name if ev else str(key)
+
+    # --- Pro gear-sharing analysis ---
+    pro_pairs = []
+    pro_unresolved = []
+    seen_pairs: set = set()
+
+    for comp in pro_comps:
+        gear = comp.get_gear_sharing()
+        if not isinstance(gear, dict):
+            continue
+
+        for key, raw_partner in gear.items():
+            event_label = _resolve_pro_event_label(key)
+            # USING entries are partnered-event confirmations. Strip the
+            # 'using:' prefix for display and resolution; remember the flag so
+            # the manager UI can show a "Confirmation" badge instead of the
+            # default "Sharing" treatment.
+            entry_is_using = is_using_value(raw_partner)
+            partner_text = strip_using_prefix(raw_partner).strip() if entry_is_using else str(raw_partner or '').strip()
+            partner_norm = normalize_person_name(partner_text)
+            partner_comp = pro_by_norm.get(partner_norm)
+
+            status = 'ok'
+            issues = []
+
+            if not partner_text:
+                status = 'missing_partner'
+                issues.append('No partner name specified')
+            elif partner_norm == normalize_person_name(comp.name):
+                status = 'self_reference'
+                issues.append('Entry references the competitor themselves')
+            elif not partner_comp:
+                status = 'unknown_partner'
+                issues.append(f'"{partner_text}" is not on the active roster')
+            else:
+                # Check for reciprocal entry on partner's side. Reciprocals can
+                # also carry the USING prefix; strip before comparing.
+                partner_gear = partner_comp.get_gear_sharing()
+                reciprocal = any(
+                    normalize_person_name(strip_using_prefix(v) if is_using_value(v) else str(v or '')) == normalize_person_name(comp.name)
+                    for k, v in partner_gear.items()
+                )
+                if not reciprocal:
+                    status = 'one_sided'
+                    issues.append('Partner has no matching gear-sharing entry pointing back')
+
+            # Treat ok and one_sided as verified pairs — gear sharing is always
+            # considered reciprocal even when only one side has it recorded.
+            if status in ('ok', 'one_sided') and partner_comp is not None:
+                # De-dupe: only the lower-ID competitor owns the entry.
+                if comp.id < partner_comp.id:
+                    seen_pairs.add((comp.id, partner_comp.id))
+                    pro_pairs.append({
+                        'comp_a': comp,
+                        'comp_b': partner_comp,
+                        'event_key': key,
+                        'event_label': event_label,
+                        'heat_conflict': False,
+                        # 'mutual' = both sides explicitly recorded;
+                        # 'inferred' = only one side recorded but treated as mutual;
+                        # 'using' = partnered-event confirmation, NOT a constraint.
+                        'paired_by': (
+                            'using' if entry_is_using
+                            else ('mutual' if status == 'ok' else 'inferred')
+                        ),
+                    })
+            elif status not in ('ok', 'one_sided'):
+                pro_unresolved.append({
+                    'competitor': comp,
+                    'event_key': key,
+                    'event_label': event_label,
+                    'partner_raw': partner_text,
+                    'partner_comp': partner_comp,
+                    'status': status,
+                    'issues': issues,
+                    'is_using': entry_is_using,
+                })
+
+    # --- Heat conflict detection ---
+    pro_conflicts = []
+    conflict_pair_ids: set = set()
+
+    for event in pro_events:
+        heats = event.heats.filter(Heat.status != 'completed').all()
+        for heat in heats:
+            comp_ids = heat.get_competitors()
+            heat_comps = [c for c in pro_comps if c.id in comp_ids]
+            for i, c1 in enumerate(heat_comps):
+                for c2 in heat_comps[i + 1:]:
+                    if competitors_share_gear_for_event(
+                        c1.name, comp_gear_by_id.get(c1.id, {}),
+                        c2.name, comp_gear_by_id.get(c2.id, {}),
+                        event,
+                        all_events=pro_events,
+                    ):
+                        pro_conflicts.append({
+                            'event': event,
+                            'heat': heat,
+                            'comp_a': c1,
+                            'comp_b': c2,
+                            'suggestions': [
+                                f'Move {c2.name} to a different heat via the Heats page',
+                                'Use Sync Heat Conflicts to auto-resolve',
+                            ],
+                        })
+                        conflict_pair_ids.add((min(c1.id, c2.id), max(c1.id, c2.id)))
+
+    for pair in pro_pairs:
+        pk = (min(pair['comp_a'].id, pair['comp_b'].id), max(pair['comp_a'].id, pair['comp_b'].id))
+        if pk in conflict_pair_ids:
+            pair['heat_conflict'] = True
+
+    # --- Gear group size validation ---
+    # For partnered events a gear group should have exactly 2 members (one pair per saw).
+    # Warn when a group for a partnered event has 1 or 3+ members.
+    partnered_event_ids = {str(e.id) for e in pro_events if getattr(e, 'is_partnered', False)}
+    group_warnings: list[dict] = []
+    raw_groups: dict[str, dict] = {}  # group_name -> {event_key, members}
+    for comp in pro_comps:
+        for key, value in comp.get_gear_sharing().items():
+            v = str(value or '').strip()
+            if not v.startswith('group:'):
+                continue
+            gname = v[len('group:'):]
+            if gname not in raw_groups:
+                raw_groups[gname] = {'event_key': key, 'members': []}
+            raw_groups[gname]['members'].append(comp.name)
+    for gname, gdata in raw_groups.items():
+        key = gdata['event_key']
+        members = gdata['members']
+        is_partnered_key = key in partnered_event_ids or key.startswith('category:crosscut')
+        if is_partnered_key and len(members) != 2:
+            group_warnings.append({
+                'group_name': gname,
+                'event_key': key,
+                'event_label': _resolve_pro_event_label(key),
+                'member_count': len(members),
+                'members': members,
+                'issue': f'Expected 2 members (one pair per saw), found {len(members)}.',
+            })
+
+    # --- Unparsed free-text details ---
+    unparsed_count = sum(
+        1 for c in pro_comps
+        if str(getattr(c, 'gear_sharing_details', '') or '').strip()
+        and not c.get_gear_sharing()
+    )
+
+    # --- College gear constraints (read-only) ---
+    college_constraints = []
+    for comp in college_comps:
+        gear = comp.get_gear_sharing()
+        if not isinstance(gear, dict) or not gear:
+            continue
+        team_code = comp.team.team_code if comp.team else ''
+        for key, partner in gear.items():
+            label = event_display_college.get(str(key))
+            if not label:
+                ev = next((e for e in college_events if event_matches_gear_key(e, key)), None)
+                label = ev.display_name if ev else str(key)
+            college_constraints.append({
+                'competitor': comp,
+                'team_code': team_code,
+                'event_key': key,
+                'event_label': label,
+                'partner': str(partner or '').strip(),
+            })
+
+    unconfirmed_count = sum(1 for p in pro_pairs if p['paired_by'] == 'inferred')
+
+    # Aggregate pairs into connected-component gear groups (supports 3+ sharing).
+    pro_groups = _aggregate_gear_groups(pro_pairs, pro_comps, pro_events)
+
+    return {
+        'pro_pairs': pro_pairs,
+        'pro_groups': pro_groups,
+        'pro_unresolved': pro_unresolved,
+        'pro_conflicts': pro_conflicts,
+        'group_warnings': group_warnings,
+        'unparsed_count': unparsed_count,
+        'college_constraints': college_constraints,
+        'stats': {
+            'pairs': len(pro_pairs),
+            'groups': len(pro_groups),
+            'unconfirmed': unconfirmed_count,
+            'unresolved': len(pro_unresolved),
+            'conflicts': len(pro_conflicts),
+            'college': len(college_constraints),
+            'group_warnings': len(group_warnings),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Batch free-text parser
+# ---------------------------------------------------------------------------
+
+def parse_all_gear_details(tournament) -> dict:
+    """
+    Parse gear_sharing_details free-text on each active ProCompetitor that has
+    no structured gear_sharing data yet, populating the gear_sharing JSON column.
+
+    Caller is responsible for db.session.commit().
+    Returns a summary dict: parsed, skipped, warnings.
+    """
+    from models import Event
+    from models.competitor import ProCompetitor
+
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).all()
+    pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
+    name_index = build_name_index(c.name for c in pro_comps)
+
+    parsed_count = 0
+    skipped_count = 0
+    warning_rows = []
+
+    for comp in pro_comps:
+        details = str(getattr(comp, 'gear_sharing_details', '') or '').strip()
+        if not details:
+            continue
+
+        existing = comp.get_gear_sharing()
+        if existing:
+            skipped_count += 1
+            continue
+
+        entered_event_names = [str(v).strip() for v in comp.get_events_entered() if str(v).strip()]
+
+        gear_map, warnings = parse_gear_sharing_details(
+            details,
+            pro_events,
+            name_index,
+            self_name=comp.name,
+            entered_event_names=entered_event_names,
+        )
+
+        if gear_map:
+            comp.gear_sharing = json.dumps(gear_map)
+            parsed_count += 1
+
+        non_trivial = [w for w in warnings if w not in ('missing_details',)]
+        if non_trivial:
+            warning_rows.append({'name': comp.name, 'warnings': non_trivial})
+
+    return {
+        'parsed': parsed_count,
+        'skipped': skipped_count,
+        'warnings': warning_rows,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Heat conflict auto-fix
+# ---------------------------------------------------------------------------
+
+def fix_heat_gear_conflicts(tournament) -> dict:
+    """
+    Detect gear-sharing conflicts in existing pending/in-progress heats and
+    attempt to resolve each by moving one competitor to a compatible heat in
+    the same event run.
+
+    Only touches heats that are not yet completed.
+    Caller is responsible for db.session.commit().
+    Returns: {fixed: int, failed: list[dict]}
+    """
+    import config
+    from database import db
+    from models import Event, Heat
+    from models.competitor import ProCompetitor
+
+    pro_comps = ProCompetitor.query.filter_by(
+        tournament_id=tournament.id, status='active'
+    ).all()
+    comp_by_id = {c.id: c for c in pro_comps}
+    comp_gear_by_id = {c.id: c.get_gear_sharing() for c in pro_comps}
+
+    fixed = 0
+    failed = []
+
+    all_pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
+    for event in all_pro_events:
+        heats = event.heats.filter(
+            Heat.status != 'completed'
+        ).order_by(Heat.run_number, Heat.heat_number).all()
+        if not heats:
+            continue
+
+        stand_config = config.STAND_CONFIGS.get(event.stand_type, {})
+        max_per_heat = (
+            event.max_stands
+            if event.max_stands is not None
+            else stand_config.get('total', 4)
+        )
+
+        # Group heats by run_number so a move stays within the same run.
+        by_run: dict[int, list] = {}
+        for h in heats:
+            by_run.setdefault(h.run_number or 1, []).append(h)
+
+        for run_heats in by_run.values():
+            # Multi-pass: keep iterating until no more fixes are possible.
+            for _pass in range(len(run_heats) * len(run_heats) + 1):
+                made_fix_this_pass = False
+
+                for heat in run_heats:
+                    comp_ids = heat.get_competitors()
+                    heat_comps = [comp_by_id[cid] for cid in comp_ids if cid in comp_by_id]
+
+                    # Find the first gear conflict in this heat.
+                    conflict_pair = None
+                    for i, c1 in enumerate(heat_comps):
+                        for c2 in heat_comps[i + 1:]:
+                            if competitors_share_gear_for_event(
+                                c1.name, comp_gear_by_id.get(c1.id, {}),
+                                c2.name, comp_gear_by_id.get(c2.id, {}),
+                                event,
+                                all_events=all_pro_events,
+                            ):
+                                conflict_pair = (c1, c2)
+                                break
+                        if conflict_pair:
+                            break
+
+                    if not conflict_pair:
+                        continue
+
+                    mover = conflict_pair[1]
+
+                    # Score all candidate target heats; pick the best.
+                    # Score = remaining capacity - (new conflicts mover would create).
+                    # Only heats with score >= 0 (capacity available, no new conflicts) qualify.
+                    best_target = None
+                    best_score = -1
+
+                    for target_heat in run_heats:
+                        if target_heat.id == heat.id:
+                            continue
+                        target_ids = target_heat.get_competitors()
+                        if len(target_ids) >= max_per_heat:
+                            continue
+                        target_comps = [comp_by_id[cid] for cid in target_ids if cid in comp_by_id]
+                        new_conflicts = sum(
+                            1 for tc in target_comps
+                            if competitors_share_gear_for_event(
+                                mover.name, comp_gear_by_id.get(mover.id, {}),
+                                tc.name, comp_gear_by_id.get(tc.id, {}),
+                                event,
+                                all_events=all_pro_events,
+                            )
+                        )
+                        if new_conflicts > 0:
+                            continue
+                        score = max_per_heat - len(target_ids)
+                        if score > best_score:
+                            best_score = score
+                            best_target = target_heat
+
+                    if best_target is None:
+                        # No valid target — record diagnostic info for suggestions.
+                        reasons = []
+                        full_count = 0
+                        conflict_count = 0
+                        for th in run_heats:
+                            if th.id == heat.id:
+                                continue
+                            t_ids = th.get_competitors()
+                            if len(t_ids) >= max_per_heat:
+                                full_count += 1
+                            else:
+                                t_comps = [comp_by_id[cid] for cid in t_ids if cid in comp_by_id]
+                                nc = sum(
+                                    1 for tc in t_comps
+                                    if competitors_share_gear_for_event(
+                                        mover.name, comp_gear_by_id.get(mover.id, {}),
+                                        tc.name, comp_gear_by_id.get(tc.id, {}),
+                                        event,
+                                        all_events=all_pro_events,
+                                    )
+                                )
+                                if nc > 0:
+                                    conflict_count += 1
+                        if full_count > 0:
+                            reasons.append(f'{full_count} heat(s) at capacity ({max_per_heat})')
+                        if conflict_count > 0:
+                            reasons.append(f'{conflict_count} heat(s) would create new conflicts')
+                        # Stash suggestions for the post-scan recording phase.
+                        if not hasattr(heat, '_failed_suggestions'):
+                            heat._failed_suggestions = {}
+                        heat._failed_suggestions[(mover.id, conflict_pair[0].id)] = reasons
+                        continue
+
+                    target_ids = best_target.get_competitors()
+
+                    # Remove mover from source heat.
+                    heat.set_competitors([cid for cid in comp_ids if cid != mover.id])
+                    src_assignments = heat.get_stand_assignments()
+                    src_assignments.pop(str(mover.id), None)
+                    heat.stand_assignments = json.dumps(src_assignments)
+
+                    # Add mover to target heat.
+                    best_target.set_competitors(target_ids + [mover.id])
+                    tgt_assignments = best_target.get_stand_assignments()
+                    used_stands = {int(v) for v in tgt_assignments.values() if str(v).lstrip('-').isdigit()}
+                    next_stand = 1
+                    while next_stand in used_stands:
+                        next_stand += 1
+                    tgt_assignments[str(mover.id)] = next_stand
+                    best_target.stand_assignments = json.dumps(tgt_assignments)
+
+                    db.session.flush()
+                    heat.sync_assignments('pro')
+                    best_target.sync_assignments('pro')
+
+                    fixed += 1
+                    made_fix_this_pass = True
+                    break  # Restart full scan after each move.
+
+                if not made_fix_this_pass:
+                    break  # No more fixes possible for this run.
+
+            # Record any remaining un-fixable conflicts with resolution suggestions.
+            for heat in run_heats:
+                comp_ids = heat.get_competitors()
+                heat_comps = [comp_by_id[cid] for cid in comp_ids if cid in comp_by_id]
+                fail_hints = getattr(heat, '_failed_suggestions', {})
+                for i, c1 in enumerate(heat_comps):
+                    for c2 in heat_comps[i + 1:]:
+                        if competitors_share_gear_for_event(
+                            c1.name, comp_gear_by_id.get(c1.id, {}),
+                            c2.name, comp_gear_by_id.get(c2.id, {}),
+                            event,
+                            all_events=all_pro_events,
+                        ):
+                            reasons = (fail_hints.get((c2.id, c1.id))
+                                       or fail_hints.get((c1.id, c2.id))
+                                       or [])
+                            suggestions = []
+                            if any('capacity' in r for r in reasons):
+                                suggestions.append(
+                                    f'Increase max competitors per heat for {event.display_name} '
+                                    f'(currently {max_per_heat})'
+                                )
+                            if any('new conflicts' in r for r in reasons):
+                                suggestions.append(
+                                    'Remove another gear conflict first so a swap target opens up'
+                                )
+                            suggestions.append(
+                                f'Manually move {c2.name} to a different heat on the Heats page'
+                            )
+                            suggestions.append(
+                                f'Add a new heat to {event.display_name} to create capacity'
+                            )
+                            failed.append({
+                                'event': event.display_name,
+                                'heat': heat.heat_number,
+                                'comp_a': c1.name,
+                                'comp_b': c2.name,
+                                'reasons': reasons,
+                                'suggestions': suggestions,
+                            })
+
+    return {'fixed': fixed, 'failed': failed}

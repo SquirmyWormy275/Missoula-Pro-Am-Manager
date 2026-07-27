@@ -1,0 +1,544 @@
+{% extends "base.html" %}
+
+{% block title %}{{ ui('dashboard') }} — {{ COMPETITION.app_title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ── COMMAND CENTRE HERO ─────────────────────────────────────── */
+    .cmd-hero {
+        background:
+            linear-gradient(135deg,
+                rgba(232,57,31,0.09) 0%,
+                rgba(11,13,17,0) 40%,
+                rgba(243,159,27,0.04) 100%),
+            var(--sx-surface);
+        border: 1px solid var(--sx-border);
+        border-left: 4px solid var(--sx-fire);
+        border-radius: 14px;
+        overflow: hidden;
+        position: relative;
+        box-shadow: 0 4px 28px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+
+    /* Diagonal grain texture */
+    .cmd-hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 14px,
+            rgba(255,255,255,0.014) 14px,
+            rgba(255,255,255,0.014) 15px
+        );
+        pointer-events: none;
+    }
+
+    /* Corner accent */
+    .cmd-hero::before {
+        content: "";
+        position: absolute;
+        top: 0; right: 0;
+        width: 220px; height: 120px;
+        background: radial-gradient(ellipse at 100% 0%, rgba(239,43,22,0.08) 0%, transparent 70%);
+        pointer-events: none;
+    }
+
+    .cmd-hero-inner { position: relative; z-index: 1; }
+
+    /* Dual logo lockup */
+    .hero-logo-lockup {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.4rem;
+    }
+
+    .hero-badge {
+        width: 88px;
+        height: 88px;
+        border-radius: 16px;
+        background: #ffffff;
+        border: 1px solid rgba(255,255,255,0.15);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        flex-shrink: 0;
+        padding: 6px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    }
+    .hero-badge img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    .hero-badge-strathex {
+        width: 88px;
+        height: 88px;
+        border-radius: 16px;
+        background: linear-gradient(180deg, #07090e 0%, #030407 100%);
+        border: 1px solid rgba(239,43,22,0.45);
+        box-shadow:
+            inset 0 0 0 1px rgba(255,255,255,0.07),
+            0 0 28px rgba(239,43,22,0.22),
+            0 4px 16px rgba(0,0,0,0.4);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        flex-shrink: 0;
+        padding: 12px;
+    }
+    .hero-badge-strathex img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    .hero-lockup-separator {
+        width: 1px;
+        height: 64px;
+        background: linear-gradient(to bottom, transparent, var(--sx-border-bright), transparent);
+        flex-shrink: 0;
+    }
+
+    .hero-title {
+        font-family: "Orbitron", sans-serif;
+        font-weight: 800;
+        font-size: 1.72rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--sx-text);
+        line-height: 1.1;
+        margin-bottom: 0.4rem;
+    }
+
+    .hero-subtitle {
+        color: var(--sx-text-2);
+        font-size: 0.875rem;
+        margin-bottom: 0;
+        letter-spacing: 0.01em;
+    }
+
+    /* ── Competition pedigree tags ─────────────────────────────── */
+    .hero-tags {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 0.75rem;
+    }
+    .hero-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid var(--sx-border);
+        border-radius: 999px;
+        padding: 3px 10px;
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--sx-text-3);
+        white-space: nowrap;
+    }
+    .hero-tag-fire {
+        border-color: rgba(239,43,22,0.35);
+        color: #f0735a;
+        background: rgba(239,43,22,0.07);
+    }
+
+    /* ── ACTIVE TOURNAMENT CARD ──────────────────────────────────── */
+    .active-tourn-card {
+        border-left: 3px solid var(--sx-fire) !important;
+        background: linear-gradient(135deg,
+            rgba(232,57,31,0.05) 0%,
+            var(--sx-surface) 40%) !important;
+    }
+
+    .next-action-box {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--sx-border);
+        border-radius: 8px;
+        padding: 0.5rem 0.8rem;
+        font-size: 0.83rem;
+        color: var(--sx-text-2);
+    }
+
+    /* ── TOURNAMENTS TABLE ───────────────────────────────────────── */
+    .section-header-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.85rem 1.15rem;
+        background: var(--sx-surface-2);
+        border-bottom: 1px solid var(--sx-border);
+        border-radius: 12px 12px 0 0;
+    }
+    .section-header-bar h5 { margin: 0; font-size: 0.95rem; color: var(--sx-text); }
+
+    .empty-state {
+        padding: 3rem 1.5rem;
+        text-align: center;
+    }
+    .empty-state-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 16px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid var(--sx-border);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.8rem;
+        color: var(--sx-text-3);
+        margin-bottom: 1rem;
+    }
+
+    /* ── QUICK LAUNCH SIDEBAR ────────────────────────────────────── */
+    .quick-launch-item {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        padding: 0.6rem 1rem;
+        color: var(--sx-text-2);
+        text-decoration: none;
+        border-bottom: 1px solid var(--sx-border);
+        font-size: 0.875rem;
+        transition: all 0.15s;
+    }
+    .quick-launch-item:last-child { border-bottom: none; }
+    .quick-launch-item:hover {
+        background: rgba(232,57,31,0.06);
+        color: var(--sx-text);
+        transform: translateX(4px);
+    }
+    .quick-launch-item i {
+        color: var(--sx-fire);
+        font-size: 1rem;
+        width: 20px;
+        text-align: center;
+        flex-shrink: 0;
+    }
+    .quick-launch-item .ql-text { flex: 1; min-width: 0; }
+    .quick-launch-item .ql-title { display: block; font-weight: 600; }
+    .quick-launch-item .ql-desc {
+        display: block;
+        font-size: 0.72rem;
+        color: var(--sx-text-3);
+        line-height: 1.3;
+        white-space: normal;
+    }
+
+    @media (max-width: 991px) {
+        .hero-logo-lockup { gap: 0.75rem; margin-bottom: 1rem; }
+        .hero-badge, .hero-badge-strathex { width: 72px; height: 72px; border-radius: 13px; }
+        .hero-lockup-separator { height: 48px; }
+        .hero-title { font-size: 1.45rem; }
+        .hero-tags { margin-top: 0.5rem; }
+    }
+
+    @media (max-width: 575px) {
+        .cmd-hero { border-left-width: 3px; }
+        .hero-badge, .hero-badge-strathex { width: 60px; height: 60px; border-radius: 11px; }
+        .hero-badge-strathex { padding: 9px; }
+        .hero-title { font-size: 1.2rem; }
+        .hero-subtitle { font-size: 0.8rem; }
+        .hero-tags { gap: 0.35rem; }
+        .hero-tag { font-size: 0.6rem; padding: 2px 8px; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    <!-- ── COMMAND CENTRE HERO ─────────────────────────────────── -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="cmd-hero p-4 p-lg-5">
+                <div class="cmd-hero-inner d-flex flex-wrap align-items-center justify-content-between gap-4">
+
+                    <!-- Left: title + subtitle + tags -->
+                    <div>
+                        <div class="hero-title">{{ COMPETITION.app_title }}</div>
+                        <p class="hero-subtitle">
+                            Operations Command Center &mdash; Friday &amp; Saturday Show Control
+                        </p>
+                        <div class="hero-tags">
+                            <span class="hero-tag hero-tag-fire">
+                                <i class="bi bi-trophy-fill" style="font-size:0.6rem;"></i>
+                                International Timbersports
+                            </span>
+                            <span class="hero-tag">
+                                <i class="bi bi-mortarboard-fill" style="font-size:0.6rem;"></i>
+                                College Division
+                            </span>
+                            <span class="hero-tag">
+                                <i class="bi bi-award-fill" style="font-size:0.6rem;"></i>
+                                Professional Division
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Right: live aggregate stats -->
+                    {% if tournaments %}
+                    <div class="d-flex gap-4 flex-wrap" style="flex-shrink:0;">
+                        {% set total_comps = namespace(n=0) %}
+                        {% for t in tournaments %}{% set total_comps.n = total_comps.n + t.college_competitor_count + t.pro_competitor_count %}{% endfor %}
+                        {% set total_teams = namespace(n=0) %}
+                        {% for t in tournaments %}{% set total_teams.n = total_teams.n + t.college_team_count %}{% endfor %}
+                        <div class="text-center">
+                            <div style="font-family:'Orbitron',sans-serif;font-weight:800;font-size:1.4rem;color:var(--sx-text);line-height:1;">{{ tournaments|length }}</div>
+                            <div class="text-label text-sx-subtle mt-1">Tournaments</div>
+                        </div>
+                        <div class="text-center">
+                            <div style="font-family:'Orbitron',sans-serif;font-weight:800;font-size:1.4rem;color:var(--sx-text);line-height:1;">{{ total_comps.n }}</div>
+                            <div class="text-label text-sx-subtle mt-1">Competitors</div>
+                        </div>
+                        <div class="text-center">
+                            <div style="font-family:'Orbitron',sans-serif;font-weight:800;font-size:1.4rem;color:var(--sx-text);line-height:1;">{{ total_teams.n }}</div>
+                            <div class="text-label text-sx-subtle mt-1">Teams</div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── ACTIVE TOURNAMENT + QUICK LAUNCH ────────────────────── -->
+    {% if active_tournament %}
+    <div class="row mb-4">
+        <div class="col-lg-8 mb-3 mb-lg-0">
+            <div class="card active-tourn-card h-100">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+                        <div>
+                            <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--sx-fire);font-family:'Orbitron',sans-serif;font-weight:700;margin-bottom:0.3rem;">
+                                Active Tournament
+                            </div>
+                            <h5 class="mb-1" style="font-family:'Orbitron',sans-serif;font-size:1rem;font-weight:800;">
+                                {{ active_tournament.name }} {{ active_tournament.year }}
+                            </h5>
+                            <div style="color:var(--sx-text-2);font-size:0.82rem;">
+                                {{ ui('active_tournament') }}
+                            </div>
+                        </div>
+                        <a href="{{ url_for('main.tournament_detail', tournament_id=active_tournament.id) }}"
+                           class="btn btn-proam">
+                            <i class="bi bi-arrow-right-circle me-1"></i> {{ ui('go_to_tournament') }}
+                        </a>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        {% if active_tournament.status == 'setup' %}
+                            <span class="badge bg-secondary">{{ ui('setup') }}</span>
+                            <div class="next-action-box flex-grow-1">
+                                <i class="bi bi-arrow-right-circle me-1" style="color:var(--sx-amber);"></i>
+                                Next: Configure events, then import teams and pro competitors.
+                            </div>
+                        {% elif active_tournament.status == 'college_active' %}
+                            <span class="badge bg-primary">{{ ui('college_competition_active') }}</span>
+                            <div class="next-action-box flex-grow-1">
+                                <i class="bi bi-arrow-right-circle me-1" style="color:var(--sx-info);"></i>
+                                Next: Generate heats and enter results heat-by-heat.
+                            </div>
+                        {% elif active_tournament.status == 'pro_active' %}
+                            <span class="badge bg-warning">{{ ui('pro_competition_active') }}</span>
+                            <div class="next-action-box flex-grow-1">
+                                <i class="bi bi-arrow-right-circle me-1" style="color:var(--sx-amber);"></i>
+                                Next: Build flights and keep payout reports updated.
+                            </div>
+                        {% else %}
+                            <span class="badge bg-success">{{ ui('completed') }}</span>
+                            <div class="next-action-box flex-grow-1">
+                                <i class="bi bi-check-circle me-1" style="color:var(--sx-success);"></i>
+                                Next: Export final results and archive the tournament.
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header card-header-proam">
+                    <strong><i class="bi bi-lightning-charge me-1"></i>Quick Launch</strong>
+                </div>
+                <div>
+                    <a class="quick-launch-item" href="{{ url_for('scheduling.event_list', tournament_id=active_tournament.id) }}">
+                        <i class="bi bi-calendar-event"></i>
+                        <span class="ql-text">
+                            <span class="ql-title">Events &amp; Schedule</span>
+                            <span class="ql-desc">Generate heats, build flights, set FNF &amp; Saturday options</span>
+                        </span>
+                    </a>
+                    <a class="quick-launch-item" href="{{ url_for('scheduling.flight_list', tournament_id=active_tournament.id) }}">
+                        <i class="bi bi-layers"></i>
+                        <span class="ql-text">
+                            <span class="ql-title">Pro Flights</span>
+                            <span class="ql-desc">Saturday show roster — start flights, score heats</span>
+                        </span>
+                    </a>
+                    <a class="quick-launch-item" href="{{ url_for('reporting.export_results', tournament_id=active_tournament.id) }}">
+                        <i class="bi bi-file-earmark-spreadsheet"></i>
+                        <span class="ql-text">
+                            <span class="ql-title">Export Results</span>
+                            <span class="ql-desc">Download final standings as a spreadsheet</span>
+                        </span>
+                    </a>
+                    <a class="quick-launch-item" href="{{ url_for('reporting.all_results', tournament_id=active_tournament.id) }}">
+                        <i class="bi bi-bar-chart-steps"></i>
+                        <span class="ql-text">
+                            <span class="ql-title">View All Results</span>
+                            <span class="ql-desc">Full results table — college standings and pro payouts</span>
+                        </span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ── TOURNAMENTS TABLE ────────────────────────────────────── -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="section-header-bar">
+                    <h5>
+                        <i class="bi bi-list-ul me-2" style="color:var(--sx-fire);"></i>
+                        {{ ui('tournaments') }}
+                    </h5>
+                    <div class="d-flex gap-2">
+                        {% set ns = namespace(has_demo=false) %}
+                        {% for t in tournaments %}{% if t.name.startswith('[DEMO]') %}{% set ns.has_demo = true %}{% endif %}{% endfor %}
+                        {% if ns.has_demo %}
+                        <form method="POST" action="{{ url_for('demo.clear') }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-warning btn-sm"
+                                    data-confirm="Remove all demo data?">
+                                <i class="bi bi-eraser me-1"></i> Clear Demo
+                            </button>
+                        </form>
+                        {% else %}
+                        <form method="POST" action="{{ url_for('demo.generate') }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-info btn-sm">
+                                <i class="bi bi-database-fill-gear me-1"></i> Load Demo Data
+                            </button>
+                        </form>
+                        {% endif %}
+                        <a href="{{ url_for('main.new_tournament') }}" class="btn btn-proam btn-sm">
+                            <i class="bi bi-plus-circle me-1"></i> {{ ui('new_tournament') }}
+                        </a>
+                    </div>
+                </div>
+
+                <div class="card-body p-0">
+                    {% if tournaments %}
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-proam">
+                                <tr>
+                                    <th>{{ ui('tournament') }}</th>
+                                    <th>{{ ui('year') }}</th>
+                                    <th>{{ ui('status') }}</th>
+                                    <th class="text-center">{{ ui('teams') }}</th>
+                                    <th class="text-center">{{ ui('college') }}</th>
+                                    <th class="text-center">{{ ui('pro') }}</th>
+                                    <th class="text-end">{{ ui('actions') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for t in tournaments %}
+                                <tr>
+                                    <td>
+                                        <strong style="font-size:0.9rem;">{{ t.name }}</strong>
+                                    </td>
+                                    <td style="color:var(--sx-text-2);font-size:0.85rem;">{{ t.year }}</td>
+                                    <td>
+                                        {% if t.status == 'setup' %}
+                                            <span class="badge bg-secondary">{{ ui('setup') }}</span>
+                                        {% elif t.status == 'college_active' %}
+                                            <span class="badge bg-primary">{{ ui('college_active') }}</span>
+                                        {% elif t.status == 'pro_active' %}
+                                            <span class="badge bg-warning">{{ ui('pro_active') }}</span>
+                                        {% elif t.status == 'completed' %}
+                                            <span class="badge bg-success">{{ ui('completed') }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center" style="color:var(--sx-text-2);font-size:0.85rem;">{{ t.college_team_count }}</td>
+                                    <td class="text-center" style="color:var(--sx-text-2);font-size:0.85rem;">{{ t.college_competitor_count }}</td>
+                                    <td class="text-center" style="color:var(--sx-text-2);font-size:0.85rem;">{{ t.pro_competitor_count }}</td>
+                                    <td class="text-end">
+                                        <div class="btn-group btn-group-sm">
+                                            <a href="{{ url_for('main.tournament_detail', tournament_id=t.id) }}"
+                                               class="btn btn-outline-primary btn-sm">
+                                                <i class="bi bi-eye"></i>
+                                                <span class="d-none d-md-inline"> {{ ui('view') }}</span>
+                                            </a>
+                                            <form method="POST"
+                                                  action="{{ url_for('main.delete_tournament', tournament_id=t.id) }}"
+                                                  style="display:inline;"
+                                                  data-delete-tournament
+                                                  data-tournament-name="{{ t.name }} {{ t.year }}">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <input type="hidden" name="confirm_delete" value="DELETE">
+                                                <button type="submit" class="btn btn-outline-danger btn-sm"
+                                                        title="Delete {{ t.name }} {{ t.year }}">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <div class="empty-state-icon mx-auto">
+                            <i class="bi bi-calendar-plus"></i>
+                        </div>
+                        <h6 style="color:var(--sx-text);margin-bottom:0.4rem;">Welcome to the Missoula Pro-Am Manager</h6>
+                        <p style="color:var(--sx-text-2);font-size:0.85rem;max-width:420px;margin:0 auto 1.25rem;">
+                            Start by creating a tournament. You'll then configure events, import teams and competitors, generate heats, and manage results all in one place.
+                        </p>
+                        <div class="d-flex justify-content-center gap-3 flex-wrap mb-3">
+                            <div style="font-size:0.78rem;color:var(--sx-text-3);display:flex;align-items:center;gap:0.3rem;"><i class="bi bi-1-circle-fill" style="color:var(--sx-fire);"></i>Create tournament</div>
+                            <i class="bi bi-arrow-right" style="color:var(--sx-border-bright);"></i>
+                            <div style="font-size:0.78rem;color:var(--sx-text-3);display:flex;align-items:center;gap:0.3rem;"><i class="bi bi-2-circle-fill" style="color:var(--sx-fire);"></i>Configure events</div>
+                            <i class="bi bi-arrow-right" style="color:var(--sx-border-bright);"></i>
+                            <div style="font-size:0.78rem;color:var(--sx-text-3);display:flex;align-items:center;gap:0.3rem;"><i class="bi bi-3-circle-fill" style="color:var(--sx-fire);"></i>Import competitors</div>
+                            <i class="bi bi-arrow-right" style="color:var(--sx-border-bright);"></i>
+                            <div style="font-size:0.78rem;color:var(--sx-text-3);display:flex;align-items:center;gap:0.3rem;"><i class="bi bi-4-circle-fill" style="color:var(--sx-fire);"></i>Run the show</div>
+                        </div>
+                        <div class="d-flex justify-content-center gap-3">
+                            <a href="{{ url_for('main.new_tournament') }}" class="btn btn-proam">
+                                <i class="bi bi-plus-circle me-1"></i> {{ ui('create_first_tournament') }}
+                            </a>
+                            <form method="POST" action="{{ url_for('demo.generate') }}" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-outline-info">
+                                    <i class="bi bi-database-fill-gear me-1"></i> Load Demo Data
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

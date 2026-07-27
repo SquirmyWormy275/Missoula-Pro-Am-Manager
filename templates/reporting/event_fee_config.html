@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Event Fee Configuration — {{ tournament.name }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0">Pro Event Fee Configuration</h4>
+        <a href="{{ url_for('reporting.fee_tracker', tournament_id=tournament.id) }}"
+           class="btn btn-outline-secondary btn-sm">Back to Fee Tracker</a>
+    </div>
+
+    <p class="text-muted small mb-3">
+        Set a default entry fee per event. Fees will be applied to all enrolled competitors.
+        Use the overwrite option to replace fees already on record; leave it unchecked to only
+        fill in competitors who have no fee set yet for that event.
+    </p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show py-2">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+    {% endwith %}
+
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">Entry Fees by Event</span>
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" name="overwrite" id="overwrite" value="1">
+                    <label class="form-check-label small" for="overwrite">
+                        Overwrite existing fees
+                    </label>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Event</th>
+                            <th class="text-center">Enrolled</th>
+                            <th class="text-center">Fees Set</th>
+                            <th class="text-center">Suggested</th>
+                            <th style="width:140px">Set Fee ($)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for row in event_rows %}
+                    <tr>
+                        <td>{{ row.event.display_name }}</td>
+                        <td class="text-center">{{ row.enrolled_count }}</td>
+                        <td class="text-center">
+                            {% if row.fee_set_count == row.enrolled_count and row.enrolled_count > 0 %}
+                            <span class="badge bg-success">{{ row.fee_set_count }}/{{ row.enrolled_count }}</span>
+                            {% elif row.fee_set_count > 0 %}
+                            <span class="badge bg-warning text-dark">{{ row.fee_set_count }}/{{ row.enrolled_count }}</span>
+                            {% else %}
+                            <span class="badge bg-secondary">0/{{ row.enrolled_count }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center text-muted small">
+                            {% if row.suggested_fee %}${{ "%.2f"|format(row.suggested_fee) }}{% else %}—{% endif %}
+                        </td>
+                        <td>
+                            <input type="number" name="fee_{{ row.event.id }}"
+                                   class="form-control form-control-sm"
+                                   step="0.01" min="0"
+                                   placeholder="0.00"
+                                   value="{{ "%.2f"|format(row.suggested_fee) if row.suggested_fee else '' }}">
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">No pro events configured for this tournament.</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">Apply Fees</button>
+            <a href="{{ url_for('reporting.fee_tracker', tournament_id=tournament.id) }}"
+               class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

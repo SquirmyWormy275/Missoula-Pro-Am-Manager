@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Audit Log{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0"><i class="bi bi-journal-text"></i> Audit Log</h4>
+        <a href="{{ url_for('auth.manage_users') }}" class="btn btn-outline-secondary btn-sm">Back to Users</a>
+    </div>
+
+    <!-- Filters -->
+    <form method="GET" class="card shadow-sm mb-3">
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label small mb-1">Action</label>
+                    <select class="form-select form-select-sm" name="action">
+                        <option value="">All actions</option>
+                        {% for a in distinct_actions %}
+                        <option value="{{ a }}" {% if action_filter == a %}selected{% endif %}>{{ a }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small mb-1">Entity Type</label>
+                    <select class="form-select form-select-sm" name="entity_type">
+                        <option value="">All types</option>
+                        {% for et in distinct_entity_types %}
+                        <option value="{{ et }}" {% if entity_type_filter == et %}selected{% endif %}>{{ et }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small mb-1">User ID</label>
+                    <input type="text" class="form-control form-control-sm" name="user_id"
+                           value="{{ user_id_filter }}" placeholder="e.g. 3">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small mb-1">From (date)</label>
+                    <input type="date" class="form-control form-control-sm" name="from"
+                           value="{{ from_filter }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small mb-1">To (date)</label>
+                    <input type="date" class="form-control form-control-sm" name="to"
+                           value="{{ to_filter }}">
+                </div>
+                <div class="col-md-1">
+                    <button type="submit" class="btn btn-proam btn-sm w-100">Filter</button>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <p class="text-muted small mb-2">Showing {{ entries|length }} of {{ total }} entries (page {{ page }}/{{ total_pages }})</p>
+
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th style="width:160px;">Date / Time</th>
+                    <th style="width:80px;">User ID</th>
+                    <th>Action</th>
+                    <th>Entity</th>
+                    <th>IP</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for entry in entries %}
+            <tr>
+                <td class="text-muted small">{{ entry.created_at.strftime('%Y-%m-%d %H:%M:%S') if entry.created_at else '—' }}</td>
+                <td>{{ entry.actor_user_id or '—' }}</td>
+                <td><span class="badge bg-secondary">{{ entry.action }}</span></td>
+                <td>
+                    {% if entry.entity_type %}
+                    <span class="badge bg-light text-dark border">{{ entry.entity_type }}</span>
+                    {% if entry.entity_id %}<small class="text-muted">#{{ entry.entity_id }}</small>{% endif %}
+                    {% else %}—{% endif %}
+                </td>
+                <td class="text-muted small">{{ entry.ip_address or '—' }}</td>
+                <td>
+                    {% if entry.details_json %}
+                    <code class="small" title="{{ entry.details_json }}">
+                        {{ entry.details_json[:80] }}{% if entry.details_json|length > 80 %}…{% endif %}
+                    </code>
+                    {% else %}—{% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted py-4">No audit log entries found.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <nav>
+        <ul class="pagination pagination-sm">
+            {% if page > 1 %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page - 1 }}&action={{ action_filter }}&entity_type={{ entity_type_filter }}&user_id={{ user_id_filter }}&from={{ from_filter }}&to={{ to_filter }}">Previous</a>
+            </li>
+            {% endif %}
+            <li class="page-item disabled"><span class="page-link">Page {{ page }} of {{ total_pages }}</span></li>
+            {% if page < total_pages %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page + 1 }}&action={{ action_filter }}&entity_type={{ entity_type_filter }}&user_id={{ user_id_filter }}&from={{ from_filter }}&to={{ to_filter }}">Next</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}

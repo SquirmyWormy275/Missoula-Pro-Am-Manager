@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Fee Tracker — {{ tournament.name }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0"><i class="bi bi-receipt"></i> Pro Entry Fee Tracker</h4>
+        <a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}" class="btn btn-outline-secondary btn-sm">Back to Pro Dashboard</a>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card text-center border-secondary shadow-sm">
+                <div class="card-body py-2">
+                    <div class="fs-4 fw-bold">${{ "%.2f"|format(total_owed) }}</div>
+                    <div class="small text-muted">Total Owed</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center border-success shadow-sm">
+                <div class="card-body py-2">
+                    <div class="fs-4 fw-bold text-success">${{ "%.2f"|format(total_paid) }}</div>
+                    <div class="small text-muted">Collected</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center border-danger shadow-sm">
+                <div class="card-body py-2">
+                    <div class="fs-4 fw-bold text-danger">${{ "%.2f"|format(total_outstanding) }}</div>
+                    <div class="small text-muted">Outstanding</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter toggle -->
+    <div class="mb-3 d-flex gap-2 align-items-center">
+        <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" id="showOutstandingOnly">
+            <label class="form-check-label small" for="showOutstandingOnly">Show outstanding only</label>
+        </div>
+        <span class="text-muted small ms-2" id="visibleCount"></span>
+    </div>
+
+    {% if competitor_data %}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle" id="feeTable">
+            <thead class="table-dark">
+                <tr>
+                    <th></th>
+                    <th>Competitor</th>
+                    <th>Gender</th>
+                    <th class="text-end">Events</th>
+                    <th class="text-end">Owed</th>
+                    <th class="text-end">Paid</th>
+                    <th class="text-end">Balance</th>
+                    <th class="text-center">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for d in competitor_data %}
+            {% set c = d.competitor %}
+            {% set balance = c.fees_balance %}
+            <tr class="fee-row {% if balance <= 0 %}table-success{% elif balance > 0 %}table-warning{% endif %}"
+                data-outstanding="{{ '1' if balance > 0 else '0' }}">
+                <!-- Expand toggle -->
+                <td style="width:28px;">
+                    {% if d.events %}
+                    <button class="btn btn-link btn-sm p-0 expand-btn"
+                            data-target="detail-{{ c.id }}"
+                            title="Show event breakdown"
+                            style="color:inherit; font-size:0.85rem;">
+                        <i class="bi bi-chevron-right expand-icon"></i>
+                    </button>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="{{ url_for('registration.pro_competitor_detail', tournament_id=tournament.id, competitor_id=c.id) }}"
+                       class="text-decoration-none fw-semibold">{{ c.name }}</a>
+                </td>
+                <td>{{ c.gender }}</td>
+                <td class="text-end">{{ d.events|length }}</td>
+                <td class="text-end">${{ "%.2f"|format(c.total_fees_owed) }}</td>
+                <td class="text-end text-success">${{ "%.2f"|format(c.total_fees_paid) }}</td>
+                <td class="text-end fw-semibold {% if balance > 0 %}text-danger{% else %}text-success{% endif %}">
+                    ${{ "%.2f"|format(balance) }}
+                </td>
+                <td class="text-center">
+                    <form method="POST" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="competitor_id" value="{{ c.id }}">
+                        {% if balance <= 0 and c.total_fees_owed > 0 %}
+                        <input type="hidden" name="action" value="unmark_all">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">Unmark</button>
+                        {% else %}
+                        <input type="hidden" name="action" value="mark_all_paid">
+                        <button type="submit" class="btn btn-sm btn-outline-success">Mark Paid</button>
+                        {% endif %}
+                    </form>
+                </td>
+            </tr>
+            <!-- Per-event detail row (hidden by default) -->
+            {% if d.events %}
+            <tr id="detail-{{ c.id }}" class="detail-row d-none">
+                <td colspan="8" class="p-0 ps-4 pe-3 pb-2">
+                    <table class="table table-sm mb-0 border">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Event</th>
+                                <th class="text-end">Fee</th>
+                                <th class="text-center">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for ev in d.events %}
+                        <tr>
+                            <td>{{ ev.name }}</td>
+                            <td class="text-end">${{ "%.2f"|format(ev.fee) }}</td>
+                            <td class="text-center">
+                                {% if ev.paid %}
+                                <span class="badge bg-success">Paid</span>
+                                {% else %}
+                                <span class="badge bg-warning text-dark">Unpaid</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-info">No active pro competitors registered yet.</div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    // Expand/collapse per-event detail rows
+    document.querySelectorAll('.expand-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var target = document.getElementById(btn.dataset.target);
+            var icon = btn.querySelector('.expand-icon');
+            if (!target) return;
+            var hidden = target.classList.contains('d-none');
+            target.classList.toggle('d-none', !hidden);
+            icon.className = hidden ? 'bi bi-chevron-down expand-icon' : 'bi bi-chevron-right expand-icon';
+        });
+    });
+
+    // Show outstanding only toggle
+    var filterToggle = document.getElementById('showOutstandingOnly');
+    var countLabel = document.getElementById('visibleCount');
+
+    function applyFilter() {
+        var outstandingOnly = filterToggle.checked;
+        var visible = 0;
+        var total = 0;
+        document.querySelectorAll('tr.fee-row').forEach(function (row) {
+            var isOutstanding = row.dataset.outstanding === '1';
+            var detailId = row.querySelector('.expand-btn') ? row.querySelector('.expand-btn').dataset.target : null;
+            var hide = outstandingOnly && !isOutstanding;
+            row.style.display = hide ? 'none' : '';
+            if (detailId) {
+                var detail = document.getElementById(detailId);
+                if (detail && hide) { detail.classList.add('d-none'); }
+            }
+            total++;
+            if (!hide) visible++;
+        });
+        countLabel.textContent = outstandingOnly ? (visible + ' outstanding') : '';
+    }
+
+    filterToggle.addEventListener('change', applyFilter);
+    applyFilter();
+})();
+</script>
+{% endblock %}

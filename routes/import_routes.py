@@ -1,0 +1,481 @@
+"""
+Pro entry importer routes.
+
+Upload -> Review -> Confirm flow for importing Google Forms xlsx exports
+into the ProCompetitor table.
+"""
+import json
+import logging
+import os
+import uuid
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+
+from database import db
+from models import Event, EventResult, ProCompetitor, Tournament
+from services.audit import log_action
+from services.gear_sharing import build_name_index, parse_gear_sharing_details, resolve_partner_name
+from services.upload_security import malware_scan, save_upload, validate_excel_upload
+
+import_pro_bp = Blueprint('import_pro', __name__)
+
+_ALLOWED = {'xlsx', 'xls'}
+
+# Fee lookup: canonical event name -> amount (used when writing entry_fees JSON)
+_EVENT_FEES = {
+    'Springboard':            10,
+    'Springboard (L)':          10,
+    'Springboard (R)':          10,
+    'Pro 1-Board':              10,
+    '1-Board Springboard':      10,
+    "Men's Underhand":          10,
+    "Women's Underhand":        10,
+    "Women's Standing Block":   10,
+    "Men's Single Buck":         5,
+    "Women's Single Buck":       5,
+    "Men's Double Buck":         5,
+    'Jack & Jill Sawing':        5,
+    'Jack & Jill':               5,
+    'Hot Saw':                   5,
+    'Obstacle Pole':             5,
+    'Pole Climb':                5,
+    'Speed Climb':               5,
+    'Cookie Stack':              5,
+    'Partnered Axe Throw':       5,
+}
+
+
+def _allowed(filename: str) -> bool:
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in _ALLOWED
+
+
+def _session_key(tournament_id: int) -> str:
+    return f'pro_import_{tournament_id}'
+
+
+def _temp_path(filename: str) -> str:
+    return os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+
+
+# ---------------------------------------------------------------------------
+# GET /import/<id>/pro-entries  — show upload form
+# POST /import/<id>/pro-entries — process uploaded file, redirect to review
+# ---------------------------------------------------------------------------
+@import_pro_bp.route('/<int:tournament_id>/pro-entries', methods=['GET', 'POST'])
+def upload_pro_entries(tournament_id):
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    if request.method == 'GET':
+        return render_template('pro/import_upload.html', tournament=tournament)
+
+    # --- POST: receive file ---
+    if 'file' not in request.files:
+        flash('No file selected.', 'error')
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    f = request.files['file']
+    if f.filename == '':
+        flash('No file selected.', 'error')
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    if not _allowed(f.filename):
+        flash('File must be an .xlsx or .xls spreadsheet.', 'error')
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    validation = validate_excel_upload(f, _ALLOWED)
+    if not validation.ok:
+        flash(validation.error, 'error')
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    upload_path = save_upload(f, current_app.config['UPLOAD_FOLDER'], validation.safe_name)
+
+    # Parse
+    try:
+        malware_scan(
+            upload_path,
+            enabled=bool(current_app.config.get('ENABLE_UPLOAD_MALWARE_SCAN', False)),
+            command_template=current_app.config.get('MALWARE_SCAN_COMMAND', '')
+        )
+        from services.pro_entry_importer import compute_review_flags, parse_pro_entries
+        entries = parse_pro_entries(upload_path)
+    except Exception as exc:
+        current_app.logger.exception(
+            'Pro-entry parse failed for tournament %s upload %s', tournament_id, upload_path,
+        )
+        flash(
+            'Could not parse file. Confirm it is a valid .xlsx export from the entry form, '
+            'then try again. If the problem persists, contact admin.',
+            'error',
+        )
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    if not entries:
+        flash('No competitor entries found in the file.', 'warning')
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    # Run enhanced import pipeline for validation, cross-validation, and report
+    import_report_text = ''
+    try:
+        from services.registration_import import run_import_pipeline, to_entry_dicts
+        import_result = run_import_pipeline(upload_path)
+        import_report_text = import_result.report_text()
+        # Use enhanced entries (with resolved partners, deduped, etc.)
+        if import_result.competitors and not import_result.errors:
+            entries = to_entry_dicts(import_result)
+    except Exception as exc:
+        logger.warning('Enhanced import pipeline failed, falling back to basic parser: %s', exc)
+
+    # Compute review flags (#18: pass existing competitor names for duplicate detection)
+    existing_names = [
+        c.name for c in tournament.pro_competitors.filter_by(status='active').all()
+    ]
+    compute_review_flags(entries, existing_names=existing_names)
+
+    # Persist parsed data and import report to temp JSON files
+    temp_name = f'pro_import_{tournament_id}_{uuid.uuid4().hex}.json'
+    with open(_temp_path(temp_name), 'w', encoding='utf-8') as fh:
+        json.dump(entries, fh, ensure_ascii=False)
+
+    # Store import report alongside parsed data
+    report_name = temp_name.replace('.json', '_report.txt')
+    if import_report_text:
+        try:
+            with open(_temp_path(report_name), 'w', encoding='utf-8') as fh:
+                fh.write(import_report_text)
+        except OSError:
+            pass
+
+    # Store only the filename in the session
+    session[_session_key(tournament_id)] = temp_name
+    log_action('pro_upload_parsed', 'tournament', tournament_id, {'entries': len(entries), 'filename': validation.safe_name})
+    db.session.commit()
+
+    return redirect(url_for('import_pro.review_pro_entries', tournament_id=tournament_id))
+
+
+# ---------------------------------------------------------------------------
+# GET /import/<id>/pro-entries/review — show review table
+# ---------------------------------------------------------------------------
+@import_pro_bp.route('/<int:tournament_id>/pro-entries/review')
+def review_pro_entries(tournament_id):
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    temp_name = session.get(_session_key(tournament_id))
+    if not temp_name:
+        flash('No import data found. Please upload the file again.', 'error')
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    try:
+        with open(_temp_path(temp_name), encoding='utf-8') as fh:
+            entries = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        flash('Import data is missing or corrupt. Please upload the file again.', 'error')
+        session.pop(_session_key(tournament_id), None)
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    total_competitors = len(entries)
+    total_fees        = sum(e['total_fees'] for e in entries)
+    has_warnings      = any(e.get('flags') for e in entries)
+
+    # Load import report if available
+    import_report = ''
+    report_name = temp_name.replace('.json', '_report.txt')
+    try:
+        with open(_temp_path(report_name), encoding='utf-8') as fh:
+            import_report = fh.read()
+    except (OSError, ValueError):
+        pass
+
+    return render_template(
+        'pro/import_review.html',
+        tournament=tournament,
+        entries=entries,
+        total_competitors=total_competitors,
+        total_fees=total_fees,
+        has_warnings=has_warnings,
+        import_report=import_report,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /import/<id>/pro-entries/confirm — write to database
+# ---------------------------------------------------------------------------
+@import_pro_bp.route('/<int:tournament_id>/pro-entries/confirm', methods=['POST'])
+def confirm_pro_entries(tournament_id):
+    tournament = Tournament.query.get_or_404(tournament_id)
+
+    temp_name = session.get(_session_key(tournament_id))
+    if not temp_name:
+        flash('No import data found. Please upload the file again.', 'error')
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    try:
+        with open(_temp_path(temp_name), encoding='utf-8') as fh:
+            entries = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        flash('Import data is missing or corrupt. Please upload the file again.', 'error')
+        session.pop(_session_key(tournament_id), None)
+        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    # Build event name -> Event lookup for this tournament.
+    # Index by both raw name ("Standing Block") and display_name ("Women's Standing Block")
+    # so that gendered canonical names from _EVENT_MAP resolve to the correct Event record.
+    pro_events = Event.query.filter_by(tournament_id=tournament_id, event_type='pro').all()
+    event_by_name = {}
+    for e in pro_events:
+        event_by_name[e.name.strip()] = e
+        event_by_name[e.display_name.strip()] = e
+
+    imported = 0
+    updated  = 0
+    errors   = []
+    gear_parse_warnings = 0
+    gear_q27_inconsistencies: list = []
+    # Competitors whose gear_sharing was just written and need to be mirrored
+    # to their partners after the main commit (gear audit fix G5 — 2026-04-07).
+    gear_synced_competitors: list = []
+    now      = datetime.utcnow()
+
+    existing_names = [c.name for c in ProCompetitor.query.filter_by(tournament_id=tournament_id).all()]
+    incoming_names = [str(e.get('name') or '').strip() for e in entries if str(e.get('name') or '').strip()]
+    name_index = build_name_index(existing_names + incoming_names)
+
+    for entry in entries:
+        try:
+            # ---- Find or create competitor ----
+            competitor = None
+            if entry.get('email'):
+                competitor = ProCompetitor.query.filter_by(
+                    tournament_id=tournament_id,
+                    email=entry['email']
+                ).first()
+
+            is_new = competitor is None
+            if is_new:
+                competitor = ProCompetitor(tournament_id=tournament_id)
+
+            # ---- Scalar fields ----
+            competitor.name          = entry['name']
+            competitor.gender        = entry['gender']
+            competitor.email         = entry.get('email')
+            competitor.phone         = entry.get('phone')
+            competitor.address       = entry.get('mailing_address')  # existing column
+            competitor.is_ala_member = entry.get('ala_member', False)
+            competitor.pro_am_lottery_opt_in = entry.get('relay_lottery', False)
+            competitor.waiver_accepted    = entry.get('waiver_accepted', False)
+            competitor.waiver_signature   = entry.get('waiver_signature')
+            competitor.gear_sharing_details = entry.get('gear_sharing_details')
+            competitor.notes          = entry.get('notes')
+            competitor.springboard_slow_heat = bool(entry.get('springboard_slow_heat', False))
+            # Handedness: None sentinel from parser means the xlsx form lacked
+            # both Springboard (L) and Springboard (R) columns, so we have no
+            # signal and must preserve any existing manual value on the row.
+            lh_flag = entry.get('is_left_handed_springboard')
+            if lh_flag is not None:
+                competitor.is_left_handed_springboard = bool(lh_flag)
+            competitor.total_fees     = entry.get('total_fees', 0)
+            competitor.import_timestamp = now
+
+            if entry.get('submission_timestamp'):
+                try:
+                    competitor.submission_timestamp = datetime.fromisoformat(
+                        entry['submission_timestamp']
+                    )
+                except (ValueError, TypeError):
+                    pass
+
+            # ---- Event entry list ----
+            # Prefer event IDs when the event exists; fall back to name strings.
+            event_ids_or_names = []
+            for event_name in entry.get('events', []):
+                ev = event_by_name.get(event_name)
+                event_ids_or_names.append(ev.id if ev else event_name)
+            competitor.set_events_entered(event_ids_or_names)
+
+            # Refresh mapping payloads on import update to avoid stale keys.
+            competitor.entry_fees = '{}'
+            competitor.partners = '{}'
+            competitor.gear_sharing = '{}'
+
+            # ---- Entry fees JSON ----
+            for event_name in entry.get('events', []):
+                ev  = event_by_name.get(event_name)
+                key = str(ev.id) if ev else event_name
+                competitor.set_entry_fee(key, _EVENT_FEES.get(event_name, 0))
+            if entry.get('relay_lottery'):
+                competitor.set_entry_fee('relay', 5)
+
+            # ---- Partners JSON ----
+            for event_name, partner_name in entry.get('partners', {}).items():
+                ev  = event_by_name.get(event_name)
+                key = str(ev.id) if ev else event_name
+                canonical_partner = resolve_partner_name(partner_name, name_index)
+                if canonical_partner:
+                    competitor.set_partner(key, canonical_partner)
+
+            # ---- Gear sharing JSON (parsed from free-text details) ----
+            # Audit gap #7: previously this only ran when Q27 ("Are you sharing
+            # gear?") was True. Competitors who answered No but typed sharing
+            # text had their text saved to gear_sharing_details and never parsed
+            # — silently invisible to the manager UI. Always parse if there is
+            # text. Track Q27/text inconsistency separately so the judge sees
+            # mismatches in the import summary.
+            details_text = (entry.get('gear_sharing_details') or '').strip()
+            q27_answer = bool(entry.get('gear_sharing'))
+            if details_text:
+                parsed_gear, warnings = parse_gear_sharing_details(
+                    details_text=details_text,
+                    event_pool=pro_events,
+                    name_index=name_index,
+                    self_name=entry.get('name') or '',
+                    entered_event_names=entry.get('events') or [],
+                )
+                for gear_key, partner_name in parsed_gear.items():
+                    competitor.set_gear_sharing(gear_key, partner_name)
+                if parsed_gear:
+                    gear_synced_competitors.append(competitor)
+                if warnings:
+                    gear_parse_warnings += 1
+                if not q27_answer:
+                    # Q27 says No but text is present — judge should reconcile.
+                    gear_q27_inconsistencies.append(
+                        f"{competitor.name}: answered No to Q27 but provided gear-sharing text"
+                    )
+            elif q27_answer:
+                # Q27 says Yes but no text — incomplete entry.
+                gear_q27_inconsistencies.append(
+                    f"{competitor.name}: answered Yes to Q27 but provided no gear-sharing text"
+                )
+
+            if is_new:
+                db.session.add(competitor)
+
+            db.session.flush()  # ensure competitor.id is available
+
+            # ---- EventResult records (only when event exists in tournament) ----
+            for event_name in entry.get('events', []):
+                ev = event_by_name.get(event_name)
+                if ev is None:
+                    continue  # event not yet configured — skip result row
+                existing_result = EventResult.query.filter_by(
+                    event_id=ev.id,
+                    competitor_id=competitor.id,
+                    competitor_type='pro'
+                ).first()
+                if not existing_result:
+                    partner_name = entry.get('partners', {}).get(event_name)
+                    db.session.add(EventResult(
+                        event_id=ev.id,
+                        competitor_id=competitor.id,
+                        competitor_type='pro',
+                        competitor_name=competitor.display_name,
+                        partner_name=partner_name,
+                        status='pending',
+                    ))
+
+            if is_new:
+                imported += 1
+            else:
+                updated += 1
+
+        except Exception as exc:
+            errors.append(f"{entry.get('name', 'Unknown')}: {exc}")
+
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Database error during commit: {exc}', 'error')
+        return redirect(url_for('import_pro.review_pro_entries', tournament_id=tournament_id))
+
+    # Post-import gear parse: catch any competitors whose gear details weren't resolved
+    # per-entry (e.g. when the 'gear_sharing' boolean field was absent/falsy on the form row).
+    from services.gear_sharing import parse_all_gear_details
+    gear_post = parse_all_gear_details(tournament)
+    post_parsed_msg = ''
+    if gear_post['parsed']:
+        db.session.commit()
+        post_parsed_msg = f' Auto-parsed gear-sharing details for {gear_post["parsed"]} competitor(s).'
+
+    # Mirror gear-sharing entries onto each partner's row so the gear manager
+    # shows both sides without requiring a manual "Complete one-sided pairs"
+    # click (gear audit fix G5 — 2026-04-07).  Build the lookup once after the
+    # main commit so newly imported competitors are present in the tournament.
+    try:
+        from services.gear_sharing import (
+            normalize_person_name as _norm,
+        )
+        from services.gear_sharing import (
+            sync_all_gear_for_competitor,
+        )
+        all_pro_now = ProCompetitor.query.filter_by(
+            tournament_id=tournament_id, status='active'
+        ).all()
+        pro_lookup = {_norm(c.name): c for c in all_pro_now}
+        # Combine per-entry parses + post-import parses (lookup current rows by id).
+        gear_synced_ids = {c.id for c in gear_synced_competitors if getattr(c, 'id', None)}
+        synced_set = [c for c in all_pro_now if c.id in gear_synced_ids]
+        # Add any competitor whose gear_sharing was populated by parse_all_gear_details.
+        if gear_post['parsed']:
+            for c in all_pro_now:
+                if c.id not in gear_synced_ids and c.get_gear_sharing():
+                    synced_set.append(c)
+        for c in synced_set:
+            sync_all_gear_for_competitor(c, pro_lookup, old_gear={})
+        if synced_set:
+            db.session.commit()
+            flash('Gear sharing imported and mirrored for all matched partners.', 'info')
+    except Exception as exc:
+        db.session.rollback()
+        flash(f'Gear sharing mirror skipped: {exc}', 'warning')
+
+    # Clean up temp files and session key
+    try:
+        os.remove(_temp_path(temp_name))
+    except OSError:
+        pass
+    # Also clean up report file if it exists
+    report_name = temp_name.replace('.json', '_report.txt')
+    try:
+        os.remove(_temp_path(report_name))
+    except OSError:
+        pass
+    session.pop(_session_key(tournament_id), None)
+
+    summary = f'Import complete: {imported} added, {updated} updated.'
+    if gear_parse_warnings:
+        summary += f' Gear-sharing parse warnings on {gear_parse_warnings} row(s); review competitor detail pages.'
+    if gear_q27_inconsistencies:
+        n = len(gear_q27_inconsistencies)
+        summary += f' Q27/text mismatch on {n} row(s) — judge should reconcile in the Gear Sharing Manager.'
+    summary += post_parsed_msg
+    log_action('pro_import_confirmed', 'tournament', tournament_id, {
+        'imported': imported,
+        'updated': updated,
+        'errors': len(errors),
+        'gear_post_parsed': gear_post['parsed'],
+        'gear_q27_inconsistencies': len(gear_q27_inconsistencies),
+        'gear_q27_inconsistency_examples': gear_q27_inconsistencies[:5],
+    })
+    db.session.commit()
+    if errors:
+        summary += f'  {len(errors)} error(s): ' + '; '.join(errors[:5])
+        if len(errors) > 5:
+            summary += f' (and {len(errors) - 5} more)'
+        flash(summary, 'warning')
+    else:
+        flash(summary, 'success')
+
+    return redirect(url_for('main.pro_dashboard', tournament_id=tournament_id))

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Pro Spectator View - {{ COMPETITION.app_title }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h3 class="mb-0">{{ tournament.name }} {{ tournament.year }} - Pro Standings</h3>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-secondary btn-sm"
+               href="{{ url_for('portal.spectator_dashboard', tournament_id=tournament.id, view=view_mode) }}">Back to Selection</a>
+            <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
+               href="{{ url_for('portal.spectator_pro_standings', tournament_id=tournament.id, view='desktop' if mobile_view else 'mobile') }}">
+                {{ 'Desktop View' if mobile_view else 'Mobile View' }}
+            </a>
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0">Completed Pro Event Results</h6>
+        </div>
+        <div class="card-body">
+            {% if mobile_view %}
+            <div class="d-grid gap-2">
+                {% for summary in event_summaries %}
+                <a class="card text-decoration-none text-reset"
+                   href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=summary.event_id, view=view_mode) }}">
+                    <div class="card-body py-2">
+                        <div class="fw-semibold">{{ summary.event_display_name }}</div>
+                        <small class="text-muted">{{ summary.result_count }} results posted</small>
+                    </div>
+                </a>
+                {% else %}
+                <div class="text-center py-3">
+                    <i class="bi bi-clipboard-check text-sx-subtle d-block mb-2" style="font-size:1.5rem;opacity:0.4;"></i>
+                    <span class="text-muted">Results will appear here as events are finalized.</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Event</th>
+                            <th>Results Posted</th>
+                            <th>View</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for summary in event_summaries %}
+                        <tr>
+                            <td>{{ summary.event_display_name }}</td>
+                            <td>{{ summary.result_count }}</td>
+                            <td><a href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=summary.event_id, view=view_mode) }}">Open</a></td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="3" class="text-center py-3">
+                            <i class="bi bi-clipboard-check d-block mb-1" style="font-size:1.2rem;opacity:0.3;"></i>
+                            <span class="text-muted">Results will appear here as events are finalized.</span>
+                        </td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

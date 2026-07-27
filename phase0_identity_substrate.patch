@@ -1,0 +1,1057 @@
+diff --git a/migrations/versions/n4c5d6e7f8a9_add_competitor_identity_and_event_log.py b/migrations/versions/n4c5d6e7f8a9_add_competitor_identity_and_event_log.py
+new file mode 100644
+index 0000000..e9d0a81
+--- /dev/null
++++ b/migrations/versions/n4c5d6e7f8a9_add_competitor_identity_and_event_log.py
+@@ -0,0 +1,224 @@
++"""Add the competitor identity table and the append-only tournament event log.
++
++Revision ID: n4c5d6e7f8a9
++Revises: m3b4c5d6e7f8
++Create Date: 2026-07-27
++
++PG-safety: no batch_alter_table except around `alter_column` /
++`create_unique_constraint` / `create_foreign_key`, which is the exemption
++`tests/test_pg_migration_safety.py::_BATCH_REQUIRED_OPS` grants. No Boolean
++server_default. No SQLite-only introspection statements. Both new tables are
++created with direct `op.create_table`.
++
++(That sentence is deliberately worded around the SQLite introspection keyword.
++`tests/test_pg_migration_safety.py::TestNoSqlitePragma` greps the full file
++source and only skips lines beginning with `#`, so naming the keyword inside
++this docstring fails the scan. Prose is not a valid reason to add an allowlist
++entry.)
++
++What this migration does
++========================
++1. Creates `competitors`: one row per competitor, college or pro, carrying the
++   single cross-discipline `uid`.
++2. Adds `uid` to `college_competitors` and `pro_competitors`, nullable.
++3. Backfills one identity row per existing competitor and writes the `uid` back.
++4. Promotes `uid` to NOT NULL + UNIQUE + FOREIGN KEY.
++5. Creates `tournament_event`, the append-only intent log.
++
++Nothing in the application reads or writes either new table in this phase. The
++one behavioural change is the mapper-level allocator in
++`models/competitor_identity.py`, which fills `uid` on every future insert.
++
++Why batch_alter_table in step 4
++===============================
++SQLite cannot `ALTER TABLE ... ALTER COLUMN`, cannot add a UNIQUE constraint to
++an existing table, and cannot add a FOREIGN KEY to an existing table. All three
++require Alembic batch mode, which on SQLite does the table-rebuild dance and on
++PostgreSQL emits direct `ALTER TABLE` DDL. Same precedent and same reasoning as
++`f0a1b2c3d4e6_points_columns_to_numeric.py`.
++
++CHECK constraints across the SQLite batch rebuild
++=================================================
++`college_competitors` carries 3 CHECK constraints and `pro_competitors` carries
++4, all added by `f5a6b7c8d9e0`. No parity test in this repo compares CHECK
++constraints, so a rebuild that silently dropped them would leave CI green while
++the database stopped enforcing gender, status, and the non-negative money
++invariants.
++
++It does not drop them. Under SQLAlchemy 2.0.23 / Alembic 1.18.5 the SQLite
++dialect reflects named CHECK constraints and batch mode carries them into the
++rebuilt table. This was measured directly against `sqlite_master`, not assumed.
++Passing them again via `table_args` was tried first and is WRONG: it emits every
++CHECK twice, because reflection has already supplied them.
++
++`tests/test_identity_migration.py` asserts the exact counts so a future
++SQLAlchemy upgrade that changes this reflection behaviour fails loudly instead
++of silently disarming the constraints.
++
++Why the backfill inserts row by row
++===================================
++An `INSERT ... SELECT` into `competitors` cannot report which generated uid
++belongs to which source row, and there is no portable `INSERT ... RETURNING`
++that both dialects consume the same way through Alembic. Executing one insert
++per competitor lets `inserted_primary_key` do the mapping on PostgreSQL
++(RETURNING) and on SQLite (lastrowid) alike. The production mirror holds 64
++college and 49 pro rows, so this is 113 inserts plus 113 updates.
++
++Re-running after a partial failure cannot double-allocate: every statement is
++scoped by `WHERE uid IS NULL`, so a row that already has an identity is skipped.
++"""
++import sqlalchemy as sa
++from alembic import op
++from sqlalchemy.dialects import postgresql
++
++# revision identifiers, used by Alembic.
++revision = "n4c5d6e7f8a9"
++down_revision = "m3b4c5d6e7f8"
++branch_labels = None
++depends_on = None
++
++
++# Must match models/_types.py exactly or tests/test_migration_integrity.py
++# reports a type mismatch between the create_all schema and the upgrade schema.
++BIG_ID = sa.BigInteger().with_variant(sa.Integer(), "sqlite")
++JSON_PAYLOAD = postgresql.JSONB().with_variant(sa.Text(), "sqlite")
++
++def _identity_table():
++    """Core handle on `competitors` for the backfill.
++
++    This is a full `sa.Table` with `primary_key=True` on `uid`, not the
++    lightweight `sa.table()` / `sa.column()` form. That distinction is load
++    bearing and was found by measurement, not by reading: the lightweight form
++    carries no primary key, so SQLAlchemy does not append a RETURNING clause on
++    PostgreSQL and `result.inserted_primary_key` comes back as an empty tuple.
++    The first version of this migration used `sa.table()`, passed on SQLite
++    (where the value is recovered from `cursor.lastrowid` regardless), and died
++    with `IndexError: tuple index out of range` on the first row of the
++    PostgreSQL backfill. Declaring the primary key makes SQLAlchemy emit
++    RETURNING on PG and keep using lastrowid on SQLite, so one code path serves
++    both dialects.
++    """
++    return sa.Table(
++        "competitors",
++        sa.MetaData(),
++        sa.Column("uid", BIG_ID, primary_key=True, autoincrement=True),
++        sa.Column("kind", sa.String(16)),
++        sa.Column("tournament_id", sa.Integer),
++        sa.Column("created_at", sa.DateTime),
++    )
++
++
++def _backfill(connection, source_table, kind):
++    """Allocate one identity per un-identified row in `source_table`."""
++    identity = _identity_table()
++    now = sa.func.now()
++
++    rows = connection.execute(
++        sa.text(
++            f"SELECT id, tournament_id FROM {source_table} "
++            f"WHERE uid IS NULL ORDER BY id"
++        )
++    ).fetchall()
++
++    for row_id, tournament_id in rows:
++        result = connection.execute(
++            identity.insert().values(
++                kind=kind,
++                tournament_id=tournament_id,
++                created_at=now,
++            )
++        )
++        new_uid = result.inserted_primary_key[0]
++        connection.execute(
++            sa.text(
++                f"UPDATE {source_table} SET uid = :uid "
++                f"WHERE id = :row_id AND uid IS NULL"
++            ),
++            {"uid": new_uid, "row_id": row_id},
++        )
++
++
++def upgrade():
++    # ------------------------------------------------------------------
++    # 1. The identity table.
++    # ------------------------------------------------------------------
++    op.create_table(
++        "competitors",
++        sa.Column("uid", BIG_ID, autoincrement=True, nullable=False),
++        sa.Column("kind", sa.String(length=16), nullable=False),
++        sa.Column("tournament_id", sa.Integer(), nullable=False),
++        sa.Column("created_at", sa.DateTime(), nullable=False),
++        sa.CheckConstraint("kind IN ('college', 'pro')", name="ck_competitors_kind_valid"),
++        sa.ForeignKeyConstraint(["tournament_id"], ["tournaments.id"], ondelete="CASCADE"),
++        sa.PrimaryKeyConstraint("uid"),
++    )
++    op.create_index("ix_competitors_tournament_id", "competitors", ["tournament_id"], unique=False)
++
++    # ------------------------------------------------------------------
++    # 2. Nullable uid on both competitor tables.
++    # ------------------------------------------------------------------
++    op.add_column("college_competitors", sa.Column("uid", BIG_ID, nullable=True))
++    op.add_column("pro_competitors", sa.Column("uid", BIG_ID, nullable=True))
++
++    # ------------------------------------------------------------------
++    # 3. Backfill.
++    # ------------------------------------------------------------------
++    connection = op.get_bind()
++    _backfill(connection, "college_competitors", "college")
++    _backfill(connection, "pro_competitors", "pro")
++
++    # ------------------------------------------------------------------
++    # 4. Promote to NOT NULL + UNIQUE + FOREIGN KEY.
++    # ------------------------------------------------------------------
++    with op.batch_alter_table("college_competitors", schema=None) as batch_op:
++        batch_op.alter_column("uid", existing_type=BIG_ID, nullable=False)
++        batch_op.create_unique_constraint("uq_college_competitors_uid", ["uid"])
++        batch_op.create_foreign_key(
++            "fk_college_competitors_uid", "competitors", ["uid"], ["uid"]
++        )
++
++    with op.batch_alter_table("pro_competitors", schema=None) as batch_op:
++        batch_op.alter_column("uid", existing_type=BIG_ID, nullable=False)
++        batch_op.create_unique_constraint("uq_pro_competitors_uid", ["uid"])
++        batch_op.create_foreign_key(
++            "fk_pro_competitors_uid", "competitors", ["uid"], ["uid"]
++        )
++
++    # ------------------------------------------------------------------
++    # 5. The append-only intent log.
++    # ------------------------------------------------------------------
++    op.create_table(
++        "tournament_event",
++        sa.Column("id", BIG_ID, autoincrement=True, nullable=False),
++        sa.Column("tournament_id", sa.Integer(), nullable=False),
++        sa.Column("seq", sa.BigInteger(), nullable=False),
++        sa.Column("kind", sa.String(length=64), nullable=False),
++        sa.Column("actor_user_id", sa.Integer(), nullable=True),
++        sa.Column("occurred_at", sa.DateTime(), nullable=False),
++        sa.Column("payload", JSON_PAYLOAD, nullable=False),
++        sa.Column("parent_seq", sa.BigInteger(), nullable=True),
++        sa.Column("state_hash", sa.CHAR(length=64), nullable=True),
++        sa.Column("schema_version", sa.SmallInteger(), server_default=sa.text("1"), nullable=False),
++        sa.ForeignKeyConstraint(["actor_user_id"], ["users.id"]),
++        sa.ForeignKeyConstraint(["tournament_id"], ["tournaments.id"], ondelete="CASCADE"),
++        sa.PrimaryKeyConstraint("id"),
++        sa.UniqueConstraint("tournament_id", "seq", name="uq_tournament_event_tournament_seq"),
++    )
++
++
++def downgrade():
++    op.drop_table("tournament_event")
++
++    with op.batch_alter_table("pro_competitors", schema=None) as batch_op:
++        batch_op.drop_constraint("fk_pro_competitors_uid", type_="foreignkey")
++        batch_op.drop_constraint("uq_pro_competitors_uid", type_="unique")
++
++    with op.batch_alter_table("college_competitors", schema=None) as batch_op:
++        batch_op.drop_constraint("fk_college_competitors_uid", type_="foreignkey")
++        batch_op.drop_constraint("uq_college_competitors_uid", type_="unique")
++
++    op.drop_column("pro_competitors", "uid")
++    op.drop_column("college_competitors", "uid")
++
++    op.drop_index("ix_competitors_tournament_id", table_name="competitors")
++    op.drop_table("competitors")
+diff --git a/models/__init__.py b/models/__init__.py
+index 90d1c31..30f2b48 100644
+--- a/models/__init__.py
++++ b/models/__init__.py
+@@ -4,6 +4,7 @@ SQLAlchemy models for the Missoula Pro Am Tournament Manager.
+ from .audit_log import AuditLog
+ from .background_job import BackgroundJob
+ from .competitor import CollegeCompetitor, ProCompetitor
++from .competitor_identity import Competitor
+ from .event import Event, EventResult
+ from .heat import Flight, Heat, HeatAssignment
+ from .payout_template import PayoutTemplate
+@@ -13,6 +14,7 @@ from .pro_event_rank import ProEventRank
+ from .school_captain import SchoolCaptain
+ from .team import Team
+ from .tournament import Tournament
++from .tournament_event import TournamentEvent
+ from .user import User
+ from .wood_config import WoodConfig
+ 
+@@ -35,4 +37,6 @@ __all__ = [
+     'PayoutTemplate',
+     'PrintTracker',
+     'PrintEmailLog',
++    'Competitor',
++    'TournamentEvent',
+ ]
+diff --git a/models/_types.py b/models/_types.py
+new file mode 100644
+index 0000000..3ba85ba
+--- /dev/null
++++ b/models/_types.py
+@@ -0,0 +1,27 @@
++"""Shared column type helpers for the event-log substrate.
++
++BIG_ID
++    Renders BIGINT (BIGSERIAL when used as an autoincrement primary key) on
++    PostgreSQL, and plain INTEGER on SQLite.  The variant is required, not
++    cosmetic: SQLite only treats a column declared *exactly* ``INTEGER PRIMARY
++    KEY`` as a rowid alias.  ``BIGINT PRIMARY KEY`` on SQLite does not
++    autoincrement, so every insert in the test suite would have to supply its
++    own id.  Production runs PostgreSQL, where BIGINT is what the log actually
++    needs.
++
++JSON_PAYLOAD
++    Renders JSONB on PostgreSQL (indexable, queryable) and TEXT on SQLite.
++    ``sa.JSON`` was not used because it maps to plain JSON on PostgreSQL, which
++    gives up every advantage JSONB has.
++
++Both constants must be used identically in the models and in the Alembic
++migration that creates the columns, or tests/test_migration_integrity.py will
++report a type mismatch between the ``db.create_all()`` schema and the
++``flask db upgrade`` schema.
++"""
++import sqlalchemy as sa
++from sqlalchemy.dialects import postgresql
++
++BIG_ID = sa.BigInteger().with_variant(sa.Integer(), 'sqlite')
++
++JSON_PAYLOAD = postgresql.JSONB().with_variant(sa.Text(), 'sqlite')
+diff --git a/models/competitor.py b/models/competitor.py
+index 16f6134..df2bf92 100644
+--- a/models/competitor.py
++++ b/models/competitor.py
+@@ -10,6 +10,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
+ 
+ from database import db
+ 
++from ._types import BIG_ID
++from .competitor_identity import attach_identity_allocator
++
+ logger = logging.getLogger(__name__)
+ 
+ MAX_NAME_LENGTH = 100  # Hard cap; String(200) column has room but UI breaks above ~100 chars
+@@ -66,6 +69,12 @@ class CollegeCompetitor(db.Model):
+     # (typically because they also compete on the pro circuit).
+     strathmark_id = db.Column(db.String(50), nullable=True, index=True)
+ 
++    # Cross-discipline identity. See models/competitor_identity.py.
++    # A college `id` and a pro `id` can be the same integer (21 such collisions
++    # exist in the production mirror); `uid` cannot.
++    uid = db.Column(BIG_ID, db.ForeignKey('competitors.uid'),
++                    nullable=False, unique=True)
++
+     _PRO_AM_LOTTERY_META_KEY = '__pro_am_lottery_opt_in__'
+ 
+     @property
+@@ -280,6 +289,12 @@ class ProCompetitor(db.Model):
+     # Populated on registration; used to push results to the global STRATHMARK Supabase DB.
+     strathmark_id = db.Column(db.String(50), nullable=True, index=True)
+ 
++    # Cross-discipline identity. See models/competitor_identity.py.
++    # A college `id` and a pro `id` can be the same integer (21 such collisions
++    # exist in the production mirror); `uid` cannot.
++    uid = db.Column(BIG_ID, db.ForeignKey('competitors.uid'),
++                    nullable=False, unique=True)
++
+     @property
+     def display_name(self):
+         """Display name (same as name — pro competitors have no team)."""
+@@ -394,3 +409,10 @@ class ProCompetitor(db.Model):
+         if not self.portal_pin_hash:
+             return False
+         return check_password_hash(self.portal_pin_hash, pin)
++
++
++# Auto-allocate `uid` on insert for both competitor tables. See
++# models/competitor_identity.py::attach_identity_allocator for why this is a
++# mapper event and not a call at each of the many insert sites.
++attach_identity_allocator(CollegeCompetitor, 'college')
++attach_identity_allocator(ProCompetitor, 'pro')
+diff --git a/models/competitor_identity.py b/models/competitor_identity.py
+new file mode 100644
+index 0000000..fa3a1e5
+--- /dev/null
++++ b/models/competitor_identity.py
+@@ -0,0 +1,116 @@
++"""Competitor identity table.
++
++Every competitor in the system, college or pro, gets exactly one row here and
++exactly one ``uid``.  ``college_competitors.uid`` and ``pro_competitors.uid``
++are foreign keys onto this table, which is what makes a college id and a pro
++id structurally incapable of colliding.
++
++Why this exists
++===============
++``EventResult.competitor_id`` and ``Heat.competitors`` carry bare integers with
++no foreign key.  A sibling ``competitor_type`` string is the only thing that
++says which table the integer points at.  In the production mirror, college ids
++29 through 49 all also exist as pro ids: 21 live collisions.  Any code path
++that reads the integer and forgets the discriminator addresses the wrong
++person.  Commit 9bd4599 fixed the three known paths.  This table removes the
++class of bug instead of the instances.
++
++The rejected alternative was a shared sequence: keep two tables, allocate both
++their ids from one counter, and add a test asserting the id sets never overlap.
++That is uniqueness by discipline.  It holds only as long as every future insert
++site remembers to use the shared allocator, which is the same failure shape as
++the 188 ``db.session.commit()`` sites that let scratch state drift in the first
++place.
++
++Phase 0 scope
++=============
++This model is inert.  Nothing reads it, nothing writes it outside the backfill
++migration.  It exists so that later phases have an identity to point at.
++"""
++from datetime import datetime
++
++import sqlalchemy as sa
++
++from database import db
++
++from ._types import BIG_ID
++
++
++class Competitor(db.Model):
++    """One row per competitor, college or pro. The identity spine."""
++
++    __tablename__ = 'competitors'
++    __table_args__ = (
++        db.CheckConstraint("kind IN ('college', 'pro')",
++                           name='ck_competitors_kind_valid'),
++        db.Index('ix_competitors_tournament_id', 'tournament_id'),
++    )
++
++    uid = db.Column(BIG_ID, primary_key=True, autoincrement=True)
++
++    # Which discipline table owns the detail row for this competitor.
++    # This is a label, not a discriminator anything is allowed to branch on for
++    # identity purposes: the uid is already unique across both.
++    kind = db.Column(db.String(16), nullable=False)
++
++    tournament_id = db.Column(
++        db.Integer,
++        db.ForeignKey('tournaments.id', ondelete='CASCADE'),
++        nullable=False,
++    )
++
++    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
++
++    def __repr__(self):
++        return f'<Competitor uid={self.uid} kind={self.kind}>'
++
++
++def allocate_uid(connection, tournament_id, kind):
++    """Insert one identity row and return its uid.
++
++    Uses Core against the live connection rather than the ORM session so it can
++    be called from inside a ``before_insert`` mapper event, where the session is
++    mid-flush and adding new ORM objects is not allowed.
++    """
++    table = Competitor.__table__
++    result = connection.execute(
++        table.insert().values(
++            kind=kind,
++            tournament_id=tournament_id,
++            created_at=datetime.utcnow(),
++        )
++    )
++    return result.inserted_primary_key[0]
++
++
++def attach_identity_allocator(model, kind):
++    """Auto-allocate ``uid`` on insert for a competitor model.
++
++    Why this exists
++    ===============
++    ``uid`` is NOT NULL.  There are 188 non-test ``db.session.commit()`` sites in
++    this codebase and competitor rows are created from registration routes, the
++    Excel importer, the pro entry importer, demo seeding, and every test fixture.
++    Requiring each of those to allocate an identity by hand is the exact failure
++    shape this phase exists to eliminate: it would hold only as long as every
++    author remembers.
++
++    So allocation happens at the mapper level.  Any code that inserts a
++    competitor gets a uid whether it knows about identities or not, and the
++    NOT NULL + FOREIGN KEY pair means a row that somehow escaped the allocator
++    fails at the database instead of landing without an identity.
++
++    Explicitly supplying ``uid`` (as the backfill migration does, and as a future
++    merge-two-records path would) is honoured and skips allocation.
++    """
++
++    @sa.event.listens_for(model, 'before_insert')
++    def _allocate(mapper, connection, target):  # noqa: ARG001
++        if target.uid is not None:
++            return
++        if target.tournament_id is None:
++            raise ValueError(
++                f'{model.__name__} inserted without tournament_id; cannot '
++                f'allocate a competitor identity'
++            )
++        target.uid = allocate_uid(connection, target.tournament_id, kind)
+diff --git a/models/tournament_event.py b/models/tournament_event.py
+new file mode 100644
+index 0000000..018206f
+--- /dev/null
++++ b/models/tournament_event.py
+@@ -0,0 +1,99 @@
++"""Append-only intent log.
++
++One row per accepted command against a tournament.  Rows are never updated and
++never deleted.  A correction is a new row whose ``parent_seq`` points at the row
++being corrected; a reversal is the same shape with a reversing ``kind``.
++
++Why a new table instead of extending audit_logs
++===============================================
++``audit_logs`` records what was *attempted*, including actions that were
++rejected.  This log records only what was *accepted*, because a reducer that
++replays it must produce exactly the state the system is in.  Feeding rejected
++actions into a reducer would produce a state the system was never in.  The two
++tables answer different questions and are kept separate.
++
++Why ``seq`` is not the primary key
++==================================
++``id`` is a global surrogate.  ``seq`` is monotonic *per tournament* and is what
++the reducer orders by, so two tournaments can be replayed independently and a
++gap in one cannot be caused by writes to the other.  ``UNIQUE (tournament_id,
++seq)`` is what makes the single-writer allocation safe: a second writer that
++races on the same seq gets an IntegrityError instead of silently interleaving.
++
++``occurred_at`` is injected at the edge and must never be read inside the
++reducer.  A reducer that reads a clock is not a pure function of the log, and
++replay would produce different state on different days.
++
++Phase 0 scope
++=============
++This model is inert.  The migration creates the table; nothing writes to it and
++nothing reads from it.  It exists so the reducer, projector, and dispatcher in
++later phases have a substrate already in production and already migrated.
++"""
++from datetime import datetime
++
++import sqlalchemy as sa
++
++from database import db
++
++from ._types import BIG_ID, JSON_PAYLOAD
++
++
++class TournamentEvent(db.Model):
++    """One accepted intent. Append-only. Never updated, never deleted."""
++
++    __tablename__ = 'tournament_event'
++    __table_args__ = (
++        db.UniqueConstraint('tournament_id', 'seq',
++                            name='uq_tournament_event_tournament_seq'),
++    )
++
++    id = db.Column(BIG_ID, primary_key=True, autoincrement=True)
++
++    tournament_id = db.Column(
++        db.Integer,
++        db.ForeignKey('tournaments.id', ondelete='CASCADE'),
++        nullable=False,
++    )
++
++    # Monotonic per tournament, assigned under the single-writer lock.
++    # Not a primary key: see module docstring.
++    seq = db.Column(db.BigInteger, nullable=False)
++
++    # Normalized verb. The 98 existing audit action strings collapse into this
++    # vocabulary in a later phase; Phase 0 fixes only the column.
++    kind = db.Column(db.String(64), nullable=False)
++
++    actor_user_id = db.Column(
++        db.Integer,
++        db.ForeignKey('users.id'),
++        nullable=True,
++    )
++
++    # Injected at the edge. NEVER read inside the reducer.
++    occurred_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
++
++    # Fully self-describing intent. Must carry everything the reducer needs;
++    # the reducer is not allowed to query other tables to interpret it.
++    payload = db.Column(JSON_PAYLOAD, nullable=False)
++
++    # Reversal and correction linkage. Points at another row's `seq` within the
++    # same tournament. Deliberately not a foreign key: the target is identified
++    # by (tournament_id, seq), and a composite self-referential FK would force
++    # every insert to resolve the parent before the child could land.
++    parent_seq = db.Column(db.BigInteger, nullable=True)
++
++    # Hash of projected state after applying this event. NULL until the
++    # projector runs (Phase 3), which is why it is nullable here.
++    state_hash = db.Column(db.CHAR(64), nullable=True)
++
++    schema_version = db.Column(
++        db.SmallInteger,
++        nullable=False,
++        default=1,
++        server_default=sa.text('1'),
++    )
++
++    def __repr__(self):
++        return (f'<TournamentEvent t={self.tournament_id} '
++                f'seq={self.seq} kind={self.kind}>')
+diff --git a/services/entity_key.py b/services/entity_key.py
+new file mode 100644
+index 0000000..4c55220
+--- /dev/null
++++ b/services/entity_key.py
+@@ -0,0 +1,169 @@
++"""Typed competitor reference for the identity transition.
++
++The problem this exists for
++===========================
++``EventResult.competitor_id`` and every integer inside the ``Heat.competitors``
++JSON blob is a bare int with no foreign key.  A sibling ``competitor_type``
++string is the only thing that says which of the two competitor tables the
++integer points at.  In the production mirror, college ids 29 through 49 all
++also exist as pro ids: 21 live collisions.  A code path that reads the integer
++and forgets the discriminator addresses the wrong person, and nothing in the
++type system or the database stops it.
++
++``EntityKey`` is the transitional wrapper.  Anywhere a bare int currently
++flows, an ``EntityKey`` forces the caller to state the kind, and the pair
++becomes a single value that can be compared, hashed, put in a set, and used as
++a dict key without the discriminator getting separated from the integer.
++
++The permanent fix is ``competitors.uid``: one integer that is unique across both
++disciplines, with real foreign keys.  ``EntityKey`` is what carries the legacy
++pair safely until every call site has been converted to a uid.  ``resolve_uid``
++is the bridge between the two.
++
++Phase 0 scope
++=============
++This module is imported by nothing.  It is landed now so that later phases have
++it available without a second migration-adjacent change, and so its semantics
++can be reviewed on their own rather than in the middle of a route conversion.
++
++Deliberately not here
++=====================
++No ORM object loading.  ``resolve_uid`` returns an integer or ``None`` and does
++not touch the identity table beyond a single scalar lookup.  Anything that wants
++the competitor row can query for it with the kind it already has.
++"""
++from dataclasses import dataclass
++
++COLLEGE = 'college'
++PRO = 'pro'
++
++VALID_KINDS = frozenset({COLLEGE, PRO})
++
++# Legacy `competitor_type` values map straight through; both tables already use
++# these exact strings.  The mapping is written out rather than assumed so that a
++# third discipline added later fails loudly here instead of silently resolving
++# to one of the existing two.
++_TABLE_FOR_KIND = {
++    COLLEGE: 'college_competitors',
++    PRO: 'pro_competitors',
++}
++
++
++@dataclass(frozen=True)
++class EntityKey:
++    """A competitor reference that cannot lose its discriminator.
++
++    ``frozen=True`` gives hashability and equality for free, which is the whole
++    point: a bare int and its ``competitor_type`` can be separated by a refactor,
++    a JSON round trip, or a function signature.  An ``EntityKey`` cannot.
++
++    ``kind`` is validated on construction.  An invalid kind is a programming
++    error, not a data condition, so it raises rather than returning a sentinel.
++    """
++
++    kind: str
++    id: int
++
++    def __post_init__(self):
++        if self.kind not in VALID_KINDS:
++            raise ValueError(
++                f'EntityKey kind must be one of {sorted(VALID_KINDS)}, '
++                f'got {self.kind!r}'
++            )
++        if not isinstance(self.id, int) or isinstance(self.id, bool):
++            raise TypeError(
++                f'EntityKey id must be an int, got {type(self.id).__name__}'
++            )
++
++    @property
++    def is_college(self):
++        return self.kind == COLLEGE
++
++    @property
++    def is_pro(self):
++        return self.kind == PRO
++
++    @property
++    def table_name(self):
++        """The legacy table this key addresses."""
++        return _TABLE_FOR_KIND[self.kind]
++
++    @classmethod
++    def from_legacy(cls, competitor_id, competitor_type):
++        """Build a key from the bare-int pair the codebase currently passes around.
++
++        Returns ``None`` when either half is missing, because that pair is
++        genuinely absent in existing rows (an EventResult can carry a NULL
++        competitor_id) and callers converting a legacy path should get a value
++        they can test rather than an exception they have to guard.
++        """
++        if competitor_id is None or competitor_type is None:
++            return None
++        return cls(kind=str(competitor_type), id=int(competitor_id))
++
++    def as_legacy(self):
++        """Back to the ``(competitor_id, competitor_type)`` pair."""
++        return self.id, self.kind
++
++    def __str__(self):
++        return f'{self.kind}:{self.id}'
++
++
++def resolve_uid(session, key):
++    """Return the ``competitors.uid`` for an ``EntityKey``, or ``None``.
++
++    ``None`` means the row exists but has no identity, or the row does not
++    exist.  Those are different conditions and a caller that needs to tell them
++    apart should query the source table directly; this function answers only
++    "what is the durable id for this legacy reference".
++
++    Uses a raw scalar select against the source table rather than the ORM so it
++    can be called with any session, including one already mid-flush, and so it
++    costs one round trip rather than a full object load.
++    """
++    if key is None:
++        return None
++
++    import sqlalchemy as sa
++
++    table = _TABLE_FOR_KIND[key.kind]
++    row = session.execute(
++        sa.text(f'SELECT uid FROM {table} WHERE id = :id'),
++        {'id': key.id},
++    ).first()
++    return row[0] if row else None
++
++
++def resolve_uids(session, keys):
++    """Batch form of :func:`resolve_uid`.
++
++    Returns a dict of ``EntityKey -> uid``.  Keys that do not resolve are absent
++    from the result rather than mapped to ``None``, so ``len(result)`` is a
++    direct count of how many resolved and the caller cannot accidentally treat
++    an unresolved key as identified.
++
++    Groups by kind so this is at most two queries regardless of how many keys
++    are passed, which matters because the natural call site is a heat or an
++    event result set.
++    """
++    import sqlalchemy as sa
++
++    out = {}
++    by_kind = {}
++    for key in keys:
++        if key is not None:
++            by_kind.setdefault(key.kind, []).append(key.id)
++
++    for kind, ids in by_kind.items():
++        table = _TABLE_FOR_KIND[kind]
++        rows = session.execute(
++            sa.text(f'SELECT id, uid FROM {table} WHERE id IN :ids').bindparams(
++                sa.bindparam('ids', expanding=True)
++            ),
++            {'ids': ids},
++        ).all()
++        for row_id, uid in rows:
++            if uid is not None:
++                out[EntityKey(kind=kind, id=row_id)] = uid
++
++    return out
+diff --git a/tests/test_identity_migration.py b/tests/test_identity_migration.py
+new file mode 100644
+index 0000000..162e8b9
+--- /dev/null
++++ b/tests/test_identity_migration.py
+@@ -0,0 +1,308 @@
++"""Guards on the competitor identity substrate landed by `n4c5d6e7f8a9`.
++
++Three things are pinned here, all of which a future change could break silently:
++
++1. **CHECK constraint counts survive the batch rebuild.**  `college_competitors`
++   and `pro_competitors` are rebuilt by Alembic batch mode in that migration.
++   Under SQLAlchemy 2.0.23 / Alembic 1.18.5 the SQLite dialect reflects named
++   CHECK constraints and batch mode carries them into the rebuilt table, so the
++   counts stay at 3 and 4.  Nothing else in this repo compares CHECK
++   constraints.  If a SQLAlchemy upgrade changed that reflection behaviour, the
++   database would quietly stop enforcing gender, status, and the non-negative
++   money invariants while CI stayed green.  Asserting the exact count also
++   catches the opposite failure, which was the one that actually happened
++   during development: passing the constraints again via `table_args` doubled
++   every CHECK to 6 and 8.
++
++2. **The identity allocator fires on every insert path.**  `uid` is NOT NULL and
++   there are 188 non-test `db.session.commit()` sites.  The allocator is a
++   mapper-level `before_insert` event precisely so no insert site has to know
++   about identities.  These tests insert competitors the ordinary way and assert
++   a uid appeared.
++
++3. **A college id and a pro id can collide; their uids cannot.**  This is the
++   whole point of the phase, so it gets a direct assertion rather than being
++   implied by the schema.
++"""
++import re
++
++import pytest
++import sqlalchemy as sa
++
++from models.competitor import ProCompetitor
++from models.competitor_identity import Competitor
++from services.entity_key import COLLEGE, PRO, EntityKey, resolve_uid, resolve_uids
++from tests.conftest import make_college_competitor, make_pro_competitor, make_team, make_tournament
++
++
++def _table_sql(session, table_name):
++    row = session.execute(
++        sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:n"),
++        {'n': table_name},
++    ).first()
++    assert row is not None, f'table {table_name} not found'
++    return row[0]
++
++
++def _named_checks(sql):
++    return set(re.findall(r'CONSTRAINT (\w+) CHECK', sql))
++
++
++def _check_occurrences(sql):
++    return re.findall(r'CONSTRAINT (\w+) CHECK', sql)
++
++
++class TestCheckConstraintsSurviveBatchRebuild:
++    """The batch rebuild must neither drop nor duplicate CHECK constraints."""
++
++    def test_college_competitors_has_exactly_three_checks(self, db_session):
++        sql = _table_sql(db_session, 'college_competitors')
++        occurrences = _check_occurrences(sql)
++        assert len(occurrences) == 3, (
++            f'expected exactly 3 CHECK constraints on college_competitors, '
++            f'got {len(occurrences)}: {occurrences}. '
++            f'More than 3 means something is emitting them twice (batch '
++            f'reflection plus an explicit table_args). Fewer than 3 means the '
++            f'batch rebuild dropped them and the database is no longer '
++            f'enforcing gender, status, or non-negative points.'
++        )
++        assert _named_checks(sql) == {
++            'ck_college_competitors_gender_valid',
++            'ck_college_competitors_status_valid',
++            'ck_college_competitors_points_nonnegative',
++        }
++
++    def test_pro_competitors_has_exactly_four_checks(self, db_session):
++        sql = _table_sql(db_session, 'pro_competitors')
++        occurrences = _check_occurrences(sql)
++        assert len(occurrences) == 4, (
++            f'expected exactly 4 CHECK constraints on pro_competitors, '
++            f'got {len(occurrences)}: {occurrences}'
++        )
++        assert _named_checks(sql) == {
++            'ck_pro_competitors_gender_valid',
++            'ck_pro_competitors_status_valid',
++            'ck_pro_competitors_earnings_nonnegative',
++            'ck_pro_competitors_total_fees_nonnegative',
++        }
++
++    def test_checks_are_actually_enforced(self, db_session):
++        """Counting names in DDL is not the same as the constraint working.
++
++        Written as an UPDATE on a legitimately-created row rather than a raw
++        INSERT.  A raw INSERT has to name every NOT NULL column on the table or
++        it fails on the wrong constraint and the test passes for the wrong
++        reason, which is exactly what the first draft of this test did (it hit
++        `NOT NULL constraint failed: pro_competitors.is_ala_member` and never
++        reached the gender CHECK at all).  An UPDATE touches one column, so a
++        failure here can only be the CHECK.
++        """
++        t = make_tournament(db_session)
++        p = make_pro_competitor(db_session, t, 'Check Enforcement')
++        db_session.flush()
++
++        with pytest.raises(sa.exc.IntegrityError) as exc:
++            db_session.execute(
++                sa.text('UPDATE pro_competitors SET gender = :g WHERE id = :i'),
++                {'g': 'X', 'i': p.id},
++            )
++        assert 'ck_pro_competitors_gender_valid' in str(exc.value), (
++            f'expected the gender CHECK to reject it, got: {exc.value}'
++        )
++        db_session.rollback()
++
++    def test_status_check_is_enforced(self, db_session):
++        """Second constraint, second table: the rebuild did not disarm college."""
++        t = make_tournament(db_session)
++        team = make_team(db_session, t)
++        c = make_college_competitor(db_session, t, team, 'Check Enforcement C')
++        db_session.flush()
++
++        with pytest.raises(sa.exc.IntegrityError) as exc:
++            db_session.execute(
++                sa.text('UPDATE college_competitors SET status = :s WHERE id = :i'),
++                {'s': 'nonsense', 'i': c.id},
++            )
++        assert 'ck_college_competitors_status_valid' in str(exc.value), (
++            f'expected the status CHECK to reject it, got: {exc.value}'
++        )
++        db_session.rollback()
++
++    def test_uid_constraints_landed(self, db_session):
++        for table in ('college_competitors', 'pro_competitors'):
++            sql = _table_sql(db_session, table)
++            assert f'uq_{table}_uid' in sql, f'{table} lost its uid UNIQUE constraint'
++            assert f'fk_{table}_uid' in sql, f'{table} lost its uid FOREIGN KEY'
++            assert re.search(r'\buid\b[^,]*NOT NULL', sql), (
++                f'{table}.uid is not NOT NULL'
++            )
++
++
++class TestIdentityAllocator:
++    """`uid` must be filled by ordinary inserts that know nothing about it."""
++
++    def test_college_insert_allocates_uid(self, db_session):
++        t = make_tournament(db_session)
++        team = make_team(db_session, t)
++        c = make_college_competitor(db_session, t, team, 'Allocator College')
++        db_session.flush()
++        assert c.uid is not None
++        identity = db_session.get(Competitor, c.uid)
++        assert identity is not None
++        assert identity.kind == 'college'
++        assert identity.tournament_id == t.id
++
++    def test_pro_insert_allocates_uid(self, db_session):
++        t = make_tournament(db_session)
++        p = make_pro_competitor(db_session, t, 'Allocator Pro')
++        db_session.flush()
++        assert p.uid is not None
++        identity = db_session.get(Competitor, p.uid)
++        assert identity is not None
++        assert identity.kind == 'pro'
++
++    def test_explicit_uid_is_honoured(self, db_session):
++        """The backfill and any future merge path supply their own uid."""
++        t = make_tournament(db_session)
++        db_session.flush()
++        identity = Competitor(kind='pro', tournament_id=t.id)
++        db_session.add(identity)
++        db_session.flush()
++
++        p = ProCompetitor(tournament_id=t.id, name='Explicit Uid', gender='M')
++        p.uid = identity.uid
++        db_session.add(p)
++        db_session.flush()
++        assert p.uid == identity.uid
++
++    def test_bulk_insert_allocates_distinct_uids(self, db_session):
++        t = make_tournament(db_session)
++        team = make_team(db_session, t)
++        made = [
++            make_college_competitor(db_session, t, team, f'Bulk {i}')
++            for i in range(10)
++        ]
++        db_session.flush()
++        uids = [c.uid for c in made]
++        assert all(u is not None for u in uids)
++        assert len(set(uids)) == 10
++
++
++class TestCrossDisciplineUniqueness:
++    """The reason the phase exists."""
++
++    def test_colliding_ids_get_distinct_uids(self, db_session):
++        t = make_tournament(db_session)
++        team = make_team(db_session, t)
++        c = make_college_competitor(db_session, t, team, 'Collision College')
++        p = make_pro_competitor(db_session, t, 'Collision Pro')
++        db_session.flush()
++
++        # Force the legacy ids to collide, which is the real production
++        # condition: 21 such collisions exist in the mirror.
++        db_session.execute(
++            sa.text('UPDATE pro_competitors SET id = :new WHERE id = :old'),
++            {'new': c.id + 100000, 'old': p.id},
++        )
++        db_session.execute(
++            sa.text('UPDATE college_competitors SET id = :new WHERE id = :old'),
++            {'new': c.id + 100000, 'old': c.id},
++        )
++        colliding_id = c.id + 100000
++
++        rows = db_session.execute(
++            sa.text(
++                'SELECT uid FROM college_competitors WHERE id = :i '
++                'UNION ALL SELECT uid FROM pro_competitors WHERE id = :i'
++            ),
++            {'i': colliding_id},
++        ).all()
++        uids = [r[0] for r in rows]
++        assert len(uids) == 2, 'expected the id to exist in both tables'
++        assert uids[0] != uids[1], 'colliding legacy ids produced the same uid'
++
++
++class TestEntityKey:
++    """The transitional wrapper. Imported by nothing in production yet."""
++
++    def test_rejects_unknown_kind(self):
++        with pytest.raises(ValueError):
++            EntityKey(kind='amateur', id=1)
++
++    def test_rejects_bool_id(self):
++        with pytest.raises(TypeError):
++            EntityKey(kind=PRO, id=True)
++
++    def test_hashable_and_comparable(self):
++        assert EntityKey(COLLEGE, 5) == EntityKey(COLLEGE, 5)
++        assert EntityKey(COLLEGE, 5) != EntityKey(PRO, 5)
++        assert len({EntityKey(COLLEGE, 5), EntityKey(PRO, 5)}) == 2
++
++    def test_from_legacy_round_trip(self):
++        k = EntityKey.from_legacy(7, 'pro')
++        assert k == EntityKey(PRO, 7)
++        assert k.as_legacy() == (7, 'pro')
++
++    def test_from_legacy_none_on_missing_half(self):
++        assert EntityKey.from_legacy(None, 'pro') is None
++        assert EntityKey.from_legacy(7, None) is None
++
++    def test_resolve_uid(self, db_session):
++        t = make_tournament(db_session)
++        p = make_pro_competitor(db_session, t, 'Resolvable')
++        db_session.flush()
++        assert resolve_uid(db_session, EntityKey(PRO, p.id)) == p.uid
++        assert resolve_uid(db_session, None) is None
++        assert resolve_uid(db_session, EntityKey(PRO, 999999)) is None
++
++    def test_resolve_uids_batches_and_omits_misses(self, db_session):
++        t = make_tournament(db_session)
++        team = make_team(db_session, t)
++        c = make_college_competitor(db_session, t, team, 'Batch College')
++        p = make_pro_competitor(db_session, t, 'Batch Pro')
++        db_session.flush()
++
++        keys = [
++            EntityKey(COLLEGE, c.id),
++            EntityKey(PRO, p.id),
++            EntityKey(PRO, 999999),
++        ]
++        out = resolve_uids(db_session, keys)
++        assert out == {
++            EntityKey(COLLEGE, c.id): c.uid,
++            EntityKey(PRO, p.id): p.uid,
++        }
++
++
++class TestEventLogTable:
++    """`tournament_event` is inert in this phase but must exist and constrain."""
++
++    def test_table_exists_with_unique_seq(self, db_session):
++        sql = _table_sql(db_session, 'tournament_event')
++        assert 'uq_tournament_event_tournament_seq' in sql
++
++    def test_duplicate_seq_within_tournament_rejected(self, db_session):
++        from models.tournament_event import TournamentEvent
++
++        t = make_tournament(db_session)
++        db_session.flush()
++        db_session.add(TournamentEvent(
++            tournament_id=t.id, seq=1, kind='test', payload='{}'))
++        db_session.flush()
++        db_session.add(TournamentEvent(
++            tournament_id=t.id, seq=1, kind='test', payload='{}'))
++        with pytest.raises(Exception):
++            db_session.flush()
++        db_session.rollback()
++
++    def test_same_seq_in_different_tournaments_allowed(self, db_session):
++        from models.tournament_event import TournamentEvent
++
++        t1 = make_tournament(db_session, name='T One')
++        t2 = make_tournament(db_session, name='T Two')
++        db_session.flush()
++        db_session.add(TournamentEvent(
++            tournament_id=t1.id, seq=1, kind='test', payload='{}'))
++        db_session.add(TournamentEvent(
++            tournament_id=t2.id, seq=1, kind='test', payload='{}'))
++        db_session.flush()  # must not raise

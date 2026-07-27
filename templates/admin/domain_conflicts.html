@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}Domain Conflict Review{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+        <div>
+            <h1 class="h3 mb-1">Domain Conflict Review</h1>
+            <div class="text-muted">Review contract conflicts, stale docs, missing tests, and implementation gaps.</div>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <span class="badge text-bg-dark border">Total {{ summary.total }}</span>
+            <span class="badge text-bg-danger">Critical {{ summary.by_severity.get('critical', 0) }}</span>
+            <span class="badge text-bg-warning">Needs Decision {{ summary.by_status.get('needs_decision', 0) }}</span>
+            <span class="badge text-bg-info">Needs Test {{ summary.by_status.get('needs_test', 0) }}</span>
+        </div>
+    </div>
+
+    <form method="GET" class="row g-2 align-items-end mb-3">
+        <div class="col-12 col-md-3">
+            <label class="form-label" for="status-filter">Status</label>
+            <select id="status-filter" name="status" class="form-select">
+                <option value="">All statuses</option>
+                {% for value, label in statuses.items() %}
+                <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-12 col-md-3">
+            <label class="form-label" for="category-filter">Category</label>
+            <select id="category-filter" name="category" class="form-select">
+                <option value="">All categories</option>
+                {% for category in summary.categories.keys() %}
+                <option value="{{ category }}" {% if selected_category == category %}selected{% endif %}>{{ category|replace('_', ' ')|title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-12 col-md-2">
+            <label class="form-label" for="severity-filter">Severity</label>
+            <select id="severity-filter" name="severity" class="form-select">
+                <option value="">All severities</option>
+                {% for severity in severities %}
+                <option value="{{ severity }}" {% if selected_severity == severity %}selected{% endif %}>{{ severity|title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-12 col-md-3">
+            <label class="form-label" for="query-filter">Search</label>
+            <input id="query-filter" name="q" class="form-control" value="{{ query }}" placeholder="rule, file, test, source">
+        </div>
+        <div class="col-12 col-md-1 d-grid">
+            <button class="btn btn-primary" type="submit" title="Apply filters">
+                <i class="bi bi-funnel"></i>
+            </button>
+        </div>
+    </form>
+
+    <div class="row g-3">
+        {% for conflict in conflicts %}
+        <div class="col-12">
+            <section class="card bg-dark text-light border-secondary">
+                <div class="card-header d-flex flex-wrap justify-content-between align-items-start gap-2">
+                    <div>
+                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                            <h2 class="h5 mb-0">{{ conflict.title }}</h2>
+                            <span class="badge text-bg-{{ 'danger' if conflict.severity == 'critical' else 'warning' if conflict.severity == 'high' else 'info' if conflict.severity == 'medium' else 'secondary' }}">{{ conflict.severity|title }}</span>
+                            <span class="badge text-bg-secondary">{{ conflict.category|replace('_', ' ')|title }}</span>
+                            <span class="badge text-bg-{{ 'success' if conflict.status in ['implemented', 'resolved', 'accepted_contract'] else 'warning' if conflict.status in ['needs_decision', 'needs_test', 'needs_code_fix'] else 'secondary' }}">{{ statuses.get(conflict.status, conflict.status) }}</span>
+                        </div>
+                        <code class="text-info">{{ conflict.id }}</code>
+                    </div>
+                    {% if conflict.updated_at %}
+                    <small class="text-muted">Updated {{ conflict.updated_at }}{% if conflict.updated_by %} by {{ conflict.updated_by }}{% endif %}</small>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-12 col-xl-5">
+                            <h3 class="h6 text-uppercase text-muted">Contract Rule</h3>
+                            <p>{{ conflict.contract_rule }}</p>
+                            <h3 class="h6 text-uppercase text-muted">Proposed Resolution</h3>
+                            <p class="mb-0">{{ conflict.proposed_resolution }}</p>
+                        </div>
+                        <div class="col-12 col-xl-4">
+                            <h3 class="h6 text-uppercase text-muted">Conflicting Sources</h3>
+                            <div class="list-group list-group-flush">
+                                {% for source in conflict.conflicting_sources %}
+                                <div class="list-group-item bg-transparent text-light px-0 border-secondary">
+                                    <div><code>{{ source.file }}{% if source.line %}:{{ source.line }}{% endif %}</code></div>
+                                    <div class="small text-muted">{{ source.text }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% if conflict.test_coverage %}
+                            <h3 class="h6 text-uppercase text-muted mt-3">Test Coverage</h3>
+                            <ul class="small mb-0">
+                                {% for test_id in conflict.test_coverage %}
+                                <li><code>{{ test_id }}</code></li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                        </div>
+                        <div class="col-12 col-xl-3">
+                            <form method="POST" action="{{ url_for('domain_conflicts.update', conflict_id=conflict.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="filter_status" value="{{ selected_status }}">
+                                <input type="hidden" name="filter_category" value="{{ selected_category }}">
+                                <input type="hidden" name="filter_severity" value="{{ selected_severity }}">
+                                <input type="hidden" name="filter_q" value="{{ query }}">
+
+                                <label class="form-label" for="status-{{ loop.index }}">Status</label>
+                                <select id="status-{{ loop.index }}" name="status" class="form-select mb-2">
+                                    {% for value, label in statuses.items() %}
+                                    <option value="{{ value }}" {% if conflict.status == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+
+                                <label class="form-label" for="decision-{{ loop.index }}">Decision</label>
+                                <textarea id="decision-{{ loop.index }}" name="decision" class="form-control mb-2" rows="2">{{ conflict.decision or '' }}</textarea>
+
+                                <label class="form-label" for="note-{{ loop.index }}">Note</label>
+                                <textarea id="note-{{ loop.index }}" name="decision_note" class="form-control mb-2" rows="3">{{ conflict.decision_note or '' }}</textarea>
+
+                                <div class="d-grid gap-2">
+                                    <button class="btn btn-success btn-sm" type="submit" name="action" value="accept_contract">
+                                        <i class="bi bi-check2-circle"></i> Accept Contract
+                                    </button>
+                                    <button class="btn btn-outline-warning btn-sm" type="submit" name="action" value="mark_stale_doc">
+                                        <i class="bi bi-file-earmark-x"></i> Mark Stale Doc
+                                    </button>
+                                    <button class="btn btn-outline-info btn-sm" type="submit" name="action" value="needs_test">
+                                        <i class="bi bi-clipboard-check"></i> Needs Test
+                                    </button>
+                                    <button class="btn btn-outline-danger btn-sm" type="submit" name="action" value="needs_code_fix">
+                                        <i class="bi bi-tools"></i> Needs Code Fix
+                                    </button>
+                                    <button class="btn btn-primary btn-sm" type="submit">
+                                        <i class="bi bi-save2"></i> Save Selected Status
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+        {% else %}
+        <div class="col-12">
+            <div class="alert alert-info">No conflicts match the current filters.</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

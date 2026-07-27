@@ -1,0 +1,320 @@
+{% extends "base.html" %}
+{% block title %}Friday Showcase & Saturday Options - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h4 class="mb-0">{{ tournament.name }} {{ tournament.year }} — Friday Showcase &amp; Saturday Options</h4>
+        <div class="d-flex gap-2">
+            {% if fnf_schedule %}
+            <a class="btn btn-outline-warning btn-sm"
+               href="{{ url_for('scheduling.friday_feature_print', tournament_id=tournament.id) }}"
+               target="_blank">
+                <i class="bi bi-printer"></i> Print FNF Schedule
+            </a>
+            <a class="btn btn-outline-warning btn-sm"
+               href="{{ url_for('scheduling.friday_feature_pdf', tournament_id=tournament.id) }}">
+                <i class="bi bi-file-earmark-pdf"></i> PDF
+            </a>
+            {% endif %}
+            <a class="btn btn-outline-secondary btn-sm"
+               href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Back to Events</a>
+        </div>
+    </div>
+
+    <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="row g-4 mb-4">
+
+            {# ── Left: Friday Night Feature ─────────────────────────────── #}
+            <div class="col-lg-6">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header card-header-proam">
+                        <h6 class="mb-0"><i class="bi bi-stars me-1 text-warning"></i> Friday Showcase</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Friday Showcase Date</label>
+                            <div class="form-control-plaintext fw-semibold">
+                                {% if tournament.college_date %}
+                                    {{ tournament.college_date.strftime('%B %d, %Y') }}
+                                {% else %}
+                                    <span class="text-muted">No college date set — update Tournament Settings first.</span>
+                                {% endif %}
+                            </div>
+                            <div class="form-text">Matches the College Day date (set in Tournament Settings).</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Select Pro Events to Run in the Friday Showcase</label>
+                            {% if eligible_events %}
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle">
+                                    <thead>
+                                        <tr>
+                                            <th style="width:50px;">Include</th>
+                                            <th>Event</th>
+                                            <th>Type</th>
+                                            <th style="width:90px;" title="Competitors per heat. FNF events can run on a different stand count than Saturday — e.g. Pro 1-Board on 3 stands while Saturday Springboard uses 4.">Stands</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for event in eligible_events %}
+                                        <tr>
+                                            <td>
+                                                <input type="checkbox" class="form-check-input" name="event_ids"
+                                                       value="{{ event.id }}"
+                                                       {% if event.id in selected_ids %}checked{% endif %}>
+                                            </td>
+                                            <td>{{ event.display_name }}</td>
+                                            <td><span class="badge bg-secondary">{{ event.scoring_type }}</span></td>
+                                            <td>
+                                                <input type="number" class="form-control form-control-sm"
+                                                       name="stands_event_{{ event.id }}"
+                                                       min="1" max="12" step="1"
+                                                       value="{{ stand_defaults.get(event.id) or '' }}"
+                                                       placeholder="—"
+                                                       aria-label="Stand count for {{ event.display_name }}">
+                                            </td>
+                                            <td>
+                                                {% if event.status == 'completed' %}
+                                                <span class="badge bg-success">Completed</span>
+                                                {% elif event.status == 'in_progress' %}
+                                                <span class="badge bg-warning text-dark">In Progress</span>
+                                                {% else %}
+                                                <span class="badge bg-light text-dark border">Pending</span>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <p class="text-muted small mb-0">No Friday Showcase eligible events found. Set up pro events first.</p>
+                            {% endif %}
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Notes / Schedule Details</label>
+                            <textarea class="form-control" name="notes" rows="3"
+                                      placeholder="e.g. Doors open 6 PM, Hot Saw finals at 7 PM…">{{ notes }}</textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {# ── Right: Saturday Spillover ───────────────────────────────── #}
+            <div class="col-lg-6">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header" style="background:rgba(59,142,232,0.12);">
+                        <h6 class="mb-0"><i class="bi bi-arrow-right-circle me-1 text-primary"></i> Saturday Spillover</h6>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">
+                            College events checked here will be slotted into Saturday morning pro flights
+                            instead of running Friday. Use this when a college event runs long or has too
+                            many competitors to finish on Friday.
+                        </p>
+                        {% if sat_eligible %}
+                        {% for event in sat_eligible %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox"
+                                   name="saturday_college_event_ids" value="{{ event.id }}"
+                                   id="sat_{{ event.id }}"
+                                   {% if event.id in selected_saturday_ids %}checked{% endif %}>
+                            <label class="form-check-label" for="sat_{{ event.id }}">
+                                {{ event.display_name }}
+                                {% if event.gender %}<small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}
+                            </label>
+                        </div>
+                        {% endfor %}
+                        {% else %}
+                        <p class="text-muted small mb-0">No college events are eligible for Saturday spillover. Configure college events first.</p>
+                        {% endif %}
+
+                        <hr class="my-3">
+
+                        <div class="mb-2">
+                            <label class="form-label small fw-semibold mb-2">
+                                How should Speed Climb Run 2 and selected spillover events distribute?
+                            </label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio"
+                                       name="saturday_college_placement_mode"
+                                       id="placement_roundrobin"
+                                       value="roundrobin"
+                                       {% if saturday_placement_mode != 'cluster' %}checked{% endif %}>
+                                <label class="form-check-label small" for="placement_roundrobin">
+                                    <strong>Distribute across flights</strong>
+                                    <span class="text-muted d-block" style="font-size:0.75rem;">
+                                        Default. Round-robin across Saturday flights, respecting 4-heat minimum spacing for any college competitor also running a pro event.
+                                    </span>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio"
+                                       name="saturday_college_placement_mode"
+                                       id="placement_cluster"
+                                       value="cluster"
+                                       {% if saturday_placement_mode == 'cluster' %}checked{% endif %}>
+                                <label class="form-check-label small" for="placement_cluster">
+                                    <strong>Cluster at start of Saturday</strong>
+                                    <span class="text-muted d-block" style="font-size:0.75rem;">
+                                        Greedy-fill the first flight with capacity, then the next. Use when Speed Climb should run up front rather than spread across the show.
+                                    </span>
+                                </label>
+                            </div>
+                            <p class="text-muted small mt-2 mb-0" style="font-size:0.72rem;">
+                                Chokerman's Race Run 2 is always the show closer, regardless of this setting.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>{# /row #}
+
+        <div class="d-flex gap-2 flex-wrap">
+            <button type="submit" name="action" value="save" class="btn btn-proam">
+                Save Friday Showcase &amp; Saturday Options
+            </button>
+            <button type="submit" name="action" value="generate_heats" class="btn btn-outline-primary"
+                    title="Generate heats for the checked Friday Showcase events using enrolled competitors">
+                Generate Heats for Selected Events
+            </button>
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+               class="btn btn-outline-secondary">Cancel</a>
+        </div>
+
+    </form>
+
+    {# ── Friday Night Feature Schedule — heats per event, in run order ───── #}
+    {% if fnf_schedule %}
+    <div class="card shadow-sm mt-4">
+        <div class="card-header d-flex justify-content-between align-items-center"
+             style="background:rgba(232,144,18,0.12);">
+            <h6 class="mb-0">
+                <i class="bi bi-calendar-week me-1 text-warning"></i>
+                Friday Night Feature Schedule
+            </h6>
+            <span class="small text-muted">
+                Heat-by-heat order — no flight grouping. Same format as college day.
+            </span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:48px;">#</th>
+                            <th>Event</th>
+                            <th style="width:70px;">Heat</th>
+                            <th>Competitors (Stand · Name)</th>
+                            <th style="width:80px;">Score</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set row_ns = namespace(slot=1) %}
+                        {% for block in fnf_schedule %}
+                            {% if block.heats %}
+                                {% for heat in block.heats %}
+                                <tr>
+                                    <td class="text-muted small">{{ row_ns.slot }}</td>
+                                    <td>
+                                        <strong>{{ block.event.display_name }}</strong>
+                                        {% if block.event.gender %}
+                                        <small class="text-muted">({{ 'Men' if block.event.gender == 'M' else 'Women' }})</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}
+                                    </td>
+                                    <td class="small">
+                                        {% if heat.competitors %}
+                                            {% for comp in heat.competitors %}
+                                                <span class="me-2">
+                                                    <span class="badge bg-secondary">S{{ comp.stand }}</span>
+                                                    {{ comp.name }}
+                                                </span>
+                                            {% endfor %}
+                                        {% else %}
+                                            <span class="text-muted fst-italic">No competitors assigned</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.heat_id) }}"
+                                           class="btn btn-sm btn-outline-primary">
+                                            Score
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% set row_ns.slot = row_ns.slot + 1 %}
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td class="text-muted small">{{ row_ns.slot }}</td>
+                                    <td>
+                                        <strong>{{ block.event.display_name }}</strong>
+                                        {% if block.event.gender %}
+                                        <small class="text-muted">({{ 'Men' if block.event.gender == 'M' else 'Women' }})</small>
+                                        {% endif %}
+                                    </td>
+                                    <td colspan="3" class="text-muted fst-italic small">
+                                        No heats generated yet — use "Generate Heats for Selected Events" above.
+                                    </td>
+                                </tr>
+                                {% set row_ns.slot = row_ns.slot + 1 %}
+                            {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Summary card (shown when anything is configured) ─────────────── #}
+    {% if selected_ids or selected_saturday_ids %}
+    <div class="card shadow-sm mt-4">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0">Current Configuration</h6>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <strong>Friday Showcase</strong>
+                    {% if tournament.friday_feature_date %}
+                    <div class="text-muted small">{{ tournament.friday_feature_date.strftime('%B %d, %Y') }}</div>
+                    {% endif %}
+                    {% if selected_ids %}
+                    <ul class="mb-1 mt-1">
+                        {% for event in eligible_events %}{% if event.id in selected_ids %}
+                        <li>{{ event.display_name }}</li>
+                        {% endif %}{% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="text-muted small mb-0">None selected</p>
+                    {% endif %}
+                    {% if notes %}<p class="text-muted small fst-italic mb-0">{{ notes }}</p>{% endif %}
+                </div>
+                <div class="col-md-6">
+                    <strong>Saturday Spillover</strong>
+                    {% if selected_saturday_ids %}
+                    <ul class="mb-1 mt-1">
+                        {% for event in sat_eligible %}{% if event.id in selected_saturday_ids %}
+                        <li>{{ event.display_name }}{% if event.gender %} <small class="text-muted">({{ 'Men' if event.gender == 'M' else 'Women' }})</small>{% endif %}</li>
+                        {% endif %}{% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="text-muted small mb-0">None — all college events run Friday</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}{{ event.display_name }} - Results{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h3 class="mb-0">{{ event.display_name }} - Results</h3>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-secondary btn-sm" href="{{ back_url }}">Back to Results List</a>
+            <a class="btn btn-sm {% if mobile_view %}btn-outline-secondary{% else %}btn-proam{% endif %}"
+               href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=event.id, sort=sort_by, view='desktop' if mobile_view else 'mobile') }}">
+                {{ 'Desktop View' if mobile_view else 'Mobile View' }}
+            </a>
+        </div>
+    </div>
+
+    <div class="btn-group mb-3" role="group" aria-label="Sort view">
+        <a class="btn btn-sm {% if sort_by == 'ranking' %}btn-proam{% else %}btn-outline-secondary{% endif %}"
+           href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=event.id, sort='ranking', view=view_mode) }}">
+            Sort by Ranking
+        </a>
+        <a class="btn btn-sm {% if sort_by == 'heat' %}btn-proam{% else %}btn-outline-secondary{% endif %}"
+           href="{{ url_for('portal.spectator_event_results', tournament_id=tournament.id, event_id=event.id, sort='heat', view=view_mode) }}">
+            Sort by Heat
+        </a>
+    </div>
+
+    {% if sort_by == 'ranking' %}
+    <div class="card shadow-sm">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0">Ranking View</h6>
+        </div>
+        <div class="card-body">
+            {% if mobile_view %}
+            <div class="d-grid gap-2">
+                {% for row in ranking_rows %}
+                <div class="card">
+                    <div class="card-body py-2">
+                        <div class="fw-semibold">{{ row.competitor_name }}</div>
+                        <small class="text-muted">Rank {{ row.position or '-' }} | {{ row.status }}</small>
+                        <div class="mt-1">
+                            {{ row.result_value if row.result_value is not none else '-' }}{% if row.result_unit %} {{ row.result_unit }}{% endif %}
+                        </div>
+                        {% if event.requires_dual_runs %}
+                        <small class="text-muted d-block">Run 1: {{ row.run1 if row.run1 is not none else '-' }} | Run 2: {{ row.run2 if row.run2 is not none else '-' }} | Best: {{ row.best_run if row.best_run is not none else '-' }}</small>
+                        {% endif %}
+                    </div>
+                </div>
+                {% else %}
+                <div class="text-muted">No results posted for this event.</div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Competitor</th>
+                            <th>Result</th>
+                            <th>Status</th>
+                            {% if event.requires_dual_runs %}
+                            <th>Run 1</th>
+                            <th>Run 2</th>
+                            <th>Best Run</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in ranking_rows %}
+                        <tr>
+                            <td>{{ row.position or '-' }}</td>
+                            <td>{{ row.competitor_name }}</td>
+                            <td>{{ row.result_value if row.result_value is not none else '-' }}{% if row.result_unit %} {{ row.result_unit }}{% endif %}</td>
+                            <td>{{ row.status }}</td>
+                            {% if event.requires_dual_runs %}
+                            <td>{{ row.run1 if row.run1 is not none else '-' }}</td>
+                            <td>{{ row.run2 if row.run2 is not none else '-' }}</td>
+                            <td>{{ row.best_run if row.best_run is not none else '-' }}</td>
+                            {% endif %}
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="{% if event.requires_dual_runs %}7{% else %}4{% endif %}" class="text-muted">No results posted for this event.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="card shadow-sm">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0">Heat View</h6>
+        </div>
+        <div class="card-body">
+            {% for heat in heat_rows %}
+            <div class="mb-4">
+                <h6 class="mb-2">Heat {{ heat.heat_number }}{% if event.requires_dual_runs %} - Run {{ heat.run_number }}{% endif %}</h6>
+                {% if mobile_view %}
+                <div class="d-grid gap-2">
+                    {% for row in heat.competitors %}
+                    <div class="card">
+                        <div class="card-body py-2">
+                            <div class="fw-semibold">{{ row.competitor_name }}</div>
+                            <small class="text-muted">Stand {{ row.stand_number or '-' }} | Rank {{ row.position or '-' }} | {{ row.status }}</small>
+                            <div class="mt-1">
+                                {{ row.result_value if row.result_value is not none else '-' }}{% if row.result_unit %} {{ row.result_unit }}{% endif %}
+                            </div>
+                            {% if event.requires_dual_runs %}
+                            <small class="text-muted d-block">Run 1: {{ row.run1 if row.run1 is not none else '-' }} | Run 2: {{ row.run2 if row.run2 is not none else '-' }} | Best: {{ row.best_run if row.best_run is not none else '-' }}</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="text-muted">No competitors assigned in this heat.</div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Stand</th>
+                                <th>Competitor</th>
+                                <th>Result</th>
+                                <th>Rank</th>
+                                <th>Status</th>
+                                {% if event.requires_dual_runs %}
+                                <th>Run 1</th>
+                                <th>Run 2</th>
+                                <th>Best Run</th>
+                                {% endif %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in heat.competitors %}
+                            <tr>
+                                <td>{{ row.stand_number or '-' }}</td>
+                                <td>{{ row.competitor_name }}</td>
+                                <td>{{ row.result_value if row.result_value is not none else '-' }}{% if row.result_unit %} {{ row.result_unit }}{% endif %}</td>
+                                <td>{{ row.position or '-' }}</td>
+                                <td>{{ row.status }}</td>
+                                {% if event.requires_dual_runs %}
+                                <td>{{ row.run1 if row.run1 is not none else '-' }}</td>
+                                <td>{{ row.run2 if row.run2 is not none else '-' }}</td>
+                                <td>{{ row.best_run if row.best_run is not none else '-' }}</td>
+                                {% endif %}
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="{% if event.requires_dual_runs %}8{% else %}5{% endif %}" class="text-muted">No competitors assigned in this heat.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+            </div>
+            {% else %}
+            <div class="text-muted">No heats available for this event.</div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

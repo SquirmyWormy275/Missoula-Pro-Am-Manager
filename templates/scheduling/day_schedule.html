@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+
+{% block title %}Day Schedule - {{ tournament.name }} {{ tournament.year }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Schedule list items ──────────────────────────────────── */
+.schedule-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--sx-border);
+    background: transparent;
+    transition: background 0.12s;
+}
+.schedule-item:last-child { border-bottom: none; }
+.schedule-item:hover { background: rgba(255,255,255,0.02); }
+
+.slot-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    height: 26px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--sx-text-2);
+    background: var(--sx-surface-3);
+    border: 1px solid var(--sx-border);
+    border-radius: 5px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.schedule-item-body { flex: 1; min-width: 0; }
+
+.schedule-item-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--sx-text);
+    line-height: 1.3;
+}
+
+.schedule-item-meta {
+    font-size: 0.75rem;
+    color: var(--sx-text-2);
+    margin-top: 2px;
+}
+
+/* Expandable heat breakdown */
+.heat-details {
+    margin-top: 6px;
+}
+.heat-details summary {
+    font-size: 0.78rem;
+    color: var(--sx-text-2);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.heat-details summary::before {
+    content: "▶";
+    font-size: 0.55rem;
+    transition: transform 0.15s;
+}
+.heat-details[open] summary::before { transform: rotate(90deg); }
+.heat-details summary:hover { color: var(--sx-text); }
+
+.heat-breakdown {
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: var(--sx-surface-3);
+    border: 1px solid var(--sx-border);
+    border-radius: 6px;
+    font-size: 0.78rem;
+    color: var(--sx-text-2);
+    line-height: 1.6;
+}
+.heat-breakdown .heat-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.heat-breakdown .heat-label { font-weight: 700; color: var(--sx-text); white-space: nowrap; }
+.heat-breakdown a { color: var(--sx-info); font-size: 0.72rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-2">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}">Events</a></li>
+                    <li class="breadcrumb-item active">Day Schedule</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-calendar-week text-dark"></i>
+                        Day Schedule Generator
+                    </h1>
+                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-warning">
+                        <i class="bi bi-shield-check"></i> Preflight Check
+                    </a>
+                    <a href="{{ url_for('scheduling.day_schedule_print', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-dark" target="_blank">
+                        <i class="bi bi-printer"></i> Print Day Schedule
+                    </a>
+                    <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> Back to Events
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-sliders"></i> Schedule Options</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="row">
+                            <div class="col-lg-6 mb-3">
+                                <h6 class="text-muted">Run Pro Events in Friday Showcase</h6>
+                                {% if pro_events %}
+                                    {% for event in pro_events %}
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                               name="friday_pro_event_ids" value="{{ event.id }}"
+                                               id="friday_pro_{{ event.id }}"
+                                               {% if event.id in selected_friday_pro_event_ids %}checked{% endif %}>
+                                        <label class="form-check-label" for="friday_pro_{{ event.id }}">
+                                            {{ event.display_name }}
+                                        </label>
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p class="text-muted mb-0">No pro events configured.</p>
+                                {% endif %}
+                            </div>
+
+                            <div class="col-lg-6 mb-3">
+                                <h6 class="text-muted">Roll College Events to Saturday (Priority List)</h6>
+                                {% if college_sat_options %}
+                                    {% for event in college_sat_options %}
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                               name="saturday_college_event_ids" value="{{ event.id }}"
+                                               id="sat_college_{{ event.id }}"
+                                               {% if event.id in selected_saturday_college_event_ids %}checked{% endif %}>
+                                        <label class="form-check-label" for="sat_college_{{ event.id }}">
+                                            {{ event.display_name }}
+                                        </label>
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p class="text-muted mb-0">No eligible college spillover events configured.</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap align-items-start">
+                            <div>
+                                <button type="submit" name="action" value="generate_all" class="btn btn-primary"
+                                        data-confirm="Generate heats for all events and rebuild pro flights? Existing heats will be regenerated.">
+                                    <i class="bi bi-lightning-charge"></i> Generate All Heats + Build Flights
+                                </button>
+                                <div class="text-muted small mt-1">Generates heats for every event and builds Saturday pro flight groupings.</div>
+                            </div>
+                            <div class="vr d-none d-md-block mx-1"></div>
+                            <div>
+                                <button type="submit" name="action" value="rebuild_flights" class="btn btn-outline-secondary"
+                                        data-confirm="Rebuild pro flights from existing pro heats?">
+                                    <i class="bi bi-shuffle"></i> Rebuild Pro Flights Only
+                                </button>
+                                <div class="text-muted small mt-1">Re-runs flight grouping without touching heats.</div>
+                            </div>
+                            <div class="vr d-none d-md-block mx-1"></div>
+                            <div>
+                                <button type="submit" name="action" value="integrate_spillover" class="btn btn-outline-secondary"
+                                        data-confirm="Integrate selected college spillover heats into existing Saturday flights?">
+                                    <i class="bi bi-link-45deg"></i> Integrate College Spillover
+                                </button>
+                                <div class="text-muted small mt-1">Adds checked college events to Saturday flights without regenerating heats.</div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-list-ul"></i> Events &amp; Heats
+                </a>
+                <a href="{{ url_for('scheduling.friday_feature', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-stars"></i> Friday Showcase (optional)
+                </a>
+                <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+                   class="btn btn-outline-warning btn-sm">
+                    <i class="bi bi-shield-check"></i> Preflight Check
+                </a>
+                {% if schedule.saturday_source == 'flights' %}
+                <span class="badge bg-success align-self-center">
+                    <i class="bi bi-check-circle me-1"></i>Flights built
+                </span>
+                {% else %}
+                <span class="badge bg-secondary align-self-center">
+                    <i class="bi bi-exclamation-circle me-1"></i>No flights yet
+                </span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        {# ── Friday Day / College ─────────────────────────────── #}
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">{{ 'Friday Day Show' if has_schedule_overrides else 'College Events' }}</h5>
+                </div>
+                {% for item in detailed_schedule.friday_day %}
+                <div class="schedule-item">
+                    <span class="slot-num">{{ item.slot }}</span>
+                    <div class="schedule-item-body">
+                        <div class="schedule-item-label">{{ item.label }}</div>
+                        <div class="schedule-item-meta">{{ item.event_type|title }}&nbsp;·&nbsp;{{ item.stand_type }}</div>
+                        {% if item.heats %}
+                        <details class="heat-details">
+                            <summary>Heats &amp; Stands</summary>
+                            <div class="heat-breakdown">
+                                {% for heat in item.heats %}
+                                <div class="heat-row">
+                                    <span class="heat-label">H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}:</span>
+                                    {% for comp in heat.competitors %}<span>S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>{% endfor %}
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}">Score</a>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </details>
+                        {% endif %}
+                    </div>
+                </div>
+                {% else %}
+                <div class="schedule-item"><span class="text-muted" style="font-size:0.85rem;">No events in this block.</span></div>
+                {% endfor %}
+            </div>
+        </div>
+
+        {# ── Friday Showcase / Pro ────────────────────────────── #}
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">{{ 'Friday Showcase' if has_schedule_overrides else 'Pro Events' }}</h5>
+                </div>
+                {% for item in detailed_schedule.friday_feature %}
+                <div class="schedule-item">
+                    <span class="slot-num">{{ item.slot }}</span>
+                    <div class="schedule-item-body">
+                        <div class="schedule-item-label">{{ item.label }}</div>
+                        <div class="schedule-item-meta">{{ item.event_type|title }}&nbsp;·&nbsp;{{ item.stand_type }}</div>
+                        {% if item.heats %}
+                        <details class="heat-details">
+                            <summary>Heats &amp; Stands</summary>
+                            <div class="heat-breakdown">
+                                {% for heat in item.heats %}
+                                <div class="heat-row">
+                                    <span class="heat-label">H{{ heat.heat_number }}{% if heat.run_number > 1 %}-R{{ heat.run_number }}{% endif %}:</span>
+                                    {% for comp in heat.competitors %}<span>S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>{% endfor %}
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}">Score</a>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </details>
+                        {% endif %}
+                    </div>
+                </div>
+                {% else %}
+                <div class="schedule-item"><span class="text-muted" style="font-size:0.85rem;">No events in this block.</span></div>
+                {% endfor %}
+            </div>
+        </div>
+
+        {# ── Saturday Show ────────────────────────────────────── #}
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">{{ 'Saturday Show' if has_schedule_overrides else 'Pro + College Queue' }}</h5>
+                </div>
+                <div style="padding: 8px 14px; border-bottom: 1px solid var(--sx-border); font-size:0.8rem;">
+                    {% if schedule.saturday_source == 'flights' %}
+                        <span class="text-success"><i class="bi bi-check-circle"></i> Using built pro flights</span>
+                    {% else %}
+                        <span class="text-danger"><i class="bi bi-exclamation-triangle"></i> No flights — using fallback order.</span>
+                    {% endif %}
+                </div>
+                {% for item in detailed_schedule.saturday_show %}
+                <div class="schedule-item">
+                    <span class="slot-num">{{ item.slot }}</span>
+                    <div class="schedule-item-body">
+                        <div class="schedule-item-label">{{ item.label }}</div>
+                        <div class="schedule-item-meta">
+                            {{ item.event_type|title }}&nbsp;·&nbsp;{{ item.stand_type }}
+                            {% if item.flight_number %}&nbsp;·&nbsp;Flight {{ item.flight_number }}{% endif %}
+                        </div>
+                        {% if item.heats %}
+                        <details class="heat-details">
+                            <summary>Heats &amp; Stands</summary>
+                            <div class="heat-breakdown">
+                                {% for heat in item.heats %}
+                                <div class="heat-row">
+                                    {% for comp in heat.competitors %}<span>S{{ comp.stand if comp.stand is not none else '?' }} {{ comp.name }}</span>{% endfor %}
+                                    <a href="{{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id) }}">Score</a>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </details>
+                        {% endif %}
+                    </div>
+                </div>
+                {% else %}
+                <div class="schedule-item"><span class="text-muted" style="font-size:0.85rem;">No events in this block.</span></div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

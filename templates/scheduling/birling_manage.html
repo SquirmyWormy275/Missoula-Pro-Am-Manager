@@ -1,0 +1,577 @@
+{% extends "base.html" %}
+{% block title %}Birling — {{ event.display_name }} — {{ tournament.name }}{% endblock %}
+
+{% block head_extra %}
+<style>
+/* ── Bracket visualization ─────────────────────────────────────────
+   Each .bracket-round is a flex column with justify-content:space-around.
+   When every round has the same outer height (enforced by the
+   --round-height custom property applied at .bracket-row), the matches
+   within each round sit at positions 1/(2N), 3/(2N), 5/(2N)... down the
+   column.  A round with half the matches of its predecessor lands
+   exactly at the midpoints — which is the bracket geometry we want.
+
+   Match heights are fixed so the total column height is deterministic:
+     round-height = round1-match-count * (match-h + match-gap)
+   Pass round1-match-count inline per .bracket-row (see template loops).
+*/
+.bracket-container {
+    overflow-x: auto;
+    padding: 12px 4px 6px;
+    --match-h: 62px;
+    --match-gap: 14px;
+    --round-gap: 32px;
+    --connector-w: 16px;
+    --connector-color: rgba(255, 255, 255, 0.18);
+}
+.bracket-section { margin-bottom: 28px; }
+.bracket-section-title {
+    background: var(--surface-200, #1a3a5c);
+    color: #fff;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: inline-block;
+    margin-bottom: 10px;
+}
+.bracket-row {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: var(--round-gap);
+    padding-right: var(--connector-w);
+    --row-height: calc(
+        var(--row-match-count, 1) * var(--match-h)
+        + max(0, var(--row-match-count, 1) - 1) * var(--match-gap)
+    );
+    min-height: var(--row-height);
+}
+.bracket-round {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    min-width: 190px;
+    flex-shrink: 0;
+    position: relative;
+    padding-block: 6px;
+}
+.bracket-round-label {
+    text-align: center;
+    font-size: 0.70rem;
+    color: var(--text-muted, #aaa);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--connector-color);
+    margin-bottom: 10px;
+}
+.bracket-match {
+    border: 1px solid var(--border-color, #333);
+    border-radius: 6px;
+    padding: 0;
+    background: var(--surface-100, #1e1e1e);
+    font-size: 0.85rem;
+    overflow: hidden;
+    min-height: var(--match-h);
+    position: relative;
+    flex: 0 0 auto;
+}
+/* Horizontal connector stub leaving a match (all rounds except the last). */
+.bracket-round:not(:last-child) .bracket-match::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: calc(var(--connector-w) * -1);
+    width: var(--connector-w);
+    height: 1px;
+    background: var(--connector-color);
+}
+/* Horizontal connector stub entering a match (all rounds except the first). */
+.bracket-round:not(:first-child) .bracket-match::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: calc(var(--connector-w) * -1);
+    width: var(--connector-w);
+    height: 1px;
+    background: var(--connector-color);
+}
+.bracket-match.playable {
+    border-color: var(--proam-accent, #ef2b16);
+    box-shadow: 0 0 0 1px var(--proam-accent, #ef2b16);
+}
+.bracket-match.completed { opacity: 0.92; }
+.bracket-match.is-bye { opacity: 0.55; }
+.match-header {
+    background: var(--surface-200, #2a2a2a);
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    color: var(--text-muted, #888);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    line-height: 1.4;
+}
+.match-slot {
+    padding: 5px 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-height: 26px;
+}
+.match-slot + .match-slot { border-top: 1px solid var(--border-color, #333); }
+.match-slot.winner-slot {
+    background: rgba(25, 135, 84, 0.18);
+    font-weight: 700;
+}
+.match-slot.loser-slot {
+    opacity: 0.5;
+    text-decoration: line-through;
+}
+.match-slot .slot-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+}
+.match-slot .slot-name.tbd,
+.match-slot .slot-name.bye {
+    color: var(--text-muted, #888);
+    font-style: italic;
+}
+/* Losers bracket geometry is irregular (drop-down rounds interleave with
+   consolidation rounds) so we do not force the same geometric alignment
+   as the winners bracket. Left-align matches and let each round flow. */
+.bracket-row.losers-row { align-items: flex-start; }
+.bracket-row.losers-row .bracket-round {
+    justify-content: flex-start;
+    gap: var(--match-gap);
+}
+.bracket-row.losers-row .bracket-match { margin-bottom: 0; }
+
+/* ── Seed input table ──────────────────────────────── */
+.seed-input {
+    width: 60px;
+}
+
+/* ── Placements table ──────────────────────────────── */
+.placement-badge {
+    width: 28px;
+    height: 28px;
+    line-height: 28px;
+    text-align: center;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.85rem;
+    display: inline-block;
+}
+.placement-1 { background: #ffd700; color: #000; }
+.placement-2 { background: #c0c0c0; color: #000; }
+.placement-3 { background: #cd7f32; color: #fff; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+
+    {# ── Header ──────────────────────────────────────── #}
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h4 class="mb-0"><i class="bi bi-diagram-3 me-2"></i>{{ event.display_name }} — Birling Bracket</h4>
+            <p class="text-muted small mb-0 mt-1">
+                Double-elimination bracket.
+                {% if not has_bracket %}Seed competitors below, then generate the bracket.{% endif %}
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('scoring.event_results', tournament_id=tournament.id, event_id=event.id) }}"
+               class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-list-ol me-1"></i> Results
+            </a>
+            <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+               class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-left me-1"></i> Events
+            </a>
+        </div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'error' else ('warning' if category == 'warning' else 'success') }} alert-dismissible fade show py-2" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endwith %}
+
+    {# ── Seeding & Generation ────────────────────────── #}
+    <div class="card shadow-sm mb-4">
+        <div class="card-header card-header-proam d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="bi bi-sort-numeric-down me-1"></i> Competitor Seeding</h6>
+            <span class="badge bg-secondary fw-normal">{{ competitors|length }} competitor{{ 's' if competitors|length != 1 }}</span>
+        </div>
+        <div class="card-body">
+            {% if competitors|length < 2 %}
+                <div class="alert alert-info mb-0">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Need at least 2 competitors signed up for this event to generate a bracket.
+                </div>
+            {% else %}
+            <p class="text-muted small mb-3">
+                Assign seed numbers (1 = strongest). Leave blank for unseeded.
+                Seeded competitors get favorable bracket positioning.
+            </p>
+            <form method="POST" action="{{ url_for('scheduling.birling_generate', tournament_id=tournament.id, event_id=event.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <table class="table table-sm table-hover mb-3">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:80px">Seed</th>
+                            <th>Competitor</th>
+                            {% if competitors[0].team %}
+                            <th>Team</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for comp in competitors %}
+                        <tr>
+                            <td>
+                                <input type="number"
+                                       class="form-control form-control-sm seed-input"
+                                       name="seed_{{ comp.id }}"
+                                       value="{{ comp.seed if comp.seed is not none else '' }}"
+                                       min="1"
+                                       placeholder="--">
+                            </td>
+                            <td class="align-middle">{{ comp.name }}</td>
+                            {% if competitors[0].team %}
+                            <td class="align-middle text-muted">
+                                {{ comp.team.team_code if comp.team else '' }}
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-diagram-3 me-1"></i>
+                        {% if has_bracket %}Regenerate Bracket{% else %}Generate Bracket{% endif %}
+                    </button>
+                    {% if has_bracket %}
+                    <span class="text-warning small align-self-center">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        Regenerating will discard the current bracket and all match results.
+                    </span>
+                    {% endif %}
+                </div>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    {# ── Active Matches (playable now) ───────────────── #}
+    {% if has_bracket and current_matches %}
+    <div class="card shadow-sm mb-4 border-warning">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0"><i class="bi bi-play-circle me-1"></i> Matches Ready to Play</h6>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                {% for match in current_matches %}
+                <div class="col-md-6 col-lg-4">
+                    <div class="card border-warning h-100">
+                        <div class="card-header py-2 d-flex justify-content-between">
+                            <strong>{{ match.match_id }}</strong>
+                            <span class="badge bg-warning text-dark">Best of 3</span>
+                        </div>
+                        <div class="card-body py-2">
+                            {% set name1 = comp_lookup.get(match.competitor1|string, 'Unknown') %}
+                            {% set name2 = comp_lookup.get(match.competitor2|string, 'Unknown') %}
+                            {% set falls = match.get('falls', []) if match.get is defined else (match.falls if match.falls is defined else []) %}
+                            {% set c1_falls = falls|selectattr('winner', 'equalto', match.competitor1)|list|length %}
+                            {% set c2_falls = falls|selectattr('winner', 'equalto', match.competitor2)|list|length %}
+
+                            {# Fall tracker #}
+                            <div class="text-center mb-2">
+                                <span class="fw-bold">{{ name1 }}</span>
+                                <span class="mx-2 fs-5 fw-bold">{{ c1_falls }} - {{ c2_falls }}</span>
+                                <span class="fw-bold">{{ name2 }}</span>
+                            </div>
+                            {% if falls %}
+                            <div class="text-center mb-2 small text-muted">
+                                Falls:
+                                {% for f in falls %}
+                                    <span class="badge bg-secondary">{{ comp_lookup.get(f.winner|string, '?') }}</span>
+                                {% endfor %}
+                                {% for _ in range(3 - falls|length) %}
+                                    <span class="badge bg-dark" style="opacity:0.3">--</span>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <div class="text-center mb-2 small text-muted">
+                                <span class="badge bg-dark" style="opacity:0.3">--</span>
+                                <span class="badge bg-dark" style="opacity:0.3">--</span>
+                                <span class="badge bg-dark" style="opacity:0.3">--</span>
+                            </div>
+                            {% endif %}
+
+                            {# Fall recording buttons #}
+                            <div class="d-grid gap-2 mb-2">
+                                <form method="POST" action="{{ url_for('scheduling.birling_record_fall', tournament_id=tournament.id, event_id=event.id) }}" class="d-grid">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                    <button type="submit" name="fall_winner_id" value="{{ match.competitor1 }}"
+                                            class="btn btn-outline-primary btn-sm text-start">
+                                        Fall to {{ name1 }}
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('scheduling.birling_record_fall', tournament_id=tournament.id, event_id=event.id) }}" class="d-grid">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                    <button type="submit" name="fall_winner_id" value="{{ match.competitor2 }}"
+                                            class="btn btn-outline-primary btn-sm text-start">
+                                        Fall to {{ name2 }}
+                                    </button>
+                                </form>
+                            </div>
+
+                            {# Direct declare (collapsed) #}
+                            <details class="mt-1">
+                                <summary class="small text-muted" style="cursor:pointer">Direct declare winner</summary>
+                                <div class="mt-1 small text-muted mb-1">Skip fall tracking</div>
+                                <form method="POST" action="{{ url_for('scheduling.birling_record_match', tournament_id=tournament.id, event_id=event.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                    <div class="d-grid gap-1">
+                                        <button type="submit" name="winner_id" value="{{ match.competitor1 }}"
+                                                class="btn btn-outline-success btn-sm text-start">
+                                            <i class="bi bi-trophy me-1"></i> {{ name1 }} wins
+                                        </button>
+                                        <button type="submit" name="winner_id" value="{{ match.competitor2 }}"
+                                                class="btn btn-outline-success btn-sm text-start">
+                                            <i class="bi bi-trophy me-1"></i> {{ name2 }} wins
+                                        </button>
+                                    </div>
+                                </form>
+                            </details>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Bracket Visualization ───────────────────────── #}
+    {% if has_bracket %}
+    <div class="card shadow-sm mb-4">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0"><i class="bi bi-trophy me-1"></i> Bracket</h6>
+        </div>
+        <div class="card-body p-2">
+
+            {% macro render_slot(comp_id, winner_id, loser_id) %}
+                {% set name = comp_lookup.get(comp_id|string, '???') if comp_id else 'TBD' %}
+                {% if comp_id and comp_id == winner_id %}
+                    <div class="match-slot winner-slot">
+                        <span class="slot-name" title="{{ name }}">{{ name }}</span>
+                        <i class="bi bi-check-circle-fill text-success"></i>
+                    </div>
+                {% elif comp_id and comp_id == loser_id %}
+                    <div class="match-slot loser-slot">
+                        <span class="slot-name" title="{{ name }}">{{ name }}</span>
+                    </div>
+                {% elif comp_id %}
+                    <div class="match-slot">
+                        <span class="slot-name" title="{{ name }}">{{ name }}</span>
+                    </div>
+                {% else %}
+                    <div class="match-slot">
+                        <span class="slot-name tbd">TBD</span>
+                    </div>
+                {% endif %}
+            {% endmacro %}
+
+            {% macro render_match(match, playable_ids) %}
+                {% set is_playable = match.match_id in playable_ids %}
+                {% set is_done = match.winner is not none %}
+                {% set is_undoable = match.match_id in undoable_match_ids %}
+                {% set falls = match.get('falls', []) if match.get is defined else [] %}
+                <div class="bracket-match {{ 'playable' if is_playable else '' }} {{ 'completed' if is_done else '' }}">
+                    <div class="match-header">
+                        <span>{{ match.match_id }}
+                        {% if is_done and falls %}
+                            {% set w_falls = falls|selectattr('winner', 'equalto', match.winner)|list|length %}
+                            {% set l_falls = falls|length - w_falls %}
+                            <span style="opacity:0.7">({{ w_falls }}-{{ l_falls }})</span>
+                        {% endif %}
+                        </span>
+                        {% if is_done and is_undoable %}
+                            <form method="POST" action="{{ url_for('scheduling.birling_undo_match', tournament_id=tournament.id, event_id=event.id) }}" style="display:inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                <button type="submit" class="btn btn-link btn-sm p-0 text-muted"
+                                        style="font-size:0.65rem; text-decoration:none"
+                                        data-confirm="Undo this match result? Both competitors will be returned to this match."
+                                        title="Undo match result">
+                                    <i class="bi bi-arrow-counterclockwise"></i>
+                                </button>
+                            </form>
+                        {% elif is_done %}
+                            <span class="text-success"><i class="bi bi-check-circle-fill"></i></span>
+                        {% elif is_playable %}
+                            <span class="text-warning"><i class="bi bi-play-fill"></i> Ready</span>
+                        {% endif %}
+                    </div>
+                    {{ render_slot(match.competitor1, match.winner, match.loser) }}
+                    {{ render_slot(match.competitor2, match.winner, match.loser) }}
+                </div>
+            {% endmacro %}
+
+            {% set playable_ids = current_matches | map(attribute='match_id') | list %}
+
+            {# Winners bracket — matches in each round align with parents
+               via equal column heights + justify-content:space-around.
+               --row-match-count drives the shared column height. #}
+            {% if bracket.winners %}
+            {% set wb_round1_count = bracket.winners[0]|length if bracket.winners[0] else 1 %}
+            <div class="bracket-section">
+                <span class="bracket-section-title">Winners Bracket</span>
+                <div class="bracket-container">
+                    <div class="bracket-row" style="--row-match-count: {{ wb_round1_count }};">
+                        {% for round_matches in bracket.winners %}
+                        <div class="bracket-round">
+                            <div class="bracket-round-label">
+                                {% if loop.last %}Final{% else %}Round {{ loop.index }}{% endif %}
+                            </div>
+                            {% for match in round_matches %}
+                                {{ render_match(match, playable_ids) }}
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Losers bracket — drop-down rounds interleave with consolidation
+               rounds, so geometric parent-midpoint alignment does not apply.
+               Use .losers-row to let each round stack its matches top-down. #}
+            {% if bracket.losers %}
+            <div class="bracket-section">
+                <span class="bracket-section-title">Losers Bracket</span>
+                <div class="bracket-container">
+                    <div class="bracket-row losers-row">
+                        {% for round_matches in bracket.losers %}
+                        <div class="bracket-round">
+                            <div class="bracket-round-label">L Round {{ loop.index }}</div>
+                            {% for match in round_matches %}
+                                {{ render_match(match, playable_ids) }}
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Grand finals #}
+            {% if bracket.finals %}
+            <div class="bracket-section">
+                <span class="bracket-section-title">Grand Finals</span>
+                <div class="bracket-container">
+                    <div class="bracket-row" style="--row-match-count: 1;">
+                        <div class="bracket-round">
+                            <div class="bracket-round-label">Finals</div>
+                            {{ render_match(bracket.finals, playable_ids) }}
+                        </div>
+                        {% if bracket.true_finals and bracket.true_finals.needed %}
+                        <div class="bracket-round">
+                            <div class="bracket-round-label">True Finals</div>
+                            {{ render_match(bracket.true_finals, playable_ids) }}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {# ── Placements ──────────────────────────────────── #}
+    {% if placements %}
+    <div class="card shadow-sm mb-4">
+        <div class="card-header card-header-proam">
+            <h6 class="mb-0"><i class="bi bi-award me-1"></i> Placements</h6>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+                <thead class="table-light">
+                    <tr><th style="width:80px">Place</th><th>Competitor</th></tr>
+                </thead>
+                <tbody>
+                    {% for comp_id, pos in placements.items()|sort(attribute='1') %}
+                    <tr>
+                        <td>
+                            {% if pos <= 3 %}
+                                <span class="placement-badge placement-{{ pos }}">{{ pos }}</span>
+                            {% else %}
+                                <span class="text-muted">{{ pos }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ comp_lookup.get(comp_id, comp_id) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Actions ─────────────────────────────────────── #}
+    <div class="d-flex gap-2 mb-4">
+        {% if is_complete and not event.is_finalized %}
+        <form method="POST" action="{{ url_for('scheduling.birling_finalize', tournament_id=tournament.id, event_id=event.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-success btn-sm"
+                    data-confirm="Finalize this bracket? This will write placements to event results.">
+                <i class="bi bi-check-circle me-1"></i> Finalize Results
+            </button>
+        </form>
+        {% endif %}
+        {% if event.is_finalized %}
+        <span class="badge bg-success align-self-center py-2 px-3">
+            <i class="bi bi-lock-fill me-1"></i> Results Finalized
+        </span>
+        {% endif %}
+        <a href="{{ url_for('scheduling.birling_print_blank', tournament_id=tournament.id, event_id=event.id) }}"
+           class="btn btn-outline-secondary btn-sm" target="_blank"
+           title="Blank printable bracket with round-1 matchups filled in — judge hand-fills advancement.">
+            <i class="bi bi-printer me-1"></i> Print Blank Bracket
+        </a>
+        <form method="POST" action="{{ url_for('scheduling.birling_reset', tournament_id=tournament.id, event_id=event.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger btn-sm"
+                    data-confirm="Reset the entire bracket? All match results will be lost.">
+                <i class="bi bi-arrow-counterclockwise me-1"></i> Reset Bracket
+            </button>
+        </form>
+    </div>
+
+    {% elif not has_bracket %}
+    {# No bracket yet — info message #}
+    {% if competitors|length >= 2 %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle me-1"></i>
+        Set seedings above and click "Generate Bracket" to create the double-elimination bracket.
+    </div>
+    {% endif %}
+    {% endif %}
+
+</div>
+{% endblock %}

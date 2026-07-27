@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+
+{% block title %}{{ competitor.name }} - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Pro</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.pro_dashboard', tournament_id=tournament.id) }}">Competitors</a></li>
+                    <li class="breadcrumb-item active">{{ competitor.name }}</li>
+                </ol>
+            </nav>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>
+                        <i class="bi bi-person-circle text-warning"></i>
+                        {{ competitor.name }}
+                    </h1>
+                    <p class="text-muted mb-0">
+                        <span class="badge bg-{% if competitor.gender == 'M' %}primary{% else %}info{% endif %}">
+                            {{ 'Male' if competitor.gender == 'M' else 'Female' }}
+                        </span>
+                        {% if competitor.is_ala_member %}
+                            <span class="badge bg-success">ALA Member</span>
+                        {% endif %}
+                        {% if competitor.pro_am_lottery_opt_in %}
+                            <span class="badge bg-warning text-dark">Pro-Am Lottery</span>
+                        {% endif %}
+                        {% if competitor.is_left_handed_springboard %}
+                            <span class="badge bg-info">Left-Handed Springboard</span>
+                        {% endif %}
+                        {% if competitor.springboard_slow_heat %}
+                            <span class="badge bg-warning text-dark">Slow Heat (all springboard events)</span>
+                        {% endif %}
+                    </p>
+                </div>
+                <div>
+                    {% if competitor.status == 'active' %}
+                        <form action="{{ url_for('registration.scratch_pro_competitor', tournament_id=tournament.id, competitor_id=competitor.id) }}"
+                              method="POST" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-danger" data-confirm="Scratch this competitor?">
+                                <i class="bi bi-x-circle"></i> Scratch
+                            </button>
+                        </form>
+                    {% else %}
+                        <span class="badge bg-secondary fs-6">Scratched</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Contact & Info -->
+        <div class="col-md-4 mb-4">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h6 class="mb-0"><i class="bi bi-person-vcard"></i> Contact Information</h6>
+                </div>
+                <ul class="list-group list-group-flush">
+                    {% if competitor.email %}
+                    <li class="list-group-item">
+                        <i class="bi bi-envelope text-muted"></i>
+                        <a href="mailto:{{ competitor.email }}">{{ competitor.email }}</a>
+                    </li>
+                    {% endif %}
+                    {% if competitor.phone %}
+                    <li class="list-group-item">
+                        <i class="bi bi-telephone text-muted"></i>
+                        {{ competitor.phone }}
+                    </li>
+                    {% endif %}
+                    {% if competitor.address %}
+                    <li class="list-group-item">
+                        <i class="bi bi-geo-alt text-muted"></i>
+                        {{ competitor.address }}
+                    </li>
+                    {% endif %}
+                    {% if competitor.shirt_size %}
+                    <li class="list-group-item">
+                        <i class="bi bi-tag text-muted"></i>
+                        Shirt Size: <strong>{{ competitor.shirt_size }}</strong>
+                    </li>
+                    {% endif %}
+                </ul>
+            </div>
+
+            <!-- Financials -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-wallet2"></i> Financials</h6>
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Entry Fees Owed</span>
+                        <strong>${{ "%.2f"|format(competitor.total_fees_owed) }}</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Fees Paid</span>
+                        <strong class="text-success">${{ "%.2f"|format(competitor.total_fees_paid) }}</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Balance Due</span>
+                        <strong class="{% if competitor.fees_balance > 0 %}text-danger{% else %}text-success{% endif %}">
+                            ${{ "%.2f"|format(competitor.fees_balance) }}
+                        </strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between bg-light">
+                        <span><strong>Total Earnings</strong></span>
+                        <strong class="text-success fs-5">${{ "%.2f"|format(competitor.total_earnings) }}</strong>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Events & Results -->
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-list-check"></i> Events Entered</h6>
+                </div>
+                <div class="card-body">
+                    {% if event_labels %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-proam">
+                                <tr>
+                                    <th>Event</th>
+                                    <th>Entry Fee</th>
+                                    <th>Paid</th>
+                                    <th>Result</th>
+                                    <th>Payout</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for event_id, event_label in event_labels %}
+                                {% set fees = competitor.get_entry_fees() %}
+                                {% set paid = competitor.get_fees_paid() %}
+                                <tr>
+                                    <td>{{ event_label }}</td>
+                                    <td>${{ "%.2f"|format(fees.get(event_id|string, 0)) }}</td>
+                                    <td>
+                                        {% if paid.get(event_id|string, False) %}
+                                            <span class="badge bg-success">Paid</span>
+                                        {% else %}
+                                            <span class="badge bg-warning text-dark">Unpaid</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>-</td>
+                                    <td>-</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-calendar-x display-4"></i>
+                        <p class="mt-3">No events entered yet.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Gear Sharing -->
+            <div class="card mt-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Gear Sharing</h6>
+                    <a href="{{ url_for('registration.pro_gear_manager', tournament_id=tournament.id) }}"
+                       class="btn btn-outline-secondary btn-sm">Manage All</a>
+                </div>
+                {% if gear_sharing_labels %}
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Event</th>
+                                <th>Partner</th>
+                                <th>Reciprocal</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for g in gear_sharing_labels %}
+                            <tr>
+                                <td>{{ g.event_label }}</td>
+                                <td>{{ g.partner if g.partner else '<span class="text-muted fst-italic">none</span>'|safe }}</td>
+                                <td>
+                                    {% if g.reciprocal %}
+                                    <span class="badge bg-success">Yes</span>
+                                    {% elif g.partner and g.partner.startswith('group:') %}
+                                    <span class="badge bg-secondary">Group</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">Not on roster</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="card-body text-muted small">No gear-sharing entries.</div>
+                {% endif %}
+                {% if gear_audit %}
+                <div class="card-footer">
+                    <h6 class="small text-muted mb-2">Recent Gear Activity</h6>
+                    <ul class="list-unstyled mb-0">
+                        {% for entry in gear_audit %}
+                        <li class="small text-muted">
+                            {{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else '' }}
+                            — {{ entry.action }}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Edit Event Enrollment -->
+            {% if pro_events %}
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-pencil-square"></i> Edit Event Enrollment</h6>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('registration.update_pro_events', tournament_id=tournament.id, competitor_id=competitor.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        {% set entered_ids = competitor.get_events_entered() | map('string') | list %}
+                        {% set fees = competitor.get_entry_fees() %}
+                        {% set paid_map = competitor.get_fees_paid() %}
+                        {% set gear_map = competitor.get_gear_sharing() %}
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Enter</th>
+                                        <th>Event</th>
+                                        <th>Partner</th>
+                                        <th>Fee ($)</th>
+                                        <th>Paid</th>
+                                        <th>Gear Sharing Partner</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for event in pro_events %}
+                                    {% set eid = event.id | string %}
+                                    <tr>
+                                        <td>
+                                            <input type="checkbox" class="form-check-input" name="event_ids" value="{{ eid }}"
+                                                {% if eid in entered_ids %}checked{% endif %}>
+                                        </td>
+                                        <td>{{ event.display_name }}</td>
+                                        <td style="min-width:180px;">
+                                            <input type="text" class="form-control form-control-sm" name="partner_{{ eid }}"
+                                                   value="{{ partner_map.get(eid, '') }}" placeholder="Partner name">
+                                        </td>
+                                        <td style="width:90px;">
+                                            <input type="number" class="form-control form-control-sm" name="fee_{{ eid }}"
+                                                   value="{{ '%.2f'|format(fees.get(eid, 0)) }}" min="0" step="0.01">
+                                        </td>
+                                        <td>
+                                            <input type="checkbox" class="form-check-input" name="paid_{{ eid }}"
+                                                {% if paid_map.get(eid) %}checked{% endif %}>
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm" name="gear_{{ eid }}"
+                                                   value="{{ gear_map.get(eid, '') }}" placeholder="Partner name">
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="left_handed" name="left_handed"
+                                           {% if competitor.is_left_handed_springboard %}checked{% endif %}>
+                                    <label class="form-check-label" for="left_handed">Left-handed Springboard Cutter</label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="springboard_slow_heat" name="springboard_slow_heat"
+                                           {% if competitor.springboard_slow_heat %}checked{% endif %}>
+                                    <label class="form-check-label" for="springboard_slow_heat">Slow heat flag (Springboard, Pro 1-Board, 3-Board Jigger)</label>
+                                </div>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-proam btn-sm">Save Changes</button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Gear Sharing Report — {{ tournament.name }} {{ tournament.year }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; font-size: 11pt; color: #000; margin: 1.5cm; }
+        h1 { font-size: 16pt; margin-bottom: 2px; }
+        h2 { font-size: 13pt; margin: 14px 0 4px; border-bottom: 1px solid #999; padding-bottom: 2px; }
+        h3 { font-size: 11pt; margin: 10px 0 2px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+        th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: left; }
+        th { background: #eee; }
+        .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9pt; }
+        .badge-success { background: #d4edda; color: #155724; }
+        .badge-warning { background: #fff3cd; color: #856404; }
+        .badge-secondary { background: #e2e3e5; color: #383d41; }
+        .badge-danger { background: #f8d7da; color: #721c24; }
+        .section-note { color: #666; font-size: 9pt; margin-bottom: 6px; }
+        @media print {
+            a { text-decoration: none; color: inherit; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="no-print" style="margin-bottom:12px;">
+    <button data-print>Print</button>
+    <button data-close-window>Close</button>
+</div>
+
+<h1>Gear Sharing Report</h1>
+<p>{{ tournament.name }} {{ tournament.year }} — Pro Division
+{% if tournament.pro_date %} &mdash; {{ tournament.pro_date }}{% endif %}
+</p>
+
+{% set springboard_groups = report.pro_groups | selectattr('event_label', 'search', '(?i)springboard|1.?board') | list %}
+{% set crosscut_groups = report.pro_groups | selectattr('event_label', 'search', '(?i)buck|jack|jill|crosscut|handsaw|saw') | list %}
+{% set chainsaw_groups = report.pro_groups | selectattr('event_label', 'search', '(?i)hot.?saw|stock.?saw|chainsaw|power') | list %}
+{% set other_groups = [] %}
+{% for group in report.pro_groups %}
+  {% if group not in springboard_groups and group not in crosscut_groups and group not in chainsaw_groups %}
+    {% set _ = other_groups.append(group) %}
+  {% endif %}
+{% endfor %}
+
+{% macro group_table(groups) %}
+<table>
+    <thead>
+        <tr>
+            <th>Members</th>
+            <th>Size</th>
+            <th>Equipment / Event</th>
+            <th>Status</th>
+            <th>Heat Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for group in groups %}
+        <tr>
+            <td>{{ group.members | map(attribute='name') | join(', ') }}</td>
+            <td>{{ group.member_count }}</td>
+            <td>{{ group.event_label }}</td>
+            <td>
+                {% if group.has_unconfirmed %}
+                <span class="badge badge-warning">Unconfirmed</span>
+                {% else %}
+                <span class="badge badge-success">Confirmed</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if group.heat_conflict %}
+                <span class="badge badge-danger">Conflict</span>
+                {% else %}
+                <span class="badge badge-success">OK</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endmacro %}
+
+<!-- Springboard Groups -->
+{% if springboard_groups %}
+<h2>Springboard Groups ({{ springboard_groups|length }})</h2>
+<p class="section-note">Springboard sharing groups cannot be in the same heat.</p>
+{{ group_table(springboard_groups) }}
+{% endif %}
+
+<!-- Crosscut / Handsaw Groups -->
+{% if crosscut_groups %}
+<h2>Crosscut / Handsaw Groups ({{ crosscut_groups|length }})</h2>
+<p class="section-note">Includes Single Buck, Double Buck, Jack &amp; Jill. Members share a saw.</p>
+{{ group_table(crosscut_groups) }}
+{% endif %}
+
+<!-- Chainsaw / Power Saw Groups -->
+{% if chainsaw_groups %}
+<h2>Chainsaw / Power Saw Groups ({{ chainsaw_groups|length }})</h2>
+<p class="section-note">Includes Hot Saw and Stock Saw. Members share a saw.</p>
+{{ group_table(chainsaw_groups) }}
+{% endif %}
+
+<!-- Other Groups -->
+{% if other_groups %}
+<h2>Other Groups ({{ other_groups|length }})</h2>
+{{ group_table(other_groups) }}
+{% endif %}
+
+{% if not report.pro_groups %}
+<p><em>No verified gear-sharing groups found.</em></p>
+{% endif %}
+
+<!-- Unresolved Entries -->
+{% if report.pro_unresolved %}
+<h2>Unresolved Entries ({{ report.pro_unresolved|length }})</h2>
+<p class="section-note">These entries have issues that need to be resolved before scheduling.</p>
+<table>
+    <thead>
+        <tr>
+            <th>Competitor</th>
+            <th>Event</th>
+            <th>Partner (stored)</th>
+            <th>Issue</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in report.pro_unresolved %}
+        <tr>
+            <td>{{ entry.competitor.display_name }}</td>
+            <td>{{ entry.event_label }}</td>
+            <td>{{ entry.partner_raw if entry.partner_raw else '(none)' }}</td>
+            <td>{{ entry.issues | join('; ') }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<!-- College Gear Constraints -->
+{% if report.college_constraints %}
+<h2>College Gear Constraints ({{ report.college_constraints|length }})</h2>
+<p class="section-note">College competitors sharing gear — for reference only.</p>
+<table>
+    <thead>
+        <tr>
+            <th>Competitor</th>
+            <th>Team</th>
+            <th>Event</th>
+            <th>Gear Partner</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in report.college_constraints %}
+        <tr>
+            <td>{{ row.competitor.display_name }}</td>
+            <td>{{ row.team_code }}</td>
+            <td>{{ row.event_label }}</td>
+            <td>{{ row.partner if row.partner else '' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<!-- Summary -->
+<h2>Summary</h2>
+<table style="width:auto;">
+    <tr><td>Gear Groups</td><td>{{ report.stats.groups }}</td></tr>
+    <tr><td>Unresolved Entries</td><td>{{ report.stats.unresolved }}</td></tr>
+    <tr><td>Heat Conflicts</td><td>{{ report.stats.conflicts }}</td></tr>
+    <tr><td>College Constraints</td><td>{{ report.stats.college }}</td></tr>
+</table>
+
+<script>
+document.querySelectorAll('[data-print]').forEach(function(btn) {
+    btn.addEventListener('click', function() { window.print(); });
+});
+document.querySelectorAll('[data-close-window]').forEach(function(btn) {
+    btn.addEventListener('click', function() { window.close(); });
+});
+</script>
+</body>
+</html>

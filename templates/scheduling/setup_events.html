@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block title %}Configure Events - {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1>
+                <i class="bi bi-gear text-primary"></i>
+                Configure Events
+            </h1>
+            <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
+        </div>
+    </div>
+
+    <form method="POST" id="setupEventsForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="row">
+        <!-- College Events Setup -->
+        <div class="col-lg-6 mb-4">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-mortarboard"></i> College Events (Friday)</h5>
+                </div>
+                <div class="card-body">
+                        <!-- OPEN Events -->
+                        <h6 class="text-muted mb-3">Traditionally OPEN Events</h6>
+                        <p class="small text-muted">These events can be run as OPEN (anyone can participate) or CLOSED (counts against 6-event limit).</p>
+
+                        {% for event in college_open_events %}
+                        <div class="card mb-2">
+                            <div class="card-body py-2">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>{{ event.name }}</strong>
+                                        {% if event.get('is_partnered') %}
+                                            <span class="badge bg-info">Partnered</span>
+                                        {% endif %}
+                                    </div>
+                                    <div>
+                                        <div class="btn-group btn-group-sm" role="group">
+                                            <input type="radio" class="btn-check" name="open_{{ event.field_key }}"
+                                                   id="open_{{ event.field_key }}_open" value="open"
+                                                   {% if existing_config.college_open_state.get(event.name, True) %}checked{% endif %}>
+                                            <label class="btn btn-outline-success" for="open_{{ event.field_key }}_open">OPEN</label>
+
+                                            <input type="radio" class="btn-check" name="open_{{ event.field_key }}"
+                                                   id="open_{{ event.field_key }}_closed" value="closed"
+                                                   {% if not existing_config.college_open_state.get(event.name, True) %}checked{% endif %}>
+                                            <label class="btn btn-outline-warning" for="open_{{ event.field_key }}_closed">CLOSED</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+
+                        <!-- CLOSED Events -->
+                        <h6 class="text-muted mb-3 mt-4">CLOSED Events</h6>
+                        <p class="small text-muted">These events count against each athlete's 6-event limit.</p>
+
+                        <div class="row">
+                            {% for event in college_closed_events %}
+                            <div class="col-md-6 mb-2">
+                                <div class="form-check">
+                                    <input type="checkbox" class="form-check-input"
+                                           name="enable_{{ event.field_key }}"
+                                           id="college_{{ event.field_key }}"
+                                           {% if existing_config.college_closed_enabled.get(event.name, True) %}checked{% endif %}>
+                                    <label class="form-check-label" for="college_{{ event.field_key }}">
+                                        {{ event.name }}
+                                        {% if event.name == 'Birling' %}
+                                            <small class="text-muted">(double elimination bracket)</small>
+                                        {% endif %}
+                                    </label>
+                                </div>
+                                {% if event.stand_type in ['underhand', 'standing_block', 'springboard'] and event.scoring_type != 'hits' %}
+                                <div class="btn-group btn-group-sm mt-1 ms-4" role="group">
+                                    <input type="radio" class="btn-check"
+                                           name="handicap_format_{{ event.field_key }}"
+                                           id="hf_college_{{ event.field_key }}_champ" value="championship"
+                                           {% if not existing_config.college_handicap.get(event.name, False) %}checked{% endif %}>
+                                    <label class="btn btn-outline-secondary" style="font-size:0.7rem;padding:0.15rem 0.5rem"
+                                           for="hf_college_{{ event.field_key }}_champ">Championship</label>
+                                    <input type="radio" class="btn-check"
+                                           name="handicap_format_{{ event.field_key }}"
+                                           id="hf_college_{{ event.field_key }}_hdcp" value="handicap"
+                                           {% if existing_config.college_handicap.get(event.name, False) %}checked{% endif %}>
+                                    <label class="btn btn-outline-info" style="font-size:0.7rem;padding:0.15rem 0.5rem"
+                                           for="hf_college_{{ event.field_key }}_hdcp">Handicap</label>
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <hr>
+                        <button type="submit" class="btn btn-primary w-100" name="action_scope" value="college">
+                            <i class="bi bi-check-circle"></i> Save College Configuration
+                        </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pro Events Setup -->
+        <div class="col-lg-6 mb-4">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-trophy"></i> Pro Events (Saturday)</h5>
+                </div>
+                <div class="card-body">
+                        <p class="small text-muted">Select which events to include and whether to run men's/women's divisions.</p>
+
+                        {% for event in pro_events %}
+                        <div class="card mb-2">
+                            <div class="card-body py-2">
+                                <div class="row align-items-center">
+                                    <div class="col-md-5">
+                                        <div class="form-check">
+                                            <input type="checkbox" class="form-check-input"
+                                                   name="enable_{{ event.field_key }}"
+                                                   id="pro_{{ event.field_key }}"
+                                                   {% if existing_config.pro_enabled.get(event.name, False) %}checked{% endif %}>
+                                            <label class="form-check-label" for="pro_{{ event.field_key }}">
+                                                <strong>{{ event.name }}</strong>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-7">
+                                        {% if event.get('is_gendered', False) %}
+                                        <div class="form-check form-check-inline">
+                                            <input type="checkbox" class="form-check-input"
+                                                   name="enable_{{ event.field_key }}_M"
+                                                   id="pro_{{ event.field_key }}_M"
+                                                   {% if existing_config.pro_gender.get(event.name, {}).get('M', False) %}checked{% endif %}>
+                                            <label class="form-check-label" for="pro_{{ event.field_key }}_M">Men's</label>
+                                        </div>
+                                        <div class="form-check form-check-inline">
+                                            <input type="checkbox" class="form-check-input"
+                                                   name="enable_{{ event.field_key }}_F"
+                                                   id="pro_{{ event.field_key }}_F"
+                                                   {% if existing_config.pro_gender.get(event.name, {}).get('F', False) %}checked{% endif %}>
+                                            <label class="form-check-label" for="pro_{{ event.field_key }}_F">Women's</label>
+                                        </div>
+                                        {% else %}
+                                        <span class="text-muted small">
+                                            {% if event.name == '1-Board Springboard' %}
+                                                Intermediate/Masters/Women
+                                            {% else %}
+                                                Open event
+                                            {% endif %}
+                                        </span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% if event.stand_type in ['underhand', 'standing_block', 'springboard'] and event.scoring_type != 'hits' %}
+                                <div class="row mt-2">
+                                    <div class="col-12 d-flex align-items-center gap-2">
+                                        <small class="text-muted">Format:</small>
+                                        <div class="btn-group btn-group-sm" role="group">
+                                            <input type="radio" class="btn-check"
+                                                   name="handicap_format_{{ event.field_key }}"
+                                                   id="hf_pro_{{ event.field_key }}_champ" value="championship"
+                                                   {% if not existing_config.pro_handicap.get(event.name, False) %}checked{% endif %}>
+                                            <label class="btn btn-outline-secondary"
+                                                   for="hf_pro_{{ event.field_key }}_champ">Championship</label>
+                                            <input type="radio" class="btn-check"
+                                                   name="handicap_format_{{ event.field_key }}"
+                                                   id="hf_pro_{{ event.field_key }}_hdcp" value="handicap"
+                                                   {% if existing_config.pro_handicap.get(event.name, False) %}checked{% endif %}>
+                                            <label class="btn btn-outline-info"
+                                                   for="hf_pro_{{ event.field_key }}_hdcp">Handicap</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+
+                        <hr>
+                        <button type="submit" class="btn btn-warning w-100" name="action_scope" value="pro">
+                            <i class="bi bi-check-circle"></i> Save Pro Configuration
+                        </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Stand Configuration -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header" id="standsHeading">
+                    <h5 class="mb-0">
+                        <button class="btn btn-link text-decoration-none p-0 text-dark"
+                                type="button" data-bs-toggle="collapse"
+                                data-bs-target="#standsCollapse" aria-expanded="false"
+                                aria-controls="standsCollapse">
+                            <i class="bi bi-layout-split text-secondary"></i>
+                            Stand Count Configuration
+                            <small class="text-muted ms-2">(optional — overrides defaults per event type)</small>
+                        </button>
+                    </h5>
+                </div>
+                <div id="standsCollapse" class="collapse">
+                    <div class="card-body">
+                        <p class="small text-muted mb-3">
+                            Set how many stands are available for each event type at this venue.
+                            Affects heat size and stand assignments. Leave at default unless your venue differs.
+                        </p>
+                        <div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 g-3">
+                            {% for stand_type, scfg in stand_configs.items() %}
+                            <div class="col">
+                                <label class="form-label small fw-semibold mb-1">
+                                    {{ stand_type.replace('_', ' ').title() }}
+                                    <span class="text-muted">(default: {{ scfg.total }})</span>
+                                </label>
+                                <input type="number"
+                                       class="form-control form-control-sm"
+                                       name="stands_{{ stand_type }}"
+                                       min="1" max="20"
+                                       value="{{ existing_config.stand_counts.get(stand_type, scfg.total) }}">
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <button type="submit" class="btn btn-proam w-100" name="action_scope" value="both">
+                <i class="bi bi-save2"></i> Save College + Pro Together
+            </button>
+        </div>
+    </div>
+    </form>
+</div>
+
+{# ── Sticky save bar (visible after scrolling past the inline buttons) ── #}
+<div class="sticky-save-bar d-none" id="stickySaveBar" style="left:0;right:0;">
+    <div class="container-fluid d-flex align-items-center justify-content-between gap-3">
+        <span class="text-sx-muted text-xs">Unsaved event configuration</span>
+        <button type="submit" form="setupEventsForm" class="btn btn-proam btn-sm" name="action_scope" value="both">
+            <i class="bi bi-save2 me-1"></i>Save All
+        </button>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+(function () {
+    var bar = document.getElementById('stickySaveBar');
+    if (!bar) return;
+    var sentinel = document.querySelector('button[name="action_scope"][value="both"]');
+    if (!sentinel) return;
+    var obs = new IntersectionObserver(function (entries) {
+        bar.classList.toggle('d-none', entries[0].isIntersecting);
+    }, { threshold: 0 });
+    obs.observe(sentinel);
+})();
+</script>
+{% endblock %}
+{% endblock %}

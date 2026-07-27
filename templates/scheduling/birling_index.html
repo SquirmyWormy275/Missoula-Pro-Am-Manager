@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Birling Brackets — {{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h4 class="mb-0"><i class="bi bi-diagram-3 me-2"></i>Birling Brackets</h4>
+            <p class="text-muted small mb-0 mt-1">
+                Seed, generate, and manage each college birling bracket.
+                College birling runs as separate men's and women's double-elimination brackets.
+            </p>
+        </div>
+        {% if events %}
+        <a href="{{ url_for('scheduling.birling_print_all', tournament_id=tournament.id) }}"
+           class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener"
+           title="Combined printable document for every seeded bracket.">
+            <i class="bi bi-printer me-1"></i> Print All Brackets
+        </a>
+        {% endif %}
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'error' else ('warning' if category == 'warning' else ('info' if category == 'info' else 'success')) }} alert-dismissible fade show py-2" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endwith %}
+
+    {% if not events %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle me-1"></i>
+        No birling events configured for this tournament.
+        <a href="{{ url_for('scheduling.setup_events', tournament_id=tournament.id) }}" class="alert-link">
+            Configure events
+        </a> to add college birling.
+    </div>
+    {% else %}
+    <div class="row g-3">
+        {% for row in events %}
+        {% set ev = row.event %}
+        <div class="col-md-6">
+            <div class="card shadow-sm h-100 border-{{ 'success' if row.status == 'completed' else ('warning' if row.status == 'in_progress' else 'secondary') }}">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="bi bi-diagram-3 me-1"></i>{{ ev.display_name }}
+                    </h6>
+                    {% if row.status == 'completed' %}
+                        <span class="badge bg-success">{{ row.status_label }}</span>
+                    {% elif row.status == 'in_progress' %}
+                        <span class="badge bg-warning text-dark">{{ row.status_label }}</span>
+                    {% else %}
+                        <span class="badge bg-secondary">{{ row.status_label }}</span>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-2 small text-muted">
+                        <span>
+                            <i class="bi bi-people me-1"></i>
+                            {{ row.entrant_count }} competitor{{ '' if row.entrant_count == 1 else 's' }} signed up
+                        </span>
+                        {% if row.has_bracket %}
+                        <span>
+                            <i class="bi bi-award me-1"></i>
+                            {{ row.placement_count }} / {{ row.total_competitors }} placed
+                        </span>
+                        {% endif %}
+                    </div>
+
+                    <div class="d-flex gap-2 flex-wrap">
+                        <a href="{{ url_for('scheduling.birling_manage', tournament_id=tournament.id, event_id=ev.id) }}"
+                           class="btn btn-primary btn-sm">
+                            <i class="bi bi-sort-numeric-down me-1"></i>
+                            {% if row.has_bracket %}Manage Bracket{% else %}Seed Now{% endif %}
+                        </a>
+                        {% if row.has_bracket %}
+                        <a href="{{ url_for('scheduling.birling_print_blank', tournament_id=tournament.id, event_id=ev.id) }}"
+                           class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener">
+                            <i class="bi bi-printer me-1"></i> Print Blank
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

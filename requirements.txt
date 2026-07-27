@@ -1,0 +1,49 @@
+# Missoula Pro Am Tournament Manager Dependencies
+
+# Web Framework
+# CSO PR #10: bumped Flask 3.0.0 → 3.1.3 to fix CVE-2026-27205.
+Flask==3.1.3
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.7
+Flask-WTF==1.2.2
+Flask-Login==0.6.3
+
+# Database
+SQLAlchemy==2.0.23
+psycopg2-binary==2.9.10
+
+# Excel Processing
+pandas==2.1.3
+openpyxl==3.1.2
+
+# Utilities
+# CSO PR #10: bumped Werkzeug 3.0.6 → 3.1.6 to fix CVE-2025-66221,
+# CVE-2026-21860, and CVE-2026-27199. Earlier 3.0.6 bump in this PR
+# already covered the 2024 CVEs (CVE-2024-49767/49766/34069); this
+# additional bump catches the 2025/2026 advisories pip-audit surfaced.
+Werkzeug==3.1.6
+
+# WSGI server
+gunicorn==22.0.0
+
+# Monitoring
+sentry-sdk==2.22.0
+
+# STRATHMARK handicap engine — pinned to a specific commit for reproducible
+# Railway deploys.  Until STRATHMARK ships a PyPI release, pin via git URL.
+# When upgrading, bump the SHA after this fragment.  Extras enabled:
+#   [db] — supabase client used by services/strathmark_sync.py
+#   [ml] — XGBoost / LightGBM / scikit-learn for the prediction cascade's
+#          ML layer; without it predictions fall through to the
+#          weighted-baseline / panel-mark fallback only.  Adds ~80 MB to
+#          the deploy image but is necessary for accurate handicap marks.
+strathmark[db,ml] @ git+https://github.com/SquirmyWormy275/STRATHMARK@a101c8e444f4096f0e321ca03b69632a91640c7c
+
+# Optional: SMS notifications (install to enable Twilio SMS features)
+# twilio>=8.0.0
+
+# Optional: S3 cloud backup (install to enable cloud backup features)
+# boto3>=1.34.0
+
+# Optional: API rate limiting for /api/public/* endpoints (graceful no-op if absent)
+# flask-limiter>=3.5.0
