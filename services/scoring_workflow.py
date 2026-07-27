@@ -38,6 +38,89 @@ def competitor_lookup_for_event(event: Event, competitor_ids: list[int]) -> dict
     return {c.id: c for c in comps}
 
 
+def event_partner_pool(event: Event) -> dict[int, object]:
+    """Every competitor enrolled in `event`, keyed by id, for partner resolution.
+
+    The heat-local pool is NOT sufficient and the difference is not marginal.
+    Measured against the real 2026 mirror, across all eight partnered events:
+
+        pool                      claims resolved
+        heat-local                 80 of 146
+        event-enrolled            145 of 146
+
+    Two separate reasons for the gap.  Peavey Log Roll, Pulp Toss and Partnered
+    Axe Throw carry 53 claims between them and have no heats generated at all,
+    so a heat-local lookup has nothing to match against.  And on pro Double Buck
+    two of twenty-four pairs are split across heats, which the heat-local pool
+    also cannot see.
+
+    Sources unioned here: every heat's competitor list, plus every existing
+    EventResult row for the event.  The second source matters after a heat undo,
+    which deletes result rows, and the first matters before any row exists.
+    """
+    ids: set[int] = set()
+    for heat in event.heats.all():
+        ids.update(_normalize_competitor_ids(heat.get_competitors() or []))
+    rows = db.session.query(EventResult.competitor_id).filter(
+        EventResult.event_id == event.id,
+        EventResult.competitor_type == event.event_type,
+    ).all()
+    for (cid,) in rows:
+        if cid is not None:
+            ids.add(int(cid))
+    return competitor_lookup_for_event(event, sorted(ids))
+
+
+def resolve_partner_display_name(event: Event, comp, pool: dict[int, object]) -> str:
+    """Return the DISPLAY NAME of `comp`'s partner in `event`, or ''.
+
+    Display name, not bare name, and that choice is load-bearing.
+    scoring_engine._pair_key_for is::
+
+        frozenset((result.competitor_name, result.partner_name))
+
+    and `competitor_name` is written as ``comp.display_name`` everywhere.
+    ProCompetitor.display_name is the bare name, so the two conventions coincide
+    for pro and nobody has had to choose before.  CollegeCompetitor.display_name
+    is ``'Nell Horgan (FVC-A)'``.  The claimed partner strings stored in
+    ``college_competitors.partners`` are bare, mixed-case first names
+    (``"Teagan"``, ``"GREER"``, ``"MATEO"``).  Writing the claim through
+    verbatim, which is what the importer does and what the backlog prescribed,
+    would produce::
+
+        Greer's row : {"Greer Swoboda (MSU-A)", "Teagan"}
+        Teagan's row: {"Teagan Wigen (MSU-A)", "GREER"}
+
+    Those frozensets are never equal, so the pair never collapses and the fix
+    would appear to work while changing nothing.  Resolving to the partner's
+    display_name makes both rows carry {"Greer Swoboda (MSU-A)",
+    "Teagan Wigen (MSU-A)"} and the engine collapses them with no change to the
+    ranking code.
+
+    It is also the invariant scratch_cascade.py:143 already assumes, where the
+    partner's row is looked up by ``competitor_name == fr.partner_name``.
+
+    Resolution uses the app's own three-tier matcher (exact, first-token,
+    Levenshtein <= 2) so ``"GREER"`` finds ``"Greer Swoboda"``.  Returns '' on
+    no match or ambiguity; callers must treat '' as "leave the stored value
+    alone" so a resolution failure never erases a good imported value.
+    """
+    from services.partner_resolver import (
+        _resolve_partner_name_local,
+        lookup_partner_cid,
+    )
+
+    if comp is None:
+        return ''
+    claimed = _resolve_partner_name_local(comp, event)
+    if not claimed:
+        return ''
+    partner_id = lookup_partner_cid(claimed, pool, comp.id)
+    if partner_id is not None and partner_id in pool:
+        return pool[partner_id].display_name
+    return ''
+
+
 def existing_results_for_event(event: Event, competitor_ids: list[int]) -> dict[int, EventResult]:
     competitor_ids = _normalize_competitor_ids(competitor_ids)
     rows = EventResult.query.filter(
@@ -110,6 +193,9 @@ def save_heat_results_submission(
 
     result_by_comp = existing_results_for_event(event, competitor_ids)
     comp_lookup = competitor_lookup_for_event(event, competitor_ids)
+    # One extra query, only for partnered events, only on a heat save.  See
+    # event_partner_pool for why the heat-local pool cannot be reused here.
+    partner_pool = event_partner_pool(event) if event.is_partnered else {}
     changes = 0
     invalid: list[tuple[int, object]] = []
     is_dual_timer_event = (
@@ -237,6 +323,26 @@ def save_heat_results_submission(
                         result.tiebreak_value = float(raw_tb)
                     except (TypeError, ValueError):
                         pass
+
+            # Pair identity, on BOTH the create and the update path.
+            #
+            # The backlog filed this as "persist partner_name on the INSERT
+            # branch".  That is not enough.  On the real mirror all eight rows
+            # of college Double Buck already exist with status='pending', and
+            # existing_results_for_event returns rows regardless of status, so
+            # every one of them takes the UPDATE branch and the insert branch is
+            # never reached for the population the bug is filed against.
+            #
+            # Guarded on a truthy derivation: a resolution failure must leave a
+            # good imported value in place rather than blanking it.
+            if event.is_partnered:
+                derived = resolve_partner_display_name(
+                    event,
+                    comp_lookup.get(comp_id) or partner_pool.get(comp_id),
+                    partner_pool,
+                )
+                if derived:
+                    result.partner_name = derived
 
             result.status = status
             raw_reason = str(form_data.get(f'reason_{comp_id}', '') or '').strip()

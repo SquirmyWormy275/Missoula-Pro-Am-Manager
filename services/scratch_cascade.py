@@ -115,8 +115,21 @@ def compute_scratch_effects(competitor, tournament) -> list[CascadeEffect]:
     }
 
     # Direction A — back-references (other comp listed this competitor as partner).
+    #
+    # Matched against BOTH name forms deliberately.  EventResult.partner_name
+    # is written as the partner's display_name (that is what makes
+    # scoring_engine._pair_key_for collapse, since competitor_name is also a
+    # display_name, and it is what scratch_cascade.py's own partner lookup
+    # below already assumes).  ProCompetitor.display_name IS the bare name, so
+    # every pro row ever written satisfies both forms and nothing about pro
+    # changes.  CollegeCompetitor.display_name carries the team suffix,
+    # 'Nell Horgan (FVC-A)', so a bare-name-only comparison would silently
+    # return zero back-references for every college pair and the scratch would
+    # leave the partner standing in a pair that no longer exists.
     back_ref_results = EventResult.query.filter(
-        EventResult.partner_name == competitor.name,
+        EventResult.partner_name.in_(
+            {competitor.name, competitor.display_name}
+        ),
         EventResult.event_id.in_(tournament_event_ids),
         EventResult.status.in_(_ACTIVE_STATUSES),
     ).all()
@@ -305,6 +318,11 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
         "competitor_status": competitor.status,
         "results": snapshot_results,
         "partner_json": competitor.partners,
+        # Populated inside the transaction below, by the heat-removal loop, at
+        # the moment each heat is mutated.  It cannot be built here: the heats
+        # a competitor is actually removed from are decided by the loop's own
+        # status filter, not by the effects list.
+        "heats": [],
         "relay_teams": [
             e.metadata.get("team_number")
             for e in effects
@@ -347,7 +365,11 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                 pr = event_result_map.get(partner_result_id)
                 if pr is None:
                     pr = EventResult.query.get(partner_result_id)
-                if pr is not None and pr.partner_name == competitor.name:
+                # Both name forms, for the reason documented on the Direction A
+                # query above: college partner_name carries the team suffix.
+                if pr is not None and pr.partner_name in (
+                    competitor.name, competitor.display_name
+                ):
                     pr.partner_name = None
                     # Update partner competitor's partners JSON if they have one.
                     if pr.competitor_type == "college":
@@ -409,9 +431,26 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
             )
         )
         touched_event_ids: set[int] = set()
+        heat_snapshot: list = snapshot["heats"]
         for heat in heats_q.all():
             comp_ids = heat.get_competitors()
             if competitor.id in comp_ids:
+                # Capture BEFORE mutating.  Nothing else in this function
+                # records heat state, which is why reverse_cascade could restore
+                # a competitor to active status with an empty schedule.
+                #
+                # Position is captured, not just membership.  The competitors
+                # JSON is the running order the judge sheet prints, and
+                # Heat.add_competitor appends, so restoring by append would put
+                # the competitor last in every heat they were pulled from.
+                _pre_assignments = heat.get_stand_assignments()
+                heat_snapshot.append(
+                    {
+                        "heat_id": heat.id,
+                        "index": comp_ids.index(competitor.id),
+                        "stand": _pre_assignments.get(str(competitor.id)),
+                    }
+                )
                 heat.remove_competitor(competitor.id)
                 assignments = heat.get_stand_assignments()
                 if str(competitor.id) in assignments:
@@ -639,6 +678,66 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                     if r_snap.get("status") == "completed":
                         ev.is_finalized = True
                         previously_finalized_event_ids.add(ev.id)
+
+        # --- Restore heat membership -----------------------------------------
+        # execute_cascade strips the competitor out of every non-completed heat
+        # (see "Remove competitor from unfinished heats" above), mutating three
+        # things: the competitors JSON, the stand_assignments JSON, and the
+        # HeatAssignment rows.  None of it was ever captured and none of it was
+        # ever restored, so an undo handed back a competitor who was active,
+        # scored and paid, and on no heat sheet anywhere.  On race day that is
+        # a competitor who does not get called to the stand.
+        #
+        # Restored per-heat rather than by regenerating: regeneration would
+        # reshuffle every other competitor in the event.
+        from models.heat import Heat
+
+        restored_event_ids: set[int] = set()
+        for h_snap in snapshot.get("heats", []):
+            heat = Heat.query.get(h_snap.get("heat_id"))
+            if heat is None:
+                continue
+            comp_ids = heat.get_competitors()
+            if competitor_id not in comp_ids:
+                idx = h_snap.get("index")
+                if isinstance(idx, int) and 0 <= idx <= len(comp_ids):
+                    comp_ids.insert(idx, competitor_id)
+                else:
+                    # Heat shrank since the scratch (another scratch, a move).
+                    # Membership matters more than order; take the tail.
+                    comp_ids.append(competitor_id)
+                heat.set_competitors(comp_ids)
+            stand = h_snap.get("stand")
+            if stand is not None:
+                heat.set_stand_assignment(competitor_id, stand)
+            # Realign HeatAssignment rows with the JSON source of truth, exactly
+            # as the scratch side does.  Without it the judge sheet and the
+            # validation screen keep showing the pre-undo roster.
+            heat.sync_assignments(comp_type)
+            restored_event_ids.add(heat.event_id)
+
+        # Mirror of the scratch-side rebalance.  It is not optional symmetry:
+        # the scratch left a solo Stock Saw heat and the rebalance moved the
+        # survivor onto the alternating stand, so blindly restoring the
+        # scratched competitor's original stand can land two competitors on the
+        # same one.  rebalance_stock_saw_solo_stands forces a pair back onto
+        # 7 and 8 in comp order, which repairs exactly that collision, and
+        # early-returns for every event that is not Stock Saw.
+        if restored_event_ids:
+            try:
+                from services.heat_generator import rebalance_stock_saw_solo_stands
+                for ev_id in restored_event_ids:
+                    ev = Event.query.get(ev_id)
+                    if ev is not None:
+                        rebalance_stock_saw_solo_stands(ev)
+            except Exception:
+                # A rebalance failure must never break an undo.
+                logger.warning(
+                    "scratch_cascade: stock saw rebalance failed on undo for "
+                    "competitor %s; stands left as restored",
+                    competitor_id,
+                    exc_info=True,
+                )
 
         # --- Rebuild college points -----------------------------------------
         if affected_college_competitor_ids:
