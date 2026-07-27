@@ -53,7 +53,7 @@ def test_birling_manage_page_returns_instead_of_hanging(dburl):
     """)
     try:
         proc = subprocess.run(
-            [os.path.join(rig.APP_ROOT, ".venv310/bin/python"), "-c", script],
+            [sys.executable, "-c", script],
             capture_output=True, text=True, timeout=60,
         )
     except subprocess.TimeoutExpired:
@@ -88,7 +88,7 @@ def test_birling_print_routes_return_instead_of_hanging(dburl):
     """)
     try:
         proc = subprocess.run(
-            [os.path.join(rig.APP_ROOT, ".venv310/bin/python"), "-c", script],
+            [sys.executable, "-c", script],
             capture_output=True, text=True, timeout=60,
         )
     except subprocess.TimeoutExpired:
@@ -379,6 +379,14 @@ def test_college_competitor_can_be_added_to_a_heat_day_of(client, sql, flashes):
          AND EXISTS (
              SELECT 1 FROM json_array_elements_text(c.events_entered::json) AS x(v)
              WHERE x.v = e.name)
+         -- College competitors store bare event NAMES, and a name is NOT unique:
+         -- "Underhand Hard Hit" is both event 7 (M) and event 8 (F).  Without
+         -- this predicate the ORDER BY below deterministically picks the lower
+         -- event id, which is the men's event, and the app then correctly
+         -- refuses a female competitor for gender mismatch.  That refusal is
+         -- right, and reading it as bug #10 sends the reader after a fix that
+         -- is already in.
+         AND e.gender = c.gender
         JOIN heats h ON h.event_id = e.id
         WHERE c.tournament_id = :t
           AND c.status = 'active'
