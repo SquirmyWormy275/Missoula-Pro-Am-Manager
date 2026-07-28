@@ -48,10 +48,17 @@ jobs:
           echo "HTTP code: $CODE"
           echo "Body: $BODY"
 
-          STATUS=$(echo "$BODY" | jq -r '.status // "missing"')
-          DB=$(echo "$BODY" | jq -r '.db // "missing"')
-          MIG_REV=$(echo "$BODY" | jq -r '.migration_rev // "missing"')
-          MIG_CURRENT=$(echo "$BODY" | jq -r '.migration_current // "missing"')
+          # Every value below is parsed out of an HTTP response body. The runner
+          # parses $GITHUB_OUTPUT as newline-delimited key=value, so a value
+          # carrying an embedded newline forges additional step outputs. jq -r
+          # emits real newlines for a JSON string containing \n, so strip them,
+          # and cap the length so one field cannot fill the output file.
+          jqs() { echo "$BODY" | jq -r "$1" | tr -d '\r\n' | head -c 200; }
+
+          STATUS=$(jqs '.status // "missing"')
+          DB=$(jqs '.db // "missing"')
+          MIG_REV=$(jqs '.migration_rev // "missing"')
+          MIG_CURRENT=$(jqs '.migration_current // "missing"')
 
           {
             echo "http_code=$CODE"
@@ -61,10 +68,15 @@ jobs:
             echo "migration_current=$MIG_CURRENT"
           } >> "$GITHUB_OUTPUT"
 
+          # Per-run random heredoc delimiter, per GitHub's documented practice.
+          # A fixed, publicly-readable delimiter lets a body containing that
+          # literal line close the block early and append forged outputs, plus
+          # an orphan terminator that breaks the step.
+          DELIM="HEALTH_EOF_$(openssl rand -hex 16)"
           {
-            echo "body<<HEALTH_EOF"
+            echo "body<<$DELIM"
             echo "$BODY"
-            echo "HEALTH_EOF"
+            echo "$DELIM"
           } >> "$GITHUB_OUTPUT"
 
           if [ "$CODE" != "200" ] || [ "$STATUS" != "ok" ] || [ "$DB" != "true" ] || [ "$MIG_CURRENT" != "true" ]; then

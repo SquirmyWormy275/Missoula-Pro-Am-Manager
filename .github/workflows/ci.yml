@@ -30,6 +30,17 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
+      # instance/ is gitignored, so on a fresh checkout tests/test_route_smoke.py
+      # takes its "no real DB" branch and replays the entire alembic chain once
+      # per parametrized route — 245 times in one process. That leaks ~20 MB per
+      # test and peaks near 5 GB, which is what has been OOM-killing this job.
+      # Building the file once here drops the whole run to a measured 934 MB.
+      # The script migrates AND seeds: a migrate-only database makes the fixture
+      # AttributeError on first_tournament.id for all 245 tests. Sets its own
+      # DATABASE_URL/SECRET_KEY, so it needs no env block here.
+      - name: Build seeded route-smoke database
+        run: python scripts/ci_build_smoke_db.py
+
       - name: Run tests
         env:
           FLASK_ENV: testing
