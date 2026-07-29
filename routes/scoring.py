@@ -558,6 +558,10 @@ def event_results(tournament_id, event_id):
     results = event.get_results_sorted()
     payout_templates = PayoutTemplate.query.order_by(PayoutTemplate.name).all()
     throwoff_pending = engine.pending_throwoffs(event) if event.is_axe_throw_cumulative else []
+    # The form is built from these, not from the flat pending list: it needs
+    # the contested places and the pair groupings, and the flat list carries
+    # neither.  See engine.throwoff_groups.
+    throwoff_blocks = engine.throwoff_groups(event) if throwoff_pending else []
 
     # Partnered Axe Throw: pass PAT state for inline prelim scoring
     pat = None
@@ -574,6 +578,7 @@ def event_results(tournament_id, event_id):
                            heats=heats, results=results,
                            payout_templates=payout_templates,
                            throwoff_pending=throwoff_pending,
+                           throwoff_blocks=throwoff_blocks,
                            pat=pat, pat_stage=pat_stage, pat_pairs=pat_pairs)
 
 
@@ -932,6 +937,19 @@ def record_throwoff(tournament_id, event_id):
 
     if not position_map:
         flash('No throw-off positions submitted.', 'warning')
+        return redirect(url_for('scoring.event_results',
+                                tournament_id=tournament_id, event_id=event_id))
+
+    # Refuse anything that is not a permutation of the contested places.  The
+    # form used to default every dropdown to "Position 1", so opening the
+    # banner and pressing the button without touching a dropdown wrote first
+    # place to every tied competitor and published it to the spectator page.
+    # A throw-off is the tiebreak, so duplicate positions are always operator
+    # error and nothing downstream catches them.
+    problems = engine.validate_throwoff_submission(event, position_map)
+    if problems:
+        for msg in problems:
+            flash(msg, 'danger')
         return redirect(url_for('scoring.event_results',
                                 tournament_id=tournament_id, event_id=event_id))
 

@@ -121,18 +121,35 @@
     <div class="collapse mt-3" id="throwoffForm">
       <form action="{{ url_for('scoring.record_throwoff', tournament_id=tournament.id, event_id=event.id) }}" method="POST">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="row g-2">
-          {% for r in throwoff_pending %}
-          <div class="col-sm-6 col-md-4">
-            <label class="form-label small mb-0">{{ r.competitor_name }} (score: {{ r.result_value|int }})</label>
-            <select class="form-select form-select-sm" name="throwoff_pos_{{ r.id }}">
-              {% for pos in range(1, throwoff_pending|length + 1) %}
-                <option value="{{ pos }}">Position {{ pos }}</option>
-              {% endfor %}
-            </select>
+        {# One block per set of tied places, one select per competing unit (a
+           pair on partnered events).  Each select opens on the position that
+           unit already holds, which for tied units is the same place, so an
+           untouched submit is a set of duplicates and the server refuses it by
+           name.  Every select used to open on "Position 1" with nothing
+           checking the result, so an untouched submit wrote first place to
+           every tied row and published it to the spectator page.  The options
+           are the places actually being contested, not 1..N: a tie for 3rd and
+           4th used to be answerable only with "Position 1" or "Position 2". #}
+        {% for block in throwoff_blocks %}
+        <div class="mb-3">
+          <div class="small text-muted mb-1">
+            Contesting {% for pos in block.positions %}{{ pos }}{% if not loop.last %}, {% endif %}{% endfor %}
+            &mdash; assign each a different place.
           </div>
-          {% endfor %}
+          <div class="row g-2">
+            {% for entry in block.entries %}
+            <div class="col-sm-6 col-md-4">
+              <label class="form-label small mb-0">{{ entry.label }} (score: {{ entry.score|int }})</label>
+              <select class="form-select form-select-sm" name="throwoff_pos_{{ entry.result_ids[0] }}">
+                {% for pos in block.positions %}
+                  <option value="{{ pos }}"{% if pos == entry.current_position %} selected{% endif %}>Position {{ pos }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            {% endfor %}
+          </div>
         </div>
+        {% endfor %}
         <button class="btn btn-danger btn-sm mt-3" type="submit">
           <i class="bi bi-check"></i> Record Throw-Off Positions
         </button>

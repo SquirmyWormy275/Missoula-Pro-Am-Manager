@@ -201,15 +201,124 @@ def _sort_key(result: EventResult, event: Event):
     return (primary, tiebreak)
 
 
-def _detect_axe_ties(results: list[EventResult]) -> list[list[EventResult]]:
-    """Return groups of 2+ results that share the same result_value (axe throw tie)."""
+def _pair_key_for(result: EventResult, is_partnered: bool):
+    """The competing unit a result row belongs to.
+
+    On a partnered event the pair is the unit, not the person: both member rows
+    carry the pair's single score, so they must collapse to one key.  frozenset
+    is symmetric, so the two row orderings land on the same key.  On a solo
+    event every row is its own unit.
+
+    Same idiom as the three inline copies further down this file (the position
+    loop, the payout split, the points split).  Those are left alone
+    deliberately: they work, and rewriting working position math to share a
+    helper buys nothing and risks a regression on show day.
+    """
+    if is_partnered:
+        return frozenset((result.competitor_name, result.partner_name))
+    return result.competitor_id
+
+
+def _detect_axe_ties(results: list[EventResult],
+                     event: Event | None = None) -> list[list[EventResult]]:
+    """Return groups of rows contesting the same position (axe throw tie).
+
+    A bucket of rows sharing a result_value is only a tie if it holds two or
+    more distinct COMPETING UNITS.  On a partnered event it usually does not.
+    services/partnered_axe.py writes the pair's one score to both member rows
+    (_sync_prelim_to_event_results and _save_event_results), so every pair is
+    automatically a two-row bucket at whatever score it earned, tie or no tie.
+    Counting rows therefore declared every pair tied with itself: five pairs at
+    five distinct scores produced ten flagged rows and a red "Throw-Off
+    Required" banner over a result set containing no tie at all.
+
+    The event argument is optional so that callers passing a bare list keep
+    working; without it the row count is the unit count, which is the
+    pre-existing behaviour and is correct for solo events.
+    """
     from itertools import groupby
+    is_partnered = bool(getattr(event, 'is_partnered', False)) if event else False
     groups = []
     sorted_results = sorted(results, key=lambda r: r.result_value or 0, reverse=True)
     for _val, group in groupby(sorted_results, key=lambda r: r.result_value):
         group_list = list(group)
-        if len(group_list) >= 2:
+        if len({_pair_key_for(r, is_partnered) for r in group_list}) >= 2:
             groups.append(group_list)
+    return groups
+
+
+def throwoff_groups(event: Event) -> list[dict]:
+    """Pending throw-offs shaped so the judge cannot submit a corrupting form.
+
+    One entry per contested block of places:
+
+        {'positions': [3, 4],
+         'entries': [{'label': 'A & B', 'result_ids': [10, 250],
+                      'score': 24.0, 'current_position': 3}, ...]}
+
+    Three defects in the throw-off form this shape closes.
+
+    First, the form offered positions 1..N where N was the number of pending
+    rows, so a tie for 3rd and 4th could only be answered "Position 1" or
+    "Position 2".  The contested places are the ones the tied units already
+    hold: calculate_positions gives every unit in a tied group the same
+    position, so a two-way tie at 3rd resolves into 3 and 4.
+
+    Second, no option carried the selected attribute, so every select rendered
+    on "Position 1".  Submitting the form as rendered wrote final_position=1 to
+    every pending row, and the public spectator page then showed ten
+    competitors in first place.  Each select now starts on the position that
+    unit already holds.  Tied units all hold the SAME position, so an untouched
+    submit is a set of duplicates and validate_throwoff_submission refuses it
+    with a message naming the entries that still need separating.  Refusing is
+    the right outcome rather than a silent no-op: the throw-off exists because
+    a judge has to make a call, and a form that quietly accepts "no call made"
+    would leave the tie unresolved behind a success message.  Pre-filling
+    distinct places instead would be worse still, because it would dress an
+    arbitrary ordering up as a judge's decision and one careless click would
+    publish it.
+
+    Third, on a partnered event the pair is the competing unit and gets ONE
+    select covering both member rows.  Per-row selects let a judge hand the two
+    halves of a pair different finishing positions.
+    """
+    pending = pending_throwoffs(event)
+    if not pending:
+        return []
+
+    is_partnered = bool(getattr(event, 'is_partnered', False))
+    groups = []
+    for bucket in _detect_axe_ties(pending, event):
+        by_unit: dict = {}
+        for r in bucket:
+            by_unit.setdefault(_pair_key_for(r, is_partnered), []).append(r)
+
+        entries = []
+        for rows in by_unit.values():
+            first = rows[0]
+            if is_partnered and first.partner_name:
+                label = f'{first.competitor_name} & {first.partner_name}'
+            else:
+                label = first.competitor_name
+            entries.append({
+                'label': label,
+                'result_ids': sorted(r.id for r in rows),
+                'score': first.result_value,
+                'current_position': first.final_position,
+            })
+        entries.sort(key=lambda e: (e['current_position'] or 0, e['label']))
+
+        # The block of places these units are fighting over.  Every unit in a
+        # tied group leaves calculate_positions on the same position, so the
+        # block runs from there for as many units as there are.
+        held = [e['current_position'] for e in entries if e['current_position']]
+        start = min(held) if held else 1
+        groups.append({
+            'positions': list(range(start, start + len(entries))),
+            'entries': entries,
+        })
+
+    groups.sort(key=lambda g: g['positions'][0])
     return groups
 
 
@@ -415,7 +524,7 @@ def calculate_positions(event: Event) -> None:
 
     # --- axe throw tie detection (before sorting) ---
     if event.is_axe_throw_cumulative:
-        tie_groups = _detect_axe_ties(completed)
+        tie_groups = _detect_axe_ties(completed, event)
         for group in tie_groups:
             for r in group:
                 r.throwoff_pending = True
@@ -700,6 +809,105 @@ def validate_finalization(event: Event) -> list[dict]:
     return issues
 
 
+def _spread_positions_across_pairs(event: Event, position_map: dict[int, int],
+                                   result_lookup: dict) -> dict[int, int]:
+    """Give every row of a partnered unit the position submitted for that unit.
+
+    No-op on solo events, where each row is its own unit.
+    """
+    if not getattr(event, 'is_partnered', False):
+        return position_map
+
+    by_unit: dict = {}
+    for r in result_lookup.values():
+        by_unit.setdefault(_pair_key_for(r, True), []).append(r)
+
+    spread = dict(position_map)
+    for result_id, position in position_map.items():
+        row = result_lookup.get(result_id)
+        if row is None:
+            continue
+        for mate in by_unit.get(_pair_key_for(row, True), []):
+            spread[mate.id] = position
+    return spread
+
+
+def validate_throwoff_submission(event: Event,
+                                 position_map: dict[int, int]) -> list[str]:
+    """Reasons this throw-off submission must be refused, empty list if fine.
+
+    The form used to render every select defaulted to "Position 1" with no
+    server-side check, so an operator who opened the banner and pressed the
+    button without touching the dropdowns wrote first place to every tied
+    competitor and published it.  A throw-off IS the tiebreak, so its output is
+    always a permutation of the places being contested: no duplicates, nothing
+    outside the block.  That makes the bad submission mechanically detectable
+    rather than a judgement call, so it is refused rather than warned about.
+
+    Checked here rather than in the route so a direct POST is held to the same
+    rule as the rendered form.
+    """
+    if not position_map:
+        return ['No throw-off positions submitted.']
+
+    groups = throwoff_groups(event)
+    if not groups:
+        return []
+
+    errors = []
+    for group in groups:
+        expected = list(group['positions'])
+        submitted = []
+        split = False
+        for entry in group['entries']:
+            vals = {position_map[rid] for rid in entry['result_ids']
+                    if rid in position_map}
+            if not vals:
+                continue
+            if len(vals) > 1:
+                # A hand-built POST naming both halves of a pair with different
+                # places.  The rendered form cannot produce this (one select per
+                # unit), but the wire format is per result row, so a crafted
+                # body can.  Refuse it here rather than letting
+                # _spread_positions_across_pairs pick a winner by dict order,
+                # which is arbitrary and silently drops one of the two.
+                errors.append(
+                    '{} was given more than one finishing position ({}). '
+                    'A pair finishes together.'.format(
+                        entry['label'],
+                        ', '.join(str(v) for v in sorted(vals))))
+                split = True
+                continue
+            submitted.append((entry['label'], sorted(vals)[0]))
+
+        if split:
+            continue
+
+        if len(submitted) != len(expected):
+            errors.append(
+                'Places {} need a position for all {} entries; got {}.'.format(
+                    ', '.join(str(p) for p in expected), len(expected),
+                    len(submitted)))
+            continue
+
+        chosen = sorted(v for _label, v in submitted)
+        if chosen != expected:
+            dupes = sorted({v for v in chosen if chosen.count(v) > 1})
+            if dupes:
+                names = ', '.join(
+                    label for label, v in submitted if v in dupes)
+                errors.append(
+                    'Two entries were given the same finishing position '
+                    '({}): {}. A throw-off has to separate them.'.format(
+                        ', '.join(str(d) for d in dupes), names))
+            else:
+                errors.append(
+                    'Positions {} are outside the places being contested '
+                    '({}).'.format(', '.join(str(c) for c in chosen),
+                                   ', '.join(str(p) for p in expected)))
+    return errors
+
+
 def record_throwoff_result(event: Event, position_map: dict[int, int]) -> None:
     """
     Resolve throw-off positions for axe throw ties.
@@ -711,8 +919,15 @@ def record_throwoff_result(event: Event, position_map: dict[int, int]) -> None:
     pattern as calculate_positions() instead of the old delta-arithmetic
     on comp.individual_points.  The two paths must stay in sync — having
     them diverge was PLAN_REVIEW.md finding A6.
+
+    On a partnered event the form shows one select per pair, named for the
+    pair's first result id, and the position is spread to the pair's other row
+    here rather than in the template.  Doing it server side means a hand-built
+    POST cannot split a pair across two finishing positions either.
     """
     result_lookup = {r.id: r for r in event.results.all()}
+    position_map = _spread_positions_across_pairs(event, position_map,
+                                                  result_lookup)
     for result_id, position in position_map.items():
         result = result_lookup.get(result_id)
         if result is None:

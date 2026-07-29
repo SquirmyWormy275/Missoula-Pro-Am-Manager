@@ -1092,3 +1092,315 @@ def test_a_scratched_college_member_can_still_be_undone_from_the_team_page(clien
     assert sql("SELECT status FROM college_competitors WHERE id = :c",
                c=SCRATCH_COLLEGE)[0][0] == 'active', (
         "the Undo control on the team page did not reinstate the member")
+
+
+# ---------------------------------------------------------------------------
+# c05. Partnered Axe Throw flags every pair as tied with itself, and the
+#      throw-off form it then offers corrupts the results if submitted
+#      services/scoring_engine.py _detect_axe_ties, throwoff_groups,
+#      validate_throwoff_submission; templates/scoring/event_results.html
+# ---------------------------------------------------------------------------
+
+PAT_EVENT = 40            # Partnered Axe Throw, pro, is_partnered, has_prelims
+COLLEGE_AXE_EVENT = 1     # Axe Throw, college men, solo, 14 real rows
+
+
+def _pat_pairs(sql):
+    """Reciprocal partner pairs on event 40 as ((cid, row_id), (cid, row_id)).
+
+    Read out of the data rather than hardcoded. The 2026 import wrote
+    partner_name on both members of every real pair, so the pairing is a
+    property of the production rows and not of this test.
+    """
+    rows = sql("""
+        SELECT id, competitor_id, competitor_name, partner_name
+        FROM event_results WHERE event_id = :e ORDER BY id
+    """, e=PAT_EVENT)
+    by_name = {r[2]: r for r in rows}
+    seen, pairs = set(), []
+    for row_id, cid, name, partner in rows:
+        if not partner or name in seen or partner in seen:
+            continue
+        mate = by_name.get(partner)
+        if mate is None or mate[3] != name:
+            continue
+        seen.add(name)
+        seen.add(partner)
+        pairs.append(((cid, row_id), (mate[1], mate[0])))
+    return pairs
+
+
+def _score_units(app, row_scores):
+    """Mark the given result rows completed at the given scores.
+
+    row_scores maps result row id -> score. Everything else on the event keeps
+    whatever status it already has, which in this data is 'pending', so it stays
+    out of the completed set calculate_positions works on.
+    """
+    from database import db
+    for row_id, score in row_scores.items():
+        db.session.execute(db.text(
+            "UPDATE event_results SET result_value = :v, status = 'completed', "
+            "throwoff_pending = false, final_position = NULL WHERE id = :r"),
+            {"v": score, "r": row_id})
+    db.session.commit()
+
+
+def _score_pat(app, sql, scores):
+    """Score the first len(scores) reciprocal pairs, one score per pair.
+
+    Returns the pairs that were scored, in the order the scores were applied.
+    """
+    pairs = _pat_pairs(sql)
+    assert len(pairs) >= len(scores), (
+        f"event {PAT_EVENT} yields {len(pairs)} reciprocal pairs in this data; "
+        f"this test needs {len(scores)}")
+    used = pairs[:len(scores)]
+    row_scores = {}
+    for (a, b), score in zip(used, scores):
+        row_scores[a[1]] = score
+        row_scores[b[1]] = score
+    _score_units(app, row_scores)
+    return used
+
+
+def _flagged(sql, event_id):
+    return {r[0] for r in sql(
+        "SELECT id FROM event_results WHERE event_id = :e AND throwoff_pending",
+        e=event_id)}
+
+
+def _positions(sql, event_id):
+    return dict(sql("""
+        SELECT id, final_position FROM event_results
+        WHERE event_id = :e AND status = 'completed'
+    """, e=event_id))
+
+
+def _finalize(client, event_id):
+    r = client.post(f"/scoring/{TID}/event/{event_id}/finalize")
+    assert r.status_code in (200, 302), r.data[:400]
+    return r
+
+
+def _results_page(client, event_id):
+    r = client.get(f"/scoring/{TID}/event/{event_id}/results")
+    assert r.status_code == 200, r.status_code
+    return r.data.decode("utf-8", "replace")
+
+
+_SELECT_RE = re.compile(
+    r'<select[^>]*name="(throwoff_pos_\d+)"[^>]*>(.*?)</select>', re.S)
+_OPTION_RE = re.compile(r'<option value="(\d+)"([^>]*)>', re.S)
+
+
+def _throwoff_selects(html):
+    """[(field_name, [option values], selected value or None)] from the form."""
+    out = []
+    for name, body in _SELECT_RE.findall(html):
+        values, selected = [], None
+        for value, attrs in _OPTION_RE.findall(body):
+            values.append(int(value))
+            if "selected" in attrs:
+                selected = int(value)
+        out.append((name, values, selected))
+    return out
+
+
+@pytest.mark.sev2
+def test_five_pairs_at_five_scores_is_not_a_throw_off(app, client, sql):
+    """A partnered pair is one competing unit, not two tied competitors.
+
+    services/partnered_axe.py writes the pair's single score to both member
+    rows, so every pair is automatically a two-row bucket at whatever score it
+    earned. The tie detector counted rows, so five pairs at five DISTINCT
+    scores produced ten flagged rows and a red "Throw-Off Required" banner over
+    a result set holding no tie at all. The judge's only way past the banner is
+    a form that then rewrites the positions.
+    """
+    scored = _score_pat(app, sql, [30, 28, 24, 20, 16])
+    _finalize(client, PAT_EVENT)
+
+    flags = _flagged(sql, PAT_EVENT)
+    assert flags == set(), (
+        f"five pairs at five distinct scores flagged {len(flags)} rows as "
+        f"needing a throw-off: {sorted(flags)}. Each pair's two rows carry the "
+        f"pair's one score, so counting rows makes every pair tied with itself.")
+
+    positions = _positions(sql, PAT_EVENT)
+    for index, (a, b) in enumerate(scored, 1):
+        assert positions.get(a[1]) == index and positions.get(b[1]) == index, (
+            f"pair {index} landed at {positions.get(a[1])}/{positions.get(b[1])}"
+            f"; both members of a pair share one finishing position")
+
+    html = _results_page(client, PAT_EVENT)
+    assert "Throw-Off Required" not in html, (
+        "the results page still shows the throw-off banner with no tie present")
+
+
+@pytest.mark.sev2
+def test_a_real_tie_between_two_pairs_still_flags_exactly_those_pairs(app, client, sql):
+    """The control. Suppressing the phantom must not suppress the real thing.
+
+    Two pairs on the same score is a genuine tie: two distinct competing units
+    contesting one place. Exactly those four rows must flag, and no others.
+    """
+    scored = _score_pat(app, sql, [30, 28, 24, 24, 16])
+    _finalize(client, PAT_EVENT)
+
+    tied_rows = {scored[2][0][1], scored[2][1][1],
+                 scored[3][0][1], scored[3][1][1]}
+    flags = _flagged(sql, PAT_EVENT)
+    assert flags == tied_rows, (
+        f"a genuine two-pair tie flagged {sorted(flags)}; the four rows of the "
+        f"two pairs sharing a score are {sorted(tied_rows)}")
+
+
+@pytest.mark.sev2
+@pytest.mark.parametrize("tie", [False, True])
+def test_solo_axe_throw_tie_detection_is_unchanged(app, client, sql, tie):
+    """The second control. The solo college event must behave exactly as before.
+
+    On a solo event every row is its own competing unit, so row count and unit
+    count are the same number and the pair-aware detector must be a no-op.
+    """
+    rows = [r[0] for r in sql("""
+        SELECT id FROM event_results WHERE event_id = :e ORDER BY id
+    """, e=COLLEGE_AXE_EVENT)]
+    assert len(rows) >= 4, f"event {COLLEGE_AXE_EVENT} has {len(rows)} rows"
+
+    scores = [40 - 2 * i for i in range(len(rows))]
+    if tie:
+        scores[1] = scores[0]
+    _score_units(app, dict(zip(rows, scores)))
+    _finalize(client, COLLEGE_AXE_EVENT)
+
+    flags = _flagged(sql, COLLEGE_AXE_EVENT)
+    expected = {rows[0], rows[1]} if tie else set()
+    assert flags == expected, (
+        f"solo event {COLLEGE_AXE_EVENT} flagged {sorted(flags)}, expected "
+        f"{sorted(expected)}. Pair-aware detection must not change solo events.")
+
+
+@pytest.mark.sev2
+def test_throwoff_form_offers_the_places_actually_being_contested(app, client, sql):
+    """A tie for 3rd is answered with 3 and 4, not with 1 and 2.
+
+    The form built its options from range(1, len(pending) + 1), so a two-pair
+    tie for third place offered "Position 1" and "Position 2" and there was no
+    way to record the correct answer at all.
+    """
+    _score_pat(app, sql, [30, 28, 24, 24, 16])
+    _finalize(client, PAT_EVENT)
+
+    selects = _throwoff_selects(_results_page(client, PAT_EVENT))
+    assert selects, "the throw-off form rendered no position selects"
+    for name, values, _selected in selects:
+        assert values == [3, 4], (
+            f"{name} offered positions {values} for a tie over 3rd and 4th")
+
+
+@pytest.mark.sev2
+def test_a_partnered_unit_gets_one_select_that_cannot_be_split(app, client, sql):
+    """One dropdown per pair, and both member rows take the same place.
+
+    Per-row selects let a judge hand the two halves of a pair different
+    finishing positions. The wire format is unchanged, so a hand-built POST is
+    the remaining way to split a pair, and the server has to refuse that too.
+    """
+    scored = _score_pat(app, sql, [30, 28, 24, 24, 16])
+    _finalize(client, PAT_EVENT)
+
+    selects = _throwoff_selects(_results_page(client, PAT_EVENT))
+    assert len(selects) == 2, (
+        f"a two-pair tie rendered {len(selects)} selects; a pair is one "
+        f"competing unit and gets one dropdown")
+
+    pair_c, pair_d = scored[2], scored[3]
+    c_rows = sorted([pair_c[0][1], pair_c[1][1]])
+    d_rows = sorted([pair_d[0][1], pair_d[1][1]])
+
+    r = client.post(f"/scoring/{TID}/event/{PAT_EVENT}/throwoff", data={
+        f"throwoff_pos_{c_rows[0]}": "3",
+        f"throwoff_pos_{d_rows[0]}": "4",
+    })
+    assert r.status_code in (200, 302), r.data[:400]
+
+    positions = _positions(sql, PAT_EVENT)
+    assert positions[c_rows[0]] == positions[c_rows[1]] == 3, (
+        f"the pair given position 3 came out at "
+        f"{positions[c_rows[0]]}/{positions[c_rows[1]]}")
+    assert positions[d_rows[0]] == positions[d_rows[1]] == 4, (
+        f"the pair given position 4 came out at "
+        f"{positions[d_rows[0]]}/{positions[d_rows[1]]}")
+
+
+@pytest.mark.sev2
+def test_a_hand_built_post_cannot_split_a_pair_across_two_places(app, client, sql):
+    """The wire format is per row, so the pair invariant is enforced server side.
+
+    The rendered form cannot produce this body, but the field names are per
+    result row and there is no authentication on the throw-off route, so a
+    crafted POST is the remaining way in. Refusing beats letting the spread
+    helper pick a winner by dictionary order.
+    """
+    scored = _score_pat(app, sql, [30, 28, 24, 24, 16])
+    _finalize(client, PAT_EVENT)
+
+    pair_c, pair_d = scored[2], scored[3]
+    c_rows = sorted([pair_c[0][1], pair_c[1][1]])
+    d_rows = sorted([pair_d[0][1], pair_d[1][1]])
+    before = _positions(sql, PAT_EVENT)
+
+    r = client.post(f"/scoring/{TID}/event/{PAT_EVENT}/throwoff", data={
+        f"throwoff_pos_{c_rows[0]}": "3",
+        f"throwoff_pos_{c_rows[1]}": "4",   # same pair, other half, other place
+        f"throwoff_pos_{d_rows[0]}": "4",
+    })
+    assert r.status_code in (200, 302), r.data[:400]
+
+    after = _positions(sql, PAT_EVENT)
+    assert after[c_rows[0]] == after[c_rows[1]], (
+        f"a hand-built POST split one pair across positions "
+        f"{after[c_rows[0]]} and {after[c_rows[1]]}")
+    assert after == before, (
+        f"a submission naming one pair twice was partly written rather than "
+        f"refused. before={before} after={after}")
+
+
+@pytest.mark.sev2
+def test_submitting_the_rendered_throwoff_form_untouched_changes_nothing(app, client, sql):
+    """Opening the banner and pressing the button must not publish a result.
+
+    Every select rendered on "Position 1" with no server-side check, so an
+    operator who pressed the button without touching a dropdown wrote
+    final_position=1 to every pending row and the public spectator page then
+    showed all of them in first place. A throw-off output is always a
+    permutation of the places being contested, so duplicates are mechanically
+    wrong and get refused by name rather than written.
+    """
+    _score_pat(app, sql, [30, 28, 24, 24, 16])
+    _finalize(client, PAT_EVENT)
+
+    before = _positions(sql, PAT_EVENT)
+    selects = _throwoff_selects(_results_page(client, PAT_EVENT))
+    assert selects, "the throw-off form rendered no position selects"
+    for name, values, selected in selects:
+        assert selected is not None, (
+            f"{name} carried no selected option, so the browser sends "
+            f"{values[0]} for it whatever the competitor actually scored")
+        assert selected == 3, (
+            f"{name} opened on position {selected}; both tied pairs currently "
+            f"hold 3rd, so that is where the dropdown must start")
+
+    payload = {name: str(selected) for name, _values, selected in selects}
+    r = client.post(f"/scoring/{TID}/event/{PAT_EVENT}/throwoff", data=payload,
+                    follow_redirects=True)
+    assert r.status_code == 200, r.status_code
+
+    after = _positions(sql, PAT_EVENT)
+    assert after == before, (
+        f"submitting the form exactly as rendered rewrote the positions. "
+        f"before={before} after={after}")
+    assert sum(1 for p in after.values() if p == 1) <= 2, (
+        f"more than one competing unit came out in first place: {after}")
