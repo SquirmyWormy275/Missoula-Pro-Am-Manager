@@ -716,11 +716,42 @@ def update_pro_events(tournament_id, competitor_id):
         if partner and normalize_person_name(partner) != normalize_person_name(competitor.name):
             new_partners[eid] = partner
 
+    # The form renders one row per pro event and nothing else, so it is
+    # authoritative for exactly those keys and for no others. Rebuilding these
+    # four columns from the loop alone therefore deletes every key the form
+    # never had an input for.
+    #
+    # Measured on a copy of production, not inferred: entry_fees carries a
+    # non-numeric 'relay' key on 23 of 49 pros (the relay lottery fee),
+    # gear_sharing carries six distinct 'category:*' keys across 48 entries,
+    # and partners carries a 'Partnered Axe Throw' key on 2. Opening a pro's
+    # detail page and pressing Save with no edits deleted all of them. For gear
+    # it was worse than a local loss: the reciprocal sync below read the
+    # disappearance as a deliberate removal and stripped the partner's matching
+    # entry too, so one no-op save on one competitor damaged two records.
+    #
+    # Written as "the form owns the keys it rendered" rather than "preserve
+    # 'relay'" so the next non-numeric key is safe on the day somebody adds it.
+    # A stray numeric key for an event that is not a pro event of this
+    # tournament is carried forward on the same reasoning: this form never gave
+    # the operator a way to change it, so this form must not be what removes it.
+    form_owned = {str(event.id) for event in pro_events}
+
+    def _carry_forward(rebuilt, stored):
+        for key, value in (stored or {}).items():
+            if key not in form_owned and key not in rebuilt:
+                rebuilt[key] = value
+        return rebuilt
+
     old_gear = competitor.get_gear_sharing()
-    competitor.entry_fees = json.dumps(new_fees)
-    competitor.fees_paid = json.dumps(new_paid)
-    competitor.gear_sharing = json.dumps(new_gear_sharing)
-    competitor.partners = json.dumps(new_partners)
+    competitor.entry_fees = json.dumps(
+        _carry_forward(new_fees, competitor.get_entry_fees()))
+    competitor.fees_paid = json.dumps(
+        _carry_forward(new_paid, competitor.get_fees_paid()))
+    competitor.gear_sharing = json.dumps(
+        _carry_forward(new_gear_sharing, old_gear))
+    competitor.partners = json.dumps(
+        _carry_forward(new_partners, competitor.get_partners()))
 
     # Write reciprocals and clear removed gear entries on partner competitors.
     from services.gear_sharing import sync_all_gear_for_competitor

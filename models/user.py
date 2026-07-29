@@ -104,6 +104,32 @@ class User(UserMixin, db.Model):
             self.ROLE_SPECTATOR,
         }
 
+    @property
+    def can_write(self):
+        """True when this role is allowed to change state at all.
+
+        can_report is deliberately broad: a spectator standing at the results
+        board and a viewer on the club laptop are both supposed to read every
+        report. The bug that made this property necessary is that reading and
+        writing were never separated. The reporting blueprint is admitted on
+        can_report, six of its endpoints accept POST, and three of those six
+        settle money (fee tracker, payout settlement, event fees). A spectator
+        account could therefore mark a competitor's entry fees paid.
+
+        Stated as an allowlist of write-capable roles rather than a denylist of
+        read-only ones, so a role added later is read-only until somebody
+        deliberately says otherwise. Getting this wrong in the safe direction
+        means a registrar files a bug; getting it wrong in the other direction
+        means the settlement desk pays from numbers a spectator typed.
+        """
+        return (
+            self.is_admin
+            or self.is_judge
+            or self.can_register
+            or self.can_schedule
+            or self.can_score
+        )
+
     def set_password(self, password: str):
         self.password_hash = generate_password_hash(password)
 

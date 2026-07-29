@@ -213,6 +213,134 @@ def _detect_axe_ties(results: list[EventResult]) -> list[list[EventResult]]:
     return groups
 
 
+def _state_machine_ranking(event: Event) -> list[list[int]] | None:
+    """Ranked competitor ids for events whose finishing order is owned by a
+    state machine, or ``None`` when the ordinary result_value sort is correct.
+
+    Returned as a list of tiers, best first, each tier holding the competitor
+    ids that share one position.  A partnered pair is one tier of two ids.
+
+    Why this exists.  Partnered Axe Throw runs prelims scored on total hits and
+    then a four-pair final scored on its own scale.  Both stages write into the
+    same ``event_results.result_value`` column, so once the final lands that
+    column holds finals numbers for the four finalists and prelim numbers for
+    the pairs that were knocked out.  Re-sorting the column mixes the two
+    scales, which is how a pair eliminated in prelims can be handed a better
+    finishing position than the pair that actually won the event.  The true
+    order is not in that column at all; it is in ``event_state``.  Read it from
+    there.
+
+    Only the ``completed`` stage is intercepted.  Before the final is scored,
+    every row still carries its prelim number, the scales match, and the
+    ordinary sort is already right.  Intercepting earlier would replace working
+    behaviour for no gain.
+    """
+    if not getattr(event, 'has_prelims', False):
+        return None
+    # Guard: the college branch of calculate_positions rebuilds individual and
+    # team point caches, which this shortcut does not do.  No college event
+    # sets has_prelims today, and if one ever does it must not land here
+    # silently.
+    if event.event_type == 'college':
+        logger.warning(
+            'scoring_engine: event %s has prelims but is a college event; '
+            'falling through to the ordinary sort', event.id
+        )
+        return None
+
+    try:
+        from services.partnered_axe import PartneredAxeThrow
+        pat = PartneredAxeThrow(event)
+        if pat.get_stage() != 'completed':
+            return None
+
+        finalists = pat.get_finalists()
+        finalist_ids = {p.get('pair_id') for p in finalists}
+        ranked_pairs = sorted(
+            (p for p in finalists if p.get('final_position') is not None),
+            key=lambda p: p['final_position'],
+        )
+        # Everyone who did not make the final is ranked behind every finalist,
+        # in prelim order.  get_prelim_standings() is already sorted by hits.
+        ranked_pairs.extend(
+            p for p in pat.get_prelim_standings()
+            if p.get('pair_id') not in finalist_ids
+        )
+    except Exception:
+        # Corrupt or half-written state must not take finalization down on
+        # show day.  Fall through to the ordinary sort, which is wrong in the
+        # specific way documented above but is at least the behaviour the
+        # judges already know.
+        logger.exception(
+            'scoring_engine: could not read state-machine standings for event %s',
+            event.id,
+        )
+        return None
+
+    tiers = []
+    for pair in ranked_pairs:
+        tier = []
+        for key in ('competitor1', 'competitor2'):
+            member = pair.get(key) or {}
+            if member.get('id') is not None:
+                tier.append(member['id'])
+        if tier:
+            tiers.append(tier)
+    return tiers or None
+
+
+def _apply_state_machine_ranking(event: Event, completed: list[EventResult],
+                                 tiers: list[list[int]]) -> None:
+    """Write positions and payouts from a state machine's ranking.
+
+    Payouts still come from ``event.get_payout_for_position``, exactly as the
+    ordinary path does, so this changes finishing order and nothing about how
+    money is computed.
+    """
+    position_by_competitor = {}
+    for index, tier in enumerate(tiers, 1):
+        for competitor_id in tier:
+            position_by_competitor[competitor_id] = index
+
+    comp_lookup = {
+        c.id: c for c in ProCompetitor.query.filter(
+            ProCompetitor.id.in_([r.competitor_id for r in completed])
+        ).all()
+    }
+
+    ranked = [r for r in completed if r.competitor_id in position_by_competitor]
+    unranked = [r for r in completed if r.competitor_id not in position_by_competitor]
+
+    def _award(result, position):
+        payout = event.get_payout_for_position(position)
+        result.final_position = position
+        result.payout_amount = payout
+        comp = comp_lookup.get(result.competitor_id)
+        if comp:
+            comp.total_earnings += payout
+
+    for result in ranked:
+        _award(result, position_by_competitor[result.competitor_id])
+
+    # A result row for somebody the state machine never heard of should not be
+    # dropped on the floor, and it must not outrank a real pair either.  Rank
+    # it behind everyone, in the ordinary order, and say so in the log.
+    if unranked:
+        logger.warning(
+            'scoring_engine: event %s has %d completed result(s) with no pair '
+            'in event_state; ranking them behind every pair',
+            event.id, len(unranked),
+        )
+        next_position = len(tiers) + 1
+        for result in sorted(unranked, key=lambda r: _sort_key(r, event)):
+            _award(result, next_position)
+            next_position += 1
+
+    flag_score_outliers(completed, event)
+    event.status = 'completed'
+    event.is_finalized = True
+
+
 # ---------------------------------------------------------------------------
 # Public: position calculation
 # ---------------------------------------------------------------------------
@@ -276,6 +404,13 @@ def calculate_positions(event: Event) -> None:
                 team = Team.query.get(tid)
                 if team:
                     team.recalculate_points()
+        return
+
+    # --- state-machine events: take the order from event_state, not from
+    # result_value.  See _state_machine_ranking for why. ---
+    tiers = _state_machine_ranking(event)
+    if tiers is not None:
+        _apply_state_machine_ranking(event, completed, tiers)
         return
 
     # --- axe throw tie detection (before sorting) ---

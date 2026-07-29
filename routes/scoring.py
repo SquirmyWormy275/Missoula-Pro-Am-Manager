@@ -1339,6 +1339,8 @@ def tournament_payout_manager(tournament_id):
                 return _payout_redirect()
             applied = 0
             skipped = 0
+            recalculated = 0
+            recalc_failed = []
             for eid in event_ids:
                 ev = Event.query.filter_by(id=eid, tournament_id=tournament_id, event_type='pro').first()
                 if ev:
@@ -1347,16 +1349,42 @@ def tournament_payout_manager(tournament_id):
                         continue
                     ev.set_payouts(template.get_payouts())
                     applied += 1
+                    # An already-finalized event carries payout_amount on every
+                    # result row and has that money counted into each
+                    # competitor's total_earnings. Changing event.payouts alone
+                    # moves the number the payout manager displays and leaves
+                    # the number the settlement desk pays from untouched, so the
+                    # two screens disagree with nothing saying so.
+                    # configure_payouts already recalculates on exactly this
+                    # condition; this is the same operation in bulk.
+                    if ev.is_finalized:
+                        try:
+                            with db.session.begin_nested():
+                                engine.calculate_positions(ev)
+                            recalculated += 1
+                        except (StaleDataError, IntegrityError):
+                            # Savepoint only: the rest of the batch keeps its
+                            # applied template. Name the event that did not
+                            # repay so the operator knows which one to redo.
+                            recalc_failed.append(ev.display_name)
             if applied:
                 try:
                     db.session.commit()
                     log_action('bulk_payout_template_applied', 'tournament', tournament_id,
-                               {'template_id': tpl_id, 'template_name': template.name, 'event_count': applied})
+                               {'template_id': tpl_id, 'template_name': template.name,
+                                'event_count': applied, 'recalculated': recalculated})
                     invalidate_tournament_caches(tournament_id)
                     msg = f'"{template.name}" applied to {applied} event(s).'
+                    if recalculated:
+                        msg += f' {recalculated} finalized event(s) repaid.'
                     if skipped:
                         msg += f' {skipped} special event(s) skipped.'
                     flash(msg, 'success')
+                    if recalc_failed:
+                        flash('Payouts saved, but these finalized events could not be '
+                              'repaid and still owe the old purse: '
+                              + ', '.join(recalc_failed)
+                              + '. Re-finalize them.', 'warning')
                 except (StaleDataError, IntegrityError):
                     db.session.rollback()
                     flash('Save failed — please retry.', 'error')
@@ -1372,7 +1400,28 @@ def tournament_payout_manager(tournament_id):
                     flash(f'{ev.display_name} uses a specialized scoring system and cannot be cleared here.', 'warning')
                 else:
                     ev.set_payouts({})
+                    # Clearing the purse has to clear the money too. Without
+                    # the recalculation the payout manager reads $0 while every
+                    # result row still carries its payout_amount and every
+                    # competitor still carries it in total_earnings, which is
+                    # the settlement desk paying a purse the app says is gone.
+                    was_finalized = ev.is_finalized
+                    cleared_money = False
+                    if was_finalized:
+                        try:
+                            with db.session.begin_nested():
+                                engine.calculate_positions(ev)
+                            cleared_money = True
+                        except (StaleDataError, IntegrityError):
+                            db.session.rollback()
+                            flash(f'Could not clear payouts for {ev.display_name} — '
+                                  f'another user changed it. Please retry.', 'error')
+                            return _payout_redirect()
                     db.session.commit()
+                    log_action('payouts_cleared', 'event', ev.id,
+                               {'tournament_id': tournament_id,
+                                'was_finalized': was_finalized,
+                                'results_repaid': cleared_money})
                     invalidate_tournament_caches(tournament_id)
                     flash(f'Payouts cleared for {ev.display_name}.', 'success')
             return _payout_redirect()

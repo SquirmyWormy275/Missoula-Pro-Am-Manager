@@ -417,6 +417,26 @@ def _create_app_inner():
         permission_attr = BLUEPRINT_PERMISSIONS.get(blueprint_name, 'is_judge')
         if not getattr(current_user, permission_attr, False):
             abort(403)
+
+        # Read access is not write access. The map above answers "may this role
+        # see this blueprint"; it never answered "may this role change what it
+        # sees". reporting is admitted on can_report, which includes spectator
+        # and viewer, and reporting has six POST endpoints, three of them money
+        # (fee tracker, payout settlement, event fees). Measured on a copy of
+        # production: a spectator account POSTed mark_all_paid and the fees
+        # landed.
+        #
+        # Enforced here rather than route by route because the per-route form is
+        # fail-open. Four of reporting's nine POSTs already carry an inner admin
+        # check and five do not, which is exactly the failure mode a central
+        # gate removes: a route added next season is covered on the day it is
+        # written, not on the day somebody notices.
+        #
+        # Safe methods are untouched. A spectator reads every report they read
+        # before this change.
+        if request.method not in ('GET', 'HEAD', 'OPTIONS') and not getattr(
+                current_user, 'can_write', False):
+            abort(403)
         return None
 
     @app.before_request

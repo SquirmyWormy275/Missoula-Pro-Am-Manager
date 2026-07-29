@@ -70,6 +70,33 @@ def app(dburl):
     application = create_app()
     application.config["TESTING"] = True
     application.config["WTF_CSRF_ENABLED"] = False
+
+    # flask_login caches the resolved user on ``g`` as ``_login_user``. Flask
+    # pushes a new application context per request only when one is not already
+    # current, and this fixture deliberately holds one open for the whole test
+    # so that ``sql`` can read the database back afterwards. The two facts
+    # combine badly: ``g`` survives from one test-client request to the next, so
+    # the second request is served with the first request's identity no matter
+    # what session cookie it carries.
+    #
+    # Measured, not theorised. A client whose session held a spectator's user id
+    # was served as the STRATHEX admin, the admin's write succeeded, and the
+    # assertion reported it as "a spectator changed fee payment state". Every
+    # read-only role assertion in this suite was vacuous until this landed.
+    #
+    # Production never sees this: gunicorn pushes a fresh application context
+    # per request. Restore that one property here, registered ahead of the
+    # application's own hooks so the permission gate in app.py reads the
+    # identity the request actually carries rather than the previous one's.
+    from flask import g as _g
+
+    def _drop_cached_login_user():
+        _g.pop("_login_user", None)
+        return None
+
+    application.before_request_funcs.setdefault(None, []).insert(
+        0, _drop_cached_login_user)
+
     with application.app_context():
         yield application
 
