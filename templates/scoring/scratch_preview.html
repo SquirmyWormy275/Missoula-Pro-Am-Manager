@@ -41,7 +41,12 @@
             <input type="hidden" name="effect_count" value="{{ effects|length }}">
 
             <div class="list-group mb-4">
-              {% for i, effect in effects|enumerate %}
+              {# No 'enumerate' filter is registered anywhere in this app, so
+                 the original `effects|enumerate` raised TemplateRuntimeError
+                 on every render. loop.index0 is the built-in that gives the
+                 same numbering scratch_confirm parses back out. #}
+              {% for effect in effects %}
+              {% set i = loop.index0 %}
               <label class="list-group-item list-group-item-action d-flex align-items-center gap-3">
                 <input class="form-check-input flex-shrink-0 mt-0"
                        type="checkbox"

@@ -522,6 +522,39 @@ def _snapshot_competitor_type(audit_entry) -> str:
     return snapshot.get("competitor_type", "pro")
 
 
+def find_undoable_scratch(competitor_id: int, competitor_type: str | None = None):
+    """Return the AuditLog row an undo would restore from, or None.
+
+    Read-only.  Extracted so the confirmation page and the undo route cannot
+    disagree about whether an Undo button should be offered: the page showing
+    a button that reverse_cascade would then refuse is worse than no button,
+    because on race day the judge reads the button as proof the scratch is
+    still reversible.
+
+    The snapshot type lives inside details_json, which is a TEXT column, so
+    the type filter runs in Python.  JSON operators differ between SQLite and
+    PostgreSQL and this code has to work on both.
+    """
+    from models.audit_log import AuditLog
+
+    cutoff = datetime.utcnow() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
+    return next(
+        (
+            entry
+            for entry in AuditLog.query.filter(
+                AuditLog.action == "competitor_scratched",
+                AuditLog.entity_id == competitor_id,
+                AuditLog.created_at >= cutoff,
+            )
+            .order_by(AuditLog.id.desc())
+            .all()
+            if competitor_type is None
+            or _snapshot_competitor_type(entry) == competitor_type
+        ),
+        None,
+    )
+
+
 def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                     competitor_type: str | None = None) -> dict:
     """Reverse a scratch cascade by restoring from the audit log snapshot.
@@ -549,30 +582,13 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
     from services.proam_relay import ProAmRelay
     from services.scoring_engine import _rebuild_individual_points
 
-    cutoff = datetime.utcnow() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
-
-    # The snapshot type lives inside details_json, which is a TEXT column, so
-    # the type filter has to run in Python.  JSON operators differ between
-    # SQLite and PostgreSQL and this code has to work on both.
     def _matches_type(entry) -> bool:
         if competitor_type is None:
             return True
         return _snapshot_competitor_type(entry) == competitor_type
 
-    audit_entry = next(
-        (
-            entry
-            for entry in AuditLog.query.filter(
-                AuditLog.action == "competitor_scratched",
-                AuditLog.entity_id == competitor_id,
-                AuditLog.created_at >= cutoff,
-            )
-            .order_by(AuditLog.id.desc())
-            .all()
-            if _matches_type(entry)
-        ),
-        None,
-    )
+    # Same lookup the confirmation page uses to decide whether to offer Undo.
+    audit_entry = find_undoable_scratch(competitor_id, competitor_type)
 
     if audit_entry is None:
         # Check whether any entry exists at all (outside window).

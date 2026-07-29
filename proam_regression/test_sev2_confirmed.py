@@ -596,3 +596,225 @@ def test_csv_import_with_only_run_columns_is_not_marked_scratched(client, sql):
     assert rows[empty[0]][1] == 'scratched', (
         "a row with no result and no runs must still scratch; got "
         f"{rows[empty[0]]}")
+
+
+# ---------------------------------------------------------------------------
+# c03. The Scratch button dead-ends on a raw JSON document
+#      routes/scoring.py::scratch_preview returns jsonify() to a browser, and
+#      the confirmation template that would let the judge finish the scratch
+#      is an orphan that raises on render.
+# ---------------------------------------------------------------------------
+
+SCRATCH_PRO = 44           # Seth Bergman, active, 8 event_results on TID
+
+# What Chrome, Firefox and Safari all send on a top-level navigation. The
+# route has to be able to tell that apart from an XHR or a script.
+BROWSER_ACCEPT = ('text/html,application/xhtml+xml,application/xml;q=0.9,'
+                  'image/avif,image/webp,*/*;q=0.8')
+BROWSER_HEADERS = {'Accept': BROWSER_ACCEPT}
+
+
+def _scratch_form_action(html, competitor_id):
+    """The action URL of the Scratch form for one competitor, or None.
+
+    Scraped rather than hardcoded so the test breaks if the button is moved,
+    renamed or removed instead of quietly testing a URL nobody can reach.
+    """
+    for form in re.findall(r'<form[^>]*>', html):
+        action = re.search(r'action="([^"]*)"', form)
+        if not action:
+            continue
+        url = action.group(1)
+        # Pro is /registration/<tid>/pro/<cid>/scratch and college is
+        # /registration/<tid>/college/competitor/<cid>/scratch, so match on the
+        # tail the two shapes share rather than on either prefix.
+        if url.endswith(f'/{competitor_id}/scratch'):
+            return url
+    return None
+
+
+def _hidden_and_checkbox_fields(html):
+    """Every hidden input and ticked checkbox inside the scratch-confirm form.
+
+    This is the judge pressing Confirm with the page exactly as rendered: all
+    effects left checked. Parsing what the server actually sent, rather than
+    reconstructing the field names here, is what makes this an end-to-end
+    test of the page instead of a restatement of the route.
+    """
+    start = html.find('scratch-confirm')
+    assert start != -1, 'no scratch-confirm form in the rendered page'
+    form_start = html.rfind('<form', 0, start)
+    form_end = html.find('</form>', start)
+    block = html[form_start:form_end]
+
+    fields = {}
+    for tag in re.findall(r'<input[^>]*>', block):
+        name = re.search(r'name="([^"]*)"', tag)
+        value = re.search(r'value="([^"]*)"', tag)
+        if not name:
+            continue
+        if 'type="checkbox"' in tag and 'checked' not in tag:
+            continue
+        fields[name.group(1)] = value.group(1) if value else 'on'
+    return fields
+
+
+@pytest.mark.sev2
+def test_scratch_button_lands_the_judge_on_a_usable_confirmation_page(client, sql):
+    """The Scratch button is a plain POST form. Wherever it lands must be HTML.
+
+    templates/pro/dashboard.html, pro/registration.html, pro/competitor_detail.html
+    and college/team_detail.html all render Scratch as a native form post with
+    a data-confirm dialog and nothing else. Nothing in static/ fetches the
+    preview endpoint, so whatever that POST redirects to is what the judge
+    sees on race day.
+
+    The first assertion scrapes the button off the real registration page. If
+    the button is not there, the rest of this test would be checking a URL no
+    operator can reach, so it fails loudly instead.
+    """
+    # /registration/<tid>/pro is the legacy URL and 302s to the pro dashboard,
+    # which is where the live Scratch buttons render. Following it keeps this
+    # test on the page the operator actually works from.
+    page = client.get(f"/registration/{TID}/pro", headers=BROWSER_HEADERS,
+                      follow_redirects=True)
+    assert page.status_code == 200, page.status_code
+    action = _scratch_form_action(page.get_data(as_text=True), SCRATCH_PRO)
+    assert action, (
+        f"no Scratch form for pro competitor {SCRATCH_PRO} on the pro "
+        "dashboard; the entry point this test covers has moved")
+
+    landed = client.post(action, headers=BROWSER_HEADERS, follow_redirects=True)
+
+    assert landed.status_code == 200, (
+        f"the Scratch button ended on {landed.status_code}: "
+        f"{landed.get_data(as_text=True)[:300]}")
+
+    ctype = landed.headers.get('Content-Type', '')
+    body = landed.get_data(as_text=True)
+    assert ctype.startswith('text/html'), (
+        "a browser pressing Scratch was served "
+        f"{ctype!r}; body starts {body[:200]!r}")
+    assert 'scratch-confirm' in body, (
+        "the page the judge landed on offers no way to confirm the scratch")
+
+
+@pytest.mark.sev2
+def test_confirming_from_the_rendered_page_actually_scratches_the_competitor(client, sql):
+    """Reaching the page is not enough. Pressing Confirm on it has to work.
+
+    Everything posted back here is scraped out of the server's own HTML, so a
+    page that renders but ships broken field names fails this and passes the
+    test above.
+
+    The competitor status is the assertion that matters. scheduling.scratch_competitor
+    is the only other scratch path in the UI and it sets a single EventResult
+    while leaving pro_competitors.status = 'active', which is what dashboard
+    integrity checks, gear-sharing cleanup and partner-orphan detection all
+    read.
+    """
+    before = sql("SELECT status FROM pro_competitors WHERE id = :c", c=SCRATCH_PRO)
+    assert before and before[0][0] == 'active', (
+        f"competitor {SCRATCH_PRO} is not active in the rig; got {before}")
+
+    page = client.get(f"/registration/{TID}/pro", headers=BROWSER_HEADERS,
+                      follow_redirects=True)
+    action = _scratch_form_action(page.get_data(as_text=True), SCRATCH_PRO)
+    assert action
+
+    landed = client.post(action, headers=BROWSER_HEADERS, follow_redirects=True)
+    assert landed.status_code == 200, landed.get_data(as_text=True)[:300]
+    fields = _hidden_and_checkbox_fields(landed.get_data(as_text=True))
+
+    assert int(fields.get('effect_count', 0)) > 0, (
+        "the confirmation page listed no effects for a competitor holding 8 "
+        f"event results; fields were {sorted(fields)}")
+
+    confirmed = client.post(
+        f"/scoring/{TID}/competitor/{SCRATCH_PRO}/scratch-confirm", data=fields)
+    assert confirmed.status_code in (200, 302), confirmed.get_data(as_text=True)[:300]
+
+    after = sql("SELECT status FROM pro_competitors WHERE id = :c", c=SCRATCH_PRO)
+    assert after[0][0] == 'scratched', (
+        "the competitor is still "
+        f"{after[0][0]!r} after the judge completed the scratch flow")
+
+    live = sql("""
+        SELECT count(*) FROM event_results
+         WHERE competitor_id = :c AND competitor_type = 'pro'
+           AND status NOT IN ('scratched', 'dns')
+    """, c=SCRATCH_PRO)[0][0]
+    assert live == 0, f"{live} event result(s) still live for a scratched competitor"
+
+
+@pytest.mark.sev2
+def test_scratch_preview_still_answers_json_when_json_is_asked_for(client, sql):
+    """Control for the two tests above.
+
+    The preview endpoint has a documented JSON body and tests/ depends on it.
+    Serving HTML to browsers must not take that away, so both explicit forms
+    of asking, the Accept header and ?format=json, are checked here. If this
+    fails the fix traded one broken caller for another.
+    """
+    base = f"/scoring/{TID}/competitor/{SCRATCH_PRO}/scratch-preview?competitor_type=pro"
+
+    by_header = client.get(base, headers={'Accept': 'application/json'})
+    assert by_header.status_code == 200, by_header.get_data(as_text=True)[:300]
+    payload = by_header.get_json()
+    assert payload is not None, by_header.get_data(as_text=True)[:300]
+    assert isinstance(payload.get('effects'), list) and payload['effects'], (
+        f"no effects in the JSON body for a competitor with 8 results: {payload}")
+
+    by_param = client.get(base + "&format=json", headers=BROWSER_HEADERS)
+    assert by_param.status_code == 200
+    assert by_param.get_json() is not None, (
+        "?format=json was ignored in favour of the browser Accept header")
+
+
+SCRATCH_COLLEGE = 29       # Greer Swoboda, team 5, active, 6 event_results.
+                           # Inside the 29-49 id range that collides with the
+                           # pro roster, so this doubles as a check that the
+                           # rendered page names the right human.
+SCRATCH_COLLEGE_TEAM = 5
+
+
+@pytest.mark.sev2
+def test_college_scratch_button_renders_the_page_for_the_right_human(client, sql):
+    """The college half of the same flow, on a colliding id.
+
+    College and pro ids come from separate sequences and overlap from 29 to
+    49. The route resolves on competitor_type, which the redirect carries, so
+    the page must show the college competitor. A page that renders correctly
+    but names the pro twin would let a judge scratch the wrong person while
+    reading a confirmation that looks right.
+    """
+    college_name = sql("SELECT name FROM college_competitors WHERE id = :c",
+                       c=SCRATCH_COLLEGE)[0][0]
+    pro_twin = sql("SELECT name FROM pro_competitors WHERE id = :c",
+                   c=SCRATCH_COLLEGE)
+    assert pro_twin and pro_twin[0][0] != college_name, (
+        f"id {SCRATCH_COLLEGE} no longer collides across the two rosters, so "
+        "this test proves nothing")
+
+    page = client.get(f"/registration/{TID}/college/team/{SCRATCH_COLLEGE_TEAM}",
+                      headers=BROWSER_HEADERS, follow_redirects=True)
+    assert page.status_code == 200, page.status_code
+    action = _scratch_form_action(page.get_data(as_text=True), SCRATCH_COLLEGE)
+    assert action, (
+        f"no Scratch form for college competitor {SCRATCH_COLLEGE} on team "
+        f"{SCRATCH_COLLEGE_TEAM}'s page")
+
+    landed = client.post(action, headers=BROWSER_HEADERS, follow_redirects=True)
+    assert landed.status_code == 200, landed.get_data(as_text=True)[:300]
+    body = landed.get_data(as_text=True)
+    assert landed.headers.get('Content-Type', '').startswith('text/html'), (
+        f"college Scratch served {landed.headers.get('Content-Type')!r}")
+    assert college_name in body, (
+        f"the confirmation page does not name {college_name}")
+    assert pro_twin[0][0] not in body, (
+        f"the confirmation page names the pro twin {pro_twin[0][0]!r} for a "
+        "college scratch")
+    fields = _hidden_and_checkbox_fields(body)
+    assert fields.get('competitor_type') == 'college', (
+        f"the confirm form would post competitor_type={fields.get('competitor_type')!r}")
+    assert int(fields.get('effect_count', 0)) > 0, sorted(fields)

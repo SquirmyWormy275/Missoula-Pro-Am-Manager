@@ -1042,23 +1042,71 @@ def _competitor_type_of(comp) -> str:
     return 'college' if isinstance(comp, CollegeCompetitor) else 'pro'
 
 
+def _scratch_preview_wants_json() -> bool:
+    """Whether this scratch-preview request should get JSON instead of a page.
+
+    The endpoint has two callers with opposite needs.  The Scratch buttons in
+    pro/dashboard.html, pro/registration.html, pro/competitor_detail.html and
+    college/team_detail.html are plain POST forms with a data-confirm dialog
+    and no JavaScript behind them; they redirect a real browser navigation
+    here, so that browser has to be handed a page it can act on.  tests/ and
+    any script hitting the documented body need the JSON.
+
+    ?format=json is the unambiguous opt-in.  Failing that, an Accept header is
+    honoured when it expresses a preference: browsers send text/html first,
+    an XHR asking for application/json gets JSON, and */* resolves to HTML
+    because the browser is the caller that cannot recover from the wrong
+    answer.  A request with no Accept header at all is a programmatic caller
+    and keeps the original JSON body, so nothing that works today breaks.
+    """
+    if (request.args.get('format') or '').strip().lower() == 'json':
+        return True
+    accept = request.accept_mimetypes
+    if not accept:
+        return True
+    return accept.best_match(['text/html', 'application/json']) == 'application/json'
+
+
 @scoring_bp.route('/<int:tournament_id>/competitor/<int:competitor_id>/scratch-preview')
 def scratch_preview(tournament_id, competitor_id):
-    """GET: Compute cascade effects and return JSON for the preview modal.
+    """GET: Compute cascade effects for a pending scratch.
 
-    Response body: {"competitor_name": str, "competitor_type": str,
-                    "effects": [CascadeEffect dicts]}
+    Renders the confirmation page for a browser.  Returns the documented JSON
+    body when the caller asks for JSON: {"competitor_name": str,
+    "competitor_type": str, "effects": [CascadeEffect dicts]}.
     """
     comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
-    from services.scratch_cascade import compute_scratch_effects
+    from services.scratch_cascade import compute_scratch_effects, find_undoable_scratch
     try:
         effects = compute_scratch_effects(comp, tournament)
     except ValueError:
         abort(403)
 
+    comp_type = _competitor_type_of(comp)
+
+    if not _scratch_preview_wants_json():
+        # Cancel goes back to the page the Scratch button lives on. Computed
+        # from the competitor rather than taken from Referer so a crafted
+        # link cannot turn Cancel into an open redirect.
+        if comp_type == 'college':
+            cancel_url = url_for('registration.team_detail',
+                                 tournament_id=tournament_id, team_id=comp.team_id)
+        else:
+            cancel_url = url_for('main.pro_dashboard', tournament_id=tournament_id)
+
+        return render_template(
+            'scoring/scratch_preview.html',
+            tournament=tournament,
+            competitor=comp,
+            competitor_type=comp_type,
+            effects=effects,
+            cancel_url=cancel_url,
+            undo_available=find_undoable_scratch(comp.id, comp_type) is not None,
+        )
+
     return jsonify({
         'competitor_name': comp.name,
-        'competitor_type': _competitor_type_of(comp),
+        'competitor_type': comp_type,
         'effects': [
             {
                 'effect_type': e.effect_type,
