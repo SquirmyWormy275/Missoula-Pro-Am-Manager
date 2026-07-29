@@ -343,3 +343,103 @@ def test_manual_relay_builder_renders_competitor_names(client, sql):
         f"still works because it binds data-id, so the operator is assigning "
         f"nameless cards to relay teams."
     )
+
+
+# ---------------------------------------------------------------------------
+# c01. Springboard stand assignment double-books a stand on 5-stand heats
+#      services/heat_generator.py hardcodes the right-handed stands as [1, 2, 3]
+# ---------------------------------------------------------------------------
+
+PRO_1BOARD_EVENT = 31      # springboard, max_stands = 5, 10 entrants
+
+
+@pytest.mark.sev2
+def test_springboard_lh_heat_gives_every_cutter_a_distinct_stand(app, sql):
+    """One left-handed cutter must not cost the heat a stand.
+
+    Event 31 is the only springboard event in this data configured for five
+    stands. The left-hand branch of the stand assignment pins the LH cutter to
+    stand 4 and then walks the remaining cutters against a hardcoded [1, 2, 3],
+    with an else-arm that falls back to the loop index plus one. On a heat of
+    five that puts the fourth right-handed cutter on stand 4 as well, so two
+    people are sent to the same springboard and stand 5 is never called.
+
+    This is latent in the data as shipped: no pro currently carries the
+    left-handed flag. It is armed by one checkbox on the pro detail form. This
+    test sets the column directly rather than posting the form, because the
+    defect under test is in heat generation and routing it through registration
+    would only add a second failure mode to the diagnosis. The flag is a real
+    production column with a real form control behind it, not a fixture
+    invention.
+    """
+    import sys
+
+    import rig as _rig
+    if _rig.APP_ROOT not in sys.path:
+        sys.path.insert(0, _rig.APP_ROOT)
+
+    from database import db
+    from models.event import Event
+    from services.heat_generator import generate_event_heats
+
+    entrants = [row[0] for row in sql("""
+        SELECT id FROM pro_competitors
+        WHERE entry_fees::jsonb ? :e ORDER BY id
+    """, e=str(PRO_1BOARD_EVENT))]
+    assert len(entrants) >= 5, (
+        f"event {PRO_1BOARD_EVENT} has {len(entrants)} entrants in this data; "
+        f"this test needs a heat of five to exercise the fifth stand")
+
+    event = db.session.get(Event, PRO_1BOARD_EVENT)
+    assert event.stand_type == 'springboard'
+    assert event.max_stands == 5, (
+        f"event {PRO_1BOARD_EVENT} is configured for {event.max_stands} "
+        f"stands; the defect only shows on more than four")
+
+    # Arm the flag on the first entrant and generate.
+    db.session.execute(db.text(
+        "UPDATE pro_competitors SET is_left_handed_springboard = true "
+        "WHERE id = :c"), {"c": entrants[0]})
+    db.session.commit()
+
+    generate_event_heats(event)
+    db.session.commit()
+
+    rows = sql("""
+        SELECT id, heat_number, competitors, stand_assignments
+        FROM heats WHERE event_id = :e AND run_number = 1
+        ORDER BY heat_number
+    """, e=PRO_1BOARD_EVENT)
+    assert rows, "heat generation produced no heats, so this test is vacuous"
+
+    collisions = []
+    for heat_id, heat_number, competitors, assignments in rows:
+        stands = _loads(assignments) or {}
+        by_stand = {}
+        for comp_id, stand in stands.items():
+            by_stand.setdefault(stand, []).append(comp_id)
+        doubled = {s: ids for s, ids in by_stand.items() if len(ids) > 1}
+        if doubled:
+            collisions.append((heat_id, heat_number, doubled, stands))
+
+    assert not collisions, (
+        f"{len(collisions)} springboard heat(s) sent two cutters to the same "
+        f"stand. First: heat id {collisions[0][0]} (heat {collisions[0][1]}) "
+        f"doubled {collisions[0][2]}, full assignment {collisions[0][3]}. "
+        f"The LH branch in services/heat_generator.py pins the LH cutter to "
+        f"stand 4 and then indexes the rest against a hardcoded [1, 2, 3], so "
+        f"the fourth right-handed cutter collides on stand 4 and stand 5 is "
+        f"never emitted.")
+
+    # The collision is only half of it: a five-stand heat that never calls
+    # stand 5 is running four people through a block sized for five.
+    full_heats = [
+        (hid, hn, _loads(a))
+        for hid, hn, c, a in rows
+        if len(_loads(c) or []) >= 5
+    ]
+    assert full_heats, "no heat of five was generated, so the stand-5 check is vacuous"
+    for hid, hn, stands in full_heats:
+        assert len(set(stands.values())) >= 5, (
+            f"heat id {hid} (heat {hn}) holds {len(stands)} cutters but uses "
+            f"only stands {sorted(set(stands.values()))}")

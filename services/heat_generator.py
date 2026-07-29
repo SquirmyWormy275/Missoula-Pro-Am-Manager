@@ -14,6 +14,13 @@ from models.competitor import CollegeCompetitor, ProCompetitor
 from services.gear_sharing import competitors_share_gear_for_event
 
 logger = logging.getLogger(__name__)
+
+# The venue owns exactly one left-hand-configured springboard dummy and it is
+# physically stand 4. This is a fact about the site, not a preference, so it
+# lives here as a named constant instead of being spelled as a bare 4 in the
+# middle of the assignment loop, which is how it came to be paired with a
+# hardcoded [1, 2, 3] for everyone else.
+LH_SPRINGBOARD_STAND = 4
 # LIST_ONLY_EVENT_NAMES and _rank_category_for_event imported from config above.
 
 # Per-event gear-sharing violation log populated by the snake-draft fallbacks.
@@ -236,10 +243,39 @@ def generate_event_heats(event: Event) -> int:
         elif event.stand_type == 'springboard':
             # Phase 5 rule: Dummy 4 is the LH-configured physical dummy. If any
             # competitor in this springboard heat is left-handed, they get
-            # stand_number=4; others fill stands 1-3 in competitor-list order.
-            # If no LH cutter is in the heat, fall through to the default
-            # per-index assignment so stand 4 still gets used.
+            # stand_number=4; the rest fill the remaining configured stands in
+            # competitor-list order. If no LH cutter is in the heat, fall
+            # through to the default per-index assignment so stand 4 still gets
+            # used.
+            #
+            # The right-handed stands are derived from the event's own stand
+            # list, not hardcoded. The original wrote them as a literal
+            # [1, 2, 3], which is only correct when the event runs exactly four
+            # stands. Measured on a copy of production: event 31, Pro 1-Board,
+            # is configured for five, and generating it with one LH cutter put
+            # competitors 12 and 45 both on stand 4 while stand 5 was never
+            # emitted. Two people to one springboard, and a block sized for five
+            # running four.
+            #
+            # Latent as the data ships, because no pro currently carries the
+            # flag. It arms from a single checkbox on the pro detail form, and
+            # nothing downstream checks for a doubled stand.
             lh_comp = next((c for c in heat_competitors if c.get('is_left_handed')), None)
+            if lh_comp is not None and LH_SPRINGBOARD_STAND not in stand_numbers:
+                # The venue's left-hand dummy is stand 4. If this event is not
+                # configured to use stand 4 at all (a specific_stands override,
+                # or fewer than four stands), there is no LH dummy to assign and
+                # pinning anyone to it would send them to a stand the event is
+                # not running. Say so and fall through to the plain assignment
+                # rather than silently placing them somewhere wrong.
+                if lh_warnings is not None:
+                    lh_warnings.append({
+                        'type': 'lh_stand_not_in_event_stands',
+                        'heat_index': heat_num - 1,
+                        'lh_names': [lh_comp.get('name', '')],
+                        'event_stands': list(stand_numbers),
+                    })
+                lh_comp = None
             if lh_comp is not None:
                 # Surface a heat-level warning if the heat has more than one LH
                 # cutter (overflow scenario) — only the first gets stand 4, the
@@ -253,19 +289,30 @@ def generate_event_heats(event: Event) -> int:
                         'lh_count': len(lh_comps_in_heat),
                         'lh_names': [c.get('name', '') for c in lh_comps_in_heat],
                     })
-                # LH cutter goes on stand 4.
-                heat.set_stand_assignment(lh_comp['id'], 4)
-                # Fill stands 1, 2, 3 for the remaining cutters in order.
+                # LH cutter goes on the left-hand dummy.
+                heat.set_stand_assignment(lh_comp['id'], LH_SPRINGBOARD_STAND)
+                # Everyone else fills the event's other stands in order. Order
+                # is preserved rather than sorted so the assignment stays the
+                # same as it was for four-stand events, which is the case the
+                # crew has run before.
+                rh_stands = [s for s in stand_numbers if s != LH_SPRINGBOARD_STAND]
                 rh_stand_idx = 0
-                rh_stands = [1, 2, 3]
+                overflow_base = (max(stand_numbers) if stand_numbers
+                                 else LH_SPRINGBOARD_STAND)
                 for comp in heat_competitors:
                     if comp['id'] == lh_comp['id']:
                         continue
-                    stand_num = (
-                        rh_stands[rh_stand_idx]
-                        if rh_stand_idx < len(rh_stands)
-                        else rh_stand_idx + 1
-                    )
+                    if rh_stand_idx < len(rh_stands):
+                        stand_num = rh_stands[rh_stand_idx]
+                    else:
+                        # More cutters than the event has stands. The heat is
+                        # already over capacity and the admin has a separate
+                        # problem, but the numbers still have to be distinct:
+                        # the old else-arm here returned the loop index plus
+                        # one, which walks straight back over stands the loop
+                        # had already handed out.
+                        stand_num = (
+                            overflow_base + 1 + (rh_stand_idx - len(rh_stands)))
                     heat.set_stand_assignment(comp['id'], stand_num)
                     rh_stand_idx += 1
             else:
