@@ -471,7 +471,17 @@ def _upsert_event(tournament, event_config, event_type, gender, is_open, max_sta
     event.is_open = is_open
     event.is_partnered = event_config.get('is_partnered', False)
     event.partner_gender_requirement = event_config.get('partner_gender')
+    # Both run flags are written, and both are written unconditionally so a
+    # config change that turns one off actually turns it off. The triple flag
+    # had no line here at all: config.py has declared requires_triple_runs on
+    # Axe Throw and Partnered Axe Throw since the scoring overhaul, and the
+    # application has never once written it, so every event in the 2026
+    # database carries false. Nothing failed loudly. The three-throw entry
+    # grid, the run3 CSV column, the T1/T2/T3 results table and the three-box
+    # judge sheet all read this column, so all four quietly degraded to the
+    # single-value layout.
     event.requires_dual_runs = event_config.get('requires_dual_runs', False)
+    event.requires_triple_runs = event_config.get('requires_triple_runs', False)
     event.stand_type = event_config.get('stand_type')
     event.max_stands = max_stands_override if max_stands_override is not None else stand_config.get('total')
     event.has_prelims = event_config.get('has_prelims', False)

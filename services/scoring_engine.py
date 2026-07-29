@@ -1002,6 +1002,13 @@ def import_results_from_csv(event: Event, csv_text: str) -> dict:
 
         # Handle DQ/DNS/DNF status values in the result column
         raw_result = (row.get('result') or '').strip()
+        # An empty result cell and an explicit DQ are two different statements
+        # and have to stay distinguishable. They are collapsed together below
+        # because both produce result_value=None, but only the explicit token
+        # is the operator saying the competitor did not post a result. A blank
+        # cell on a row that carries run columns means "derive it", and the
+        # import page tells the operator exactly that.
+        result_is_blank = raw_result == ''
         is_dq = raw_result.upper() in ('DQ', 'DNS', 'DNF', 'DSQ', 'DISQUALIFIED', '')
 
         if is_dq:
@@ -1045,6 +1052,21 @@ def import_results_from_csv(event: Event, csv_text: str) -> dict:
             r.calculate_best_run(event.scoring_order)
         if event.requires_triple_runs:
             r.calculate_cumulative_score()
+
+        # The scratch decision was made above from the raw result cell, before
+        # either derivation had run. On a dual or triple run event that reads
+        # the blank cell, calls the row a scratch, then fills result_value in
+        # from the run columns and marks the scratch anyway. The operator gets
+        # 'Imported N result(s), skipped 0.' in green and a competitor who
+        # posted three real throws sits out the standings. Reconsider it here,
+        # once, now that the value is actually known.
+        #
+        # Only a blank cell is reconsidered. An explicit DQ, DNS, DNF or DSQ is
+        # the operator making a statement and outranks anything the run columns
+        # imply, so those are left alone. A row with no result and no runs is
+        # still a scratch, because nothing derived a value.
+        if result_is_blank and r.result_value is not None:
+            row_status = None
 
         # Status: explicit column overrides auto-detection
         explicit_status = (row.get('status') or '').strip().lower()

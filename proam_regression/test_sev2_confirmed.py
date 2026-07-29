@@ -443,3 +443,156 @@ def test_springboard_lh_heat_gives_every_cutter_a_distinct_stand(app, sql):
         assert len(set(stands.values())) >= 5, (
             f"heat id {hid} (heat {hn}) holds {len(stands)} cutters but uses "
             f"only stands {sorted(set(stands.values()))}")
+
+
+# ---------------------------------------------------------------------------
+# c02. The config-declared three-throw flag never reaches the database, and a
+#      CSV that carries only run columns is silently marked scratched.
+#      routes/scheduling/events.py::_upsert_event  (flag never written)
+#      services/scoring_engine.py::import_results_from_csv  (status decided
+#      from the raw result cell before the run columns are summed)
+# ---------------------------------------------------------------------------
+
+AXE_M_EVENT = 1            # college Axe Throw, men. config declares triple runs.
+CABER_M_EVENT = 4          # college Caber Toss, men. dual runs, distance.
+CABER_ENTRANTS = ["Trevor Norris", "Trustin Norick", "Noah Chamberlain"]
+
+
+def _checked_enable_fields(html):
+    """Every enable_* checkbox the rendered setup form has ticked.
+
+    The operator's real POST carries one entry per ticked box. Posting an empty
+    form instead would ask the route to delete every closed event, which is a
+    different operation with a different blast radius. Scraping what the page
+    actually renders keeps this test on the path a human takes.
+    """
+    fields = []
+    for tag in re.findall(r'<input[^>]*>', html):
+        if 'type="checkbox"' not in tag and "type='checkbox'" not in tag:
+            continue
+        name = re.search(r'name="([^"]+)"', tag)
+        if not name or not name.group(1).startswith('enable_'):
+            continue
+        if 'checked' in tag:
+            fields.append(name.group(1))
+    return fields
+
+
+@pytest.mark.sev2
+def test_events_setup_save_writes_the_config_declared_triple_run_flag(client, sql):
+    """Saving the event setup must restore every run flag config declares.
+
+    config.py declares 'requires_triple_runs': True on Axe Throw and Partnered
+    Axe Throw. _upsert_event copies requires_dual_runs and stops there, so the
+    triple flag has never once been written by the application. All 44 real
+    2026 events carry requires_triple_runs=false, and routes/main.py copies the
+    value verbatim when a tournament is cloned, so a 2027 clone inherits the
+    wrong value too.
+
+    Caber Toss is the control. Both flags are zeroed here, the same POST is
+    sent, and the dual flag comes back while the triple flag does not. That
+    rules out 'the save did not run' as an explanation for the failure.
+
+    Zeroing the flags is a write to the per-test clone, never to the template.
+    """
+    from database import db
+    from models.event import Event
+
+    db.session.execute(db.text(
+        "UPDATE events SET requires_dual_runs = false, requires_triple_runs = false "
+        "WHERE id IN (:a, :c)"), {"a": AXE_M_EVENT, "c": CABER_M_EVENT})
+    db.session.commit()
+
+    page = client.get(f"/scheduling/{TID}/events/setup")
+    assert page.status_code == 200, page.status_code
+    html = page.get_data(as_text=True)
+
+    form = {"action_scope": "college"}
+    for field in _checked_enable_fields(html):
+        form[field] = "on"
+
+    saved = client.post(f"/scheduling/{TID}/events/setup", data=form)
+    assert saved.status_code == 302, saved.data[:400]
+
+    db.session.expire_all()
+    axe = db.session.get(Event, AXE_M_EVENT)
+    caber = db.session.get(Event, CABER_M_EVENT)
+
+    # Control first. If this fails the POST never reached the upsert and the
+    # real assertion below would be meaningless.
+    assert caber.requires_dual_runs is True, (
+        "the control failed: the setup save did not restore requires_dual_runs "
+        "on Caber Toss either, so this run proves nothing about the triple flag")
+
+    assert axe.requires_triple_runs is True, (
+        "the setup save left requires_triple_runs=False on Axe Throw while "
+        "restoring requires_dual_runs on Caber Toss from the same POST. "
+        "_upsert_event in routes/scheduling/events.py writes requires_dual_runs "
+        "and has no requires_triple_runs twin, so the flag config declares can "
+        "never reach the database.")
+
+
+@pytest.mark.sev2
+def test_csv_import_with_only_run_columns_is_not_marked_scratched(client, sql):
+    """Run columns that produce a result must not land as a scratch.
+
+    The import page tells the operator the result column is optional and that
+    run1 and run2 are accepted. Follow that instruction and the importer reads
+    the blank result cell, decides the row is a scratch, and only afterwards
+    sums or picks the runs into result_value. The row ends up with a real
+    number and status='scratched', under a green 'Imported 3 result(s),
+    skipped 0.' banner. Nothing on screen says a competitor was dropped.
+
+    Caber Toss is used rather than Axe Throw because it already carries
+    requires_dual_runs=true in production, so this test needs no flag setup and
+    isolates the importer defect from the missing-flag defect above.
+
+    A genuinely empty row, no result and no runs, must still scratch. That is
+    the second assertion.
+    """
+    from database import db
+    from models.event import Event
+
+    event = db.session.get(Event, CABER_M_EVENT)
+    assert event.requires_dual_runs is True
+    assert event.scoring_order == 'highest_wins'
+
+    csv_text = "competitor_name,result,run1,run2\n"
+    throws = {"Trevor Norris": (28.0, 31.5),
+              "Trustin Norick": (30.0, 29.0),
+              "Noah Chamberlain": (26.5, 27.0)}
+    for name in CABER_ENTRANTS:
+        r1, r2 = throws[name]
+        csv_text += f"{name},,{r1},{r2}\n"
+    # A row with nothing in it at all. This one is a real scratch.
+    csv_text += "COOPER DRISKELL,,,\n"
+
+    posted = client.post(f"/scoring/{TID}/event/{CABER_M_EVENT}/import-results",
+                         data={"csv_text": csv_text})
+    assert posted.status_code == 302, posted.data[:400]
+
+    rows = dict((name, (val, status)) for name, val, status in sql("""
+        SELECT competitor_name, result_value, status
+        FROM event_results WHERE event_id = :e
+    """, e=CABER_M_EVENT))
+
+    for name in CABER_ENTRANTS:
+        match = [k for k in rows if k.lower().startswith(name.lower())]
+        assert match, f"{name} has no result row after import; rows: {sorted(rows)}"
+        value, status = rows[match[0]]
+        expected = max(throws[name])
+        assert value is not None and float(value) == expected, (
+            f"{name} imported with result_value={value}, expected {expected} "
+            f"(highest of the two runs)")
+        assert status == 'completed', (
+            f"{name} imported with three real runs and landed status='{status}'. "
+            f"import_results_from_csv decides the status from the raw result "
+            f"cell before calculate_best_run fills result_value in, so a row "
+            f"that follows the on-screen instruction is scratched silently "
+            f"under a success flash.")
+
+    empty = [k for k in rows if k.lower().startswith('cooper')]
+    assert empty, "the control row is missing, so the scratch check is vacuous"
+    assert rows[empty[0]][1] == 'scratched', (
+        "a row with no result and no runs must still scratch; got "
+        f"{rows[empty[0]]}")
