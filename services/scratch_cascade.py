@@ -323,6 +323,13 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
         # a competitor is actually removed from are decided by the loop's own
         # status filter, not by the effects list.
         "heats": [],
+        # Populated inside the transaction below, by the partner branch, at the
+        # moment each partner row is mutated.  Like "heats" it cannot be built
+        # here: which partner rows actually get touched is decided by the
+        # branch's own name-match guard, not by the effects list.  Without it
+        # the undo restored the scratched competitor perfectly and left every
+        # counterparty stripped, which reads on screen as a successful undo.
+        "partners": [],
         "relay_teams": [
             e.metadata.get("team_number")
             for e in effects
@@ -370,23 +377,57 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                 if pr is not None and pr.partner_name in (
                     competitor.name, competitor.display_name
                 ):
-                    pr.partner_name = None
-                    # Update partner competitor's partners JSON if they have one.
                     if pr.competitor_type == "college":
                         partner_comp = CollegeCompetitor.query.get(pr.competitor_id)
                     else:
                         partner_comp = ProCompetitor.query.get(pr.competitor_id)
+
+                    # This effect is scoped to ONE event: the one this partner
+                    # result belongs to.  partners is event_id -> partner_name
+                    # (models/competitor.py), so the key to drop is this event's.
+                    # The previous filter dropped every key whose VALUE was the
+                    # scratched competitor, so ticking the Double Buck effect
+                    # also stripped Partnered Axe Throw, an effect the judge had
+                    # left unchecked.  Acting on an unchecked effect is the
+                    # defect; the checkbox is a consent control, not a hint.
+                    partner_event_key = str(pr.event_id)
+                    partner_data = {}
+                    dropped_value = None
                     if partner_comp is not None:
                         try:
                             partner_data = json.loads(partner_comp.partners or "{}")
                         except (json.JSONDecodeError, TypeError):
                             partner_data = {}
-                        partner_data = {
-                            k: v
-                            for k, v in partner_data.items()
-                            if v != competitor.name
+                        # Both name forms again: the guard above already treats
+                        # them as the same human, so the JSON has to as well or
+                        # a college pairing survives the scratch half-cleared.
+                        if partner_data.get(partner_event_key) in (
+                            competitor.name, competitor.display_name
+                        ):
+                            dropped_value = partner_data.pop(partner_event_key)
+                            partner_comp.partners = json.dumps(partner_data)
+
+                    # Capture BEFORE nulling partner_name.  reverse_cascade has
+                    # no other way to learn what this row said: the scratched
+                    # competitor's own partners JSON is snapshotted separately
+                    # and does not carry the counterparty's row state.
+                    snapshot["partners"].append(
+                        {
+                            "result_id": pr.id,
+                            "result_partner_name": pr.partner_name,
+                            "event_id": pr.event_id,
+                            "competitor_id": (
+                                partner_comp.id if partner_comp is not None else None
+                            ),
+                            "competitor_type": pr.competitor_type,
+                            # None when the key was already absent or named
+                            # somebody else, which is the signal to leave the
+                            # partner's JSON alone on undo.
+                            "partner_json_value": dropped_value,
                         }
-                        partner_comp.partners = json.dumps(partner_data)
+                    )
+
+                    pr.partner_name = None
                     effects_applied += 1
 
             elif effect.effect_type == "relay_team":
@@ -555,6 +596,36 @@ def find_undoable_scratch(competitor_id: int, competitor_type: str | None = None
     )
 
 
+def find_undoable_scratches(competitor_ids, competitor_type: str | None = None) -> set:
+    """The subset of competitor_ids whose scratch is still inside the window.
+
+    Read-only, one query for a whole page.  The rosters need this for every
+    scratched competitor in the table, and calling find_undoable_scratch per
+    row would put a query per competitor on the busiest screen of race day.
+
+    Same cutoff and same snapshot-type filter as find_undoable_scratch, so an
+    Undo button on a roster and the one on the confirmation page cannot
+    disagree about whether an undo is still possible.
+    """
+    from models.audit_log import AuditLog
+
+    ids = [int(c) for c in competitor_ids]
+    if not ids:
+        return set()
+
+    cutoff = datetime.utcnow() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
+    return {
+        entry.entity_id
+        for entry in AuditLog.query.filter(
+            AuditLog.action == "competitor_scratched",
+            AuditLog.entity_id.in_(ids),
+            AuditLog.created_at >= cutoff,
+        ).all()
+        if competitor_type is None
+        or _snapshot_competitor_type(entry) == competitor_type
+    }
+
+
 def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                     competitor_type: str | None = None) -> dict:
     """Reverse a scratch cascade by restoring from the audit log snapshot.
@@ -626,6 +697,42 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
             # Restore partners JSON
             if "partner_json" in snapshot and snapshot["partner_json"] is not None:
                 comp.partners = snapshot["partner_json"]
+
+        # --- Restore partner counterparties ----------------------------------
+        # execute_cascade nulls the partner's EventResult.partner_name and drops
+        # this event's key from the partner competitor's partners JSON.  Neither
+        # was ever restored, so an undo handed back the scratched competitor
+        # intact and left the partner unpaired, then flashed success.  Nothing
+        # catches that afterwards: routes/scheduling/partners.py's orphan queue
+        # only matches rows whose partner_name is set and names a scratched
+        # competitor, and after an undo it is neither.  The pair silently fails
+        # to be seated the next time heats are generated.
+        #
+        # Restored per-field rather than by re-writing the whole JSON blob: if
+        # the judge re-paired the partner during the undo window, that new
+        # pairing is the current truth and must survive the undo.
+        for p_snap in snapshot.get("partners", []):
+            p_result = EventResult.query.get(p_snap.get("result_id"))
+            if p_result is not None and not p_result.partner_name:
+                p_result.partner_name = p_snap.get("result_partner_name")
+
+            p_comp_id = p_snap.get("competitor_id")
+            p_value = p_snap.get("partner_json_value")
+            if p_comp_id is None or p_value is None:
+                continue
+            PartnerModel = (
+                CollegeCompetitor
+                if p_snap.get("competitor_type") == "college"
+                else ProCompetitor
+            )
+            p_comp = PartnerModel.query.get(p_comp_id)
+            if p_comp is None:
+                continue
+            p_data = p_comp.get_partners()
+            p_key = str(p_snap.get("event_id"))
+            if p_key not in p_data:
+                p_data[p_key] = p_value
+                p_comp.partners = json.dumps(p_data)
 
         # --- Restore EventResult rows ----------------------------------------
         affected_college_competitor_ids: set[int] = set()

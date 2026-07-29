@@ -243,6 +243,23 @@
                                                 <i class="bi bi-slash-circle"></i> Scratch
                                             </button>
                                         </form>
+                                        {% elif member.id in undoable_scratch_ids|default([], true) %}
+                                        {# The scratch is still inside the undo window. See the
+                                           matching block in pro/dashboard.html: without it the
+                                           window is unreachable, because the confirm redirect
+                                           lands here and the only other Undo control sits behind
+                                           the Scratch button a scratched member no longer gets.
+                                           competitor_type is required because college and pro
+                                           ids collide on this data. #}
+                                        <form action="{{ url_for('scoring.scratch_undo', tournament_id=tournament.id, competitor_id=member.id) }}"
+                                              method="POST" class="d-inline"
+                                              data-confirm="Undo the scratch for {{ member.name }}?">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="competitor_type" value="college">
+                                            <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                                <i class="bi bi-arrow-counterclockwise"></i> Undo
+                                            </button>
+                                        </form>
                                         {% endif %}
                                     </td>
                                 </tr>

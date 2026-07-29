@@ -587,6 +587,16 @@ def pro_dashboard(tournament_id):
             })
     live_event_leaders = live_event_leaders[:5]
 
+    # Which scratched competitors can still be undone.  Without this the
+    # 30-minute undo window is unreachable from anywhere in the product:
+    # scratch_confirm redirects here, the Scratch button is gated on
+    # status == 'active', and the only Undo control that existed lived on the
+    # confirmation page that button leads to.  One bulk query, not one per row.
+    from services.scratch_cascade import find_undoable_scratches
+    undoable_scratch_ids = find_undoable_scratches(
+        [c.id for c in competitors if c.status == 'scratched'], 'pro'
+    )
+
     return render_template('pro/dashboard.html',
                            tournament=tournament,
                            competitors=competitors,
@@ -594,6 +604,7 @@ def pro_dashboard(tournament_id):
                            total_fees=total_fees,
                            collected_fees=collected_fees,
                            top_earners=top_earners,
+                           undoable_scratch_ids=undoable_scratch_ids,
                            live_event_leaders=live_event_leaders)
 
 

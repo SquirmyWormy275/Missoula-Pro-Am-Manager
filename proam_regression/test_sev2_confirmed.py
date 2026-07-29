@@ -818,3 +818,277 @@ def test_college_scratch_button_renders_the_page_for_the_right_human(client, sql
     assert fields.get('competitor_type') == 'college', (
         f"the confirm form would post competitor_type={fields.get('competitor_type')!r}")
     assert int(fields.get('effect_count', 0)) > 0, sorted(fields)
+
+
+# ---------------------------------------------------------------------------
+# c04. Undo restores the scratched competitor and leaves the partner destroyed
+#      services/scratch_cascade.py::execute_cascade nulls the partner's
+#      EventResult.partner_name and strips the partner competitor's partners
+#      JSON, and snapshots neither, so reverse_cascade cannot put them back.
+#      The same branch filters that JSON by partner NAME across every event
+#      key, so one ticked effect also wipes events the judge left unticked.
+# ---------------------------------------------------------------------------
+
+# Ben Hansen / Cameron Pilgreen are partnered in event 38 (Men's Double Buck)
+# and nowhere else together, so this pair isolates the round trip.
+C04_SCRATCHED = 21         # Ben Hansen
+C04_PARTNER = 23           # Cameron Pilgreen
+C04_PARTNER_RESULT = 97    # Cameron Pilgreen's event 38 row, partner_name='Ben Hansen'
+C04_EVENT = 38
+
+# Stirling Hart is Cody labahn's partner in BOTH event 38 (Double Buck) and
+# event 40 (Partnered Axe Throw). Two separate partner effects are offered for
+# him, so ticking one and not the other is a real judge decision and the test
+# can tell a scoped wipe from a name-wide one.
+C04_MULTI_SCRATCHED = 4    # Stirling Hart
+C04_MULTI_PARTNER = 26     # Cody labahn
+C04_TICKED_RESULT = 117    # labahn's event 38 row  — effect IS ticked
+C04_UNTICKED_RESULT = 122  # labahn's event 40 row  — effect is NOT ticked
+C04_UNTICKED_EVENT = 40
+
+
+def _confirm_form(html):
+    """(fields, effects) scraped out of the rendered scratch-confirm form.
+
+    fields is every hidden input, ready to post as-is. effects is
+    [(index, effect_type, affected_entity_id)] in render order, so a test can
+    tick exactly the boxes a judge would tick rather than all of them. The
+    unticked case is the whole point of the checkbox, and it is the case the
+    over-broad wipe violates.
+    """
+    start = html.find('scratch-confirm')
+    assert start != -1, 'no scratch-confirm form in the rendered page'
+    block = html[html.rfind('<form', 0, start):html.find('</form>', start)]
+
+    fields = {}
+    for tag in re.findall(r'<input[^>]*>', block):
+        name = re.search(r'name="([^"]*)"', tag)
+        if not name or 'type="checkbox"' in tag:
+            continue
+        value = re.search(r'value="([^"]*)"', tag)
+        fields[name.group(1)] = value.group(1) if value else ''
+
+    effects = [
+        (i, fields.get(f'effect_type_{i}'), fields.get(f'affected_entity_id_{i}'))
+        for i in range(int(fields.get('effect_count') or 0))
+    ]
+    return fields, effects
+
+
+def _undo_control(client, competitor_id, page_url):
+    """(action, fields) of the Undo control on a roster page, or (None, None).
+
+    scratch_confirm redirects the judge back to the roster, so this is the
+    only screen a real operator is on after a scratch. Scratch buttons are
+    gated on status == 'active' and the confirmation page is only reachable
+    through one, so if the roster carries no Undo control the 30-minute window
+    does not exist in practice no matter what reverse_cascade would do.
+    """
+    page = client.get(page_url, headers=BROWSER_HEADERS, follow_redirects=True)
+    assert page.status_code == 200, page.status_code
+    for form in re.findall(r'<form[^>]*>.*?</form>',
+                           page.get_data(as_text=True), re.S):
+        action = re.search(r'action="([^"]*)"', form)
+        if not action or not action.group(1).endswith(
+                f'/competitor/{competitor_id}/scratch-undo'):
+            continue
+        fields = {}
+        for tag in re.findall(r'<input[^>]*>', form):
+            name = re.search(r'name="([^"]*)"', tag)
+            if not name:
+                continue
+            value = re.search(r'value="([^"]*)"', tag)
+            fields[name.group(1)] = value.group(1) if value else ''
+        return action.group(1), fields
+    return None, None
+
+
+def _reach_preview(client, competitor_id):
+    """Press the Scratch button for one competitor and return the page HTML."""
+    page = client.get(f"/registration/{TID}/pro", headers=BROWSER_HEADERS,
+                      follow_redirects=True)
+    assert page.status_code == 200, page.status_code
+    action = _scratch_form_action(page.get_data(as_text=True), competitor_id)
+    assert action, (
+        f"no Scratch form for pro competitor {competitor_id} on the pro "
+        "dashboard; the entry point this test covers has moved")
+    landed = client.post(action, headers=BROWSER_HEADERS, follow_redirects=True)
+    assert landed.status_code == 200, landed.status_code
+    return landed.get_data(as_text=True)
+
+
+@pytest.mark.sev2
+def test_undoing_a_scratch_gives_the_partner_back_their_partner(client, sql):
+    """Undo has to restore the counterparty, not just the person who scratched.
+
+    reverse_cascade restoring the scratched competitor's own status, results
+    and partners JSON is the control inside this test: if those assertions
+    pass and the partner's do not, undo is selectively broken rather than
+    broken outright, which is exactly what makes it dangerous. The judge sees
+    'Scratch reversed for Ben Hansen', the competitor is active again, and the
+    pair is quietly gone.
+
+    Nothing downstream catches it. routes/scheduling/partners.py's orphan
+    queue only lists rows whose partner_name is set AND names a scratched
+    competitor; after an undo it is neither, so the queue is empty and the
+    pair is simply not seated the next time heats are generated.
+    """
+    before_name = sql(
+        "SELECT partner_name FROM event_results WHERE id = :r",
+        r=C04_PARTNER_RESULT)[0][0]
+    before_json = _loads(sql(
+        "SELECT partners FROM pro_competitors WHERE id = :c",
+        c=C04_PARTNER)[0][0])
+    assert before_name, "fixture drift: the partner row carries no partner_name"
+    assert before_json.get(str(C04_EVENT)), (
+        f"fixture drift: competitor {C04_PARTNER} has no event {C04_EVENT} partner")
+
+    fields, effects = _confirm_form(_reach_preview(client, C04_SCRATCHED))
+    assert any(e[1] == 'partner' for e in effects), (
+        f"no partner effect offered for competitor {C04_SCRATCHED}; this test "
+        "would prove nothing")
+
+    ticked = {f'effect_checked_{i}': 'on' for i, _, _ in effects}
+    confirmed = client.post(
+        f"/scoring/{TID}/competitor/{C04_SCRATCHED}/scratch-confirm",
+        data=dict(fields, **ticked), headers=BROWSER_HEADERS,
+        follow_redirects=True)
+    assert confirmed.status_code == 200, confirmed.status_code
+
+    # Control: the scratch really did reach the partner. Without this the undo
+    # assertions below could pass on a cascade that never ran.
+    mid_name = sql(
+        "SELECT partner_name FROM event_results WHERE id = :r",
+        r=C04_PARTNER_RESULT)[0][0]
+    assert not mid_name, (
+        "the scratch left the partner row untouched; this test is no longer "
+        "exercising the partner branch")
+
+    # The judge is standing on the pro roster: that is where scratch_confirm
+    # just redirected them. If the Undo control is not here it is nowhere.
+    action, undo_fields = _undo_control(
+        client, C04_SCRATCHED, f"/registration/{TID}/pro")
+    assert action, (
+        "no Undo control on the pro roster for a competitor scratched seconds "
+        "ago; the 30-minute undo window is unreachable by any operator")
+    assert undo_fields.get('competitor_type') == 'pro', (
+        f"the Undo form would post competitor_type={undo_fields.get('competitor_type')!r}; "
+        "college and pro ids collide, so an untyped undo can restore the twin")
+    undone = client.post(action, data=undo_fields, headers=BROWSER_HEADERS,
+                         follow_redirects=True)
+    assert undone.status_code == 200, undone.status_code
+
+    # In-repro control: the actor's own record comes back. This passed before
+    # the fix too, which is why the bug read as a working undo.
+    assert sql("SELECT status FROM pro_competitors WHERE id = :c",
+               c=C04_SCRATCHED)[0][0] == 'active'
+
+    after_name = sql(
+        "SELECT partner_name FROM event_results WHERE id = :r",
+        r=C04_PARTNER_RESULT)[0][0]
+    assert after_name == before_name, (
+        f"undo left event_results.{C04_PARTNER_RESULT}.partner_name="
+        f"{after_name!r}; it was {before_name!r} before the scratch")
+
+    after_json = _loads(sql(
+        "SELECT partners FROM pro_competitors WHERE id = :c",
+        c=C04_PARTNER)[0][0])
+    assert after_json.get(str(C04_EVENT)) == before_json[str(C04_EVENT)], (
+        f"undo left competitor {C04_PARTNER} partners={after_json}; "
+        f"event {C04_EVENT} was {before_json[str(C04_EVENT)]!r}")
+
+
+@pytest.mark.sev2
+def test_an_unticked_partner_effect_leaves_its_event_alone(client, sql):
+    """The checkbox is a consent control. Unticked means do not touch.
+
+    Stirling Hart partners Cody labahn in two events, so the page offers two
+    partner effects. Ticking only the Double Buck one used to strip Partnered
+    Axe Throw as well, because the branch filtered the partners JSON by the
+    scratched competitor's NAME across every event key instead of dropping
+    the key for the event the effect belongs to.
+
+    The ticked effect is asserted too. A fix that simply stopped writing would
+    pass the unticked half of this test and fail the ticked half.
+    """
+    before = _loads(sql("SELECT partners FROM pro_competitors WHERE id = :c",
+                        c=C04_MULTI_PARTNER)[0][0])
+    assert before.get(str(C04_EVENT)) and before.get(str(C04_UNTICKED_EVENT)), (
+        f"fixture drift: competitor {C04_MULTI_PARTNER} partners={before} no "
+        "longer covers both events this test separates")
+
+    fields, effects = _confirm_form(_reach_preview(client, C04_MULTI_SCRATCHED))
+    ticked_idx = [i for i, etype, eid in effects
+                  if etype == 'partner' and eid == str(C04_TICKED_RESULT)]
+    unticked_idx = [i for i, etype, eid in effects
+                    if etype == 'partner' and eid == str(C04_UNTICKED_RESULT)]
+    assert ticked_idx and unticked_idx, (
+        "the page did not offer two separable partner effects "
+        f"(effects={effects}); this test would prove nothing")
+
+    confirmed = client.post(
+        f"/scoring/{TID}/competitor/{C04_MULTI_SCRATCHED}/scratch-confirm",
+        data=dict(fields, **{f'effect_checked_{ticked_idx[0]}': 'on'}),
+        headers=BROWSER_HEADERS, follow_redirects=True)
+    assert confirmed.status_code == 200, confirmed.status_code
+
+    after = _loads(sql("SELECT partners FROM pro_competitors WHERE id = :c",
+                       c=C04_MULTI_PARTNER)[0][0])
+    assert str(C04_EVENT) not in after, (
+        f"the ticked effect did not clear event {C04_EVENT}: partners={after}")
+    assert after.get(str(C04_UNTICKED_EVENT)) == before[str(C04_UNTICKED_EVENT)], (
+        f"an unticked effect wiped event {C04_UNTICKED_EVENT}: partners={after}, "
+        f"was {before}")
+
+    untouched = sql("SELECT partner_name FROM event_results WHERE id = :r",
+                    r=C04_UNTICKED_RESULT)[0][0]
+    assert untouched, (
+        f"an unticked effect cleared event_results.{C04_UNTICKED_RESULT}."
+        "partner_name")
+
+
+@pytest.mark.sev2
+def test_a_scratched_college_member_can_still_be_undone_from_the_team_page(client, sql):
+    """The college judge has the same dead end and needs the same way out.
+
+    scratch_confirm sends a college judge back to the team page, where the
+    Scratch button is gated on status == 'active'. Without an Undo control
+    here the window is unreachable for college exactly as it was for pro.
+
+    competitor_type is asserted because college and pro ids collide on this
+    data: an undo posted without it resolves against the wrong table and can
+    reinstate a different human.
+    """
+    team_url = f"/registration/{TID}/college/team/{SCRATCH_COLLEGE_TEAM}"
+    page = client.get(team_url, headers=BROWSER_HEADERS, follow_redirects=True)
+    assert page.status_code == 200, page.status_code
+    action = _scratch_form_action(page.get_data(as_text=True), SCRATCH_COLLEGE)
+    assert action, (
+        f"no Scratch form for college competitor {SCRATCH_COLLEGE} on team "
+        f"{SCRATCH_COLLEGE_TEAM}; the entry point this test covers has moved")
+
+    landed = client.post(action, headers=BROWSER_HEADERS, follow_redirects=True)
+    fields, effects = _confirm_form(landed.get_data(as_text=True))
+    assert fields.get('competitor_type') == 'college', fields.get('competitor_type')
+
+    confirmed = client.post(
+        f"/scoring/{TID}/competitor/{SCRATCH_COLLEGE}/scratch-confirm",
+        data=dict(fields, **{f'effect_checked_{i}': 'on' for i, _, _ in effects}),
+        headers=BROWSER_HEADERS, follow_redirects=True)
+    assert confirmed.status_code == 200, confirmed.status_code
+    assert sql("SELECT status FROM college_competitors WHERE id = :c",
+               c=SCRATCH_COLLEGE)[0][0] == 'scratched'
+
+    undo_action, undo_fields = _undo_control(client, SCRATCH_COLLEGE, team_url)
+    assert undo_action, (
+        "no Undo control on the team page for a member scratched seconds ago; "
+        "the 30-minute undo window is unreachable by any college judge")
+    assert undo_fields.get('competitor_type') == 'college', (
+        f"the Undo form would post competitor_type={undo_fields.get('competitor_type')!r}")
+
+    undone = client.post(undo_action, data=undo_fields, headers=BROWSER_HEADERS,
+                         follow_redirects=True)
+    assert undone.status_code == 200, undone.status_code
+    assert sql("SELECT status FROM college_competitors WHERE id = :c",
+               c=SCRATCH_COLLEGE)[0][0] == 'active', (
+        "the Undo control on the team page did not reinstate the member")

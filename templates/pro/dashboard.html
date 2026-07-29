@@ -157,6 +157,22 @@
                                             <i class="bi bi-x-lg"></i>
                                         </button>
                                     </form>
+                                    {% elif c.id in undoable_scratch_ids|default([], true) %}
+                                    {# The scratch is still inside the undo window. Before this
+                                       the window was unreachable: the confirm redirect lands
+                                       here and the only Undo control in the product sat on the
+                                       confirmation page, which is only reachable through the
+                                       Scratch button above, which a scratched competitor does
+                                       not get. competitor_type is required because college and
+                                       pro ids collide. #}
+                                    <form action="{{ url_for('scoring.scratch_undo', tournament_id=tournament.id, competitor_id=c.id) }}"
+                                          method="POST" style="display:inline;" data-confirm="Undo the scratch for {{ c.name }}?">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="competitor_type" value="pro">
+                                        <button type="submit" class="btn btn-outline-secondary" title="Undo scratch">
+                                            <i class="bi bi-arrow-counterclockwise"></i>
+                                        </button>
+                                    </form>
                                     {% endif %}
                                 </div>
                             </td>

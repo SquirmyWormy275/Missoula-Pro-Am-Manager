@@ -218,12 +218,21 @@ def team_detail(tournament_id, team_id):
             details.append({'key': event_key, 'display': display, 'partner': partner})
         member_event_details[member.id] = details
 
+    # Same reachability repair as the pro dashboard: scratch_confirm redirects
+    # a college judge back here, and the Scratch button is gated on
+    # status == 'active', so without this the undo window cannot be reached.
+    from services.scratch_cascade import find_undoable_scratches
+    undoable_scratch_ids = find_undoable_scratches(
+        [m.id for m in members if m.status == 'scratched'], 'college'
+    )
+
     return render_template('college/team_detail.html',
                            tournament=tournament,
                            team=team,
                            members=members,
                            college_events=college_events,
                            member_event_labels=member_event_labels,
+                           undoable_scratch_ids=undoable_scratch_ids,
                            member_event_details=member_event_details)
 
 
