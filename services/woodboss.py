@@ -677,45 +677,56 @@ def calculate_saw_wood(tournament_id, counts=None, configs=None):
         if relay_db_cfg and relay_db_cfg.count_override is not None and relay_db_cfg.count_override > 0
         else 0
     )
-    if relay_team_count:
-        relay_inches = relay_team_count * 2.0
-        # Species/size: use relay-specific config if set, otherwise fall back to general log
-        rel_species = (relay_db_cfg.species if relay_db_cfg and relay_db_cfg.species else
-                       (general_cfg.species if general_cfg else None))
-        rel_size_value = (relay_db_cfg.size_value if relay_db_cfg and relay_db_cfg.size_value is not None else
-                          (general_cfg.size_value if general_cfg else None))
-        # M3: gate size_unit on the relay row having a real unit, not on
-        # size_value. Otherwise a relay row with a selected unit but blank
-        # diameter silently falls back to general.
-        rel_size_unit = (relay_db_cfg.size_unit if relay_db_cfg and relay_db_cfg.size_unit in ('in', 'mm') else
-                         (general_cfg.size_unit if general_cfg else 'in'))
+    # The row is emitted whether or not a count has been typed. A blank count
+    # is the normal starting state of the config and it means "nobody has told
+    # me yet", not "there is no relay". Gating the row on the count made the
+    # untouched case indistinguishable from a complete order sheet: the relay
+    # BLOCK rows are emitted unconditionally, and the shipped 2026 config
+    # carries count_override 3 on both of them and NULL here, so the same
+    # three teams were visible in the block table and structurally absent
+    # from the saw table, 6" of Western Larch short with no warning.
+    # calculate_blocks emits every configured key at zero and the emit loop
+    # above does the same for college and pro. This row now agrees with both.
+    # The count arithmetic itself is unchanged: NULL, an explicit 0 and a
+    # negative all still read as 0 teams.
+    relay_inches = relay_team_count * 2.0
+    # Species/size: use relay-specific config if set, otherwise fall back to general log
+    rel_species = (relay_db_cfg.species if relay_db_cfg and relay_db_cfg.species else
+                   (general_cfg.species if general_cfg else None))
+    rel_size_value = (relay_db_cfg.size_value if relay_db_cfg and relay_db_cfg.size_value is not None else
+                      (general_cfg.size_value if general_cfg else None))
+    # M3: gate size_unit on the relay row having a real unit, not on
+    # size_value. Otherwise a relay row with a selected unit but blank
+    # diameter silently falls back to general.
+    rel_size_unit = (relay_db_cfg.size_unit if relay_db_cfg and relay_db_cfg.size_unit in ('in', 'mm') else
+                     (general_cfg.size_unit if general_cfg else 'in'))
 
-        # Build a temporary config-like object for _fmt_size
-        class _FakeCfg:
-            pass
-        _fake = _FakeCfg()
-        _fake.size_value = rel_size_value
-        _fake.size_unit = rel_size_unit
+    # Build a temporary config-like object for _fmt_size
+    class _FakeCfg:
+        pass
+    _fake = _FakeCfg()
+    _fake.size_value = rel_size_value
+    _fake.size_unit = rel_size_unit
 
-        results.append({
-            'event_label': 'Pro-Am Relay — Double Buck',
-            'comp_type': 'relay',
-            'gender': 'open',
-            'competitor_count': relay_team_count,
-            'cut_count': relay_team_count,
-            'formula_desc': (
-                f'{relay_team_count} team{"s" if relay_team_count != 1 else ""} '
-                f'× 2" = {relay_inches:.0f}"'
-            ),
-            'category': 'crosscut',
-            'total_inches': relay_inches,
-            'log_count': None,
-            'species': rel_species,
-            'size_value': rel_size_value,
-            'size_unit': rel_size_unit,
-            'size_display': _fmt_size(_fake),
-            'config_key': LOG_RELAY_DOUBLEBUCK_KEY,
-        })
+    results.append({
+        'event_label': 'Pro-Am Relay — Double Buck',
+        'comp_type': 'relay',
+        'gender': 'open',
+        'competitor_count': relay_team_count,
+        'cut_count': relay_team_count,
+        'formula_desc': (
+            f'{relay_team_count} team{"s" if relay_team_count != 1 else ""} '
+            f'× 2" = {relay_inches:.0f}"'
+        ),
+        'category': 'crosscut',
+        'total_inches': relay_inches,
+        'log_count': None,
+        'species': rel_species,
+        'size_value': rel_size_value,
+        'size_unit': rel_size_unit,
+        'size_display': _fmt_size(_fake),
+        'config_key': LOG_RELAY_DOUBLEBUCK_KEY,
+    })
 
     # Sort: college first, then pro, then relay — within each, preserve SAW_EVENTS order.
     type_order = {'college': 0, 'pro': 1, 'relay': 2}

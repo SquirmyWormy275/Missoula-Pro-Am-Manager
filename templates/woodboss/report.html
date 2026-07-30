@@ -327,7 +327,12 @@
                           <tr>
                             <td colspan="6"
                                 style="background:var(--sx-surface-2);padding:0.3rem 0.75rem;font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--sx-text-2);border-top:2px solid var(--sx-border-bright);">
+                              {# comp_type is college, pro or relay. A two-way
+                                 test funnelled relay into the pro arm and
+                                 opened a second section headed "Pro Saw
+                                 Events" above the relay row. #}
                               {% if div == 'college' %}College Saw Events
+                              {% elif div == 'relay' %}Pro-Am Relay Saw Events
                               {% else %}Pro Saw Events{% endif %}
                             </td>
                           </tr>

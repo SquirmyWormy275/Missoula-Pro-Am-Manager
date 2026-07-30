@@ -2402,3 +2402,180 @@ def test_one_person_listed_twice_in_the_same_upload_lands_on_one_row(
         f"exists to catch, and the confirm button is all-or-nothing.")
     assert _imp_roster_size(sql) == before, (
         f"the pro roster grew from {before} to {_imp_roster_size(sql)}")
+
+
+# ---------------------------------------------------------------------------
+# 17. The Pro-Am Relay Double Buck saw log vanishes from the wood order when
+#     nobody has typed a team count, while the two relay BLOCK rows for the
+#     same three teams are on the same report.
+#     services/woodboss.py calculate_saw_wood, the `if relay_team_count:` gate
+# ---------------------------------------------------------------------------
+
+RELAY_SAW_LABEL = "Pro-Am Relay — Double Buck"
+RELAY_SAW_KEY = "log_relay_doublebuck"
+RELAY_BLOCK_KEYS = ("block_relay_underhand", "block_relay_standing")
+
+
+def _wb_rows(app, tid=TID):
+    """(blocks, saw_wood) straight from the service the report renders."""
+    with app.app_context():
+        from services import woodboss as wb
+        return wb.calculate_blocks(tid), wb.calculate_saw_wood(tid)
+
+
+def _larch_inches(app, tid=TID):
+    """Linear inches of Western Larch on the purchase order sheet."""
+    with app.app_context():
+        from services import woodboss as wb
+        blocks = wb.calculate_blocks(tid)
+        saw = wb.calculate_saw_wood(tid)
+        for item in wb.get_ordering_summary(blocks, saw):
+            if item["category"] == "log" and item["species"] == "Western Larch":
+                return item["total_inches"]
+    raise AssertionError("no Western Larch log line on the order sheet")
+
+
+def _set_relay_saw_count(app, value, tid=TID):
+    with app.app_context():
+        from database import db
+        from models.wood_config import WoodConfig
+        cfg = WoodConfig.query.filter_by(
+            tournament_id=tid, config_key=RELAY_SAW_KEY).first()
+        assert cfg is not None, "log_relay_doublebuck config row is missing"
+        cfg.count_override = value
+        db.session.commit()
+
+
+@pytest.mark.sev2
+def test_the_relay_double_buck_log_is_on_the_report_with_no_team_count_typed(
+        client, app, sql):
+    """A missing number must show as a zero, never as a missing row.
+
+    The shipped 2026 config carries species Western Larch and diameter 18in on
+    log_relay_doublebuck with count_override NULL, while both relay block keys
+    carry count_override 3. The operator filled in the blocks and left the saw
+    count blank, which is the exact mistake a visible row exists to catch.
+    calculate_saw_wood instead drops the row entirely: no line, no zero, no
+    warning. The woodboss reads a complete-looking saw table and buys 6" less
+    Western Larch than the relay needs.
+
+    Every other row in this module is emitted at zero on purpose.
+    calculate_saw_wood says so at the top of its emit loop ("Always include
+    college and pro rows (even if zero) for visibility") and calculate_blocks
+    emits the relay block row unconditionally. This one row disagrees.
+    """
+    override = sql(
+        "SELECT count_override FROM wood_configs "
+        "WHERE tournament_id = :t AND config_key = :k",
+        t=TID, k=RELAY_SAW_KEY)
+    assert override and override[0][0] is None, (
+        f"precondition failed: this test measures the NULL count case, but "
+        f"log_relay_doublebuck holds count_override={override}")
+
+    _blocks, saw = _wb_rows(app)
+    labels = [r["event_label"] for r in saw]
+    assert RELAY_SAW_LABEL in labels, (
+        f"calculate_saw_wood emitted {len(saw)} rows and none of them is the "
+        f"relay double buck log. The same three relay teams are visible in the "
+        f"block table on the same page. Rows emitted: {labels}")
+
+    row = next(r for r in saw if r["event_label"] == RELAY_SAW_LABEL)
+    assert row["competitor_count"] == 0, (
+        f"with no count typed the relay row must read zero teams, got {row}")
+    assert row["species"] == "Western Larch", (
+        f"the relay log species is configured and must survive onto the row, "
+        f"got {row['species']!r}")
+    assert row["size_value"] == 18.0, (
+        f"the relay log diameter is configured and must survive onto the row, "
+        f"got {row['size_value']!r}")
+    assert row["total_inches"] == 0.0, (
+        f"zero teams is zero inches, not a null. The report footer sums "
+        f"total_inches, got {row['total_inches']!r}")
+
+    page = client.get(f"/woodboss/{TID}/report")
+    assert page.status_code == 200, page.data[:400]
+    body = page.get_data(as_text=True)
+    assert RELAY_SAW_LABEL in body, (
+        "the relay double buck log is absent from the rendered wood report")
+
+
+@pytest.mark.sev2
+def test_the_report_does_not_open_a_second_pro_saw_events_section(client, app):
+    """The saw table groups rows under one heading per division.
+
+    The heading is chosen by comp_type and the relay row's comp_type is
+    'relay', which the template's two-way college/pro test funnels into the
+    'else' arm. So the moment a relay row exists the table grows a second
+    "Pro Saw Events" divider immediately above it. That is invisible in
+    production today only because the row itself is being dropped.
+    """
+    _set_relay_saw_count(app, 3)
+    body = client.get(f"/woodboss/{TID}/report").get_data(as_text=True)
+    assert body.count("Pro Saw Events") == 1, (
+        f"the saw table opened {body.count('Pro Saw Events')} sections titled "
+        f"'Pro Saw Events'. The relay row belongs under its own heading.")
+
+
+@pytest.mark.sev2
+def test_the_relay_block_rows_keep_their_three_teams(app):
+    """Positive control. The blocks side is already correct and must stay so."""
+    blocks, _saw = _wb_rows(app)
+    by_key = {b["config_key"]: b for b in blocks}
+    for key in RELAY_BLOCK_KEYS:
+        assert key in by_key, f"{key} row disappeared from calculate_blocks"
+        assert by_key[key]["competitor_count"] == 3, (
+            f"{key} must still report its 3 manually entered teams, got "
+            f"{by_key[key]}")
+        assert by_key[key]["is_manual"] is True, (
+            f"{key} must still be flagged manual, got {by_key[key]}")
+
+
+@pytest.mark.sev2
+def test_typing_three_relay_teams_still_adds_six_inches_of_larch(app):
+    """Positive control on the path that already works.
+
+    Western Larch 18in is also the general saw log spec, so the relay teams
+    land in the group the woodboss actually buys against. Making the zero case
+    visible must not disturb this.
+    """
+    before = _larch_inches(app)
+    _set_relay_saw_count(app, 3)
+    after = _larch_inches(app)
+    assert after == before + 6.0, (
+        f"three relay teams cut once each at 2\" = 6\" of Western Larch. "
+        f"The order sheet went from {before} to {after}.")
+
+
+@pytest.mark.sev2
+def test_the_relay_log_row_survives_a_tournament_with_no_relay_saw_config(
+        client, app, sql):
+    """A tournament nobody has configured yet is the case that needs the row most.
+
+    calculate_blocks emits every key in BLOCK_CONFIG_LABELS whether or not a
+    wood_configs row exists for it, falling back to a blank spec. Keying the
+    saw row's existence on the config row instead of on the count is the same
+    bug wearing a different hat: the woodboss opening a fresh tournament would
+    see a saw table with no relay line at all and no reason to suspect one is
+    missing.
+    """
+    with app.app_context():
+        from database import db
+        from models.wood_config import WoodConfig
+        WoodConfig.query.filter_by(
+            tournament_id=TID, config_key=RELAY_SAW_KEY).delete()
+        db.session.commit()
+    assert not sql(
+        "SELECT 1 FROM wood_configs WHERE tournament_id = :t AND config_key = :k",
+        t=TID, k=RELAY_SAW_KEY), "the config row was not actually removed"
+
+    _blocks, saw = _wb_rows(app)
+    labels = [r["event_label"] for r in saw]
+    assert RELAY_SAW_LABEL in labels, (
+        f"with no log_relay_doublebuck config row the relay saw line vanished "
+        f"entirely. Rows emitted: {labels}")
+
+    row = next(r for r in saw if r["event_label"] == RELAY_SAW_LABEL)
+    assert row["competitor_count"] == 0, row
+    assert row["species"] is not None, (
+        f"an unconfigured relay log must fall back to the general saw log "
+        f"spec, not to a blank species, got {row}")
