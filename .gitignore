@@ -52,3 +52,15 @@ htmlcov/
 
 # Session handoff paste buffers — generated per session, not source
 SESSION_HANDOFF_*.md
+
+# Patch transfer between the Claude session and this checkout.
+# _claude_inbox/ holds exactly two files, both overwritten on every delivery:
+# patches.mbox (every commit this checkout does not have yet) and apply.bat
+# (the one command that applies it). Nothing in there is source.
+_claude_inbox/
+
+# Loose patch files dropped in the repo root by that transfer. Root-anchored on
+# purpose: phase0_identity_substrate.patch is already tracked and stays tracked,
+# and a patch committed deliberately somewhere other than the root still shows.
+/*.patch
+/*.mbox
