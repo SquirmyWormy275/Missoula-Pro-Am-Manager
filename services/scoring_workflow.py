@@ -383,9 +383,38 @@ def save_heat_results_submission(
         heat.status = 'completed'
         heat.release_lock(judge_user_id or 0)
 
+        # A dual-timer row where only one watch was read is stored as
+        # status='partial' (see the is_dual_timer_event branch above, which
+        # downgrades 'completed' to 'partial' when no average could be
+        # computed).  Auto-finalize used to run anyway.
+        #
+        # calculate_positions places only status=='completed' rows
+        # (scoring_engine.py) but still sets is_finalized=True, so the partial
+        # competitor finalized at position None with 0.00 points and vanished
+        # from the public results feed, which filters on the same status
+        # (routes/api.py:190).  The save returned the ordinary success flash,
+        # so nothing on the operator's screen said an event had just been
+        # published one competitor short.
+        #
+        # Deferring rather than blocking is deliberate.  The heat still counts
+        # as run, the values the judge did enter are still saved, and the
+        # moment the second watch is read and the heat re-saved there are no
+        # partial rows left and the ordinary auto-finalize fires.  Manual
+        # finalize is untouched on purpose: an operator who knows a timer is
+        # gone for good needs a way to close the event, and the honest way to
+        # record that competitor is DNF on the entry form, not a partial row.
+        # validate_finalization now names the partial rows on that path.
+        db.session.flush()
+        partial_rows = [r for r in event.results.all() if r.status == 'partial']
+        # Read the names now, while the objects are live. commit() expires
+        # them and the caller formats this message after the commit.
+        partial_names = [r.competitor_name or f'competitor {r.competitor_id}'
+                         for r in partial_rows]
+
         all_heats_complete = all(h.status == 'completed' for h in event.heats.all())
+        finalize_deferred = bool(all_heats_complete and partial_rows)
         finalize_failed = False
-        if all_heats_complete:
+        if all_heats_complete and not partial_rows:
             try:
                 with db.session.begin_nested():
                     engine.calculate_positions(event)
@@ -446,6 +475,28 @@ def save_heat_results_submission(
             'message': ('Heat saved, but auto-finalization failed. The event '
                         'results page will let you retry - your timer values '
                         'are safe.'),
+            'redirect_kind': 'event_results',
+            'redirect_event_id': event.id,
+            'redirect_heat_id': heat.id,
+            'status_code': 200,
+            'undo_heat_id': heat.id,
+            'undo_token': undo_token,
+        }
+
+    if finalize_deferred:
+        shown = ', '.join(partial_names[:5])
+        more = (f' (+{len(partial_names) - 5} more)'
+                if len(partial_names) > 5 else '')
+        extra = (f' {len(invalid)} invalid value(s) were also skipped.'
+                 if invalid else '')
+        return {
+            'ok': True,
+            'category': 'warning',
+            'message': (f'Heat saved. The event was NOT finalized because '
+                        f'{len(partial_names)} result(s) still have only one '
+                        f'timer entered: {shown}{more}. Enter the second timer '
+                        f'and save again to finalize, or set them to DNF if '
+                        f'the time is gone.{extra}'),
             'redirect_kind': 'event_results',
             'redirect_event_id': event.id,
             'redirect_heat_id': heat.id,

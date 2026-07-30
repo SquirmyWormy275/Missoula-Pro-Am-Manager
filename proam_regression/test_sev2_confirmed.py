@@ -257,6 +257,233 @@ def test_partial_timer_entry_does_not_auto_finalize_the_event(client, sql):
     )
 
 
+def _enter_heat(client, sql, heat_id, fields):
+    """POST the scoring form with a freshly read optimistic-lock version."""
+    version = sql("SELECT version_id FROM heats WHERE id = :h", h=heat_id)[0][0]
+    data = {"heat_version": str(version)}
+    data.update(fields)
+    r = client.post(f"/scoring/{TID}/heat/{heat_id}/enter", data=data)
+    assert r.status_code in (200, 302), r.data[:400]
+    return r
+
+
+@pytest.mark.sev2
+def test_a_clean_dual_timer_heat_still_auto_finalizes(client, sql):
+    """Positive control. Do not fix the partial bug by killing auto-finalize.
+
+    The cheapest way to make the test above pass is to stop auto-finalizing at
+    all, or to gate it on something that is never true on real data. Both leave
+    the operator finalizing every event by hand on race day and neither test
+    above would notice.
+
+    Same heat, same competitors, both timers present for both. This must still
+    finalize by itself, with real positions and real points, exactly as it does
+    on v2026.final. It passes before the fix and it has to keep passing after.
+    """
+    comps = _loads(sql("SELECT competitors FROM heats WHERE id = :h",
+                       h=PARTIAL_HEAT)[0][0])
+    assert len(comps) >= 2, comps
+    fast, slow = comps[0], comps[1]
+
+    _enter_heat(client, sql, PARTIAL_HEAT, {
+        f"t1_run1_{fast}": "12.00", f"t2_run1_{fast}": "12.00",
+        f"status_{fast}": "completed",
+        f"t1_run1_{slow}": "13.00", f"t2_run1_{slow}": "13.00",
+        f"status_{slow}": "completed",
+    })
+
+    finalized = sql("SELECT is_finalized FROM events WHERE id = :e",
+                    e=PARTIAL_EVENT)[0][0]
+    rows = dict((r[0], r) for r in sql("""
+        SELECT competitor_id, status, final_position, points_awarded
+        FROM event_results WHERE event_id = :e
+    """, e=PARTIAL_EVENT))
+
+    assert finalized, (
+        "a heat with every timer entered did not auto-finalize. rows="
+        f"{list(rows.values())}. The partial guard has been written too wide "
+        "and now blocks the normal path."
+    )
+    assert rows[fast][1] == "completed" and rows[slow][1] == "completed", rows
+    assert rows[fast][2] == 1, (
+        f"the faster competitor is at position {rows[fast][2]}, not 1. rows="
+        f"{list(rows.values())}")
+    assert rows[slow][2] == 2, (
+        f"the slower competitor is at position {rows[slow][2]}, not 2. rows="
+        f"{list(rows.values())}")
+
+
+@pytest.mark.sev2
+def test_supplying_the_missing_timer_finalizes_the_event(client, sql, flashes):
+    """Positive control. Blocking finalize must be a deferral, not a dead end.
+
+    Two lazy fixes survive the defect test on their own. One poisons the event
+    the moment it sees a partial row, so entering the second timer never
+    finalizes it and the operator is stuck with no in-app way out. The other
+    finalizes anyway while dropping the partial competitor from placement,
+    which is the shipped bug wearing a different hat.
+
+    So: enter the partial, watch it not finalize, then enter the timer that was
+    missing and demand the event finalizes with BOTH competitors holding a real
+    position, real points, and a place in the public results the spectators
+    read. The second half is the half that matters and it can only be observed
+    after the fix.
+    """
+    comps = _loads(sql("SELECT competitors FROM heats WHERE id = :h",
+                       h=PARTIAL_HEAT)[0][0])
+    assert len(comps) >= 2, comps
+    whole, partial = comps[0], comps[1]
+
+    _enter_heat(client, sql, PARTIAL_HEAT, {
+        f"t1_run1_{whole}": "12.00", f"t2_run1_{whole}": "12.00",
+        f"status_{whole}": "completed",
+        f"t1_run1_{partial}": "13.00",   # judge's second stopwatch not read yet
+        f"status_{partial}": "completed",
+    })
+
+    assert not sql("SELECT is_finalized FROM events WHERE id = :e",
+                   e=PARTIAL_EVENT)[0][0], (
+        "finalized while a row was still partial; see the test above")
+    assert sql("""SELECT status FROM event_results
+                  WHERE event_id = :e AND competitor_id = :c""",
+               e=PARTIAL_EVENT, c=partial)[0][0] == "partial", (
+        "the half-entered row is not stored as partial, so the rest of this "
+        "test is not measuring what it claims to measure")
+
+    # A silent deferral is barely better than a silent finalize. The operator
+    # is standing at the entry screen watching the flash bar and nothing else.
+    told = [(cat, msg) for cat, msg in flashes()
+            if "not finalized" in msg.lower() or "one timer" in msg.lower()]
+    assert told, (
+        "the event quietly refused to finalize and the save still flashed the "
+        "ordinary success message. The operator walks away believing the "
+        f"event is published. flashes={flashes()}")
+    assert any(cat == "warning" for cat, _ in told), told
+    partial_name = sql("""SELECT competitor_name FROM event_results
+                          WHERE event_id = :e AND competitor_id = :c""",
+                       e=PARTIAL_EVENT, c=partial)[0][0]
+    assert any(partial_name in msg for _, msg in told), (
+        f"the warning does not name {partial_name!r}, so the operator has to "
+        f"hunt for which row is short. told={told}")
+
+    # The judge reads the second stopwatch and re-saves. Both competitors go
+    # back in, because the real form posts every competitor in the heat.
+    _enter_heat(client, sql, PARTIAL_HEAT, {
+        f"t1_run1_{whole}": "12.00", f"t2_run1_{whole}": "12.00",
+        f"status_{whole}": "completed",
+        f"t1_run1_{partial}": "13.00", f"t2_run1_{partial}": "13.00",
+        f"status_{partial}": "completed",
+    })
+
+    rows = dict((r[0], r) for r in sql("""
+        SELECT competitor_id, status, final_position, points_awarded
+        FROM event_results WHERE event_id = :e
+    """, e=PARTIAL_EVENT))
+
+    assert sql("SELECT is_finalized FROM events WHERE id = :e",
+               e=PARTIAL_EVENT)[0][0], (
+        "the missing timer was supplied and the event still refuses to "
+        f"finalize. rows={list(rows.values())}. Blocking auto-finalize on a "
+        "partial row has to lift when the row stops being partial, otherwise "
+        "one slow stopwatch kills the event for the rest of the show.")
+
+    assert rows[partial][1] == "completed", rows[partial]
+    assert rows[partial][2] is not None, (
+        f"the competitor who was briefly partial finalized at position None. "
+        f"rows={list(rows.values())}")
+    assert rows[whole][2] == 1 and rows[partial][2] == 2, (
+        f"12.00 should beat 13.00. rows={list(rows.values())}")
+
+    body = client.get(f"/api/public/tournaments/{TID}/results").get_json()
+    published = {
+        r["competitor_id"]
+        for e in body["results"] if e["event_id"] == PARTIAL_EVENT
+        for r in e["results"]
+    }
+    assert published, (
+        "event 13 published no results at all. The public API filters on "
+        "events.status == 'completed' (routes/api.py:183), which is a "
+        "different gate from is_finalized, so it is worth seeing separately.")
+    assert partial in published, (
+        f"competitor {partial} finalized at position {rows[partial][2]} but is "
+        f"absent from the public results feed. published={published}")
+
+
+
+# Pro Standing Block. Two heats, one run, not partnered, not handicap, so the
+# only thing that separates it from event 13 above is that the partial row and
+# the heat being saved can be different heats.
+CROSS_HEAT_EVENT = 34
+CROSS_HEAT_A = 464   # competitors [2, 11, 12, 9, 13]
+CROSS_HEAT_B = 465   # competitors [5, 8, 16, 18, 15]
+
+
+@pytest.mark.sev2
+def test_a_partial_row_in_another_heat_still_blocks_finalize(client, sql):
+    """Positive control. The guard is event-scoped, and it has to stay that way.
+
+    Event 13 has exactly one heat, so every test above passes identically
+    whether the partial check looks at the event's results or only at the rows
+    in the heat being saved. Those are very different guards. Auto-finalize
+    fires when the LAST heat of an event completes, so the heat that trips it
+    is usually not the heat holding the bad row.
+
+    Here the short row is left in heat 464 and heat 465 is the one that
+    completes the event. A heat-scoped guard sees nothing wrong in 465 and
+    publishes the event with a competitor at position None, which is the
+    original bug with an extra step.
+    """
+    a = _loads(sql("SELECT competitors FROM heats WHERE id = :h",
+                   h=CROSS_HEAT_A)[0][0])
+    b = _loads(sql("SELECT competitors FROM heats WHERE id = :h",
+                   h=CROSS_HEAT_B)[0][0])
+    assert len(a) >= 2 and len(b) >= 2, (a, b)
+    short = a[0]
+
+    fields_a = {}
+    for i, cid in enumerate(a):
+        fields_a[f"t1_run1_{cid}"] = f"{20 + i}.00"
+        fields_a[f"status_{cid}"] = "completed"
+        if cid != short:                      # everyone but `short` gets both
+            fields_a[f"t2_run1_{cid}"] = f"{20 + i}.00"
+    _enter_heat(client, sql, CROSS_HEAT_A, fields_a)
+
+    assert sql("""SELECT status FROM event_results
+                  WHERE event_id = :e AND competitor_id = :c""",
+               e=CROSS_HEAT_EVENT, c=short)[0][0] == "partial", (
+        "heat 464 did not leave a partial row, so this test proves nothing")
+    assert not sql("SELECT is_finalized FROM events WHERE id = :e",
+                   e=CROSS_HEAT_EVENT)[0][0], "finalized on the first of two heats"
+
+    fields_b = {}
+    for i, cid in enumerate(b):
+        fields_b[f"t1_run1_{cid}"] = f"{30 + i}.00"
+        fields_b[f"t2_run1_{cid}"] = f"{30 + i}.00"
+        fields_b[f"status_{cid}"] = "completed"
+    _enter_heat(client, sql, CROSS_HEAT_B, fields_b)
+
+    rows = sql("""
+        SELECT competitor_id, status, final_position, points_awarded
+        FROM event_results WHERE event_id = :e ORDER BY competitor_id
+    """, e=CROSS_HEAT_EVENT)
+    assert not sql("SELECT is_finalized FROM events WHERE id = :e",
+                   e=CROSS_HEAT_EVENT)[0][0], (
+        f"saving the LAST heat finalized the event while competitor {short} "
+        f"in the FIRST heat still had one timer. rows={rows}. The partial "
+        f"check is looking at the heat being saved instead of the event.")
+
+    # And it lifts the same way it does within one heat.
+    fields_a[f"t2_run1_{short}"] = fields_a[f"t1_run1_{short}"]
+    _enter_heat(client, sql, CROSS_HEAT_A, fields_a)
+    assert sql("SELECT is_finalized FROM events WHERE id = :e",
+               e=CROSS_HEAT_EVENT)[0][0], (
+        "both heats are complete with no partial rows left and the event still "
+        "will not finalize")
+    assert sql("""SELECT final_position FROM event_results
+                  WHERE event_id = :e AND competitor_id = :c""",
+               e=CROSS_HEAT_EVENT, c=short)[0][0] is not None
+
+
 # ---------------------------------------------------------------------------
 # 15. Async flight-build completion page 500s on every refresh
 #     routes/reporting.py:373 export_results_job_status

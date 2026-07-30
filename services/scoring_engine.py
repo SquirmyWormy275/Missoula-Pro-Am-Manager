@@ -795,7 +795,36 @@ def validate_finalization(event: Event) -> list[dict]:
                            f'Assign marks before finalizing for accurate handicap results.',
             })
 
-    # Check 3: Pending throwoffs on axe events
+    # Check 3: rows with only one timer read
+    #
+    # calculate_positions places only status=='completed' rows and sets
+    # is_finalized=True regardless, so a partial row finalizes at position None
+    # with 0.00 points and is filtered out of the public results feed
+    # (routes/api.py:190). save_heat_results_submission now refuses to
+    # AUTO-finalize while any of these exist. Manual finalize is still allowed
+    # on purpose, because an operator whose second stopwatch is genuinely gone
+    # has to be able to close the event, but they should not be able to do it
+    # without being told who they are dropping.
+    #
+    # Filed at 'warning' rather than 'blocker' because 'blocker' is a dead
+    # level: the docstring above says it prevents finalization and no caller
+    # anywhere implements that. routes/scoring.py finalize_event flashes every
+    # issue at 'warning' and proceeds either way. Emitting a 'blocker' here
+    # would read as enforcement that does not exist.
+    partial = [r for r in event.results.all() if r.status == 'partial']
+    if partial:
+        names = ', '.join(r.competitor_name for r in partial[:5])
+        more = f' (+{len(partial) - 5} more)' if len(partial) > 5 else ''
+        issues.append({
+            'level': 'warning',
+            'message': f'{len(partial)} competitor(s) have only one timer '
+                       f'entered: {names}{more}. Finalizing now places them at '
+                       f'no position with 0.00 points and leaves them out of '
+                       f'the public results. Enter the second timer, or set '
+                       f'them to DNF, before finalizing.',
+        })
+
+    # Check 4: Pending throwoffs on axe events
     throwoffs = [r for r in event.results.all() if r.throwoff_pending]
     if throwoffs:
         names = ', '.join(r.competitor_name for r in throwoffs[:5])
