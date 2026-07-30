@@ -1474,3 +1474,137 @@ def test_an_unauthenticated_post_cannot_resolve_a_throw_off(app, client, sql):
         "the control failed: the same payload changed nothing as the admin "
         "either, so the anonymous assertion above proved nothing about "
         "authentication")
+
+
+# ---------------------------------------------------------------------------
+# c06. One competitor can be registered into two Partnered Axe pairs, and the
+#      unique constraint on event_results turns that into silent
+#      last-write-wins on their published score
+#      services/partnered_axe.py register_pair;
+#      routes/partnered_axe.py _eligible_pros
+# ---------------------------------------------------------------------------
+
+PAT_BASE = f"/tournament/{TID}/partnered-axe"
+
+# Real pros, really entered in event 40. Trevor Baker (1) is the one this test
+# tries to register twice; Kate Page (2) and Stirling Hart (4) are the two
+# different people he is paired with.
+PAT_DOUBLE = 1
+PAT_MATE_A = 2
+PAT_MATE_B = 4
+
+
+def _pat_state(sql, event_id=PAT_EVENT):
+    raw = sql("SELECT event_state FROM events WHERE id = :e", e=event_id)[0][0]
+    return _loads(raw) if raw else {}
+
+
+def _pat_register(client, c1, c2):
+    return client.post(f"{PAT_BASE}/register-pair",
+                       data={"competitor1_id": str(c1), "competitor2_id": str(c2)},
+                       follow_redirects=True)
+
+
+def _pat_member_ids(state):
+    """Every competitor id appearing in any registered pair, with duplicates."""
+    out = []
+    for pair in state.get("pairs", []):
+        for key in ("competitor1", "competitor2"):
+            member = pair.get(key) or {}
+            if member.get("id") is not None:
+                out.append(member["id"])
+    return out
+
+
+@pytest.mark.sev2
+def test_a_competitor_cannot_be_registered_into_two_partnered_axe_pairs(client, sql):
+    """register_pair appends unconditionally, so one thrower can hold two slots.
+
+    services/partnered_axe.py register_pair validates tenancy, active status
+    and event entry, then appends to state['pairs'] with no check that either
+    competitor is already in a pair. routes/partnered_axe.py only blocks
+    pairing someone with themselves.
+
+    The damage is downstream and silent. event_results carries at most one row
+    per competitor per event (uq_event_result_competitor), so both
+    _sync_prelim_to_event_results and _save_event_results take the
+    filter_by(...).first() update-in-place branch. A competitor in two pairs
+    therefore does not raise IntegrityError, they get whichever pair was
+    written last, and the results board publishes a score that contradicts the
+    partnered-axe standings page for the same person.
+    """
+    first = _pat_register(client, PAT_DOUBLE, PAT_MATE_A)
+    assert first.status_code == 200, first.status_code
+
+    state = _pat_state(sql)
+    assert len(state.get("pairs", [])) == 1, (
+        f"the control failed: registering the first pair produced "
+        f"{len(state.get('pairs', []))} pairs, so nothing below is meaningful")
+
+    second = _pat_register(client, PAT_DOUBLE, PAT_MATE_B)
+    assert second.status_code == 200, second.status_code
+
+    state = _pat_state(sql)
+    members = _pat_member_ids(state)
+    assert members.count(PAT_DOUBLE) == 1, (
+        f"competitor {PAT_DOUBLE} is registered in {members.count(PAT_DOUBLE)} "
+        f"pairs on event {PAT_EVENT}. pairs={state.get('pairs')}. One person "
+        f"cannot throw two partnered axe targets, and event_results has room "
+        f"for exactly one score for them, so the second registration can only "
+        f"overwrite the first.")
+    assert len(state.get("pairs", [])) == 1, (
+        f"the second registration was accepted: {len(state.get('pairs', []))} "
+        f"pairs now stand where one thrower is in two of them")
+
+    # And the score the audience sees survives. Pair 1 scored 20; if the
+    # second registration had landed, scoring it would silently rewrite
+    # competitor 1's single result row.
+    r = client.post(f"{PAT_BASE}/prelims/record",
+                    data={"pair_id": "1", "hits": "20"}, follow_redirects=True)
+    assert r.status_code == 200, r.status_code
+
+    published = sql("""
+        SELECT result_value FROM event_results
+        WHERE event_id = :e AND competitor_id = :c AND competitor_type = 'pro'
+    """, e=PAT_EVENT, c=PAT_DOUBLE)
+    assert len(published) == 1, (
+        f"expected exactly one result row for competitor {PAT_DOUBLE}, got "
+        f"{len(published)}")
+    assert float(published[0][0]) == 20.0, (
+        f"competitor {PAT_DOUBLE} publishes {published[0][0]} on the results "
+        f"board while their pair scored 20")
+
+
+@pytest.mark.sev2
+def test_the_pairing_dropdown_stops_offering_an_already_paired_competitor(client, sql):
+    """_eligible_pros filters on event entry but not on being already paired.
+
+    The judge running the event sees the same 33 names after every
+    registration, including the people already standing at a target. The
+    service-layer guard now refuses the submission, but a dropdown that offers
+    a choice the server will reject is a trap, not a safeguard: the judge finds
+    out only after the POST, mid-event.
+    """
+    r = _pat_register(client, PAT_DOUBLE, PAT_MATE_A)
+    assert r.status_code == 200, r.status_code
+    assert len(_pat_state(sql).get("pairs", [])) == 1, (
+        "the control failed: the first pair did not register")
+
+    html = client.get(f"{PAT_BASE}/").data.decode("utf-8", "replace")
+    selects = re.findall(r'<select[^>]*name="competitor1_id"[^>]*>(.*?)</select>',
+                         html, re.S)
+    assert len(selects) == 1, (
+        f"expected one competitor1_id select on the dashboard, found "
+        f"{len(selects)}")
+    offered = {int(v) for v in re.findall(r'<option value="(\d+)"', selects[0])}
+
+    assert offered, "the control failed: the dropdown offered nobody at all"
+    assert PAT_MATE_B in offered, (
+        f"the control failed: competitor {PAT_MATE_B} is entered in event "
+        f"{PAT_EVENT} and unpaired, so the dropdown must still offer them")
+    assert PAT_DOUBLE not in offered, (
+        f"competitor {PAT_DOUBLE} is already in a registered pair but the "
+        f"dashboard still offers them for a second one. offered={sorted(offered)}")
+    assert PAT_MATE_A not in offered, (
+        f"competitor {PAT_MATE_A} is already in a registered pair but the "
+        f"dashboard still offers them for a second one")

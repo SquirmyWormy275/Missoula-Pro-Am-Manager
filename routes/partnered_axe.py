@@ -24,17 +24,25 @@ _STALE_DATA_FLASH = (
 bp = Blueprint('partnered_axe', __name__, url_prefix='/tournament/<int:tournament_id>/partnered-axe')
 
 
-def _eligible_pros(tournament_id: int, event_id: int) -> list:
+def _eligible_pros(tournament_id: int, event_id: int, exclude_ids=None) -> list:
     """Active pros in this tournament who are actually entered in the
-    Partnered Axe Throw event. Filtering here (instead of passing the
-    whole active roster to the template) prevents judges from
-    accidentally pairing someone who never signed up."""
+    Partnered Axe Throw event and are not already in a pair.
+
+    Filtering here (instead of passing the whole active roster to the
+    template) prevents judges from accidentally pairing someone who never
+    signed up. exclude_ids drops the people already standing at a target:
+    register_pair refuses them anyway, and a dropdown that offers a choice
+    the server will reject is a trap the judge only springs mid-event.
+    """
+    exclude_ids = set(exclude_ids or ())
     pros = ProCompetitor.query.filter_by(
         tournament_id=tournament_id,
         status='active',
     ).all()
     eligible = []
     for comp in pros:
+        if comp.id in exclude_ids:
+            continue
         entered = set()
         for raw in comp.get_events_entered():
             try:
@@ -67,7 +75,8 @@ def dashboard(tournament_id):
                                available_pros=[],
                                event_missing=True)
 
-    available_pros = _eligible_pros(tournament_id, pat.event.id)
+    available_pros = _eligible_pros(tournament_id, pat.event.id,
+                                    exclude_ids=pat.paired_competitor_ids())
 
     return render_template('partnered_axe/dashboard.html',
                          tournament=tournament,

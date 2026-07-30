@@ -72,6 +72,27 @@ class PartneredAxeThrow:
         """Get all registered pairs."""
         return self.state.get('pairs', [])
 
+    def paired_competitor_ids(self) -> dict:
+        """{competitor_id: pair_id} for everyone already standing in a pair.
+
+        The dashboard uses this to stop offering people who are already
+        registered, and register_pair uses it to refuse the submission if
+        the dropdown is bypassed.
+        """
+        holders = {}
+        for pair in self.state.get('pairs', []):
+            for key in ('competitor1', 'competitor2'):
+                member = pair.get(key) or {}
+                cid = member.get('id')
+                if cid is None:
+                    continue
+                try:
+                    cid = int(cid)
+                except (TypeError, ValueError):
+                    continue
+                holders.setdefault(cid, pair.get('pair_id'))
+        return holders
+
     def register_pair(self, competitor1_id: int, competitor2_id: int) -> dict:
         """
         Register a pair for the event.
@@ -82,6 +103,14 @@ class PartneredAxeThrow:
         could inject competitors from another tournament into this
         event's state JSON (tenancy leak) or pair competitors who never
         signed up for the event.
+
+        Neither may already be standing in another pair. That check is
+        not cosmetic: event_results holds at most one row per competitor
+        per event (uq_event_result_competitor), so the two writers below
+        take the update-in-place branch rather than raising. A competitor
+        registered twice is published at whichever pair's score was
+        written last, silently, while the partnered-axe standings page
+        still shows both pairs at their own scores.
 
         Returns pair info dict.
         """
@@ -114,6 +143,18 @@ class PartneredAxeThrow:
             if event_id not in entered:
                 raise ValueError(
                     f"{comp.name} ({label}) is not entered in Partnered Axe Throw"
+                )
+
+        # One competitor, one pair.
+        if comp1.id == comp2.id:
+            raise ValueError("A competitor cannot be paired with themselves")
+
+        already = self.paired_competitor_ids()
+        for comp in (comp1, comp2):
+            if comp.id in already:
+                raise ValueError(
+                    f"{comp.name} is already registered in pair "
+                    f"{already[comp.id]}. A competitor can only be in one pair."
                 )
 
         pair = {
