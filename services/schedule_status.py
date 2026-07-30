@@ -376,21 +376,41 @@ def _build_warnings(
         # Gear report is best-effort; never block the status panel on it
         pass
 
-    # --- 4. Cookie Stack + Standing Block simultaneous scheduling ---
+    # --- 4. Events that share physical stands running too close together ---
     #
-    # The flight builder already prevents this at build time, but surface
-    # any pre-existing conflict in already-built flights so they get
-    # cleaned up.
-    cookie_block_conflicts = _count_cookie_standing_simultaneous(tournament.id)
-    if cookie_block_conflicts:
+    # The builder tries to keep a gap between events on shared stands, but the
+    # block is not absolute: when every remaining candidate is blocked it
+    # re-scores with the check disabled, and college spillover is integrated
+    # afterwards by a path that never consults the rule. So violations do reach
+    # the built schedule and the crew needs to know which changeovers are tight.
+    #
+    # This is a briefing item, not a blocker: no button on the page clears it
+    # (a full rebuild was measured to take the 2026 count from 11 to 10), so it
+    # is severity 'warning' with a link to the flight editor where the heats can
+    # actually be reordered by hand.
+    stand_conflicts = _find_stand_conflicts(tournament.id)
+    if stand_conflicts:
+        pair_counts: dict[tuple[str, str], int] = defaultdict(int)
+        for pair in stand_conflicts:
+            pair_counts[pair] += 1
+        pairs_text = ", ".join(
+            f"{earlier} then {later}" + (f" (x{n})" if n > 1 else "")
+            for (earlier, later), n in sorted(
+                pair_counts.items(), key=lambda kv: (-kv[1], kv[0])
+            )
+        )
         warnings.append(
             {
-                "severity": "danger",
-                "title": f"{cookie_block_conflicts} flight slot(s) schedule Cookie Stack and Standing Block simultaneously",
-                "detail": "These events share physical stands and must not run at the same time. Rebuild flights to resolve.",
-                "link": url_for("scheduling.event_list", tournament_id=tid),
-                "link_label": "Rebuild flights",
-                "submit_action": "rebuild_flights",
+                "severity": "warning",
+                "title": f"{len(stand_conflicts)} back-to-back heat(s) on shared stands",
+                "detail": (
+                    f"These events share physical stands and run too close together "
+                    f"for a changeover: {pairs_text}. Rebuilding flights does not "
+                    f"clear this. Reorder the heats in the flight editor, or brief "
+                    f"the crew to reset the stands between them."
+                ),
+                "link": url_for("scheduling.flight_list", tournament_id=tid),
+                "link_label": "Flight editor",
             }
         )
 
@@ -441,26 +461,50 @@ def _display_event_name(e: Event) -> str:
     return base
 
 
-def _count_cookie_standing_simultaneous(tournament_id: int) -> int:
-    """Count flight slots that schedule Cookie Stack and Standing Block at the same time."""
-    flight_heats = (
-        db.session.query(Heat.flight_id, Heat.flight_position, Event.stand_type)
+def _stand_label(stand_type: str) -> str:
+    """Human name for a stand_type, e.g. 'obstacle_pole' -> 'Obstacle Pole'."""
+    return (stand_type or "").replace("_", " ").title()
+
+
+def _find_stand_conflicts(tournament_id: int) -> list[tuple[str, str]]:
+    """Placements in the built show order that break the builder's stand rule.
+
+    A flight is a SEQUENCE of heats, not a simultaneous group: Heat.flight_position
+    is the 1-based order of a heat WITHIN its flight. Two events that share
+    physical stands therefore never collide "at the same time"; they collide as
+    a changeover with no break. What matters is the GAP between them, measured
+    over the whole show order, exactly as the builder measures it while placing
+    heats (flight_builder._calculate_heat_score, current_position = len(ordered)).
+
+    The rule table and the gap are IMPORTED from services.flight_builder rather
+    than restated here, so there is one spelling of the rule and it cannot
+    drift. The local import keeps schedule_status free of a module-level
+    dependency on the builder.
+
+    Returns the clashing (earlier_stand, later_stand) label pairs, one entry per
+    violation, so the caller can name them.
+    """
+    from services.flight_builder import _CONFLICTING_STANDS, _STAND_CONFLICT_GAP
+
+    rows = (
+        db.session.query(Heat.id, Event.stand_type)
+        .join(Flight, Flight.id == Heat.flight_id)
         .join(Event, Event.id == Heat.event_id)
-        .filter(
-            Event.tournament_id == tournament_id,
-            Heat.flight_id.isnot(None),
-            Event.stand_type.in_(("cookie_stack", "standing_block")),
-        )
+        .filter(Flight.tournament_id == tournament_id)
+        .order_by(Flight.flight_number, Heat.flight_position, Heat.id)
         .all()
     )
-    slot_stands: dict[tuple[int, int | None], set[str]] = defaultdict(set)
-    for flight_id, pos, stand_type in flight_heats:
-        slot_stands[(flight_id, pos)].add(stand_type)
-    return sum(
-        1
-        for stands in slot_stands.values()
-        if "cookie_stack" in stands and "standing_block" in stands
-    )
+
+    last_seen: dict[str, int] = {}
+    conflicts: list[tuple[str, str]] = []
+    for position, (_heat_id, stand_type) in enumerate(rows):
+        for other in _CONFLICTING_STANDS.get(stand_type, ()):
+            previous = last_seen.get(other)
+            if previous is not None and (position - previous) < _STAND_CONFLICT_GAP:
+                conflicts.append((_stand_label(other), _stand_label(stand_type)))
+        if stand_type:
+            last_seen[stand_type] = position
+    return conflicts
 
 
 # ---------------------------------------------------------------------------

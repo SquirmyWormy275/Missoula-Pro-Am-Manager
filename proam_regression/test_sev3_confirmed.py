@@ -16,6 +16,7 @@ workflow over the free text the competitors actually submitted.
 """
 
 import json
+import re
 
 import pytest
 import rig
@@ -1899,3 +1900,369 @@ def test_a_college_competitor_is_still_routed_by_her_own_gender(app):
         f"route by the competitor: counts={dict(college_underhand)}")
     assert all(v > 0 for v in college_underhand.values()), \
         dict(college_underhand)
+
+
+# ---------------------------------------------------------------------------
+# c23. The stand-conflict danger banner on the schedule panel is unreachable.
+#
+#      services/schedule_status.py::_count_cookie_standing_simultaneous groups
+#      heats by (flight_id, flight_position) and calls a group with both stand
+#      types in it a conflict. flight_position is the 1-based ORDER of a heat
+#      WITHIN its flight, so that key is unique by construction: no two heats
+#      ever share it. Measured on the real 2026 flights, zero duplicate
+#      (flight_id, flight_position) pairs exist. The function returns 0 for
+#      every input and the danger banner has never rendered.
+#
+#      What the flight builder actually enforces is a GAP. Heats in a flight
+#      run one after another, so two events that share physical stands are not
+#      "simultaneous", they are a changeover with no break. flight_builder
+#      declares _CONFLICTING_STANDS (cookie/standing, stock saw/hand saw/hot
+#      saw, obstacle pole/speed climb) and _STAND_CONFLICT_GAP = 8, and
+#      _calculate_heat_score returns -1 to block a placement inside that gap.
+#      The block is not absolute: when every remaining candidate is blocked the
+#      builder re-scores with the check disabled, and college spillover is
+#      inserted afterwards by a code path that never consults the rule at all.
+#
+#      So violations reach the built schedule, and the panel that exists to
+#      report them cannot. On the real 2026 flights there are 11, and the
+#      status panel emits ZERO warnings of any kind.
+# ---------------------------------------------------------------------------
+
+
+def _flight_ordered_heats(sql):
+    """The built show order: every flighted heat, in the order it runs."""
+    return sql("""
+        SELECT f.flight_number, h.flight_position, h.id, e.stand_type, e.name
+          FROM heats h
+          JOIN flights f ON f.id = h.flight_id
+          JOIN events e ON e.id = h.event_id
+         WHERE h.flight_id IS NOT NULL
+         ORDER BY f.flight_number, h.flight_position, h.id
+    """)
+
+
+def _status(app):
+    from models.tournament import Tournament
+    from services.schedule_status import build_schedule_status
+    with app.test_request_context():
+        return build_schedule_status(Tournament.query.get(TID))
+
+
+def _expected_conflict_count(sql):
+    """Recompute the violations independently, from the builder's own rule.
+
+    The panel's number is operator-facing: it is what a judge counts off
+    against the run sheet. Tying it to a recomputation here rather than to a
+    literal means the detector cannot quietly disagree, in either direction,
+    with the rule it claims to be reporting on.
+    """
+    from services.flight_builder import (
+        _CONFLICTING_STANDS,
+        _STAND_CONFLICT_GAP,
+    )
+
+    last_pos: dict[str, int] = {}
+    n = 0
+    for pos, row in enumerate(_flight_ordered_heats(sql)):
+        stand_type = row[3]
+        for other in _CONFLICTING_STANDS.get(stand_type, ()):
+            prev = last_pos.get(other)
+            if prev is not None and (pos - prev) < _STAND_CONFLICT_GAP:
+                n += 1
+        if stand_type:
+            last_pos[stand_type] = pos
+    return n
+
+
+def _stand_conflict_warnings(status):
+    """Warnings that are about two events sharing physical stands.
+
+    Matched on content, not on a title string, so the test does not pin the
+    exact wording of a message a human will read.
+    """
+    out = []
+    for w in status["warnings"]:
+        blob = f"{w.get('title', '')} {w.get('detail', '')}".lower()
+        if "stand" in blob and ("conflict" in blob or "share" in blob
+                                or "shares" in blob):
+            out.append(w)
+    return out
+
+
+@pytest.mark.sev3
+def test_the_flight_position_key_the_detector_groups_on_never_collides(sql):
+    """The premise the dead detector rests on, stated as data.
+
+    If two heats could share (flight_id, flight_position) this test fails and
+    the detector was merely wrong about the 2026 data rather than unreachable.
+    """
+    dupes = sql("""
+        SELECT flight_id, flight_position, count(*)
+          FROM heats
+         WHERE flight_id IS NOT NULL
+         GROUP BY flight_id, flight_position
+        HAVING count(*) > 1
+    """)
+    assert dupes == [], (
+        f"(flight_id, flight_position) is not unique after all: {dupes}. "
+        f"The detector's grouping key would then be meaningful and this "
+        f"whole analysis needs redoing.")
+
+
+@pytest.mark.sev3
+def test_the_built_2026_schedule_really_does_share_stands_between_events(sql):
+    """The defect has to be worth reporting before the reporter is fixed.
+
+    Walks the built show order with the builder's OWN rule table, imported
+    rather than copied, and counts placements inside the conflict gap.
+    """
+    from services.flight_builder import (
+        _CONFLICTING_STANDS,
+        _STAND_CONFLICT_GAP,
+    )
+
+    rows = _flight_ordered_heats(sql)
+    assert len(rows) > 50, f"only {len(rows)} flighted heats; wrong fixture?"
+
+    last_pos: dict[str, int] = {}
+    found = []
+    for pos, row in enumerate(rows):
+        stand_type = row[3]
+        for other in _CONFLICTING_STANDS.get(stand_type, ()):
+            prev = last_pos.get(other)
+            if prev is not None and (pos - prev) < _STAND_CONFLICT_GAP:
+                found.append((pos - prev, other, stand_type, row[2]))
+        if stand_type:
+            last_pos[stand_type] = pos
+
+    assert found, (
+        "the real 2026 flight order has no stand conflicts at all, so there "
+        "is nothing for the panel to report and this cycle is pointless")
+    # Measured 2026-07-30 against proam_prod_mirror_p0: 11 violations, the
+    # tightest a gap of 1 (obstacle pole immediately followed by speed climb,
+    # which share Pole 2).
+    assert min(g for g, _, _, _ in found) == 1, sorted(found)
+    assert len(found) >= 11, sorted(found)
+
+
+@pytest.mark.sev3
+def test_the_schedule_panel_tells_the_operator_the_stands_are_double_booked(app, sql):
+    """The whole point. Eleven real conflicts, and the panel says nothing.
+
+    Before the fix build_schedule_status returns an empty warnings list and
+    overall_severity 'info', which reads as "no problems found".
+
+    The count it prints must be the count the builder's own rule produces, so
+    an off-by-one on the gap comparison cannot hide behind "it warned about
+    something".
+    """
+    status = _status(app)
+    hits = _stand_conflict_warnings(status)
+    assert hits, (
+        "the schedule status panel raised no stand-conflict warning at all. "
+        f"It returned {len(status['warnings'])} warning(s) "
+        f"({[w.get('title') for w in status['warnings']]}) and overall "
+        f"severity {status['overall_severity']!r}, while the built flight "
+        f"order double-books physical stands 11 times.")
+
+    expected = _expected_conflict_count(sql)
+    headline = " ".join(w.get("title", "") for w in hits)
+    numbers = {int(n) for n in re.findall(r"\d+", headline)}
+    assert expected in numbers, (
+        f"the warning headline says {sorted(numbers)} but the builder's own "
+        f"rule finds {expected} violations in the built order: {headline!r}")
+
+
+@pytest.mark.sev3
+def test_the_warning_names_the_poles_and_not_just_the_cookie_blocks(app):
+    """Nine of the eleven are obstacle pole against speed climb, sharing Pole 2.
+
+    The old query filtered stand_type to cookie_stack and standing_block, so
+    even a working version of it would have missed every pole clash. The
+    replacement must read the builder's rule table rather than a hardcoded
+    pair.
+    """
+    hits = _stand_conflict_warnings(_status(app))
+    assert hits, "no stand-conflict warning to inspect"
+    blob = " ".join(f"{w.get('title', '')} {w.get('detail', '')}"
+                    for w in hits).lower()
+    assert "pole" in blob, (
+        f"the stand-conflict warning never mentions the poles: {blob!r}")
+
+
+@pytest.mark.sev3
+def test_the_warning_does_not_offer_a_rebuild_that_does_not_clear_it(app):
+    """Measured: rebuilding flights takes the count from 11 to 10.
+
+    The old banner's call to action was a rebuild_flights POST and its detail
+    line read "Rebuild flights to resolve". A remedy button that provably does
+    not remedy is worse than no button, because the operator presses it,
+    watches the seven-step progress bar, and gets the same red banner back.
+    """
+    hits = _stand_conflict_warnings(_status(app))
+    assert hits, "no stand-conflict warning to inspect"
+    for w in hits:
+        assert w.get("submit_action") != "rebuild_flights", (
+            f"stand-conflict warning still offers a rebuild: {w}")
+
+
+@pytest.mark.sev3
+def test_the_panel_does_not_go_permanently_red_over_a_changeover(app):
+    """Severity has to be liveable.
+
+    _overall turns the entire Current Schedule card red the moment any warning
+    carries severity 'danger'. These eleven cannot be cleared by any button on
+    the page, so 'danger' would mean the card is red from now until race day
+    and every genuinely fatal condition after it reads the same. This is a
+    crew-briefing item: warn, do not scream.
+    """
+    status = _status(app)
+    hits = _stand_conflict_warnings(status)
+    assert hits, "no stand-conflict warning to inspect"
+    for w in hits:
+        assert w.get("severity") == "warning", (
+            f"stand-conflict warning severity is {w.get('severity')!r}: {w}")
+    assert status["overall_severity"] != "danger", (
+        f"the schedule card went red: {status['overall_label']!r}")
+
+
+# --- positive controls -----------------------------------------------------
+
+
+@pytest.mark.sev3
+def test_the_show_order_is_not_touched(sql):
+    """CONTROL. This cycle changes what the operator is TOLD, nothing else.
+
+    Any fix that reorders heats to make the warning go away reshuffles the
+    Saturday show, which is a decision for Alex and not for a detector fix.
+    Snapshot is the exact shipped order, pinned by heat id.
+    """
+    rows = _flight_ordered_heats(sql)
+    order = [(r[0], r[1], r[2]) for r in rows]
+    assert len(order) == 75, f"{len(order)} flighted heats, expected 75"
+    assert order[0] == (1, 1, 461), order[:3]
+    assert order[8] == (1, 10, 380), order[6:10]
+    assert order[43] == (5, 6, 449), order[41:45]
+    assert order[55] == (6, 9, 376), order[53:57]
+    assert order[-1] == (7, 20, 475), order[-3:]
+    assert len({r[2] for r in rows}) == 75, "a heat id appears twice"
+
+
+@pytest.mark.sev3
+def test_the_other_schedule_warnings_are_left_alone(app):
+    """CONTROL. Exactly one warning is added and nothing else changes.
+
+    On the real 2026 data the panel currently raises none, so after the fix it
+    must raise exactly one, and that one must be the stand-conflict warning.
+    A fix that trips the college/pro "no heats yet" banners or the gear-sharing
+    banner has broken something on its way past.
+    """
+    status = _status(app)
+    others = [w for w in status["warnings"]
+              if w not in _stand_conflict_warnings(status)]
+    assert others == [], (
+        f"unrelated warnings appeared: {[w.get('title') for w in others]}")
+
+
+@pytest.mark.sev3
+def test_a_tournament_with_no_flights_built_reports_nothing(app, sql):
+    """CONTROL. The detector must be quiet before the flights exist.
+
+    Un-flighting every heat is the state the page is in right after heats are
+    generated and before Build Flights is pressed. A detector that fires there
+    would tell the operator to fix a schedule that has not been built.
+    """
+    from database import db
+    db.session.execute(db.text(
+        "UPDATE heats SET flight_id = NULL, flight_position = NULL"))
+    db.session.commit()
+    status = _status(app)
+    assert _stand_conflict_warnings(status) == [], (
+        "stand-conflict warning fired with no flights built: "
+        f"{_stand_conflict_warnings(status)}")
+
+
+def _stage_gap(sql, gap):
+    """Put exactly one conflicting pair `gap` slots apart, alone in one flight.
+
+    Clears every flight assignment, then lays out: the earlier conflicting heat
+    at index 0, `gap - 1` filler heats on stands that conflict with nothing, and
+    the later conflicting heat at index `gap`. The detector walks rows in show
+    order, so the index IS the position it measures on.
+
+    Returns the two conflicting stand types, or None if the clone has no usable
+    heats for the layout.
+    """
+    from database import db
+    from services.flight_builder import _CONFLICTING_STANDS
+
+    pair = sorted(
+        (a, b) for a, others in _CONFLICTING_STANDS.items() for b in others
+    )[0]
+    inert = list(_CONFLICTING_STANDS)
+
+    def _heats_on(stand_type, limit):
+        return [r[0] for r in sql(
+            "SELECT h.id FROM heats h JOIN events e ON e.id = h.event_id "
+            "WHERE e.stand_type = :st ORDER BY h.id LIMIT :n",
+            st=stand_type, n=limit)]
+
+    first = _heats_on(pair[0], 1)
+    second = _heats_on(pair[1], 1)
+    fillers = [r[0] for r in sql(
+        "SELECT h.id FROM heats h JOIN events e ON e.id = h.event_id "
+        "WHERE e.stand_type IS NULL OR e.stand_type NOT IN :inert "
+        "ORDER BY h.id LIMIT :n", inert=tuple(inert), n=gap - 1)]
+    if not first or not second or len(fillers) < gap - 1:
+        return None
+
+    flight_id = sql("SELECT id FROM flights ORDER BY flight_number LIMIT 1")[0][0]
+    db.session.execute(db.text(
+        "UPDATE heats SET flight_id = NULL, flight_position = NULL"))
+    placed = [first[0]] + fillers + [second[0]]
+    for position, heat_id in enumerate(placed, start=1):
+        db.session.execute(
+            db.text("UPDATE heats SET flight_id = :f, flight_position = :p "
+                    "WHERE id = :h"),
+            {"f": flight_id, "p": position, "h": heat_id})
+    db.session.commit()
+    return pair
+
+
+@pytest.mark.sev3
+def test_a_pair_exactly_the_builders_gap_apart_is_not_reported(app, sql):
+    """CONTROL, upper boundary. The builder ALLOWS a gap of exactly
+    _STAND_CONFLICT_GAP: _calculate_heat_score blocks only when the distance is
+    strictly less than it. A detector that reports at equality contradicts the
+    rule it imports and cries wolf at a legal changeover.
+
+    The 2026 data happens to contain no pair sitting exactly on the boundary,
+    so this case is staged rather than found. Without it an off-by-one in the
+    comparison is invisible.
+    """
+    from services.flight_builder import _STAND_CONFLICT_GAP
+
+    pair = _stage_gap(sql, _STAND_CONFLICT_GAP)
+    assert pair is not None, "clone has no heats to stage the boundary with"
+    hits = _stand_conflict_warnings(_status(app))
+    assert hits == [], (
+        f"{pair[0]} and {pair[1]} exactly {_STAND_CONFLICT_GAP} slots apart is "
+        f"legal by the builder's own rule, but the panel reported it: {hits}")
+
+
+@pytest.mark.sev3
+def test_a_pair_one_slot_inside_the_gap_is_reported_once(app, sql):
+    """CONTROL, lower boundary. One slot tighter than the rule allows is a
+    violation, and exactly one. Pins the other side of the comparison so the
+    detector cannot buy the test above by simply reporting less.
+    """
+    from services.flight_builder import _STAND_CONFLICT_GAP
+
+    pair = _stage_gap(sql, _STAND_CONFLICT_GAP - 1)
+    assert pair is not None, "clone has no heats to stage the boundary with"
+    hits = _stand_conflict_warnings(_status(app))
+    assert len(hits) == 1, (
+        f"{pair[0]} and {pair[1]} only {_STAND_CONFLICT_GAP - 1} slots apart "
+        f"breaks the builder's rule, panel said: {hits}")
+    assert "1 " in hits[0].get("title", ""), (
+        f"one staged violation, headline says {hits[0].get('title')!r}")
