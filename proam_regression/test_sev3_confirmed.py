@@ -1401,3 +1401,287 @@ def test_a_finals_score_can_still_be_corrected_after_the_bracket_completes(
     refused = [(cat, msg) for cat, msg in said if cat in ("danger", "error")]
     assert not refused, (
         f"a finals correction on a completed bracket was refused: {refused}")
+
+
+# ---------------------------------------------------------------------------
+# c21. A cascade scratch that empties a heat leaves it status='pending'.
+#      The heats-page scratch of the same competitor marks it 'completed'.
+#      services/scratch_cascade.py execute_cascade, heat loop ~461-505,
+#      against routes/scheduling/heats.py scratch_competitor ~455-500.
+#
+#      An empty pending heat is not cosmetic. It is the only heat status the
+#      operator has no way to clear: POST to an empty heat's enter page
+#      redirects back to itself and leaves the status alone (measured). So it
+#      pins all_heats_complete False forever, next_unscored_heat serves the
+#      judge an empty stand, and next_incomplete_event never advances past the
+#      event.
+# ---------------------------------------------------------------------------
+
+_C21_SOLO_EVENT = 12        # Standing Block Hard Hit, college F
+_C21_SOLO_HEAT = 381        # holds exactly one competitor: college 29
+_C21_SOLO_COMP = 29
+_C21_PAIR_EVENT = 42        # Pole Climb, pro
+_C21_PAIR_HEAT = 449        # [23, 31]
+_C21_LIVE_HEAT = 450        # [41, 49]
+_C21_SHIPPED_EMPTY = 392    # event 21, ships empty and pending on real data
+
+
+def _c21_loads(value):
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def _c21_heat(sql, heat_id):
+    """(status, [competitor ids]) straight out of the heats row."""
+    row = sql("SELECT status, competitors FROM heats WHERE id = :h",
+              h=heat_id)[0]
+    return row[0], (_c21_loads(row[1]) or [])
+
+
+def _c21_scratch(client, competitor_id, competitor_type):
+    """Drive the real preview -> confirm cascade a judge drives.
+
+    competitor_type is always sent: college and pro ids collide on this data
+    and the resolver aborts 400 rather than guess.
+    """
+    r = client.get(
+        f"/scoring/{TID}/competitor/{competitor_id}/scratch-preview"
+        f"?format=json&competitor_type={competitor_type}")
+    body = r.get_json()
+    assert body is not None, (
+        f"scratch-preview for {competitor_type} {competitor_id} returned "
+        f"{r.status_code} and no JSON: {r.data[:300]}")
+    effects = body["effects"]
+    form = {"effect_count": str(len(effects)),
+            "competitor_type": competitor_type}
+    for i, e in enumerate(effects):
+        form[f"effect_type_{i}"] = e["effect_type"]
+        form[f"affected_entity_id_{i}"] = str(e["affected_entity_id"])
+        form[f"affected_entity_type_{i}"] = e["affected_entity_type"]
+        form[f"effect_checked_{i}"] = "on"
+    p = client.post(
+        f"/scoring/{TID}/competitor/{competitor_id}/scratch-confirm", data=form)
+    assert p.status_code in (200, 302), p.data[:400]
+    return len(effects)
+
+
+def _c21_undo(client, competitor_id, competitor_type):
+    p = client.post(
+        f"/scoring/{TID}/competitor/{competitor_id}/scratch-undo"
+        f"?competitor_type={competitor_type}")
+    assert p.status_code in (200, 302), p.data[:400]
+
+
+def _c21_score_heat(client, sql, heat_id, seconds="30.00"):
+    """Score every competitor in a heat through the real enter-heat POST."""
+    _, ids = _c21_heat(sql, heat_id)
+    ver = sql("SELECT version_id FROM heats WHERE id = :h", h=heat_id)[0][0]
+    form = {"heat_version": str(ver)}
+    for cid in ids:
+        form[f"t1_run1_{cid}"] = seconds
+        form[f"t2_run1_{cid}"] = seconds
+        form[f"status_{cid}"] = "completed"
+    r = client.post(f"/scoring/{TID}/heat/{heat_id}/enter", data=form)
+    assert r.status_code in (200, 302), r.data[:400]
+    return ids
+
+
+@pytest.mark.sev3
+def test_a_cascade_scratch_that_empties_a_heat_marks_it_complete(
+        client, sql, flashes):
+    """The defect, at its smallest. Heat 381 holds exactly one competitor.
+
+    Closing the heat silently is only half a fix. The heats-page scratch of
+    this same competitor tells the judge the heat is gone, and a heat that
+    drops off the running order without a word is how someone stands at a
+    stand waiting for a competitor who was scratched ten minutes ago.
+    """
+    before_status, before_ids = _c21_heat(sql, _C21_SOLO_HEAT)
+    assert before_ids == [_C21_SOLO_COMP], (
+        f"anchor moved: heat {_C21_SOLO_HEAT} holds {before_ids}, "
+        f"expected exactly [{_C21_SOLO_COMP}]")
+    assert before_status == "pending", before_status
+    flashes()
+
+    _c21_scratch(client, _C21_SOLO_COMP, "college")
+    said = flashes()
+
+    after_status, after_ids = _c21_heat(sql, _C21_SOLO_HEAT)
+    # Vacuity guards: the scratch really happened, both in the heat and on the
+    # competitor. Without these the status assertion could pass on a no-op.
+    assert after_ids == [], (
+        f"the cascade did not empty heat {_C21_SOLO_HEAT}: {after_ids}")
+    assert sql("SELECT status FROM college_competitors WHERE id = :c",
+               c=_C21_SOLO_COMP)[0][0] == "scratched"
+    assert after_status == "completed", (
+        f"heat {_C21_SOLO_HEAT} was emptied by a cascade scratch and left "
+        f"status={after_status!r}. The heats-page scratch of the same "
+        f"competitor marks it 'completed' and says so out loud.")
+    # Asserted on the event the operator reads off the screen, not on my
+    # wording. A cascade closes heats across several events at once, so a
+    # bare heat number would not identify which board went quiet.
+    event_name = sql("SELECT name FROM events WHERE id = :e",
+                     e=_C21_SOLO_EVENT)[0][0]
+    told = [msg for _, msg in said if "empty" in msg.lower()]
+    assert told, (
+        f"heat {_C21_SOLO_HEAT} was closed and the operator was told nothing "
+        f"about it. Flashes: {said}")
+    assert any(event_name in msg for msg in told), (
+        f"the operator was told a heat closed but not which event it was in, "
+        f"and this scratch closes heats in four different events. "
+        f"Said: {told}")
+
+
+@pytest.mark.sev3
+def test_a_cascade_emptied_heat_is_not_offered_to_the_judge_as_next(client, sql):
+    """next_unscored_heat filters on status='pending', so it serves the hole."""
+    _c21_scratch(client, _C21_SOLO_COMP, "college")
+    _, ids = _c21_heat(sql, _C21_SOLO_HEAT)
+    assert ids == [], f"vacuity: heat {_C21_SOLO_HEAT} was not emptied: {ids}"
+
+    r = client.get(f"/scoring/{TID}/event/{_C21_SOLO_EVENT}/next-heat")
+    location = r.headers.get("Location") or ""
+    assert f"/heat/{_C21_SOLO_HEAT}/" not in location, (
+        f"next-heat for event {_C21_SOLO_EVENT} sends the judge to "
+        f"{location}, which is the heat the cascade just emptied. There is "
+        f"nobody at that stand and no POST that clears it.")
+
+
+@pytest.mark.sev3
+def test_an_event_finalizes_when_a_cascade_emptied_its_only_other_heat(
+        client, sql):
+    """The measured race-day harm: the event can never auto-finalize.
+
+    Event 42 is two heats of two. Scratch both climbers out of heat 449, then
+    score heat 450. Every competitor still in the event has now been scored,
+    so the event must publish.
+    """
+    _, pair_ids = _c21_heat(sql, _C21_PAIR_HEAT)
+    assert len(pair_ids) == 2, f"anchor moved: heat {_C21_PAIR_HEAT} {pair_ids}"
+    for cid in pair_ids:
+        _c21_scratch(client, cid, "pro")
+
+    emptied_status, emptied_ids = _c21_heat(sql, _C21_PAIR_HEAT)
+    assert emptied_ids == [], f"vacuity: heat {_C21_PAIR_HEAT} {emptied_ids}"
+
+    scored_ids = _c21_score_heat(client, sql, _C21_LIVE_HEAT)
+    live_status, _ = _c21_heat(sql, _C21_LIVE_HEAT)
+    assert live_status == "completed", (
+        f"vacuity: the surviving heat did not score: {live_status}")
+
+    finalized, ev_status = sql(
+        "SELECT is_finalized, status FROM events WHERE id = :e",
+        e=_C21_PAIR_EVENT)[0]
+    assert finalized, (
+        f"event {_C21_PAIR_EVENT} did not finalize after every live heat was "
+        f"scored. Heat {_C21_PAIR_HEAT} is empty and still "
+        f"status={emptied_status!r}, so all_heats_complete "
+        f"(services/scoring_workflow.py:414) is False forever.")
+
+    placed = dict(sql(
+        "SELECT competitor_id, final_position FROM event_results "
+        "WHERE event_id = :e AND status = 'completed'", e=_C21_PAIR_EVENT))
+    for cid in scored_ids:
+        assert placed.get(cid) is not None, (
+            f"competitor {cid} was scored and left unplaced: {placed}")
+
+
+@pytest.mark.sev3
+def test_an_undo_restores_the_heat_status_the_cascade_changed(client, sql):
+    """Undo must put back everything the scratch touched, status included.
+
+    Without this, an undo hands the competitor back into a heat marked
+    'completed'. next_unscored_heat will never serve it, and all_heats_complete
+    goes true with a competitor who has never been timed, which publishes the
+    event with that competitor at position None.
+    """
+    before_status, before_ids = _c21_heat(sql, _C21_SOLO_HEAT)
+    assert before_ids == [_C21_SOLO_COMP], before_ids
+
+    _c21_scratch(client, _C21_SOLO_COMP, "college")
+    _c21_undo(client, _C21_SOLO_COMP, "college")
+
+    after_status, after_ids = _c21_heat(sql, _C21_SOLO_HEAT)
+    assert after_ids == [_C21_SOLO_COMP], (
+        f"vacuity: the undo did not put the competitor back: {after_ids}")
+    assert sql("SELECT status FROM college_competitors WHERE id = :c",
+               c=_C21_SOLO_COMP)[0][0] == "active"
+    assert after_status == before_status, (
+        f"the undo restored the competitor into heat {_C21_SOLO_HEAT} but "
+        f"left it status={after_status!r} instead of {before_status!r}. "
+        f"He is entered in a heat no judge will ever be sent to.")
+
+
+@pytest.mark.sev3
+def test_a_cascade_scratch_that_leaves_someone_behind_does_not_close_the_heat(
+        client, sql):
+    """Positive control. Only an EMPTY heat is complete."""
+    _, pair_ids = _c21_heat(sql, _C21_PAIR_HEAT)
+    assert len(pair_ids) == 2, pair_ids
+
+    _c21_scratch(client, pair_ids[0], "pro")
+
+    status, ids = _c21_heat(sql, _C21_PAIR_HEAT)
+    assert ids == [pair_ids[1]], (
+        f"vacuity: expected only {pair_ids[1]} left in heat "
+        f"{_C21_PAIR_HEAT}, got {ids}")
+    assert status == "pending", (
+        f"heat {_C21_PAIR_HEAT} still holds competitor {pair_ids[1]}, who has "
+        f"not climbed, and it was marked {status!r}.")
+
+
+@pytest.mark.sev3
+def test_a_heat_that_already_shipped_empty_is_not_touched_by_a_scratch(
+        client, sql):
+    """Positive control, and it pins the scope of this fix.
+
+    Nineteen heats ship EMPTY and pending in the 2026 database, including two
+    in event 21 and six in the Birling bracket, which scores through
+    services/birling_bracket.py and not through these rows at all. Those are a
+    separate defect with a separate blast radius. A scratch in another event
+    must not reach across and close them.
+    """
+    before_status, before_ids = _c21_heat(sql, _C21_SHIPPED_EMPTY)
+    assert before_ids == [], (
+        f"anchor moved: heat {_C21_SHIPPED_EMPTY} is no longer empty")
+    assert before_status == "pending", before_status
+
+    _c21_scratch(client, _C21_SOLO_COMP, "college")
+
+    after_status, _ = _c21_heat(sql, _C21_SHIPPED_EMPTY)
+    assert after_status == "pending", (
+        f"a scratch in event {_C21_SOLO_EVENT} changed heat "
+        f"{_C21_SHIPPED_EMPTY} in event 21 to {after_status!r}")
+
+
+@pytest.mark.sev3
+def test_an_undo_does_not_reopen_a_heat_the_operator_scored_afterwards(
+        client, sql):
+    """Positive control on the undo, and it is the sharp one.
+
+    Scratch one of a pair, score the survivor, then undo. The heat is
+    'completed' because the JUDGE completed it, not because the cascade did.
+    A restore that blindly writes the snapshotted status back would reopen a
+    scored heat and throw away the completion the operator earned.
+    """
+    _, pair_ids = _c21_heat(sql, _C21_PAIR_HEAT)
+    assert len(pair_ids) == 2, pair_ids
+    scratched, survivor = pair_ids[0], pair_ids[1]
+
+    _c21_scratch(client, scratched, "pro")
+    _c21_score_heat(client, sql, _C21_PAIR_HEAT)
+    scored_status, scored_ids = _c21_heat(sql, _C21_PAIR_HEAT)
+    assert scored_status == "completed", (
+        f"vacuity: the judge's own scoring did not complete heat "
+        f"{_C21_PAIR_HEAT}: {scored_status}")
+    assert scored_ids == [survivor], scored_ids
+
+    _c21_undo(client, scratched, "pro")
+
+    after_status, after_ids = _c21_heat(sql, _C21_PAIR_HEAT)
+    assert scratched in after_ids, (
+        f"vacuity: the undo did not restore competitor {scratched}: "
+        f"{after_ids}")
+    assert after_status == "completed", (
+        f"the undo reopened heat {_C21_PAIR_HEAT} to {after_status!r}. The "
+        f"judge completed that heat after the scratch and the undo threw it "
+        f"away.")

@@ -1205,6 +1205,19 @@ def scratch_confirm(tournament_id, competitor_id):
             'warning',
         )
 
+    # A heat that closed under this scratch has left the running order. The
+    # heats-page scratch route already says so; without this the cascade path
+    # closes heats silently and the judge still calls for one that is gone.
+    emptied = result.get('emptied_heats') or []
+    if emptied:
+        listed = '; '.join(f'{name} Heat {number}' for name, number in emptied)
+        flash(
+            (f'{listed} is now empty and marked complete.'
+             if len(emptied) == 1
+             else f'These heats are now empty and marked complete: {listed}.'),
+            'info',
+        )
+
     # Redirect back to the competitor's registration page (pro or college).
     from models.competitor import CollegeCompetitor as _CC
     if isinstance(comp, _CC):

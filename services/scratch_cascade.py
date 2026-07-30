@@ -472,6 +472,7 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
             )
         )
         touched_event_ids: set[int] = set()
+        emptied_heats: list[tuple] = []
         heat_snapshot: list = snapshot["heats"]
         for heat in heats_q.all():
             comp_ids = heat.get_competitors()
@@ -485,13 +486,18 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                 # Heat.add_competitor appends, so restoring by append would put
                 # the competitor last in every heat they were pulled from.
                 _pre_assignments = heat.get_stand_assignments()
-                heat_snapshot.append(
-                    {
-                        "heat_id": heat.id,
-                        "index": comp_ids.index(competitor.id),
-                        "stand": _pre_assignments.get(str(competitor.id)),
-                    }
-                )
+                _h_snap = {
+                    "heat_id": heat.id,
+                    "index": comp_ids.index(competitor.id),
+                    "stand": _pre_assignments.get(str(competitor.id)),
+                    # Captured for the auto-complete below.  auto_completed is
+                    # the flag reverse_cascade keys off: the undo must restore
+                    # a status THIS function wrote and must not touch one the
+                    # judge wrote afterwards.
+                    "status": heat.status,
+                    "auto_completed": False,
+                }
+                heat_snapshot.append(_h_snap)
                 heat.remove_competitor(competitor.id)
                 assignments = heat.get_stand_assignments()
                 if str(competitor.id) in assignments:
@@ -501,6 +507,38 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                 # Without this, validation/judge sheets show the scratched competitor
                 # until someone manually clicks the heat-sync recovery button.
                 heat.sync_assignments(heat_type)
+                # A heat this scratch just emptied is done, and closing it is
+                # not cosmetic.  routes/scheduling/heats.py scratch_competitor
+                # already does exactly this for the other scratch entry point,
+                # and flashes about it.  Left 'pending' it is the one heat
+                # status the operator cannot clear: POSTing the enter page of
+                # an empty heat redirects back to itself and leaves the status
+                # alone.  So it pins all_heats_complete False forever
+                # (scoring_workflow.py:414), next_unscored_heat sends the judge
+                # to an empty stand (scoring.py:518), and next_incomplete_event
+                # never advances past the event (scoring.py:530).
+                #
+                # Scoped to heats THIS cascade emptied, on purpose.  Heats that
+                # were already empty never enter this branch at all, because
+                # the loop body only runs when the competitor is in the heat.
+                # Nineteen such heats ship in the 2026 database, six of them in
+                # the Birling bracket, which scores through birling_bracket.py
+                # and not through these rows.  Closing those is a different fix
+                # with a different blast radius.
+                if not heat.get_competitors():
+                    heat.status = "completed"
+                    _h_snap["auto_completed"] = True
+                    # Named by event, not by bare heat number.  A cascade
+                    # spans the whole tournament: scratching one college
+                    # competitor off the real 2026 data closes five heat rows
+                    # across four different events, and "Heats 1, 3, 4" tells
+                    # the operator nothing about which board they came off.
+                    _ev = heat.event
+                    emptied_heats.append(
+                        (getattr(_ev, "display_name", None) or getattr(
+                            _ev, "name", f"event {heat.event_id}"),
+                         heat.heat_number)
+                    )
                 touched_event_ids.add(heat.event_id)
 
         # --- Stock Saw solo-stand rebalance ----------------------------------
@@ -544,6 +582,13 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
         "success": True,
         "message": f"Competitor scratched. {effects_applied} effect(s) applied.",
         "effects_applied": effects_applied,
+        # Reported, not folded into "message": scratch_confirm discards
+        # message entirely and builds its own flash, so anything written
+        # there would never reach the operator.  The heats-page scratch
+        # already tells the judge when a heat closes under him; this is the
+        # same notice for the other entry point.  (event name, heat number),
+        # deduplicated because a two-run event has one heat number per run.
+        "emptied_heats": sorted(set(emptied_heats)),
     }
 
 
@@ -833,6 +878,17 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
             stand = h_snap.get("stand")
             if stand is not None:
                 heat.set_stand_assignment(competitor_id, stand)
+            # Undo the auto-complete, and ONLY that.  The flag is the whole
+            # point: a heat can also be 'completed' because the judge scored
+            # the survivors after the scratch, and blindly writing the
+            # snapshotted status back would reopen a scored heat and throw
+            # away work the operator earned.  Without the restore, the undo
+            # hands the competitor back into a heat next_unscored_heat will
+            # never serve, and all_heats_complete goes true with someone who
+            # has never been timed, which publishes the event with him at
+            # position None.
+            if h_snap.get("auto_completed") and heat.status == "completed":
+                heat.status = h_snap.get("status") or "pending"
             # Realign HeatAssignment rows with the JSON source of truth, exactly
             # as the scratch side does.  Without it the judge sheet and the
             # validation screen keep showing the pre-undo roster.
