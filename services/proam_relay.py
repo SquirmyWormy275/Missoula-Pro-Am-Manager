@@ -8,6 +8,7 @@ Each team has 8 members:
 - 2 College Men
 - 2 College Women
 """
+import copy
 import json
 import random
 
@@ -225,7 +226,22 @@ class ProAmRelay:
         }
 
     def redraw_lottery(self, num_teams: int = 2) -> dict:
-        """Clear and redraw the lottery."""
+        """Clear and redraw the lottery.
+
+        The clear is in memory only. It used to be written through
+        _save_relay_data(), which commits, and only then was run_lottery
+        called — and run_lottery raises ValueError when any gender bucket is
+        short. The route catches that and flashes the message, by which point
+        the drawn teams were already gone from the database. The shuffle is
+        unseeded, so the rosters that had been announced could not be
+        reproduced, in the app or out of it.
+
+        Nothing here touches the database until run_lottery's own save, which
+        runs after its four bucket checks pass. If the draw cannot be made,
+        the previous state is restored in memory and the stored state was
+        never modified at all.
+        """
+        previous = copy.deepcopy(self.relay_data)
         self.relay_data = {
             'status': 'not_drawn',
             'teams': [],
@@ -234,8 +250,14 @@ class ProAmRelay:
             'drawn_college': [],
             'drawn_pro': []
         }
-        self._save_relay_data()
-        return self.run_lottery(num_teams=num_teams)
+        try:
+            return self.run_lottery(num_teams=num_teams)
+        except Exception:
+            # Also covers a StaleDataError out of run_lottery's commit, where
+            # the caller rolls back the session but this object would
+            # otherwise keep serving the half-built draw to whatever holds it.
+            self.relay_data = previous
+            raise
 
     def get_teams(self) -> list:
         """Get the current teams."""

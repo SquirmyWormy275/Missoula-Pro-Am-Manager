@@ -172,6 +172,52 @@ def test_failed_relay_redraw_leaves_the_announced_teams_intact(client, sql):
     )
 
 
+@pytest.mark.sev1
+def test_a_redraw_that_can_succeed_still_replaces_the_teams(client, sql):
+    """Guard against over-tightening the fix above into a no-op redraw.
+
+    The fix for item 6 has to stop persisting the wipe without also stopping
+    the redraw from redrawing. This one passes against unfixed code on purpose,
+    so it fails if the fix turns the button into a button that does nothing.
+
+    Two teams, not three: the mirror holds three, so asking for a different
+    number proves the new state was written rather than the old state merely
+    surviving. Two is reachable — the binding pool is pro women, of whom seven
+    opted in, so anything up to three teams draws.
+    """
+    before = _relay_state(sql)
+    assert len(before.get("teams", [])) == 3, before.get("status")
+
+    r = client.post(f"/tournament/{TID}/proam-relay/redraw",
+                    data={"num_teams": "2"})
+    assert r.status_code in (200, 302), r.data[:400]
+
+    after = _relay_state(sql)
+    teams = after.get("teams", [])
+    assert after.get("status") == "drawn", after.get("status")
+    assert len(teams) == 2, (
+        f"a redraw that the pool can satisfy did not redraw: {len(teams)} "
+        f"team(s) after asking for 2")
+
+    # Well-formedness, because "wrote something" is not the same as "wrote a
+    # legal draw". Every team is 2 pro men, 2 pro women, 2 college men and 2
+    # college women, and nobody is on two teams.
+    seen = set()
+    for team in teams:
+        pros = team["pro_members"]
+        college = team["college_members"]
+        assert sorted(m["gender"] for m in pros) == ["F", "F", "M", "M"], pros
+        assert sorted(m["gender"] for m in college) == ["F", "F", "M", "M"], college
+        for division, members in (("pro", pros), ("college", college)):
+            for m in members:
+                key = (division, m["id"])
+                assert key not in seen, f"{key} drawn onto two teams"
+                seen.add(key)
+
+    assert len(after.get("drawn_pro", [])) == 8, after.get("drawn_pro")
+    assert len(after.get("drawn_college", [])) == 8, after.get("drawn_college")
+
+
 # ---------------------------------------------------------------------------
 # 7. The public relay results page 500s as soon as a total time exists
 #    templates/portal/relay_results.html:53 formats "%.2f" on None
