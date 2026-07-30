@@ -381,3 +381,160 @@ def test_the_report_cache_refuses_to_put_database_rows_on_disk(app, tmp_path):
             "whole point of having an L2")
     finally:
         restore()
+
+
+# ---------------------------------------------------------------------------
+# c09. The ALA membership PDF cannot be produced at all, and the failed
+#      attempt still marks the compliance document as printed
+#      requirements.txt (no reportlab), services/print_catalog.py record_print
+#
+#      Filed SEV2. Verified SEV3: nothing in the live show loop touches
+#      reportlab, the ALA data itself is intact, and the HTML page renders, so
+#      the Download path has a same-minute workaround in browser print-to-PDF.
+#      The two things with no workaround are the "Email to ALA" button, whose
+#      only job is to attach a PDF, and the false "Fresh" badge, which can
+#      convince an operator the filing already happened.
+# ---------------------------------------------------------------------------
+
+ALA_HTML_URL = f"/reporting/ala-membership-report/{TID}"
+ALA_PDF_URL = f"/reporting/ala-membership-report/{TID}/pdf"
+STANDINGS_PRINT_URL = f"/reporting/{TID}/college/standings/print"
+HUB_URL = f"/scheduling/{TID}/print-hub"
+
+# A real 2026 pro attendee, so the HTML control below cannot pass on an
+# empty report.
+ALA_REAL_ATTENDEE = "Trevor Baker"
+
+
+def _tracker_rows(sql, doc_key):
+    """Read print_trackers back from the database rather than the ORM.
+
+    The write happens in the request's session and the assertion runs in the
+    test's, so going through the ORM here would risk reading an identity-map
+    copy instead of what was actually committed.
+    """
+    return sql(
+        "SELECT id, entity_id, last_printed_at FROM print_trackers "
+        "WHERE tournament_id = :tid AND doc_key = :key ORDER BY id",
+        tid=TID, key=doc_key)
+
+
+def _hub_row(html: str, needle: str) -> str:
+    """Return the single Print Hub table row containing needle.
+
+    Asserting against the whole hub page is worthless: it lists every document
+    and the words "Never printed" and "Fresh" both appear on it regardless.
+
+    Pass a needle that only the hub table can contain, normally the document's
+    own print_url. A bare report slug is not safe: the base template renders a
+    sidebar nav link to the same report roughly 108,000 bytes above the table,
+    outside any <tr>, so html.find() lands there and rfind("<tr", ...) returns
+    -1. The assertion below catches that rather than silently matching the
+    wrong element.
+    """
+    marker = html.find(needle)
+    assert marker != -1, f"{needle!r} is not on the Print Hub page at all"
+    start = html.rfind("<tr", 0, marker)
+    end = html.find("</tr>", marker)
+    assert start != -1 and end != -1, (
+        f"could not isolate a table row around {needle!r}; the match at "
+        f"offset {marker} is probably not inside the hub table")
+    return html[start:end]
+
+
+@pytest.mark.sev3
+def test_a_failed_print_does_not_mark_the_document_as_printed(
+        client, sql, monkeypatch):
+    """record_print's own contract, held against a view that catches its error.
+
+    The decorator's docstring promises that if the view raises, no tracker row
+    is written. ala_membership_report_pdf does not raise: it catches, logs,
+    flashes and redirects. The decorator saw a return value, treated the failed
+    print as a success, and upserted a PrintTracker row, so the Print Hub
+    reported the ALA compliance document as "Fresh ... by STRATHEX" with zero
+    bytes ever produced.
+
+    This is asserted through the ALA route because that is where it was found,
+    but the gate being tested lives in the decorator and covers all seventeen
+    @record_print routes.
+    """
+    import services.ala_report as ala_report
+
+    # Control. The production mirror has never printed this document, so any
+    # row found below was written by the failed attempt and nothing else.
+    assert _tracker_rows(sql, 'ala_report') == []
+
+    def _boom(report_data):
+        raise ModuleNotFoundError("No module named 'reportlab'")
+
+    # The route does its import inside the function body, so patching the
+    # module attribute is what the route will actually resolve at call time.
+    monkeypatch.setattr(ala_report, 'generate_ala_pdf', _boom)
+
+    response = client.get(ALA_PDF_URL)
+
+    # Control on the control: the route really did take its failure path. If
+    # this ever returns 200 the test below is measuring nothing.
+    assert response.status_code == 302, response.status_code
+
+    assert _tracker_rows(sql, 'ala_report') == [], (
+        "a print that produced no bytes was recorded as a completed print, so "
+        "the Print Hub will report the ALA filing as done")
+
+    hub = client.get(HUB_URL)
+    assert hub.status_code == 200
+    row = _hub_row(hub.get_data(as_text=True), ALA_PDF_URL)
+    assert 'Never printed' in row, row
+    assert 'Fresh' not in row, row
+
+
+@pytest.mark.sev3
+def test_a_successful_print_is_still_recorded(client, sql):
+    """Guard against over-tightening the gate above.
+
+    This one passes against unfixed code on purpose. Its job is to fail if the
+    fix starts refusing to record prints that really did deliver a document,
+    which would silently break the whole Print Hub staleness feature.
+    """
+    assert _tracker_rows(sql, 'college_standings') == []
+
+    response = client.get(STANDINGS_PRINT_URL)
+    assert response.status_code == 200, response.status_code
+
+    assert len(_tracker_rows(sql, 'college_standings')) == 1, (
+        "a print that returned a document was not recorded")
+
+
+@pytest.mark.sev3
+def test_the_ala_membership_report_can_actually_be_produced_as_a_pdf(
+        client, sql):
+    """The ALA filing has to leave the building as a PDF.
+
+    generate_ala_pdf imports reportlab, reportlab is not in requirements.txt,
+    so the Railway image does not have it either. The Download button has a
+    workaround (the HTML page below renders fine and the operator can print to
+    PDF from the browser). The "Email to ALA" button does not: attaching the
+    PDF is its only function, and the association simply never receives the
+    filing.
+    """
+    # Control. The data layer and the HTML page are fine, so a failure below
+    # is the PDF renderer and not the report itself.
+    html = client.get(ALA_HTML_URL)
+    assert html.status_code == 200, html.status_code
+    assert ALA_REAL_ATTENDEE in html.get_data(as_text=True), (
+        "the ALA report rendered no attendees, so the PDF assertion below "
+        "would be vacuous")
+
+    response = client.get(ALA_PDF_URL)
+    assert response.status_code == 200, (
+        f"the ALA PDF route returned {response.status_code}; the Email to ALA "
+        f"button shares this code path and has no workaround")
+    assert response.mimetype == 'application/pdf', response.mimetype
+
+    body = response.get_data()
+    assert body.startswith(b'%PDF-'), body[:40]
+    assert len(body) > 2000, f"only {len(body)} bytes, which is not a report"
+
+    # The other half of the record_print contract: a print that really did
+    # deliver bytes must be recorded.
+    assert len(_tracker_rows(sql, 'ala_report')) == 1

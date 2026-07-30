@@ -744,23 +744,64 @@ def load_trackers_for_tournament(tournament_id: int) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _response_status(response) -> int:
+    """Best-effort HTTP status for whatever a view function returned.
+
+    record_print wraps the view before Flask coerces its return value, so this
+    sees the raw thing: a Response from redirect() or send_file(), a
+    (body, status, headers) tuple from services/print_response.py, or a bare
+    string from render_template. A bare string is Flask's implicit 200.
+    """
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        return status
+    if isinstance(response, tuple):
+        for item in response[1:]:
+            if isinstance(item, int):
+                return item
+            if isinstance(item, str) and item[:3].isdigit():
+                return int(item[:3])
+    return 200
+
+
 def record_print(doc_key: str, entity_id_kwarg: Optional[str] = None):
     """Wrap an existing print route so each successful hit updates PrintTracker.
 
     Rules:
       1. Tracker update runs AFTER the view returns. If the view raises,
          no tracker row is written.
-      2. Tracker failures are swallowed and logged — the print itself MUST
+      2. A view that returns without delivering a document does not count as
+         a print either. Rule 1 alone was not enough: a route that catches its
+         own renderer failure, flashes, and redirects returns normally, and
+         this decorator used to record that as a completed print. The ALA
+         membership PDF did exactly that, so one failed click flipped the
+         Print Hub from "Never printed" to "Fresh ... by STRATHEX" having
+         produced zero bytes, which is worse than the failure it was hiding.
+         Anything outside 2xx is therefore not recorded.
+      3. Tracker failures are swallowed and logged — the print itself MUST
          NOT be blocked by an audit bookkeeping error.
-      3. Tournament id is read from kwargs['tournament_id'] or kwargs['tid'].
-      4. If entity_id_kwarg is set (e.g. 'event_id'), that kwarg identifies
+      4. Tournament id is read from kwargs['tournament_id'] or kwargs['tid'].
+      5. If entity_id_kwarg is set (e.g. 'event_id'), that kwarg identifies
          the per-row entity for dynamic docs.
+
+    On 304: a conditional request can only get one after an earlier request
+    served the bytes, and that request recorded its own row, so declining to
+    record here loses nothing.
     """
 
     def wrap(view):
         @functools.wraps(view)
         def inner(*args, **kwargs):
             response = view(*args, **kwargs)
+            status = _response_status(response)
+            if not 200 <= status < 300:
+                logger.info(
+                    "Not recording print doc=%s: view returned %s without a "
+                    "document",
+                    doc_key,
+                    status,
+                )
+                return response
             try:
                 _write_tracker_from_request(doc_key, entity_id_kwarg, kwargs)
             except Exception:

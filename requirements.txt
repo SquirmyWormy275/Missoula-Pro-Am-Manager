@@ -26,6 +26,20 @@ Werkzeug==3.1.6
 # WSGI server
 gunicorn==22.0.0
 
+# PDF generation
+# services/ala_report.py::generate_ala_pdf imports reportlab. That import was
+# never satisfied by this file, so the ALA membership filing could not be
+# produced on Railway at all. Both entry points fall into the same except
+# branch: the Download button flashes "PDF generation failed" and redirects,
+# and "Email to ALA" — whose only job is to attach that PDF — never reaches
+# its send call, so the association received nothing. The flash made the
+# failure visible; what was not visible was the Print Hub, which recorded the
+# redirect as a completed print (see services/print_catalog.py::record_print).
+#
+# reportlab pulls Pillow in as a hard dependency. That is deliberate and worth
+# knowing: it is the only reason Pillow is present in the image.
+reportlab==4.5.1
+
 # Monitoring
 sentry-sdk==2.22.0
 
