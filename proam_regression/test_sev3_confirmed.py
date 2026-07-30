@@ -989,3 +989,415 @@ def test_the_college_lookup_is_never_handed_an_id_from_a_pro_heat(
         f"{SMS_TARGET_FLIGHT_NUMBER}, but the notify path asked the college "
         f"table about them. Those integers name different people in the two "
         f"tables.")
+
+
+# ---------------------------------------------------------------------------
+# c19. Partnered Axe score entry reports success on work it did not do.
+#      services/partnered_axe.py record_prelim_result / record_final_result,
+#      routes/partnered_axe.py:148-176 and :215-241.
+#
+# Two doors, one failure mode. record_prelim_result has no stage guard, so a
+# prelim recorded after the bracket has been run overwrites the published
+# EventResult rows of the pairs that already placed. Neither writer checks
+# that the pair_id it was handed exists, so a typo is a silent no-op that the
+# route still flashes as a success.
+#
+# Sibling of item 17. That one guarded advance_to_finals. These are the other
+# two writers on the same state machine, reached from the same stale tab.
+# ---------------------------------------------------------------------------
+
+PAT_FINAL_HITS = [15, 13, 11, 9]
+
+_REFUSAL_CATS = ("danger", "error", "warning")
+
+_ER_ROWS = ("SELECT competitor_id, result_value, final_position, status "
+            "FROM event_results WHERE event_id = :e ORDER BY competitor_id")
+
+
+def _assert_refused_out_loud(said, why):
+    """The operator must be told the entry did not land, and not told it did.
+
+    Shaped on flash CATEGORY, not on message wording. The first version of
+    this check flagged any message containing 'recorded', which also caught
+    the refusal 'Nothing was recorded.' That made the assertion a test of my
+    own phrasing rather than of behaviour. Any implementation that refuses
+    under a refusal category, and claims nothing under a neutral one, passes,
+    whatever words it uses.
+    """
+    assert said, f"{why}: no flash at all. Silence reads as success."
+    claims = [(c, m) for c, m in said if c not in _REFUSAL_CATS]
+    assert not claims, f"{why}: the app reported this as done: {claims}"
+    refusals = [(c, m) for c, m in said if c in _REFUSAL_CATS]
+    assert refusals, (
+        f"{why}: nothing in {said} tells the operator the entry was refused")
+
+
+def _er(sql):
+    """{competitor_id: (result_value, final_position, status)} for event 40."""
+    return {r[0]: (r[1], r[2], r[3]) for r in sql(_ER_ROWS, e=PAT_EVENT)}
+
+
+def _build_pat_complete(client, sql):
+    """Prelims, the cut, and all four finals scores. Returns the state dict.
+
+    Ends with stage 'completed', final_position assigned on all four finalists
+    and EventResult rows published by _save_event_results.
+    """
+    _build_pat_prelims(client, sql)
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+
+    finalists = _pat_state(sql).get("finalists", [])
+    assert len(finalists) == 4, finalists
+    for pair, hits in zip(finalists, PAT_FINAL_HITS):
+        r = client.post(f"{PAT_BASE}/finals/record",
+                        data={"pair_id": str(pair["pair_id"]), "hits": str(hits)})
+        assert r.status_code in (200, 302), r.data[:400]
+
+    state = _pat_state(sql)
+    assert state.get("stage") == "completed", (
+        f"the harness could not finish the bracket; stage is "
+        f"{state.get('stage')!r}, so this test is not checking what it claims")
+    return state
+
+
+@pytest.mark.sev3
+def test_a_published_axe_champion_keeps_his_score_when_a_prelim_is_re_recorded(
+        client, sql):
+    """The event is over and published. One prelim entry rewrites the winner.
+
+    record_prelim_result has no stage guard, and it ends by calling
+    _sync_prelim_to_event_results, which writes pair['prelim_score'] straight
+    over EventResult.result_value. Those rows already hold the FINALS score
+    and the placing, written by _save_event_results when the bracket finished.
+    final_position is left alone, so the row does not revert cleanly to a
+    prelim row either: it comes out a hybrid, first place holding whatever
+    number was just typed into the prelim box.
+
+    Measured on the real event 40 roster: Trevor Baker and Kate Page finish
+    first on 15 finals hits, a prelim re-record of 3 leaves them at position 1
+    with 3.00, below every pair they beat, while event_state still says 15.
+    """
+    state = _build_pat_complete(client, sql)
+    winner = state["final_results"][0]
+    members = [winner["competitor1"]["id"], winner["competitor2"]["id"]]
+    runner_up = state["final_results"][1]
+    runners = [runner_up["competitor1"]["id"], runner_up["competitor2"]["id"]]
+
+    before = _er(sql)
+    assert all(before[c] == (PAT_FINAL_HITS[0], 1, "completed") for c in members), (
+        f"the bracket did not publish the winner the way this test assumes: "
+        f"{ {c: before.get(c) for c in members} }")
+
+    r = client.post(f"{PAT_BASE}/prelims/record",
+                    data={"pair_id": str(winner["pair_id"]), "hits": "3"})
+    assert r.status_code in (200, 302), r.data[:400]
+
+    after = _er(sql)
+
+    # Vacuity guard: the pairs nobody touched must be exactly where they were.
+    # If these moved too, something other than this defect is rewriting rows
+    # and the assertion below would be reading the wrong cause.
+    assert all(after[c] == before[c] for c in runners), (
+        f"the runner-up rows moved as well: "
+        f"{ {c: (before.get(c), after.get(c)) for c in runners} }")
+
+    for cid in members:
+        assert after[cid] == before[cid], (
+            f"competitor {cid} finished first on {before[cid][0]} finals hits "
+            f"and the published row now reads {after[cid][0]} at position "
+            f"{after[cid][1]}. A prelim entry rewrote a published final "
+            f"result. event_state still says "
+            f"{winner['final_score']}, so the results page and the scoring "
+            f"page now disagree with nothing to say which is right.")
+
+
+@pytest.mark.sev3
+def test_a_prelim_recorded_after_the_cut_does_not_report_success(client, sql, flashes):
+    """The operator has to be told the entry did not land.
+
+    Same press as the test above, watched from the operator's side. Silence is
+    not an answer either: somebody typed a score into a box and pressed a
+    button at a live show, and if the page comes back clean they will believe
+    the number is in.
+    """
+    state = _build_pat_complete(client, sql)
+    winner = state["final_results"][0]
+    flashes()
+
+    r = client.post(f"{PAT_BASE}/prelims/record",
+                    data={"pair_id": str(winner["pair_id"]), "hits": "3"})
+    assert r.status_code in (200, 302), r.data[:400]
+    said = flashes()
+
+    _assert_refused_out_loud(
+        said,
+        "a prelim entry on a completed bracket (the pair has already placed, "
+        "and this entry lands on a published result)")
+
+
+@pytest.mark.sev3
+def test_a_prelim_recorded_between_the_cut_and_the_finals_is_refused(
+        client, sql, flashes):
+    """Stage 'finals': cut made, no finals score in yet. Also has to refuse.
+
+    This is the window a guard written as ``stage == 'completed'`` misses, and
+    that is the obvious way to write this guard if you are only looking at the
+    corruption in the test above. Nothing is published yet at this stage, so
+    EventResult survives, but state['finalists'] was seeded from a snapshot of
+    the prelim standings and does not move. Change a prelim score now and the
+    standings the operator reads no longer agree with who is actually in the
+    final, with no way to tell from either page which one is the record.
+
+    Asserted on the standings, not on a flash category, so it is a check on
+    the data and not on my wording.
+    """
+    _build_pat_prelims(client, sql)
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+
+    before = _pat_state(sql)
+    assert before.get("stage") == "finals", before.get("stage")
+    finalist_ids = [p["pair_id"] for p in before["finalists"]]
+    assert len(finalist_ids) == 4, finalist_ids
+
+    # The pair that missed the cut. Give it the best prelim score in the event.
+    missed = [p for p in before["pairs"] if p["pair_id"] not in finalist_ids]
+    assert len(missed) == 1, missed
+    flashes()
+
+    r = client.post(f"{PAT_BASE}/prelims/record",
+                    data={"pair_id": str(missed[0]["pair_id"]), "hits": "99"})
+    assert r.status_code in (200, 302), r.data[:400]
+    said = flashes()
+
+    after = _pat_state(sql)
+    top4 = [p["pair_id"] for p in after["prelim_results"][:4]]
+    assert top4 == finalist_ids, (
+        f"the prelim standings now put pairs {top4} in the top four while the "
+        f"finals bracket holds {finalist_ids}. A prelim entry after the cut "
+        f"moved the seeding record out from under a bracket that was already "
+        f"seeded.")
+    _assert_refused_out_loud(
+        said, "a prelim entry after the cut but before the finals")
+
+
+@pytest.mark.sev3
+def test_the_service_refuses_a_late_prelim_when_called_directly(client, sql):
+    """The guard has to sit in the service, not in the route.
+
+    Not implementation-peeking: PartneredAxeThrow.record_prelim_result is a
+    real entry point with callers outside the web layer (tests/
+    test_partnered_axe_state.py and tests/test_axe_throw_qualifiers.py drive it
+    directly, 18 sites between them), and a route-level guard leaves every one
+    of those callers able to corrupt a published bracket. The HTTP tests above
+    cannot tell the two placements apart, which is exactly why this one exists.
+
+    Also pins the escape hatch: reset() rebuilds the stage from a literal, so
+    it must clear the guard. A guard that cannot be cleared strands an event.
+    """
+    from services.partnered_axe import get_or_create_partnered_axe_throw
+
+    _build_pat_complete(client, sql)
+
+    pat = get_or_create_partnered_axe_throw(TID)
+    assert pat.get_stage() == "completed", pat.get_stage()
+    pair_id = pat.state["pairs"][0]["pair_id"]
+
+    with pytest.raises(ValueError) as caught:
+        pat.record_prelim_result(pair_id, 3)
+    assert "completed" in str(caught.value), (
+        f"the refusal does not tell the caller what stage blocked it: "
+        f"{caught.value}")
+
+    # reset() wipes the pairs along with the stage, so the call below still
+    # raises. What matters is WHICH refusal: the stage is no longer what is
+    # stopping it.
+    pat.reset()
+    assert pat.get_stage() == "prelims"
+    with pytest.raises(ValueError) as after_reset:
+        pat.record_prelim_result(pair_id, 12)
+    assert "completed" not in str(after_reset.value), (
+        f"reset() did not clear the stage guard, so a wrongly seeded bracket "
+        f"has no way back: {after_reset.value}")
+
+
+@pytest.mark.sev3
+def test_a_prelim_score_for_a_pair_that_does_not_exist_is_refused(
+        client, sql, flashes):
+    """A mistyped pair number is announced as recorded and stored nowhere.
+
+    record_prelim_result walks state['pairs'] looking for the id and simply
+    falls out of the loop when it is not there. recorded_pair stays None, the
+    method returns without raising, and the route flashes
+    'Prelim result recorded for Pair 999'. At a live show that is a score the
+    judge believes is on the board.
+    """
+    _build_pat_prelims(client, sql)
+    before_state = _pat_state(sql)
+    before_rows = _er(sql)
+    flashes()
+
+    r = client.post(f"{PAT_BASE}/prelims/record",
+                    data={"pair_id": "999", "hits": "17"})
+    assert r.status_code in (200, 302), r.data[:400]
+    said = flashes()
+
+    # The no-op half is not the bug. Storing nothing is correct for a pair
+    # that does not exist. Assert it so a fix cannot buy the flash by
+    # inventing a pair.
+    assert _pat_state(sql) == before_state, (
+        "recording against pair 999 changed the event state")
+    assert _er(sql) == before_rows, (
+        "recording against pair 999 changed the published rows")
+
+    _assert_refused_out_loud(
+        said, "a prelim entry for pair 999, which does not exist")
+
+
+@pytest.mark.sev3
+def test_a_finals_score_for_a_pair_that_does_not_exist_is_refused(
+        client, sql, flashes):
+    """Same door on the finals side, where the number decides the placings."""
+    _build_pat_prelims(client, sql)
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+
+    before_state = _pat_state(sql)
+    assert len(before_state.get("finalists", [])) == 4
+    flashes()
+
+    r = client.post(f"{PAT_BASE}/finals/record",
+                    data={"pair_id": "999", "hits": "19"})
+    assert r.status_code in (200, 302), r.data[:400]
+    said = flashes()
+
+    assert _pat_state(sql) == before_state, (
+        "recording a final against pair 999 changed the event state")
+
+    _assert_refused_out_loud(
+        said, "a finals entry for pair 999, which is not in the bracket")
+
+
+@pytest.mark.sev3
+def test_a_prelim_score_can_still_be_recorded_during_prelims(client, sql, flashes):
+    """Positive control. The ordinary path, which is most of the event.
+
+    Passes before the fix and has to pass after. A guard that refuses too much
+    takes prelim scoring away entirely, which is worse than the defect.
+    """
+    for c1, c2 in PAT_PAIRS:
+        r = client.post(f"{PAT_BASE}/register-pair",
+                        data={"competitor1_id": str(c1), "competitor2_id": str(c2)})
+        assert r.status_code in (200, 302), r.data[:400]
+    pairs = _pat_state(sql).get("pairs", [])
+    assert len(pairs) == len(PAT_PAIRS), pairs
+
+    first = pairs[0]
+    members = [first["competitor1"]["id"], first["competitor2"]["id"]]
+    flashes()
+
+    r = client.post(f"{PAT_BASE}/prelims/record",
+                    data={"pair_id": str(first["pair_id"]), "hits": "20"})
+    assert r.status_code in (200, 302), r.data[:400]
+    said = flashes()
+
+    scored = {p["pair_id"]: p["prelim_score"]
+              for p in _pat_state(sql).get("pairs", [])}
+    assert scored[first["pair_id"]] == 20, (
+        f"an ordinary prelim entry did not land: {scored}")
+
+    rows = _er(sql)
+    for cid in members:
+        assert rows[cid][0] == 20, (
+            f"competitor {cid} did not get the prelim score on his "
+            f"EventResult row: {rows[cid]}")
+
+    refused = [(cat, msg) for cat, msg in said if cat in ("danger", "error")]
+    assert not refused, (
+        f"an ordinary prelim entry was refused: {refused}")
+
+
+@pytest.mark.sev3
+def test_a_prelim_score_can_still_be_corrected_before_the_cut(client, sql, flashes):
+    """Positive control. Judges mis-hear hit counts; re-entry is routine.
+
+    This is the reason the guard has to be on the STAGE and not on 'this pair
+    already has a prelim score'. Both readings stop the defect. Only one of
+    them leaves the operator able to fix a number before the bracket is cut.
+    """
+    state = _build_pat_prelims(client, sql)
+    target = state["pairs"][0]
+    members = [target["competitor1"]["id"], target["competitor2"]["id"]]
+    assert target["prelim_score"] == PAT_PRELIM_HITS[0]
+    flashes()
+
+    r = client.post(f"{PAT_BASE}/prelims/record",
+                    data={"pair_id": str(target["pair_id"]), "hits": "19"})
+    assert r.status_code in (200, 302), r.data[:400]
+    said = flashes()
+
+    scored = {p["pair_id"]: p["prelim_score"]
+              for p in _pat_state(sql).get("pairs", [])}
+    assert scored[target["pair_id"]] == 19, (
+        f"a prelim correction before the cut was dropped: {scored}")
+    rows = _er(sql)
+    for cid in members:
+        assert rows[cid][0] == 19, (
+            f"competitor {cid} kept the old prelim score on his EventResult "
+            f"row after a correction: {rows[cid]}")
+
+    refused = [(cat, msg) for cat, msg in said if cat in ("danger", "error")]
+    assert not refused, (
+        f"a prelim correction during prelims was refused: {refused}")
+
+
+@pytest.mark.sev3
+def test_a_finals_score_can_still_be_corrected_after_the_bracket_completes(
+        client, sql, flashes):
+    """Positive control, and it pins a deliberate asymmetry.
+
+    The prelim writer must refuse once the bracket is cut. The FINALS writer
+    must not: re-entering a finals score is the only in-app way to fix a
+    mis-heard number on the deciding throw, and it already works correctly,
+    re-sorting the placings and republishing every EventResult row. A guard
+    written as 'refuse any score entry once stage is completed' would kill it
+    and leave /reset, which wipes the pairs and the prelims too, as the only
+    way back.
+    """
+    state = _build_pat_complete(client, sql)
+    last = state["final_results"][-1]
+    winner = state["final_results"][0]
+    last_members = [last["competitor1"]["id"], last["competitor2"]["id"]]
+    win_members = [winner["competitor1"]["id"], winner["competitor2"]["id"]]
+    assert last["final_position"] == 4, last
+    flashes()
+
+    # The judge misheard the last pair: 22, not 9. That is now the best score
+    # in the final, so the placings have to turn over.
+    r = client.post(f"{PAT_BASE}/finals/record",
+                    data={"pair_id": str(last["pair_id"]), "hits": "22"})
+    assert r.status_code in (200, 302), r.data[:400]
+    said = flashes()
+
+    after = _pat_state(sql)
+    placings = {p["pair_id"]: p["final_position"]
+                for p in after.get("final_results", [])}
+    assert placings.get(last["pair_id"]) == 1, (
+        f"the corrected finals score did not re-rank the bracket: {placings}")
+    assert placings.get(winner["pair_id"]) == 2, (
+        f"the previous winner was not moved down: {placings}")
+
+    rows = _er(sql)
+    for cid in last_members:
+        assert rows[cid] == (22, 1, "completed"), (
+            f"competitor {cid} did not get the corrected finals score "
+            f"published: {rows[cid]}")
+    for cid in win_members:
+        assert rows[cid][1] == 2, (
+            f"competitor {cid} kept position 1 on his published row after "
+            f"being beaten: {rows[cid]}")
+
+    refused = [(cat, msg) for cat, msg in said if cat in ("danger", "error")]
+    assert not refused, (
+        f"a finals correction on a completed bracket was refused: {refused}")

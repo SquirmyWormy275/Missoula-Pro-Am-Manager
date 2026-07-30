@@ -166,6 +166,12 @@ def record_prelim(tournament_id):
         db.session.rollback()
         flash(_STALE_DATA_FLASH, 'warning')
         return redirect(url_for('partnered_axe.prelims', tournament_id=tournament_id))
+    except ValueError as e:
+        # Mirrors advance_to_finals below. Without this the guards in
+        # record_prelim_result would 500 instead of telling the operator
+        # anything. Falls through rather than returning so the message lands
+        # on the page the score was entered from.
+        flash(str(e), 'danger')
 
     # If the score was entered from the event_results page, redirect back there
     if request.form.get('return_to') == 'event_results':
@@ -231,6 +237,13 @@ def record_final(tournament_id):
     except StaleDataError:
         db.session.rollback()
         flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('partnered_axe.finals', tournament_id=tournament_id))
+    except ValueError as e:
+        # Returns rather than falling through, unlike record_prelim above: the
+        # stage check under this block would read 'completed' on an already
+        # finished bracket and flash 'Finals complete!' success on top of the
+        # refusal.
+        flash(str(e), 'danger')
         return redirect(url_for('partnered_axe.finals', tournament_id=tournament_id))
 
     if pat.get_stage() == 'completed':

@@ -184,13 +184,65 @@ class PartneredAxeThrow:
         Args:
             pair_id: The pair ID
             hits: Total hits scored by the pair
+
+        Raises:
+            ValueError: if the bracket has moved past prelims, or if no pair
+                carries this id.
         """
+        # Stage guard. This method ends by calling
+        # _sync_prelim_to_event_results, which writes prelim_score straight
+        # over EventResult.result_value. Once the bracket has been cut those
+        # rows hold the FINALS score and the placing, published by
+        # _save_event_results. final_position is not touched here, so the row
+        # does not even revert cleanly to a prelim row: it comes out a hybrid,
+        # first place holding whatever number was typed into the prelim box,
+        # while event_state still carries the real finals score. The results
+        # page and the scoring page then disagree with nothing to say which is
+        # right.
+        #
+        # The guard is on the STAGE, not on "this pair already has a prelim
+        # score". Both readings stop the corruption; only this one leaves the
+        # operator able to correct a mis-heard hit count before the cut, which
+        # is routine.
+        #
+        # Deliberately NOT mirrored onto record_final_result. Re-entering a
+        # finals score after the bracket completes already works correctly
+        # (it re-sorts the placings and republishes every row) and it is the
+        # only in-app way to fix a mis-heard number on the deciding throw.
+        # Blocking it would leave reset(), which wipes the pairs and the
+        # prelims too, as the only way back.
+        #
+        # Same shape as the advance_to_finals guard below, for the same
+        # reason: the route flashes success on whatever it gets back, so
+        # refusing out loud beats returning quietly. reset() rebuilds the
+        # stage from a literal, so resetting the event clears this guard.
+        stage = self.get_stage()
+        if stage != 'prelims':
+            raise ValueError(
+                f"Prelim scores can no longer be entered for this event "
+                f"(stage: {stage}). The bracket has already been cut, and "
+                f"this entry would overwrite a published result. Reset the "
+                f"event if the bracket needs to be rebuilt."
+            )
+
         recorded_pair = None
         for pair in self.state['pairs']:
             if pair['pair_id'] == pair_id:
                 pair['prelim_score'] = hits
                 recorded_pair = pair
                 break
+
+        # A pair_id that matches nothing used to fall out of this loop, leave
+        # recorded_pair None, and return without raising, at which point the
+        # route flashed "Prelim result recorded for Pair 999". Storing nothing
+        # is the correct response to a pair that does not exist; announcing it
+        # as recorded is not. At a live show that is a score the judge
+        # believes is on the board.
+        if recorded_pair is None:
+            raise ValueError(
+                f"No pair {pair_id} is registered for this event. Nothing was "
+                f"recorded."
+            )
 
         # Update prelim_results sorted by score (descending)
         self.state['prelim_results'] = sorted(
@@ -284,11 +336,27 @@ class PartneredAxeThrow:
         Args:
             pair_id: The pair ID
             hits: Total hits scored in finals
+
+        Raises:
+            ValueError: if no finalist carries this id.
+
+        There is no stage guard here, and that asymmetry with
+        record_prelim_result is deliberate. See the note in that method.
         """
+        recorded_pair = None
         for pair in self.state['finalists']:
             if pair['pair_id'] == pair_id:
                 pair['final_score'] = hits
+                recorded_pair = pair
                 break
+
+        # Same silent no-op as the prelim writer had, on the side where the
+        # number decides the placings.
+        if recorded_pair is None:
+            raise ValueError(
+                f"Pair {pair_id} is not in the finals bracket for this event. "
+                f"Nothing was recorded."
+            )
 
         # Check if all finals complete
         all_scored = all(p.get('final_score') is not None for p in self.state['finalists'])
