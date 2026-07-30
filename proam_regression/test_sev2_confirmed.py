@@ -1608,3 +1608,251 @@ def test_the_pairing_dropdown_stops_offering_an_already_paired_competitor(client
     assert PAT_MATE_A not in offered, (
         f"competitor {PAT_MATE_A} is already in a registered pair but the "
         f"dashboard still offers them for a second one")
+
+
+# ---------------------------------------------------------------------------
+# c07. The pro-entry importer keys find-or-create on email alone, so any
+#      competitor whose row carries no email, or whose email changed, or who
+#      retypes it in different case, is written as a brand new person
+#      routes/import_routes.py confirm_pro_entries
+# ---------------------------------------------------------------------------
+
+# Real rows in the production mirror, tournament 2.
+#   1 Trevor Baker      email NULL   <- the blank-email fork
+#   4 Stirling Hart     email NULL
+#   5 Brianna Kvinge    briannakvinge@gmail.com  <- the changed-email fork
+#   8 Erin LaVoie       elavoie57@gmail.com      <- the control, and the
+#                                                   case-variant fork
+IMP_NOEMAIL_ID = 1
+IMP_NOEMAIL_NAME = "Trevor Baker"
+IMP_CHANGED_ID = 5
+IMP_CHANGED_NAME = "Brianna Kvinge"
+IMP_CHANGED_OLD = "briannakvinge@gmail.com"
+IMP_CHANGED_NEW = "brianna.kvinge@gmail.com"
+IMP_CONTROL_ID = 8
+IMP_CONTROL_NAME = "Erin LaVoie"
+IMP_CONTROL_EMAIL = "elavoie57@gmail.com"
+
+_IMP_HEADERS = [
+    "Timestamp",
+    "Email Address",
+    "Full Name",
+    "Gender",
+    "Mailing Address",
+    "Phone Number",
+    "Are you a current ALA member?",
+    "Men's Underhand",
+    "Women's Standing Block",
+    "I would like to enter into the Pro-Am lottery",
+    "Are you sharing gear?",
+    "I know that logging events are dangerous and that I accept all risk.",
+    "Signature",
+]
+
+
+def _imp_row(name, gender, email="", event=None):
+    """One Google-Forms response row, keyed by header text."""
+    row = {
+        "Timestamp": "2026-03-01 09:00:00",
+        "Email Address": email,
+        "Full Name": name,
+        "Gender": "Male" if gender == "M" else "Female",
+        "Mailing Address": "100 Test Rd, Missoula MT",
+        "Phone Number": "4065550100",
+        "Are you a current ALA member?": "Yes",
+        "I would like to enter into the Pro-Am lottery": "No",
+        "Are you sharing gear?": "No",
+        "I know that logging events are dangerous and that I accept all risk.": "Yes",
+        "Signature": name,
+    }
+    if event is None:
+        event = "Men's Underhand" if gender == "M" else "Women's Standing Block"
+    row[event] = "Yes"
+    return row
+
+
+def _imp_workbook(rows):
+    """Build the Google-Forms-shaped .xlsx the importer expects, in memory."""
+    import io
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.worksheets[0]
+    ws.title = "Form Responses 1"
+    ws.append(_IMP_HEADERS)
+    for row in rows:
+        ws.append([row.get(h, "") for h in _IMP_HEADERS])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _imp_run(client, app, tmp_path, rows):
+    """Drive the real upload -> review -> confirm flow and return the roster."""
+    app.config["UPLOAD_FOLDER"] = str(tmp_path)
+
+    up = client.post(
+        f"/import/{TID}/pro-entries",
+        data={"file": (_imp_workbook(rows), "entries.xlsx")},
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert up.status_code == 200, up.status_code
+    with client.session_transaction() as sess:
+        parsed = sess.get(f"pro_import_{TID}")
+    assert parsed, (
+        "the control failed: the upload never parsed, so nothing downstream "
+        "of it is being tested. The confirm step reads the session key "
+        f"pro_import_{TID} and it is not set.")
+
+    conf = client.post(f"/import/{TID}/pro-entries/confirm", follow_redirects=True)
+    assert conf.status_code == 200, conf.status_code
+
+
+def _imp_rows_named(sql, name):
+    return sql("""
+        SELECT id, name, email FROM pro_competitors
+        WHERE tournament_id = :t AND lower(btrim(name)) = :n
+        ORDER BY id
+    """, t=TID, n=name.strip().lower())
+
+
+def _imp_roster_size(sql):
+    return sql("SELECT count(*) FROM pro_competitors WHERE tournament_id = :t",
+               t=TID)[0][0]
+
+
+@pytest.mark.sev2
+def test_reimporting_a_pro_who_has_no_email_does_not_create_a_second_row(
+        client, app, sql, tmp_path):
+    """Four pros in the 2026 roster have no email address on file.
+
+    confirm_pro_entries only looks a competitor up when the incoming row
+    carries an email, so every one of those four is created fresh on any
+    re-import. The second row is a different competitor id, which means a
+    second set of EventResult rows, a second entry-fee bill, and the same
+    human standing in two heats of the same event. Erin LaVoie is the
+    control: her stored address matches the submitted one exactly, so she
+    must take the update-in-place branch even against the current code.
+    """
+    before = _imp_roster_size(sql)
+    assert len(_imp_rows_named(sql, IMP_NOEMAIL_NAME)) == 1, (
+        f"the control failed: {IMP_NOEMAIL_NAME} is not a single existing row")
+
+    _imp_run(client, app, tmp_path, [
+        _imp_row(IMP_NOEMAIL_NAME, "M"),
+        _imp_row(IMP_CONTROL_NAME, "F", email=IMP_CONTROL_EMAIL),
+    ])
+
+    control = _imp_rows_named(sql, IMP_CONTROL_NAME)
+    assert len(control) == 1, (
+        f"the control failed: {IMP_CONTROL_NAME} submitted her exact stored "
+        f"address and still forked into {len(control)} rows {control}. The "
+        f"email match path itself is broken, so this test proves nothing "
+        f"about the no-email path.")
+    assert control[0][0] == IMP_CONTROL_ID, control
+
+    rows = _imp_rows_named(sql, IMP_NOEMAIL_NAME)
+    assert len(rows) == 1, (
+        f"{IMP_NOEMAIL_NAME} already exists as pro_competitors id "
+        f"{IMP_NOEMAIL_ID} with no email on file, and re-importing his entry "
+        f"created a second row. Now {len(rows)} rows: {rows}. Both carry "
+        f"their own EventResult rows and their own entry_fees, so he is "
+        f"billed twice and scheduled into two heats of the same event.")
+    assert rows[0][0] == IMP_NOEMAIL_ID, (
+        f"the existing row id {IMP_NOEMAIL_ID} was expected to be updated in "
+        f"place, but the surviving row is {rows[0]}")
+    assert _imp_roster_size(sql) == before, (
+        f"the pro roster grew from {before} to {_imp_roster_size(sql)} on a "
+        f"re-import of two people who were both already registered")
+
+
+@pytest.mark.sev2
+def test_a_pro_who_changed_their_email_does_not_fork_into_a_second_row(
+        client, app, sql, tmp_path):
+    """Competitors resubmit the form with a new address all the time.
+
+    The lookup is an equality match on the stored email, so a new address
+    matches nothing and the importer creates a second competitor rather
+    than updating the one already holding this person's event entries.
+    """
+    before = _imp_roster_size(sql)
+    existing = _imp_rows_named(sql, IMP_CHANGED_NAME)
+    assert len(existing) == 1 and existing[0][2] == IMP_CHANGED_OLD, (
+        f"the control failed: expected one {IMP_CHANGED_NAME} row holding "
+        f"{IMP_CHANGED_OLD}, found {existing}")
+
+    _imp_run(client, app, tmp_path, [
+        _imp_row(IMP_CHANGED_NAME, "F", email=IMP_CHANGED_NEW),
+    ])
+
+    rows = _imp_rows_named(sql, IMP_CHANGED_NAME)
+    assert len(rows) == 1, (
+        f"{IMP_CHANGED_NAME} is pro_competitors id {IMP_CHANGED_ID}. She "
+        f"resubmitted the entry form from a new address and the importer "
+        f"created a second person instead of updating her. Now {len(rows)} "
+        f"rows: {rows}.")
+    assert rows[0][0] == IMP_CHANGED_ID, (
+        f"the existing row id {IMP_CHANGED_ID} was expected to be updated in "
+        f"place, but the surviving row is {rows[0]}")
+    assert _imp_roster_size(sql) == before, (
+        f"the pro roster grew from {before} to {_imp_roster_size(sql)}")
+
+
+@pytest.mark.sev2
+def test_the_same_email_typed_in_a_different_case_matches_the_existing_pro(
+        client, app, sql, tmp_path):
+    """Email addresses are case-insensitive in the mailbox and in the form.
+
+    Four rows in the 2026 roster are stored with an address that is not
+    equal to lower(btrim(address)), so the exact-equality lookup already
+    misses in production data. Retyping the same address with a capital
+    letter or a trailing space forks the competitor.
+    """
+    before = _imp_roster_size(sql)
+    assert len(_imp_rows_named(sql, IMP_CONTROL_NAME)) == 1, (
+        f"the control failed: {IMP_CONTROL_NAME} is not a single existing row")
+
+    _imp_run(client, app, tmp_path, [
+        _imp_row(IMP_CONTROL_NAME, "F", email="  ELAVOIE57@Gmail.COM "),
+    ])
+
+    rows = _imp_rows_named(sql, IMP_CONTROL_NAME)
+    assert len(rows) == 1, (
+        f"{IMP_CONTROL_NAME} is pro_competitors id {IMP_CONTROL_ID} holding "
+        f"{IMP_CONTROL_EMAIL}. The same address typed with different case and "
+        f"surrounding whitespace created a second competitor. Now "
+        f"{len(rows)} rows: {rows}.")
+    assert rows[0][0] == IMP_CONTROL_ID, (
+        f"the existing row id {IMP_CONTROL_ID} was expected to be updated in "
+        f"place, but the surviving row is {rows[0]}")
+    assert _imp_roster_size(sql) == before, (
+        f"the pro roster grew from {before} to {_imp_roster_size(sql)}")
+
+
+@pytest.mark.sev2
+def test_one_person_listed_twice_in_the_same_upload_lands_on_one_row(
+        client, app, sql, tmp_path):
+    """The pipeline's own deduplicator groups by email and passes every
+    email-less row through untouched (services/registration_import.py
+    _deduplicate). Two no-email rows for the same person in one workbook
+    therefore reach the writer as two entries, and the writer creates a
+    person per entry.
+    """
+    before = _imp_roster_size(sql)
+
+    _imp_run(client, app, tmp_path, [
+        _imp_row(IMP_NOEMAIL_NAME, "M"),
+        _imp_row(IMP_NOEMAIL_NAME, "M"),
+    ])
+
+    rows = _imp_rows_named(sql, IMP_NOEMAIL_NAME)
+    assert len(rows) == 1, (
+        f"{IMP_NOEMAIL_NAME} appeared twice in one upload, with no email on "
+        f"either row, and the importer wrote {len(rows)} competitors: {rows}. "
+        f"A duplicated form submission is the normal case the review screen "
+        f"exists to catch, and the confirm button is all-or-nothing.")
+    assert _imp_roster_size(sql) == before, (
+        f"the pro roster grew from {before} to {_imp_roster_size(sql)}")

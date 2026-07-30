@@ -61,6 +61,18 @@ def _allowed(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in _ALLOWED
 
 
+def _identity_key(value) -> str:
+    """Collapse case and interior whitespace so the same person typed two
+    different ways lands on one key.
+
+    '  ELAVOIE57@Gmail.COM ' and 'elavoie57@gmail.com' are the same mailbox.
+    'Erin  LaVoie ' and 'erin lavoie' are the same competitor. Returns '' for
+    anything empty, and callers must treat '' as "no signal" rather than as a
+    key, or every competitor with a blank field would match every other one.
+    """
+    return ' '.join(str(value or '').split()).lower()
+
+
 def _session_key(tournament_id: int) -> str:
     return f'pro_import_{tournament_id}'
 
@@ -248,19 +260,67 @@ def confirm_pro_entries(tournament_id):
     gear_synced_competitors: list = []
     now      = datetime.utcnow()
 
-    existing_names = [c.name for c in ProCompetitor.query.filter_by(tournament_id=tournament_id).all()]
+    roster = ProCompetitor.query.filter_by(tournament_id=tournament_id).all()
+    existing_names = [c.name for c in roster]
     incoming_names = [str(e.get('name') or '').strip() for e in entries if str(e.get('name') or '').strip()]
     name_index = build_name_index(existing_names + incoming_names)
+
+    # ---- Identity indexes for find-or-create ----
+    # This used to be a single equality match on email, which silently forked a
+    # competitor three different ways: a row with no email on file was never
+    # looked up at all (four of the 2026 pros have none), a competitor who
+    # resubmitted the form from a new address matched nothing, and the same
+    # address retyped with different case or a stray space matched nothing
+    # either. Each fork writes a whole second person: their own EventResult
+    # rows, their own entry_fees, and the same human scheduled into two heats
+    # of one event.
+    #
+    # Match order is email first, then exact normalized name. Name is a
+    # legitimate identity key here because this function already treats it as
+    # one: build_name_index / resolve_partner_name below resolve every partner
+    # declaration by name alone. Names are unique per tournament in the real
+    # data. Where they are not (only reachable through damage this bug already
+    # did), the lowest id wins, which is the original row, and the judge is
+    # told in the import summary rather than being handed a silent guess.
+    by_email = {}
+    by_name = {}
+    ambiguous_names = set()
+    for comp in sorted(roster, key=lambda c: c.id or 0):
+        ekey = _identity_key(comp.email)
+        if ekey:
+            by_email.setdefault(ekey, comp)
+        nkey = _identity_key(comp.name)
+        if nkey:
+            if nkey in by_name:
+                ambiguous_names.add(nkey)
+            else:
+                by_name[nkey] = comp
+
+    def _remember(comp):
+        """Index a row the moment it exists so a second entry for the same
+        person in this same upload updates it instead of adding another."""
+        ekey = _identity_key(comp.email)
+        if ekey:
+            by_email.setdefault(ekey, comp)
+        nkey = _identity_key(comp.name)
+        if nkey:
+            by_name.setdefault(nkey, comp)
+
+    matched_by_name = []
 
     for entry in entries:
         try:
             # ---- Find or create competitor ----
             competitor = None
-            if entry.get('email'):
-                competitor = ProCompetitor.query.filter_by(
-                    tournament_id=tournament_id,
-                    email=entry['email']
-                ).first()
+            email_key = _identity_key(entry.get('email'))
+            if email_key:
+                competitor = by_email.get(email_key)
+
+            name_key = _identity_key(entry.get('name'))
+            if competitor is None and name_key:
+                competitor = by_name.get(name_key)
+                if competitor is not None:
+                    matched_by_name.append(entry.get('name'))
 
             is_new = competitor is None
             if is_new:
@@ -361,6 +421,10 @@ def confirm_pro_entries(tournament_id):
 
             if is_new:
                 db.session.add(competitor)
+            # Index it now, with the values this entry just wrote, so a repeat
+            # of the same person later in this same upload updates this row
+            # rather than adding a third one.
+            _remember(competitor)
 
             db.session.flush()  # ensure competitor.id is available
 
@@ -455,6 +519,21 @@ def confirm_pro_entries(tournament_id):
     session.pop(_session_key(tournament_id), None)
 
     summary = f'Import complete: {imported} added, {updated} updated.'
+    if matched_by_name:
+        n = len(matched_by_name)
+        summary += (
+            f' {n} row(s) were matched to an existing competitor by name '
+            f'because the submitted email did not match one on file '
+            f'({", ".join(sorted(set(matched_by_name))[:5])}). '
+            f'Confirm each is the same person and not two competitors who '
+            f'share a name.'
+        )
+    if ambiguous_names:
+        summary += (
+            f' {len(ambiguous_names)} name(s) already appear on more than one '
+            f'competitor row in this tournament; the lowest id was used. '
+            f'Merge the duplicates before scheduling.'
+        )
     if gear_parse_warnings:
         summary += f' Gear-sharing parse warnings on {gear_parse_warnings} row(s); review competitor detail pages.'
     if gear_q27_inconsistencies:
