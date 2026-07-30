@@ -642,7 +642,9 @@ def clone_tournament(tournament_id):
         team_id_map[team.id] = new_team.id
 
     # Copy college competitors (reset earned data)
+    college_count = 0
     for comp in source.college_competitors.all():
+        college_count += 1
         new_comp = CollegeCompetitor(
             tournament_id=new_tournament.id,
             team_id=team_id_map.get(comp.team_id),
@@ -658,7 +660,9 @@ def clone_tournament(tournament_id):
         db.session.add(new_comp)
 
     # Copy pro competitors (reset earned data)
+    pro_count = 0
     for comp in source.pro_competitors.all():
+        pro_count += 1
         new_comp = ProCompetitor(
             tournament_id=new_tournament.id,
             name=comp.name,
@@ -686,6 +690,7 @@ def clone_tournament(tournament_id):
     # teams along with competitor IDs from the source tournament that don't
     # exist in the clone. Reset those to empty state during clone.
     _STATEFUL_EVENT_NAMES = {'Partnered Axe Throw', 'Pro-Am Relay'}
+    new_events_by_source_id = {}
     for event in source.events.all():
         is_state_event = (
             event.name in _STATEFUL_EVENT_NAMES
@@ -712,14 +717,87 @@ def clone_tournament(tournament_id):
             is_finalized=False,
         )
         db.session.add(new_event)
+        new_events_by_source_id[event.id] = new_event
+
+    # One flush for the whole batch, so the clone's event ids exist before the
+    # schedule config below is remapped onto them.
+    db.session.flush()
+    event_id_map = {src_id: ev.id for src_id, ev in new_events_by_source_id.items()}
+
+    # Copy the wood configs. These are the operator's hand-entered species and
+    # dimensions for every block and log the show consumes, and rebuilding them
+    # is real work. config_key is a STRING, so unlike the id-bearing state
+    # above these carry straight across with no remap hazard.
+    from models.wood_config import WoodConfig
+    wood_count = 0
+    for wc in WoodConfig.query.filter_by(tournament_id=source.id).all():
+        db.session.add(WoodConfig(
+            tournament_id=new_tournament.id,
+            config_key=wc.config_key,
+            species=wc.species,
+            size_value=wc.size_value,
+            size_unit=wc.size_unit,
+            notes=wc.notes,
+            count_override=wc.count_override,
+        ))
+        wood_count += 1
+
+    # Copy the schedule settings: flight sizing, placement mode, Friday feature
+    # selections and the hand-built running orders. Four of these keys hold
+    # EVENT IDS, and the clone's events are new rows with new ids, so copying
+    # the config verbatim would drag dead source ids into the copy — exactly
+    # the hazard `payouts` is reset for above. Remap every id through
+    # event_id_map and DROP anything unmappable rather than carrying it or
+    # leaving a null in the list, because every consumer of these keys treats
+    # them as ids it can look up.
+    _SCHEDULE_CONFIG_EVENT_ID_KEYS = (
+        'friday_pro_event_ids',
+        'saturday_college_event_ids',
+        'friday_event_order',
+        'saturday_event_order',
+    )
+    source_config = source.get_schedule_config()
+    if source_config:
+        cloned_config = dict(source_config)
+        for key in _SCHEDULE_CONFIG_EVENT_ID_KEYS:
+            if key not in cloned_config:
+                continue
+            mapped = []
+            for raw_id in (cloned_config[key] or []):
+                try:
+                    mapped.append(event_id_map[int(raw_id)])
+                except (TypeError, ValueError, KeyError):
+                    continue
+            cloned_config[key] = mapped
+        new_tournament.set_schedule_config(cloned_config)
 
     log_action('tournament_cloned', 'tournament', new_tournament.id, {
         'tournament_id': new_tournament.id,
         'source_id': source.id,
         'source_name': source.name,
+        'events': len(event_id_map),
+        'wood_configs': wood_count,
+        'schedule_config_copied': bool(source_config),
     })
     db.session.commit()
-    flash(f'Tournament cloned as "{new_tournament.name}". Update the name and dates before use.', 'success')
+
+    # The old message read "Update the name and dates before use", which told
+    # the operator that was the whole job. Say what actually carried and what
+    # did not, because nothing else on the page does.
+    carried = [
+        f'{len(event_id_map)} events',
+        f'{len(team_id_map)} teams',
+        f'{college_count} college and {pro_count} pro competitors',
+    ]
+    if wood_count:
+        carried.append(f'{wood_count} wood configs')
+    if source_config:
+        carried.append('the schedule settings')
+    flash(
+        f'Tournament cloned as "{new_tournament.name}": ' + ', '.join(carried)
+        + '. No event entries, heats, or results were copied. '
+          'Set the dates before use.',
+        'success')
     return redirect(url_for('main.tournament_detail', tournament_id=new_tournament.id))
 
 

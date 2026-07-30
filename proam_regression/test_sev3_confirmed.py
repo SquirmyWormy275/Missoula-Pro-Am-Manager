@@ -2266,3 +2266,299 @@ def test_a_pair_one_slot_inside_the_gap_is_reported_once(app, sql):
         f"breaks the builder's rule, panel said: {hits}")
     assert "1 " in hits[0].get("title", ""), (
         f"one staged violation, headline says {hits[0].get('title')!r}")
+
+
+# ---------------------------------------------------------------------------
+# 25. Tournament clone drops the tournament's configuration
+#     routes/main.py:615-724, clone_tournament
+#
+# The clone copies events, teams and competitors and nothing else. Measured on
+# the real 2026 tournament: 16 hand-entered wood configs become 0, and the
+# whole schedule_config (including a hand-ordered 29-event Friday running
+# order) becomes NULL. The operator is told "Update the name and dates before
+# use", which is the only instruction they get and is false.
+#
+# schedule_config stores SOURCE event ids in four keys. The clone builds new
+# events with new ids, so a verbatim copy would drag dead ids into the copy.
+# That is the same hazard clone_tournament already documents and guards for
+# `payouts` on stateful events. The ids must be remapped, not copied.
+# ---------------------------------------------------------------------------
+
+CLONE_URL = f"/tournament/{TID}/clone"
+
+# Every schedule_config key whose value is (or contains) event ids.
+EVENT_ID_KEYS = (
+    "friday_pro_event_ids",
+    "saturday_college_event_ids",
+    "friday_event_order",
+    "saturday_event_order",
+)
+
+
+def _do_clone(client, sql):
+    """POST the real clone route and return the new tournament id."""
+    before = {r[0] for r in sql("SELECT id FROM tournaments")}
+    resp = client.post(CLONE_URL, follow_redirects=False)
+    assert resp.status_code == 302, f"clone POST returned {resp.status_code}"
+    after = {r[0] for r in sql("SELECT id FROM tournaments")}
+    new = sorted(after - before)
+    assert len(new) == 1, f"clone created {len(new)} tournament(s): {new}"
+    return new[0]
+
+
+def _wood(sql, tid):
+    return {
+        r[0]: (r[1], r[2], r[3], r[4], r[5])
+        for r in sql(
+            "SELECT config_key, species, size_value, size_unit, notes, "
+            "count_override FROM wood_configs WHERE tournament_id=:t", t=tid)
+    }
+
+
+def _cfg(sql, tid):
+    raw = sql("SELECT schedule_config FROM tournaments WHERE id=:t", t=tid)[0][0]
+    if raw is None:
+        return None
+    return json.loads(raw)
+
+
+def _event_identity(sql, tid):
+    """event id -> (name, gender, event_type) for one tournament."""
+    return {
+        r[0]: (r[1], r[2], r[3])
+        for r in sql("SELECT id, name, gender, event_type FROM events "
+                     "WHERE tournament_id=:t", t=tid)
+    }
+
+
+@pytest.mark.sev3
+def test_the_source_tournament_really_does_carry_hand_entered_wood_configs(sql):
+    """CONTROL. Stated as data, not as prose. If 2026 held no wood configs
+    there would be nothing to lose and this cycle would be chasing a defect
+    that does not exist on the operator's real tournament.
+    """
+    rows = _wood(sql, TID)
+    assert len(rows) >= 10, f"source holds only {len(rows)} wood config(s)"
+    specced = [k for k, v in rows.items() if v[0] and v[1]]
+    assert len(specced) >= 10, (
+        f"only {len(specced)} of {len(rows)} wood configs carry both a species "
+        f"and a size, so little real work is at stake")
+
+
+@pytest.mark.sev3
+def test_the_source_tournament_really_does_carry_a_hand_ordered_schedule(sql):
+    """CONTROL. Same purpose for the other half. The Friday running order is
+    29 events long and every id in it belongs to this tournament, which is what
+    makes a verbatim copy into a different tournament wrong.
+    """
+    cfg = _cfg(sql, TID)
+    assert cfg, "source tournament has no schedule_config"
+    order = cfg.get("friday_event_order") or []
+    assert len(order) >= 20, f"Friday order holds only {len(order)} event(s)"
+    own = set(_event_identity(sql, TID))
+    assert set(order) <= own, (
+        f"source order references ids outside its own events: "
+        f"{sorted(set(order) - own)}")
+
+
+@pytest.mark.sev3
+def test_the_clone_carries_the_wood_configs(client, sql):
+    """DEFECT. 16 rows of hand-entered species and dimensions, silently zero
+    in the copy, with nothing on any page saying so.
+    """
+    src = _wood(sql, TID)
+    new = _do_clone(client, sql)
+    got = _wood(sql, new)
+    assert got == src, (
+        f"clone carried {len(got)} of the source's {len(src)} wood config(s); "
+        f"missing {sorted(set(src) - set(got))}")
+
+
+@pytest.mark.sev3
+def test_the_clone_carries_the_schedule_settings(client, sql):
+    """DEFECT. Flight sizing, placement mode and feature notes are operator
+    decisions, not derived state, and none of them survive the clone.
+    """
+    src = _cfg(sql, TID)
+    new = _do_clone(client, sql)
+    got = _cfg(sql, new)
+    assert got is not None, "clone's schedule_config is NULL"
+    scalars = {k: v for k, v in src.items() if k not in EVENT_ID_KEYS}
+    assert scalars, "source carries no non-id schedule settings to check"
+    for key, want in scalars.items():
+        assert got.get(key) == want, (
+            f"schedule_config[{key!r}] is {got.get(key)!r} in the copy, "
+            f"{want!r} in the source")
+
+
+@pytest.mark.sev3
+def test_the_cloned_running_order_points_at_the_clones_own_events(client, sql):
+    """DEFECT, and the reason a verbatim copy is not the fix. Every event id
+    stored in schedule_config must be remapped to the copy's own event, and the
+    running order must survive as the same events in the same sequence.
+    """
+    src_cfg = _cfg(sql, TID)
+    src_ident = _event_identity(sql, TID)
+    new = _do_clone(client, sql)
+    got = _cfg(sql, new) or {}
+    new_ident = _event_identity(sql, new)
+
+    for key in EVENT_ID_KEYS:
+        if key not in src_cfg:
+            continue
+        ids = got.get(key)
+        assert ids is not None, f"schedule_config[{key!r}] did not carry"
+        stale = [i for i in ids if i not in new_ident]
+        assert not stale, (
+            f"schedule_config[{key!r}] carries id(s) {stale} that do not exist "
+            f"in the cloned tournament")
+        assert [new_ident[i] for i in ids] == [src_ident[i] for i in src_cfg[key]], (
+            f"schedule_config[{key!r}] does not name the same events in the "
+            f"same order as the source")
+
+
+@pytest.mark.sev3
+def test_the_clone_flash_does_not_say_the_name_and_dates_are_all_that_is_left(
+        client, sql, flashes):
+    """DEFECT. The flash is the operator's only instruction after a clone and
+    it is the reason the silent drops stay silent.
+    """
+    _do_clone(client, sql)
+    msgs = [m for _cat, m in flashes()]
+    assert msgs, "clone raised no flash at all"
+    text = " ".join(msgs)
+    assert not re.search(r"update the name and dates before use", text, re.I), (
+        f"flash still tells the operator the name and the dates are the whole "
+        f"job: {text!r}")
+    assert re.search(r"result|heat|entr", text, re.I), (
+        f"flash does not say what did NOT carry: {text!r}")
+
+
+@pytest.mark.sev3
+def test_the_clone_still_copies_events_teams_and_competitors(client, sql):
+    """CONTROL. The parts that already worked must keep working."""
+    def counts(tid):
+        return {
+            t: sql(f"SELECT count(*) FROM {t} WHERE tournament_id=:x", x=tid)[0][0]
+            for t in ("events", "teams", "college_competitors", "pro_competitors")
+        }
+
+    src = counts(TID)
+    new = _do_clone(client, sql)
+    assert counts(new) == src
+
+
+@pytest.mark.sev3
+def test_the_clone_still_carries_no_heats_results_or_entries(client, sql):
+    """CONTROL. A clone is a template for next year, not a copy of the show.
+    Carrying config must not start carrying the run itself.
+    """
+    new = _do_clone(client, sql)
+    heats = sql("SELECT count(*) FROM heats h JOIN events e ON e.id=h.event_id "
+                "WHERE e.tournament_id=:t", t=new)[0][0]
+    flights = sql("SELECT count(*) FROM flights WHERE tournament_id=:t", t=new)[0][0]
+    entered = sql("SELECT DISTINCT events_entered FROM pro_competitors "
+                  "WHERE tournament_id=:t", t=new)
+    assert heats == 0, f"clone carried {heats} heat(s)"
+    assert flights == 0, f"clone carried {flights} flight(s)"
+    assert [r[0] for r in entered] == ["[]"], (
+        f"clone carried event entries: {[r[0] for r in entered][:3]}")
+
+
+@pytest.mark.sev3
+def test_the_clone_still_wipes_stateful_event_payouts(client, sql):
+    """CONTROL. clone_tournament already resets `payouts` on Partnered Axe,
+    Pro-Am Relay and birling because it holds source competitor ids. Carrying
+    schedule_config must not weaken that guard.
+    """
+    new = _do_clone(client, sql)
+    rows = sql("SELECT name, payouts FROM events WHERE tournament_id=:t AND "
+               "(name IN ('Partnered Axe Throw', 'Pro-Am Relay') "
+               " OR lower(coalesce(stand_type,''))='birling')", t=new)
+    assert rows, "no stateful events in the clone to check"
+    for name, payouts in rows:
+        assert payouts in ("{}", None), f"{name} carried state: {payouts!r}"
+
+
+@pytest.mark.sev3
+def test_the_clone_does_not_modify_the_source_tournament(client, sql):
+    """CONTROL. An id remap that rewrote the source's own config in place would
+    destroy the live 2026 schedule while appearing to succeed.
+    """
+    before_cfg = _cfg(sql, TID)
+    before_wood = _wood(sql, TID)
+    _do_clone(client, sql)
+    assert _cfg(sql, TID) == before_cfg, "clone rewrote the SOURCE schedule_config"
+    assert _wood(sql, TID) == before_wood, "clone modified the SOURCE wood configs"
+
+
+@pytest.mark.sev3
+def test_a_tournament_with_nothing_configured_still_clones(client, sql):
+    """CONTROL. A fresh tournament has no wood configs and a NULL
+    schedule_config. Cloning one must not become a 500.
+    """
+    from database import db
+
+    db.session.execute(db.text("DELETE FROM wood_configs WHERE tournament_id=:t"),
+                       {"t": TID})
+    db.session.execute(db.text("UPDATE tournaments SET schedule_config=NULL "
+                               "WHERE id=:t"), {"t": TID})
+    db.session.commit()
+    new = _do_clone(client, sql)
+    assert _wood(sql, new) == {}
+    assert sql("SELECT count(*) FROM events WHERE tournament_id=:t", t=new)[0][0] > 0
+
+
+@pytest.mark.sev3
+def test_a_config_naming_a_deleted_event_does_not_leak_a_stale_id(client, sql):
+    """CONTROL, and the boundary of the remap. An id that cannot be mapped is
+    dropped, not carried and not turned into a null. Staged rather than found:
+    the real 2026 config happens to reference only live events, so without this
+    a remap that silently passed unknown ids through would be invisible.
+    """
+    from database import db
+
+    cfg = _cfg(sql, TID) or {}
+    real = list(cfg.get("friday_event_order") or [])
+    assert len(real) >= 3, "source order too short to stage against"
+    cfg["friday_event_order"] = [real[0], 999999, real[1]]
+    db.session.execute(db.text("UPDATE tournaments SET schedule_config=:c "
+                               "WHERE id=:t"), {"c": json.dumps(cfg), "t": TID})
+    db.session.commit()
+
+    new = _do_clone(client, sql)
+    got = (_cfg(sql, new) or {}).get("friday_event_order")
+    new_ident = _event_identity(sql, new)
+    assert got is not None, "friday_event_order did not carry"
+    assert 999999 not in got, f"stale source id survived the clone: {got}"
+    assert None not in got, f"unmappable id became a null: {got}"
+    assert len(got) == 2, f"expected the two mappable events, got {got}"
+    src_ident = _event_identity(sql, TID)
+    assert [new_ident[i] for i in got] == [src_ident[real[0]], src_ident[real[1]]]
+
+
+@pytest.mark.sev3
+def test_every_wood_config_column_carries_not_just_the_ones_2026_uses(client, sql):
+    """CONTROL, staged. The real 2026 wood configs leave `notes` NULL on all 16
+    rows and `size_unit` at its 'in' default on all 16, so a copy that silently
+    dropped either field would be indistinguishable from a correct one on this
+    data. Mutation M-e proved exactly that: omitting notes= from the copy
+    survived the whole battery. Stage both fields so the columns are pinned by
+    the test rather than by what the operator happened to type.
+    """
+    from database import db
+
+    db.session.execute(db.text(
+        "UPDATE wood_configs SET notes=:n, size_unit='mm', size_value=330 "
+        "WHERE tournament_id=:t AND config_key=:k"),
+        {"n": "green larch, cut Thursday", "t": TID, "k": "log_general"})
+    db.session.commit()
+
+    src = _wood(sql, TID)
+    assert src["log_general"] == ("Western Larch", 330.0, "mm",
+                                  "green larch, cut Thursday", None), src["log_general"]
+    new = _do_clone(client, sql)
+    got = _wood(sql, new)
+    assert got == src, (
+        f"log_general carried as {got.get('log_general')!r}, "
+        f"source has {src['log_general']!r}")
