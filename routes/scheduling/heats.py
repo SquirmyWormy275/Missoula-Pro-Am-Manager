@@ -68,17 +68,32 @@ def event_heats(tournament_id, event_id):
     all_comp_ids = []
     for h in heats:
         all_comp_ids.extend(h.get_competitors())
-    comp_lookup = _load_competitor_lookup(event, all_comp_ids)
     all_results = EventResult.query.filter_by(event_id=event.id).all()
     result_status_map = {r.competitor_id: r.status for r in all_results}
 
     # Competitors registered for this event but not in any heat (for Add Competitor UI)
     all_heat_comp_ids = set(all_comp_ids)
-    unassigned_competitors = [
-        {'id': r.competitor_id, 'name': r.competitor_name}
-        for r in all_results
+    unassigned_rows = [
+        r for r in all_results
         if r.competitor_id not in all_heat_comp_ids and r.status != 'scratched'
     ]
+    # Load the unassigned competitors too, not just the ones standing in heats,
+    # so the eligibility check below has an object to read a gender off.
+    comp_lookup = _load_competitor_lookup(
+        event, all_comp_ids + [r.competitor_id for r in unassigned_rows])
+    unassigned_competitors = []
+    for r in unassigned_rows:
+        comp = comp_lookup.get(r.competitor_id)
+        # Do not offer a choice add_to_heat will refuse. This is deliberately
+        # the ADD ROUTE's predicate (heats.py add_to_heat), not the heat
+        # generator's: the dropdown must hide exactly what the server rejects
+        # and nothing more. An unresolvable id stays on the list, because
+        # hiding what cannot be verified is how a real entrant disappears.
+        if (event.gender and comp is not None
+                and getattr(comp, 'gender', None)
+                and comp.gender != event.gender):
+            continue
+        unassigned_competitors.append({'id': r.competitor_id, 'name': r.competitor_name})
 
     return render_template('scheduling/heats.html',
                            tournament=tournament,
@@ -152,6 +167,7 @@ def generate_heats(tournament_id, event_id):
     from services.heat_generator import (
         generate_event_heats,
         get_last_gear_violations,
+        get_last_gender_excluded,
         get_last_unpaired_partnered,
     )
     from services.saw_block_assignment import trigger_saw_block_recompute
@@ -203,6 +219,27 @@ def generate_heats(tournament_id, event_id):
         flash(text.FLASH['heats_error'].format(
             error='see application logs (admin only)'
         ), 'error')
+
+    # Surface entrants dropped by the gendered-event filter. This sits AFTER the
+    # try/except, not inside it with its two siblings, on purpose: when EVERY
+    # entrant is the wrong gender, generate_event_heats raises ValueError("No
+    # competitors entered for ...") and the operator gets a generic error naming
+    # nobody. That is the case where this warning matters most, and inside the
+    # try it would never fire. The service writes the log before it raises.
+    excluded = get_last_gender_excluded(event.id)
+    if excluded:
+        names_blurb = ', '.join(
+            f"{e['comp_name']} ({e['comp_gender']})" for e in excluded[:5]
+        )
+        extra = f' (+{len(excluded) - 5} more)' if len(excluded) > 5 else ''
+        flash(
+            f'NOT ELIGIBLE: {len(excluded)} competitor(s) are entered in '
+            f'{event.display_name} but are the wrong gender for it and were '
+            f'NOT placed in any heat: {names_blurb}{extra}. '
+            'They are still entered in the event. Remove the entry or correct '
+            'the record.',
+            'warning'
+        )
 
     return redirect(url_for('scheduling.event_heats',
                             tournament_id=tournament_id,

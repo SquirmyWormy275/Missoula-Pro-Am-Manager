@@ -2579,3 +2579,307 @@ def test_the_relay_log_row_survives_a_tournament_with_no_relay_saw_config(
     assert row["species"] is not None, (
         f"an unconfigured relay log must fall back to the general saw log "
         f"spec, not to a blank species, got {row}")
+
+
+# ---------------------------------------------------------------------------
+# c20. A wrong-gender entrant is dropped from heat generation in total silence,
+#      then offered in the Add Competitor dropdown that the server will refuse.
+#      services/heat_generator.py:472-474 (the filter)
+#      services/heat_generator.py:205-215 (the placement validator it blinds)
+#      routes/scheduling/heats.py:75-81 (the dropdown)
+#      routes/scheduling/heats.py:637-645 (the guard the dropdown ignores)
+#
+# Kate Page (pro 2, F) is entered in event 32, pro Underhand, gender M. She is
+# the only such row in the whole 2026 database. She has an EventResult row, she
+# is billed $10 for the event in entry_fees, and she can never take a start in
+# it. Nothing in the app says so.
+#
+# The placement validator at :205 looks like it would catch this and does not:
+# the gender filter runs inside _get_event_competitors BEFORE `competitors` is
+# built, so expected_ids never contains her, `missing` is empty, and not even
+# the logger.warning fires.
+# ---------------------------------------------------------------------------
+
+UH_M = 32           # pro Underhand, gender M, 5 stands, 26 enrolled
+UH_F = 33           # pro Underhand, gender F, 13 enrolled, 3 heats already
+COOKIE = 43         # pro Cookie Stack, NO gender, 31 enrolled — negative control
+KATE = 2            # pro, F, entered in 32/33/34/39/40
+CLAY = 3            # pro, M, active, entered only in 36. Never in 32.
+
+_ADD_FORM_RE = re.compile(
+    r'<form[^>]+action="[^"]*add-to-heat[^"]*"[^>]*>(.*?)</form>', re.S)
+# Named _ADD_OPTION_RE, not _OPTION_RE: the throwoff helpers at the top of
+# this file already own that name with a two-group pattern, and shadowing it
+# from down here broke three of their tests without touching their code.
+_ADD_OPTION_RE = re.compile(r'<option value="(\d+)"')
+
+
+def _add_dropdown_ids(html):
+    """Competitor ids the Add Competitor dropdowns actually offer.
+
+    Scoped to the add-to-heat forms rather than every <option> on the page, so
+    the move-competitor and status selects cannot contaminate the reading. The
+    heat_id travels as a hidden input, not an option, so it cannot either.
+    """
+    ids = set()
+    for block in _ADD_FORM_RE.findall(html):
+        ids.update(int(v) for v in _ADD_OPTION_RE.findall(block))
+    return ids
+
+
+def _placed_ids(sql, event_id):
+    out = []
+    for _num, comps in sql("SELECT heat_number, competitors FROM heats "
+                           "WHERE event_id = :e ORDER BY heat_number",
+                           e=event_id):
+        out.extend(_loads(comps) or [])
+    return [int(c) for c in out]
+
+
+def _gen(client, flashes, event_id):
+    flashes()
+    r = client.post(f"/scheduling/{TID}/event/{event_id}/generate-heats",
+                    data={"confirm": "true"})
+    assert r.status_code in (200, 302), r.data[:400]
+    return flashes()
+
+
+def _named_in_a_warning(said, name):
+    """Flashes that name this person under a category the operator reads as
+    a problem. Shaped on CATEGORY, not on my wording, so any implementation
+    that says it out loud passes whatever words it picks."""
+    return [(cat, msg) for cat, msg in said
+            if cat in ("warning", "danger", "error") and name in msg]
+
+
+def _insert_result(app, event_id, comp_id, name, ctype="pro"):
+    from database import db
+    db.session.execute(db.text(
+        "INSERT INTO event_results "
+        "(event_id, competitor_id, competitor_type, competitor_name, "
+        " points_awarded, payout_amount, status, version_id, is_flagged, "
+        " throwoff_pending, handicap_factor, payout_settled) "
+        "VALUES (:e, :c, :t, :n, 0, 0, 'pending', 1, false, false, 0, false)"),
+        {"e": event_id, "c": comp_id, "t": ctype, "n": name})
+    db.session.commit()
+
+
+# --- the defect -------------------------------------------------------------
+
+@pytest.mark.sev2
+def test_generating_heats_says_out_loud_that_an_entered_competitor_was_left_out(
+        client, sql, flashes):
+    """26 people are entered in event 32. 25 get a stand. Nobody is told.
+
+    Measured against v2026.final: the only flash is
+    ('success', "Generated 5 heat(s) for Men's Underhand.") and caplog holds
+    no heat_generator warning either.
+    """
+    said = _gen(client, flashes, UH_M)
+
+    # Vacuity guard: generation must actually have succeeded, or "no success
+    # flash" would satisfy this test for the wrong reason.
+    assert [m for cat, m in said if cat == "success"], (
+        f"heat generation did not succeed at all, so this test proves "
+        f"nothing about what it reports: {said}")
+    assert len(_placed_ids(sql, UH_M)) == 25, "the roster changed under the test"
+
+    warned = _named_in_a_warning(said, "Kate Page")
+    assert warned, (
+        f"Kate Page is entered in event {UH_M} and was left out of every heat, "
+        f"and the operator was told nothing about it. Flashes: {said}")
+
+
+@pytest.mark.sev2
+def test_the_add_competitor_dropdown_does_not_offer_someone_the_server_refuses(
+        client, sql, flashes):
+    """The dropdown offers Kate on every heat. add_to_heat refuses her.
+
+    routes/partnered_axe.py:27-36 states this codebase's own position on the
+    class: "a dropdown that offers a choice the server will reject is a trap
+    the judge only springs mid-event."
+    """
+    _gen(client, flashes, UH_M)
+
+    page = client.get(f"/scheduling/{TID}/event/{UH_M}/heats")
+    assert page.status_code == 200, page.status_code
+    offered = _add_dropdown_ids(page.get_data(as_text=True))
+
+    # Not an assertion about Kate by name: nobody the add route will refuse on
+    # gender may be offered. Read the genders back out of the database rather
+    # than hardcoding them.
+    ev_gender = sql("SELECT gender FROM events WHERE id = :e", e=UH_M)[0][0]
+    genders = dict(sql("SELECT id, gender FROM pro_competitors "
+                       "WHERE tournament_id = :t", t=TID))
+    trap = sorted(cid for cid in offered
+                  if genders.get(cid) and genders[cid] != ev_gender)
+    assert not trap, (
+        f"the Add Competitor dropdown offers {trap} for a {ev_gender} event; "
+        f"add_to_heat refuses every one of them on gender mismatch")
+
+
+@pytest.mark.sev2
+def test_the_generator_records_the_excluded_entrant_when_called_directly(app):
+    """A route-only fix leaves every other caller of the service blind.
+
+    services/schedule_generation.py, routes/scheduling/flights.py,
+    routes/scheduling/events.py and two scripts all call generate_event_heats
+    without going through the heats route.
+    """
+    from database import db
+    from models import Event
+    from services.heat_generator import (
+        generate_event_heats,
+        get_last_gender_excluded,
+    )
+
+    event = Event.query.get(UH_M)
+    generate_event_heats(event)
+    db.session.commit()
+
+    recorded = get_last_gender_excluded(UH_M)
+    ids = [r["comp_id"] for r in recorded]
+    assert KATE in ids, (
+        f"the service placed 25 of 26 entrants and recorded nothing about the "
+        f"26th: {recorded}")
+
+    # And ONLY entrants. Every woman in the tournament is the wrong gender for
+    # a men's event; saying so on all of them turns one real problem into a
+    # roster dump the operator scrolls past. The record has to be scoped by who
+    # is entered, not by who fails the gender check. The entered set is read out
+    # of the database rather than hardcoded, so this stays true if the roster
+    # moves.
+    entered = set()
+    for cid, raw in db.session.execute(db.text(
+            "SELECT id, events_entered FROM pro_competitors "
+            "WHERE tournament_id = :t"), {"t": TID}):
+        if UH_M in [int(e) for e in (_loads(raw) or [])]:
+            entered.add(cid)
+    assert entered, "vacuity guard: nobody reads as entered in event 32 at all"
+    stowaways = sorted(set(ids) - entered)
+    assert not stowaways, (
+        f"the service reported {stowaways} as excluded from event {UH_M} and "
+        f"none of them is entered in it. {len(ids)} people named for a problem "
+        f"that affects {len(set(ids) & entered)}.")
+
+
+@pytest.mark.sev2
+def test_when_every_entrant_is_the_wrong_gender_the_operator_is_told_who(
+        app, client, sql, flashes):
+    """The worst version of this lands on the FAILURE path.
+
+    Empty the women's Underhand of eligible entrants and enter one man in it.
+    generate_event_heats raises 'No competitors entered', the route swallows
+    it and flashes 'see application logs (admin only)', and the one man who IS
+    entered is never mentioned. Both halves of that are wrong: competitors ARE
+    entered, and the operator is sent to a log file to find out who.
+    """
+    from database import db
+    db.session.execute(db.text(
+        "UPDATE pro_competitors SET status = 'scratched' "
+        "WHERE tournament_id = :t AND gender = 'F'"), {"t": TID})
+    db.session.execute(db.text(
+        "UPDATE pro_competitors SET events_entered = :ev WHERE id = :c"),
+        {"ev": json.dumps([36, UH_F]), "c": CLAY})
+    db.session.commit()
+
+    before = sql("SELECT count(*) FROM heats WHERE event_id = :e", e=UH_F)[0][0]
+    said = _gen(client, flashes, UH_F)
+    after = sql("SELECT count(*) FROM heats WHERE event_id = :e", e=UH_F)[0][0]
+
+    # Vacuity guard, inverted: this test only means anything if generation
+    # really did fail. It raises before _delete_event_heats, so the three
+    # production heats are still standing untouched.
+    assert after == before, (
+        f"heats were rebuilt after all ({before} -> {after}), so this test is "
+        f"not exercising the failure path it was written for")
+    assert not [m for cat, m in said if cat == "success"], (
+        f"generation reported success on an event it could not build: {said}")
+    warned = _named_in_a_warning(said, "Clay Stephenson")
+    assert warned, (
+        f"the only person entered in event {UH_F} is the wrong gender for it, "
+        f"and the operator was handed a generic error naming nobody: {said}")
+
+
+# --- positive controls: these must pass before AND after the fix -------------
+
+@pytest.mark.sev2
+def test_the_eligible_men_are_still_placed_when_a_wrong_gender_entrant_is_present(
+        client, sql, flashes):
+    """The fix must report the excluded entrant, not start dropping people."""
+    _gen(client, flashes, UH_M)
+
+    placed = _placed_ids(sql, UH_M)
+    heats = sql("SELECT count(*) FROM heats WHERE event_id = :e", e=UH_M)[0][0]
+    assert heats == 5, f"expected 5 heats of 5, got {heats}"
+    assert len(placed) == 25, f"expected 25 men placed, got {len(placed)}"
+    assert len(set(placed)) == 25, f"somebody was placed twice: {sorted(placed)}"
+    assert KATE not in placed, (
+        "Kate Page was placed in a men's heat — the fix must surface her, not "
+        "admit her")
+
+
+@pytest.mark.sev2
+def test_an_unassigned_same_gender_competitor_is_still_offered_in_the_dropdown(
+        app, client, sql, flashes):
+    """The Add Competitor UI has a job. Filtering must not silence it.
+
+    Clay Stephenson is an active male pro who is not entered in event 32. Give
+    him an EventResult row after generation, which is exactly the state the Add
+    Competitor dropdown exists to resolve, and check he is still offered.
+    """
+    _gen(client, flashes, UH_M)
+    _insert_result(app, UH_M, CLAY, "Clay Stephenson")
+
+    page = client.get(f"/scheduling/{TID}/event/{UH_M}/heats")
+    offered = _add_dropdown_ids(page.get_data(as_text=True))
+    assert CLAY in offered, (
+        f"an eligible unassigned man vanished from the Add Competitor "
+        f"dropdown. Offered: {sorted(offered)}")
+
+
+@pytest.mark.sev2
+def test_an_unresolvable_entry_is_still_offered_in_the_dropdown(
+        app, client, sql, flashes):
+    """Never hide what cannot be verified.
+
+    ProCompetitor and CollegeCompetitor share an id space, and event_results
+    rows can outlive the competitor they point at. An entry whose competitor
+    cannot be loaded must stay visible: it is the operator's only sign that the
+    row exists at all.
+    """
+    _gen(client, flashes, UH_M)
+    orphan = sql("SELECT max(id) + 1000 FROM pro_competitors")[0][0]
+    _insert_result(app, UH_M, orphan, "Orphaned Entry")
+
+    page = client.get(f"/scheduling/{TID}/event/{UH_M}/heats")
+    offered = _add_dropdown_ids(page.get_data(as_text=True))
+    assert orphan in offered, (
+        f"an event_results row with no competitor behind it was hidden from "
+        f"the dropdown instead of surfaced. Offered: {sorted(offered)}")
+
+
+@pytest.mark.sev2
+def test_a_non_gendered_event_reports_no_exclusions(client, sql, flashes):
+    """The negative control: a fix that warns about everybody is not a fix.
+
+    Cookie Stack has no gender, so no entrant can be the wrong one for it. The
+    flash assertion below is the part that carries weight before the fix as
+    well as after. The side-channel check is reached through getattr because
+    get_last_gender_excluded does not exist yet on the unmodified tree, and is
+    stated as vacuous-before rather than dressed up as a passing assertion.
+    """
+    import services.heat_generator as hg
+
+    said = _gen(client, flashes, COOKIE)
+
+    assert [m for cat, m in said if cat == "success"], (
+        f"generation failed, so this control proves nothing: {said}")
+    noise = [(c, m) for c, m in said if c in ("warning", "danger", "error")]
+    assert not noise, (
+        f"a genderless event produced a warning flash: {noise}")
+
+    getter = getattr(hg, "get_last_gender_excluded", None)
+    if getter is not None:
+        assert getter(COOKIE) == [], (
+            f"a genderless event reported gender exclusions: {getter(COOKIE)}")

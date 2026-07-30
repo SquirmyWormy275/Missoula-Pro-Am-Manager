@@ -44,6 +44,17 @@ _last_lh_overflow_warnings: dict[int, list[dict]] = {}
 # warning flash + Preflight resolution prompt.
 _last_unpaired_partnered: dict[int, list[dict]] = {}
 
+# Per-event log of entrants dropped by the gendered-event filter in
+# _get_event_competitors. Same purpose as the unpaired-partnered log above:
+# they are active, they are entered in the event, they will not appear in any
+# heat, and somebody has to say so.
+#
+# The placement validator in generate_event_heats looks like it already covers
+# this and does not. The gender filter runs inside _get_event_competitors, so
+# the excluded competitor never reaches `competitors`, expected_ids never holds
+# their id, `missing` comes out empty, and not even the logger.warning fires.
+_last_gender_excluded: dict[int, list[dict]] = {}
+
 
 def get_last_gear_violations(event_id: int) -> list[dict]:
     """Return the gear-sharing violations recorded by the most recent
@@ -66,6 +77,13 @@ def get_last_unpaired_partnered(event_id: int) -> list[dict]:
     (raw string from partners JSON, possibly empty), reason ('blank' |
     'unresolved' | 'self_reference' | 'nonreciprocal')."""
     return list(_last_unpaired_partnered.get(event_id, []))
+
+
+def get_last_gender_excluded(event_id: int) -> list[dict]:
+    """Return the wrong-gender entrants dropped by the most recent
+    generate_event_heats(event) call for this event_id, or an empty list.
+    Each entry is a dict with keys: comp_id, comp_name, comp_gender."""
+    return list(_last_gender_excluded.get(event_id, []))
 
 
 def _sort_by_ability(competitors: list, event: Event) -> list:
@@ -128,6 +146,11 @@ def generate_event_heats(event: Event) -> int:
                 event.id, event.name, event.event_type)
     # Clear the per-tournament event cache so it refreshes each generate call.
     _get_tournament_events._cache = {}
+    # This clear is NOT down with its three siblings below. They are cleared
+    # after _get_event_competitors returns; this log is WRITTEN inside that
+    # call, so clearing it there would erase the record one line after it was
+    # made. It has to be cleared before the call, not after.
+    _last_gender_excluded.pop(event.id, None)
     # Get competitors for this event
     competitors = _get_event_competitors(event)
 
@@ -469,8 +492,34 @@ def _get_event_competitors(event: Event) -> list:
             status='active'
         ).all()
 
-    # Filter by gender if gendered event
+    # Filter by gender if gendered event.
+    # Record who this drops before dropping them. An active competitor who is
+    # entered in this event and is the wrong gender for it will not appear in
+    # any heat, and the placement validator in generate_event_heats cannot see
+    # it: they never reach `competitors`, so `missing` comes out empty. Only
+    # entrants are recorded. Everybody else in the tournament is the wrong
+    # gender for a gendered event and saying so would be noise.
     if event.gender:
+        excluded = [
+            c for c in all_comps
+            if c.gender != event.gender
+            and _competitor_entered_event(event, c.get_events_entered())
+        ]
+        if excluded:
+            _last_gender_excluded[event.id] = [
+                {'comp_id': c.id,
+                 'comp_name': c.display_name,
+                 'comp_gender': c.gender}
+                for c in sorted(excluded, key=lambda c: c.id)
+            ]
+            for entry in _last_gender_excluded[event.id]:
+                logger.warning(
+                    'heat_generator: competitor %s (%r, gender=%r) is entered in '
+                    'event %r (gender=%r) but is excluded from it and will not '
+                    'be placed in any heat',
+                    entry['comp_id'], entry['comp_name'], entry['comp_gender'],
+                    event.display_name, event.gender,
+                )
         all_comps = [c for c in all_comps if c.gender == event.gender]
 
     for comp in all_comps:
