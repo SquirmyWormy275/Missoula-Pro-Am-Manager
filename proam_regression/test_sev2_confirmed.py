@@ -1404,3 +1404,73 @@ def test_submitting_the_rendered_throwoff_form_untouched_changes_nothing(app, cl
         f"before={before} after={after}")
     assert sum(1 for p in after.values() if p == 1) <= 2, (
         f"more than one competing unit came out in first place: {after}")
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap (not a backlog item): nothing asserted that an unauthenticated
+# POST to a management write route is refused.
+#
+# scoring.record_throwoff carries no @login_required, unlike finalize_event
+# two hundred lines above it.  That looked like a hole and is not one: the
+# before_request gate in app.py (require_judge_for_management_routes) admits
+# scoring only to an authenticated principal holding can_score, and refuses
+# every unsafe method from a principal without can_write.  Eight of the
+# thirteen POST routes in routes/scoring.py rely on that gate the same way, so
+# the decorator's absence is the house style rather than an oversight.
+#
+# What was actually missing is the test.  tests/test_role_access_control.py
+# covers the gate with GET only (there is not one .post in the file), and the
+# read-only-role write test above enters through reporting, where can_report
+# admits a principal the write check then stops.  No test anywhere held the
+# unauthenticated half of the gate on a write route.  The gate is one
+# before_request hook with a list of prefix exemptions above it; adding a
+# prefix there is a one-line change that would open every scoring POST at
+# once, silently, with the whole suite still green.  This closes that.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.sev2
+def test_an_unauthenticated_post_cannot_resolve_a_throw_off(app, client, sql):
+    """No session, no position change. With a control proving the payload works.
+
+    The control is the point. Asserting only that the anonymous POST changed
+    nothing passes just as happily against a typo in the URL, a payload the
+    validator rejects, or an event with no tie to resolve. So the same payload
+    is replayed as the admin afterwards and has to land, which makes the first
+    assertion mean "the gate stopped it" rather than "nothing was going to
+    happen anyway".
+    """
+    used = _score_pat(app, sql, [30, 28, 24, 24, 16])
+    _finalize(client, PAT_EVENT)
+
+    flagged = _flagged(sql, PAT_EVENT)
+    assert flagged, "no throw-off is pending, so this test would prove nothing"
+
+    tied = [pair for pair in used if pair[0][1] in flagged]
+    assert len(tied) == 2, (
+        f"expected the two 24-point pairs to be flagged, got {len(tied)}")
+    payload = {f"throwoff_pos_{tied[0][0][1]}": "3",
+               f"throwoff_pos_{tied[1][0][1]}": "4"}
+
+    before = _positions(sql, PAT_EVENT)
+
+    anon = app.test_client()
+    resp = anon.post(f"/scoring/{TID}/event/{PAT_EVENT}/throwoff", data=payload)
+    after_anon = _positions(sql, PAT_EVENT)
+
+    assert resp.status_code != 200, (
+        f"an anonymous POST to record_throwoff returned {resp.status_code}; "
+        f"a management write route must never serve an unauthenticated caller")
+    assert after_anon == before, (
+        f"an anonymous POST moved finishing positions on event {PAT_EVENT}. "
+        f"before={before} after={after_anon}. record_throwoff has no "
+        f"@login_required, so the only thing standing between the open "
+        f"internet and the results board is the before_request gate in app.py")
+
+    r_admin = client.post(f"/scoring/{TID}/event/{PAT_EVENT}/throwoff",
+                          data=payload, follow_redirects=True)
+    assert r_admin.status_code == 200, r_admin.status_code
+    after_admin = _positions(sql, PAT_EVENT)
+    assert after_admin != before, (
+        "the control failed: the same payload changed nothing as the admin "
+        "either, so the anonymous assertion above proved nothing about "
+        "authentication")
