@@ -81,7 +81,29 @@
                         {% endfor %}
                         {% if not already_assigned %}
                         <div class="comp-card" data-id="{{ comp.id }}" data-gender="{{ comp.gender }}" data-division="pro">
-                            <span>{{ comp.display_name }}</span>
+                            {#
+                              comp is a plain dict from
+                              ProAmRelayService.get_eligible_pro_competitors, keyed
+                              id/name/gender. It has never had a display_name key, so
+                              this printed Jinja's Undefined (empty string) on every
+                              pool card while drag-and-drop kept working off data-id.
+                              The operator was assigning nameless cards to teams.
+
+                              Fixed in the template rather than in the service on
+                              purpose: run_lottery appends these exact dict objects
+                              into team['pro_members'] / team['college_members'],
+                              which get serialized into events.event_state, and
+                              services/proam_relay.py:452 persists the eligible lists
+                              themselves. Adding a display_name key would change the
+                              shape of persisted JSON and leave two spellings of the
+                              same name in the same record.
+
+                              'name' is also what the assigned-slot cards 55 lines
+                              below already print (m.name off the same dicts). A card
+                              whose text changed when it was dragged out of the pool
+                              would be worse than one that is blank.
+                            #}
+                            <span>{{ comp.name }}</span>
                             <span class="badge {% if comp.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">{{ comp.gender }}</span>
                         </div>
                         {% endif %}
@@ -104,7 +126,20 @@
                         {% endfor %}
                         {% if not already_assigned %}
                         <div class="comp-card" data-id="{{ comp.id }}" data-gender="{{ comp.gender }}" data-division="college">
-                            <span>{{ comp.display_name }}</span>
+                            {#
+                              Same defect and same reasoning as the pro pool above.
+
+                              Note for whoever picks this up: CollegeCompetitor.
+                              display_name on the model returns 'Name (TEAM)', so the
+                              author of this line probably intended the team code to
+                              show here. The service dict does carry a 'team' key, so
+                              printing it is a one-word change. Deliberately not done
+                              here: the assigned-slot cards print bare m.name, and
+                              adding the team code only to the pool would make a card
+                              change its text the moment it is dragged into a team.
+                              That is a display decision, not a bug fix.
+                            #}
+                            <span>{{ comp.name }}</span>
                             <span class="badge {% if comp.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">{{ comp.gender }}</span>
                         </div>
                         {% endif %}

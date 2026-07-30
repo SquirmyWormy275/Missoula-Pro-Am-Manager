@@ -685,6 +685,212 @@ def test_manual_relay_builder_renders_competitor_names(client, sql):
     )
 
 
+_CARD_RE = re.compile(
+    r'<div class="comp-card"[^>]*data-id="(\d+)"[^>]*data-division="(\w+)">'
+    r'\s*<span>(.*?)</span>', re.S)
+
+
+def _relay_regions(body):
+    """Split the manual builder page into (pro pool, college pool, team slots).
+
+    Pool cards and assigned-team cards are the same markup with the same
+    attributes, so they cannot be told apart by a regex over the whole page.
+    They are told apart by position: the template lays out proPool, then
+    collegePool, then the team-list slots. Each slice is asserted non-empty by
+    the callers, so a template restructure fails loudly instead of quietly
+    handing every test an empty list to not-find-a-problem in.
+    """
+    i_pro = body.index('id="proPool"')
+    i_col = body.index('id="collegePool"')
+    i_slot = body.index('class="team-list"')
+    assert i_pro < i_col < i_slot, (i_pro, i_col, i_slot)
+    return body[i_pro:i_col], body[i_col:i_slot], body[i_slot:]
+
+
+def _db_names(sql):
+    pro = {r[0]: r[1] for r in sql(
+        "SELECT id, name FROM pro_competitors WHERE tournament_id = :t", t=TID)}
+    col = {r[0]: r[1] for r in sql(
+        "SELECT id, name FROM college_competitors WHERE tournament_id = :t", t=TID)}
+    return {"pro": pro, "college": col}
+
+
+@pytest.mark.sev2
+def test_relay_pool_cards_name_the_person_the_card_actually_is(client, sql):
+    """Positive control. "Not blank" is not the same as "correct".
+
+    The test above only asks that the span is non-empty. Several fixes satisfy
+    it and still hand the operator garbage: print comp.id, print a
+    'Competitor 41' placeholder, or reach for the wrong key and print the
+    gender letter or the team code on every card. Worse, a fix applied to the
+    dicts rather than the template could print the RIGHT name against the
+    WRONG id, and drag-and-drop binds data-id, so the operator would build a
+    team out of people they never picked and the page would look perfect.
+
+    Pro and college ids collide in this data (21 of them), so the check joins
+    on division as well as id. Fails pre-fix with every pool card blank.
+    """
+    r = client.get(f"/tournament/{TID}/proam-relay/manual-teams")
+    assert r.status_code == 200, (r.status_code, r.data[:400])
+    body = r.data.decode("utf-8", "replace")
+    pro_region, col_region, _ = _relay_regions(body)
+    names = _db_names(sql)
+
+    wrong = []
+    seen = 0
+    for region, division in ((pro_region, "pro"), (col_region, "college")):
+        cards = _CARD_RE.findall(region)
+        assert cards, (
+            f"the {division} pool rendered no cards at all, so this test is "
+            f"checking nothing. Either the opt-in pool is empty in this data "
+            f"or the page structure moved.")
+        for cid, div, shown in cards:
+            seen += 1
+            assert div == division, (
+                f"a card in the {division} pool is tagged data-division={div!r}; "
+                f"drag-and-drop routes on that attribute")
+            expected = names[division].get(int(cid))
+            assert expected is not None, (
+                f"pool card data-id={cid} in the {division} pool matches no "
+                f"{division} competitor in this tournament")
+            shown_text = re.sub(r"<[^>]+>", "", shown).strip()
+            if expected not in shown_text:
+                wrong.append((division, cid, expected, shown_text))
+
+    assert seen > 0
+    assert not wrong, (
+        f"{len(wrong)} of {seen} pool cards do not name the competitor their "
+        f"data-id points at. (division, id, expected, shown): {wrong[:5]}. "
+        f"The operator drags by name and the app assigns by id, so a card that "
+        f"disagrees with itself puts the wrong person on the team.")
+
+
+@pytest.mark.sev2
+def test_already_assigned_relay_cards_keep_their_names(client, sql):
+    """Positive control. The team slots work today and must keep working.
+
+    Slot cards render m.name and they render correctly right now, so any fix
+    that reaches the whole page rather than the two broken pool lines shows up
+    here as blank or wrong slot cards.
+
+    Do not read this as covering a service-layer rename. It does not, and I
+    mutated the service to prove it: slot members come out of the persisted
+    events.event_state JSON, not out of a live service call, so renaming the
+    service key leaves every already-drawn team looking perfect. That mutation
+    is caught one test down, in
+    test_the_pool_dicts_are_keyed_the_way_persisted_team_members_are.
+    """
+    r = client.get(f"/tournament/{TID}/proam-relay/manual-teams")
+    assert r.status_code == 200, (r.status_code, r.data[:400])
+    body = r.data.decode("utf-8", "replace")
+    _, _, slots = _relay_regions(body)
+
+    cards = _CARD_RE.findall(slots)
+    assert cards, (
+        "no relay team has any assigned members in this data, so this control "
+        "is vacuous. The mirror carries a drawn relay (events.event_state on "
+        "'Pro-Am Relay' is populated); if that changed, this test needs a new "
+        "fixture rather than a pass.")
+
+    names = _db_names(sql)
+    bad = []
+    for cid, div, shown in cards:
+        shown_text = re.sub(r"<[^>]+>", "", shown).strip()
+        expected = names.get(div, {}).get(int(cid))
+        if not shown_text or (expected and expected not in shown_text):
+            bad.append((div, cid, expected, shown_text))
+    assert not bad, (
+        f"{len(bad)} of {len(cards)} assigned relay cards lost or changed their "
+        f"name: {bad[:5]}. These render correctly on v2026.final, so this is a "
+        f"regression introduced by the pool-card fix.")
+
+
+@pytest.mark.sev2
+def test_the_pool_dicts_are_keyed_the_way_persisted_team_members_are(app, sql):
+    """Positive control, and the whole argument for fixing the template.
+
+    The obvious alternative fix is to rename the service key to display_name so
+    the original template line works. Every other test in this file passes under
+    that change. I ran it as a mutation to be sure: four green.
+
+    It is still wrong. ProAmRelay.run_lottery appends these exact dict objects
+    into team['pro_members'] / team['college_members'], and the whole structure
+    is json.dumps'd into events.event_state (services/proam_relay.py:88, :452).
+    The key is not a private detail of the service, it is the on-disk schema of
+    every relay ever drawn. Rename it and the already-drawn teams keep their
+    names, because they were written before the rename, so the page looks fine
+    and stays fine until someone redraws on show day. Then every slot card goes
+    blank, and anything reading member['name'] off event_state raises KeyError.
+
+    So: the key the service hands out has to stay the key the persisted records
+    already use. That is checkable without drawing anything, and this checks it.
+    """
+    import json
+
+    from models import Tournament
+    from services.proam_relay import ProAmRelay
+
+    with app.app_context():
+        tournament = Tournament.query.get(TID)
+        assert tournament is not None, f"tournament {TID} is missing from the mirror"
+        service = ProAmRelay(tournament)
+        pro_pool = service.get_eligible_pro_competitors()
+        college_pool = service.get_eligible_college_competitors()
+
+    assert pro_pool and college_pool, (
+        f"the eligible pools came back empty (pro={len(pro_pool)}, "
+        f"college={len(college_pool)}), so this test is checking nothing")
+
+    rows = sql("SELECT event_state FROM events "
+               "WHERE tournament_id = :t AND name = 'Pro-Am Relay'", t=TID)
+    assert rows and rows[0][0], (
+        "no Pro-Am Relay event_state in the mirror, so there is no persisted "
+        "record to compare the live dict shape against. This control needs a "
+        "drawn relay; it must not be allowed to pass by finding nothing.")
+    state = json.loads(rows[0][0])
+    teams = state.get("teams") or []
+    assert teams, "the persisted relay has no teams drawn"
+
+    persisted = []
+    for team in teams:
+        persisted.extend(team.get("pro_members") or [])
+        persisted.extend(team.get("college_members") or [])
+    assert persisted, "the persisted relay teams have no members"
+
+    live_keys = {k for d in (pro_pool + college_pool) for k in d}
+    stored_keys = {k for d in persisted for k in d}
+
+    dropped = stored_keys - live_keys
+    assert not dropped, (
+        f"the eligible-pool dicts no longer carry {sorted(dropped)}, but every "
+        f"member dict already persisted in events.event_state does. run_lottery "
+        f"copies pool dicts straight into that JSON, so the next draw would "
+        f"write records in a shape the old ones are not in, and the slot cards "
+        f"plus anything else reading those keys break on show day. "
+        f"live={sorted(live_keys)} stored={sorted(stored_keys)}")
+
+    assert "name" in live_keys, (
+        f"the pool dicts have no 'name' key at all: {sorted(live_keys)}")
+
+
+@pytest.mark.sev2
+def test_the_relay_dashboard_still_renders_off_the_same_pools(client):
+    """Positive control. Two pages consume these two service methods.
+
+    routes/proam_relay.py:43-44 hands the identical eligible_pro /
+    eligible_college lists to the dashboard, which is the page the operator
+    actually lands on. Any fix made inside services/proam_relay.py rather than
+    in the one broken template lands here too, and nothing else in the suite
+    opens this page.
+    """
+    r = client.get(f"/tournament/{TID}/proam-relay/")
+    assert r.status_code == 200, (r.status_code, r.data[:400])
+    assert b"comp-card" in r.data or b"Pro-Am Relay" in r.data, (
+        "the relay dashboard returned 200 but rendered neither relay markup "
+        "nor its own title, which usually means an exception was swallowed "
+        "into an empty template block")
+
+
 # ---------------------------------------------------------------------------
 # c01. Springboard stand assignment double-books a stand on 5-stand heats
 #      services/heat_generator.py hardcodes the right-handed stands as [1, 2, 3]
