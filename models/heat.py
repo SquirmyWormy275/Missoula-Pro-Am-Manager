@@ -118,14 +118,47 @@ class Heat(db.Model):
         assignments = self.get_stand_assignments()
         return assignments.get(str(competitor_id))
 
-    def sync_assignments(self, competitor_type: str) -> None:
+    def sync_assignments(self, competitor_type: str) -> bool:
         """Rebuild HeatAssignment rows to match the authoritative competitors JSON.
 
         Must be called after self.id is assigned (i.e., after db.session.flush()).
         competitor_type should be 'pro' or 'college' (matches event.event_type).
+
+        Returns True if the rows were actually rewritten, False if they already
+        matched the JSON and nothing was touched.
+
+        The ~20 per-heat callers of this method call it straight after mutating
+        competitors or stand_assignments, so for them the compare is a cheap
+        miss and the rebuild happens exactly as before. The return value exists
+        for the two BULK sweepers, run_preflight_autofix and heat_sync_fix,
+        which walk every heat in a tournament or an event. Without it they had
+        no way to tell a heat they repaired from a heat they merely visited, so
+        they reported the walk count as a repair count and rewrote every row in
+        the table to produce it.
+
+        The comparison carries all three columns the rebuild writes, and it
+        compares SORTED LISTS rather than sets. Sets would collapse a duplicate
+        row and report a heat clean forever. competitor_type matters because
+        pro and college competitor ids overlap, so a row with the wrong type
+        points at the wrong person while holding the right number.
         """
-        HeatAssignment.query.filter_by(heat_id=self.id).delete()
         assignments = self.get_stand_assignments()
+        wanted = sorted(
+            (comp_id, competitor_type, assignments.get(str(comp_id)))
+            for comp_id in self.get_competitors()
+        )
+        existing = sorted(
+            (row.competitor_id, row.competitor_type, row.stand_number)
+            for row in HeatAssignment.query.filter_by(heat_id=self.id).all()
+        )
+        if existing == wanted:
+            return False
+
+        # Insert in JSON order, not in `wanted` order. `wanted` is sorted for
+        # the comparison only; rebuilding from it would silently reorder the
+        # rows (and their autoincrement ids) relative to the heat's running
+        # order, which is a change nobody asked for.
+        HeatAssignment.query.filter_by(heat_id=self.id).delete()
         for comp_id in self.get_competitors():
             db.session.add(HeatAssignment(
                 heat_id=self.id,
@@ -133,6 +166,7 @@ class Heat(db.Model):
                 competitor_type=competitor_type,
                 stand_number=assignments.get(str(comp_id)),
             ))
+        return True
 
     @property
     def competitor_count(self):

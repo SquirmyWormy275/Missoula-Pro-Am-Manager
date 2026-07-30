@@ -897,25 +897,23 @@ def heat_sync_fix(tournament_id, event_id):
     if event.tournament_id != tournament_id:
         abort(404)
 
+    # heat.sync_assignments is the canonical rebuild and reports whether it
+    # changed anything. This loop used to inline a copy of it and increment
+    # `fixed` once per heat WALKED, so the flash reported every heat in the
+    # event as repaired even when the table already matched the JSON, and
+    # every row was deleted and reinserted to produce that number. The
+    # predicate was already sitting one function above, in heat_sync_check.
     fixed = 0
+    checked = 0
     for heat in event.heats.all():
-        json_ids = heat.get_competitors()
-        HeatAssignment.query.filter_by(heat_id=heat.id).delete()
-        comp_type = event.event_type  # 'pro' or 'college'
-        assignments = heat.get_stand_assignments()
-        for comp_id in json_ids:
-            ha = HeatAssignment(
-                heat_id=heat.id,
-                competitor_id=comp_id,
-                competitor_type=comp_type,
-                stand_number=assignments.get(str(comp_id)),
-            )
-            db.session.add(ha)
-        fixed += 1
+        checked += 1
+        if heat.sync_assignments(event.event_type):
+            fixed += 1
 
     db.session.commit()
-    log_action('heat_assignments_synced', 'event', event_id, {'heats_fixed': fixed})
-    flash(f'HeatAssignment table synced for {fixed} heats.', 'success')
+    log_action('heat_assignments_synced', 'event', event_id,
+               {'heats_fixed': fixed, 'heats_checked': checked})
+    flash(f'HeatAssignment sync checked {checked} heats: {fixed} repaired.', 'success')
     return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
 

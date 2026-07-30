@@ -52,8 +52,14 @@ def preflight_check(tournament_id):
                 f" completed {result['gear_pairs_completed']} one-sided gear pair(s),"
                 if result['gear_pairs_completed'] else ''
             )
+            # "synced N heats" used to report every heat the autofix WALKED,
+            # so it read the same number on a perfect table as on a broken one
+            # and told the operator nothing. heats_fixed now counts heats that
+            # were actually rewritten; heats_checked carries the walk count so
+            # the operator can still see the sweep covered the tournament.
             flash(
-                f"Auto-fix complete: synced {result['heats_fixed']} heats,{gear_msg}{pairs_msg} "
+                f"Auto-fix complete: repaired {result['heats_fixed']} of "
+                f"{result['heats_checked']} heat assignment sets,{gear_msg}{pairs_msg} "
                 f"assigned {result['partner_summary']['assigned_pairs']} pairs, "
                 f"integrated {result['spillover']['integrated_heats']} spillover heats.",
                 'success'

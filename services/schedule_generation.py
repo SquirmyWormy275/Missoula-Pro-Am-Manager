@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from database import db
-from models import Event, HeatAssignment, Tournament
+from models import Event, Tournament
 
 
 def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None = None) -> dict:
@@ -15,6 +15,7 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
     from services.partner_matching import auto_assign_pro_partners
 
     heats_fixed = 0
+    heats_checked = 0
     for event in tournament.events.all():
         # Skip Pro-Am Relay: its pseudo-heats are synthesized by
         # integrate_proam_relay_into_final_flight and have no HeatAssignment
@@ -23,17 +24,16 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
         if event.name == 'Pro-Am Relay':
             continue
         for heat in event.heats.all():
-            json_ids = heat.get_competitors()
-            HeatAssignment.query.filter_by(heat_id=heat.id).delete()
-            assignments = heat.get_stand_assignments()
-            for comp_id in json_ids:
-                db.session.add(HeatAssignment(
-                    heat_id=heat.id,
-                    competitor_id=comp_id,
-                    competitor_type=event.event_type,
-                    stand_number=assignments.get(str(comp_id)),
-                ))
-            heats_fixed += 1
+            # heat.sync_assignments is the canonical rebuild, and it now reports
+            # whether it changed anything. This loop used to inline a copy of it
+            # and count every heat it WALKED, so heats_fixed read 172 on a
+            # tournament with zero desynced heats while 379 rows were deleted
+            # and reinserted to produce that number. The comment directly above
+            # already names no-op writes here as churn for no effect; it was
+            # only acted on for Pro-Am Relay because nothing else was checked.
+            heats_checked += 1
+            if heat.sync_assignments(event.event_type):
+                heats_fixed += 1
 
     gear_parse_result = parse_all_gear_details(tournament)
     pairs_result = complete_one_sided_pairs(tournament)
@@ -44,6 +44,7 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
 
     return {
         'heats_fixed': heats_fixed,
+        'heats_checked': heats_checked,
         'gear_parsed': gear_parse_result,
         'gear_pairs_completed': pairs_result['completed'],
         'partner_summary': partner_summary,

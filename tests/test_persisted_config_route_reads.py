@@ -164,6 +164,11 @@ class TestPreflightAutofixHonoursPersistedSpillover:
             captured["saturday_ids"] = list(saturday_ids or [])
             return {
                 "heats_fixed": 0,
+                # MOCK FIDELITY: run_preflight_autofix now also returns
+                # heats_checked, the number of heats the sweep WALKED, which
+                # the preflight flash prints alongside the repair count.
+                # Without this key the route raises KeyError.
+                "heats_checked": 0,
                 "gear_parsed": {"parsed": 0},
                 "gear_pairs_completed": 0,
                 "partner_summary": {"assigned_pairs": 0},
