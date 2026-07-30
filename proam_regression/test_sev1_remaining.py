@@ -269,6 +269,98 @@ def test_public_relay_results_page_survives_recorded_total_times(app, client, sq
     )
 
 
+# Splits chosen to sum to team 1's total above, so recording them does not
+# move that team in the standings and the assertions stay independent of sort
+# order. 100.01 + 90.53 + 95.21 + 126.75 = 412.50.
+RELAY_SPLITS = {
+    "partnered_sawing": 100.01,
+    "standing_butcher_block": 90.53,
+    "underhand_butcher_block": 95.21,
+    "team_axe_throw": 126.75,
+}
+
+
+@pytest.mark.sev1
+def test_public_relay_desktop_view_prints_the_times_it_actually_has(app, client, sql):
+    """Guard against fixing the 500 by hiding the numbers.
+
+    There are two cheap ways to make the test above pass while giving a
+    spectator nothing: wrap the whole desktop table in a conditional, or
+    render every cell as a placeholder. Both return 200 and show an empty
+    page, and the test above cannot tell the difference.
+
+    Part one records totals only, which is how the operator's screen actually
+    works, and demands the totals reach the desktop table. Part two writes
+    per-event splits for team 1 and demands those reach it too, while teams 2
+    and 3 keep their placeholders. A blanket placeholder fails part two; a
+    blanket suppression fails part one.
+
+    Part two calls the service directly, on purpose. record_event_result has
+    no route. routes/proam_relay.py:147 record_total_time is the only relay
+    writer wired to a form, so per-event splits cannot be entered in
+    production at all today and those four columns can only ever render
+    placeholders. That is worth knowing on its own; it is also why proving the
+    columns still work has to reach past HTTP.
+    """
+    app.config["PROPAGATE_EXCEPTIONS"] = False
+
+    teams = _relay_state(sql).get("teams", [])
+    assert teams, "the mirror holds no drawn relay teams"
+
+    for team in teams:
+        number = team["team_number"]
+        seconds = RELAY_TOTAL_TIMES.get(number, "420.00")
+        r = client.post(f"/tournament/{TID}/proam-relay/results",
+                        data={"team_number": str(number),
+                              "time_seconds": seconds})
+        assert r.status_code in (200, 302), r.data[:400]
+
+    # view=desktop is explicit because _resolve_view_mode(prefer_mobile=True)
+    # only picks mobile off a mobile User-Agent (routes/portal.py:405-417).
+    # The test client sends none, so the default is already desktop, and
+    # saying so keeps this test honest if that default ever flips.
+    anon = app.test_client()
+    r = anon.get(f"/portal/spectator/{TID}/relay?view=desktop")
+    assert r.status_code == 200, r.status_code
+    page = r.get_data(as_text=True)
+
+    for number, seconds in RELAY_TOTAL_TIMES.items():
+        if any(t["team_number"] == number for t in teams):
+            assert f"{seconds}s" in page, (
+                f"team {number}'s total time {seconds} is not on the desktop "
+                f"page. The page rendered, but the standings it exists to "
+                f"publish are not in it.")
+
+    with app.app_context():
+        from models import Tournament
+        from services.proam_relay import get_proam_relay
+
+        relay = get_proam_relay(Tournament.query.get(TID))
+        for event_name, seconds in RELAY_SPLITS.items():
+            relay.record_event_result(1, event_name, seconds)
+
+    stored = {t["team_number"]: t for t in _relay_state(sql).get("teams", [])}
+    assert stored[1]["events"]["partnered_sawing"]["result"] == \
+        RELAY_SPLITS["partnered_sawing"], stored[1]["events"]
+    assert stored[2]["events"]["partnered_sawing"]["result"] is None, (
+        "the harness filled in team 2 as well, so the placeholder half of "
+        "this test would pass vacuously")
+
+    r = anon.get(f"/portal/spectator/{TID}/relay?view=desktop")
+    assert r.status_code == 200, r.status_code
+    page = r.get_data(as_text=True)
+
+    for event_name, seconds in RELAY_SPLITS.items():
+        assert f"{seconds:.2f}s" in page, (
+            f"team 1's {event_name} split {seconds:.2f} is not on the desktop "
+            f"page. A fix that renders every split cell as a placeholder "
+            f"stops the 500 and also stops the page ever showing a split.")
+
+    assert f"{RELAY_TOTAL_TIMES[2]}s" in page, (
+        "team 2 still has a total time and no splits. It must keep rendering "
+        "alongside team 1's filled-in row.")
+
+
 # ---------------------------------------------------------------------------
 # 9. Bulk payout apply and clear leave paid money stale on finalized events
 #    routes/scoring.py tournament_payout_manager, both branches skip the

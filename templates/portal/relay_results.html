@@ -46,14 +46,38 @@
                         </tr>
                     </thead>
                     <tbody>
+                        {#
+                          A team reaches this table as soon as it has a
+                          total_time, because that is all get_results() filters
+                          on. Per-event results are a separate field and are
+                          normally still None at that moment: the operator's
+                          screen posts one total per team
+                          (routes/proam_relay.py:147 -> record_total_time),
+                          which never touches team['events'].
+
+                          In fact nothing in the app fills those four columns.
+                          record_event_result exists and is covered by
+                          tests/test_proam_relay.py, but no route calls it, so
+                          today these cells always render the placeholder.
+                          Formatting "%.2f" against them raised TypeError and
+                          returned a 500 to every spectator not on a phone,
+                          from the moment the first team crossed the line until
+                          the last. Mobile escaped it only because the mobile
+                          branch above prints the total on its own.
+
+                          Guarded the same way templates/proam_relay/teams.html
+                          already guards these identical fields, except on
+                          "is not none" rather than truthiness, so a legitimate
+                          0.00 would still print as a time.
+                        #}
                         {% for team in results %}
                         <tr>
                             <td>#{{ loop.index }}</td>
                             <td>{{ team.name }}</td>
-                            <td>{{ "%.2f"|format(team.events.partnered_sawing.result) }}s</td>
-                            <td>{{ "%.2f"|format(team.events.standing_butcher_block.result) }}s</td>
-                            <td>{{ "%.2f"|format(team.events.underhand_butcher_block.result) }}s</td>
-                            <td>{{ "%.2f"|format(team.events.team_axe_throw.result) }}s</td>
+                            <td>{% if team.events.partnered_sawing.result is not none %}{{ "%.2f"|format(team.events.partnered_sawing.result) }}s{% else %}-{% endif %}</td>
+                            <td>{% if team.events.standing_butcher_block.result is not none %}{{ "%.2f"|format(team.events.standing_butcher_block.result) }}s{% else %}-{% endif %}</td>
+                            <td>{% if team.events.underhand_butcher_block.result is not none %}{{ "%.2f"|format(team.events.underhand_butcher_block.result) }}s{% else %}-{% endif %}</td>
+                            <td>{% if team.events.team_axe_throw.result is not none %}{{ "%.2f"|format(team.events.team_axe_throw.result) }}s{% else %}-{% endif %}</td>
                             <td><strong>{{ "%.2f"|format(team.total_time) }}s</strong></td>
                         </tr>
                         {% endfor %}
