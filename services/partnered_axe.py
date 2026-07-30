@@ -212,7 +212,19 @@ class PartneredAxeThrow:
         return sorted(pairs_with_scores, key=lambda x: x['prelim_score'], reverse=True)
 
     def can_advance_to_finals(self) -> bool:
-        """Check if we have enough results to advance to finals."""
+        """Whether the Advance to Finals button should be offered.
+
+        Prelims complete AND still in the prelims stage. The stage half is not
+        cosmetic: prelims never become incomplete again, so without it this
+        stays True for the rest of the event and the button stays live on every
+        page that asks. templates/partnered_axe/prelims.html already renders the
+        button behind ``can_advance and stage == 'prelims'``, so the stage test
+        belonged in here from the start; the template was compensating for its
+        absence, and routes/partnered_axe.py:299 (the api/status endpoint) was
+        not.
+        """
+        if self.get_stage() != 'prelims':
+            return False
         scored = [p for p in self.state['pairs'] if p['prelim_score'] is not None]
         return len(scored) >= 4 and len(scored) == len(self.state['pairs'])
 
@@ -222,6 +234,35 @@ class PartneredAxeThrow:
 
         Returns list of finalist pairs.
         """
+        # Idempotency guard. This method reseeds state['finalists'] from the
+        # prelim standings, and the pair dicts in those standings carry
+        # final_score None, so a second call destroys every finals score
+        # already entered. record_final_result only writes finals scores back
+        # into state['pairs'] once ALL FOUR are in, so a bracket scored halfway
+        # keeps those scores nowhere else and loses them outright.
+        #
+        # After all four are in, the damage is worse: stage is 'completed',
+        # final_position is assigned, and _save_event_results has already
+        # published EventResult rows. Reseeding drops the placings but not the
+        # published rows, so the results page and the event state disagree with
+        # no indication which is right.
+        #
+        # Refuse rather than quietly return the existing finalists: the route
+        # flashes success on whatever it gets back, and an operator who is told
+        # the press worked stops looking for the problem. The route already
+        # turns ValueError into a danger flash.
+        #
+        # The check reads the stage out of self.state, which reset() rebuilds
+        # from a literal, so resetting the event clears the guard along with
+        # everything else and the bracket can be run again.
+        stage = self.get_stage()
+        if stage != 'prelims':
+            raise ValueError(
+                f"Finals have already been seeded for this event (stage: "
+                f"{stage}). Advancing again would clear the finals scores. "
+                f"Reset the event if the bracket needs to be rebuilt."
+            )
+
         if not self.can_advance_to_finals():
             raise ValueError("Cannot advance to finals - not all prelim results recorded")
 

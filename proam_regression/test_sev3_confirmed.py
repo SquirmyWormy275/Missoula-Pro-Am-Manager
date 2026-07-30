@@ -106,6 +106,172 @@ def test_advancing_to_finals_twice_does_not_wipe_recorded_finals(client, sql):
     )
 
 
+def _build_pat_prelims(client, sql):
+    """Register the five pairs and score every prelim. Returns the state dict.
+
+    Same construction the defect test above does inline. Factored out here so
+    the controls do not each grow their own copy and drift apart from it.
+    """
+    for c1, c2 in PAT_PAIRS:
+        r = client.post(f"{PAT_BASE}/register-pair",
+                        data={"competitor1_id": str(c1), "competitor2_id": str(c2)})
+        assert r.status_code in (200, 302), r.data[:400]
+
+    pairs = _pat_state(sql).get("pairs", [])
+    assert len(pairs) == len(PAT_PAIRS), (
+        f"expected {len(PAT_PAIRS)} registered pairs, got {len(pairs)}")
+
+    for pair, hits in zip(pairs, PAT_PRELIM_HITS):
+        r = client.post(f"{PAT_BASE}/prelims/record",
+                        data={"pair_id": str(pair["pair_id"]), "hits": str(hits)})
+        assert r.status_code in (200, 302), r.data[:400]
+
+    return _pat_state(sql)
+
+
+@pytest.mark.sev3
+def test_the_first_advance_to_finals_still_seeds_the_top_four(client, sql):
+    """Positive control. The guard must refuse the SECOND press, not the first.
+
+    A guard written against the wrong condition kills the feature outright.
+    Refusing when state['finalists'] is already truthy looks equivalent and is
+    not; refusing when can_advance_to_finals has ever been True blocks
+    everything. This is the whole event: five pairs go in, the top four by
+    prelim score come out, seeded highest first. Passes before the fix and has
+    to pass after.
+    """
+    _build_pat_prelims(client, sql)
+
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+
+    state = _pat_state(sql)
+    finalists = state.get("finalists", [])
+    assert len(finalists) == 4, (
+        f"the first advance produced {len(finalists)} finalists, not 4: "
+        f"{finalists}. The guard is refusing the press it is supposed to allow.")
+    assert state.get("stage") == "finals", (
+        f"stage is {state.get('stage')!r} after a successful advance")
+
+    seeds = [p.get("prelim_score") for p in finalists]
+    assert seeds == sorted(PAT_PRELIM_HITS, reverse=True)[:4], (
+        f"the finalists are not the top four by prelim score, or are not seeded "
+        f"highest first: {seeds}. Prelim scores were {PAT_PRELIM_HITS}.")
+
+
+@pytest.mark.sev3
+def test_a_second_advance_press_does_not_report_success(client, sql, flashes):
+    """The operator has to be told the press did nothing.
+
+    Fails pre-fix: the route flashes 'Top 4 pairs advanced to finals!' every
+    single time, so a judge who presses a stale button sees the same green
+    confirmation whether it seeded the bracket or silently destroyed the scores
+    they just entered.
+
+    This also pins the shape of the fix. A guard that quietly returns the
+    existing finalists protects the data and still leaves the operator
+    believing something happened, which on show day means they stop looking for
+    the problem. Refusing out loud is the point.
+    """
+    _build_pat_prelims(client, sql)
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+    flashes()   # drain the legitimate first-press success
+
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+    said = flashes()
+
+    assert said, (
+        "the second press produced no flash at all. Silence is not an answer "
+        "either: the operator pressed a button and the page came back with "
+        "nothing to say about it.")
+    lying = [(cat, msg) for cat, msg in said
+             if cat == "success" or "advanced to finals" in msg.lower()]
+    assert not lying, (
+        f"the second advance press reported success: {lying}. Nothing advanced. "
+        f"The finals bracket was already seeded and the stage is already "
+        f"'finals'.")
+
+
+@pytest.mark.sev3
+def test_a_completed_partnered_axe_event_cannot_be_pushed_back_to_finals(client, sql):
+    """The worst version of item 17: a finished event, re-opened.
+
+    Fails pre-fix. Once all four finals scores are in, record_final_result
+    assigns final_position, writes the placings back into state['pairs'], sets
+    stage to 'completed' and calls _save_event_results, which persists rows in
+    the EventResult table. can_advance_to_finals is still True at that point,
+    because it only ever looks at prelims. So one press on a stale prelims tab
+    reseeds finalists from the prelim standings, drops all four final scores
+    and placings, and drags a completed, published event back to 'finals' while
+    the EventResult rows it already wrote stay behind saying otherwise.
+    """
+    _build_pat_prelims(client, sql)
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+
+    finalists = _pat_state(sql)["finalists"]
+    assert len(finalists) == 4, finalists
+    for pair, hits in zip(finalists, (15, 13, 11, 9)):
+        r = client.post(f"{PAT_BASE}/finals/record",
+                        data={"pair_id": str(pair["pair_id"]), "hits": str(hits)})
+        assert r.status_code in (200, 302), r.data[:400]
+
+    done = _pat_state(sql)
+    assert done.get("stage") == "completed", (
+        f"the harness could not finish the event; stage is "
+        f"{done.get('stage')!r}, so this test is not checking what it claims")
+    placed = {p["pair_id"]: p.get("final_position") for p in done["finalists"]}
+    assert all(v is not None for v in placed.values()), placed
+
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+
+    after = _pat_state(sql)
+    now = {p["pair_id"]: p.get("final_position")
+           for p in after.get("finalists", [])}
+    assert after.get("stage") == "completed", (
+        f"a completed event was dragged back to stage {after.get('stage')!r}")
+    assert now == placed, (
+        f"the placings changed on a completed event. was {placed}, now {now}. "
+        f"EventResult rows were already written from the old placings, so the "
+        f"published results and the event state now disagree.")
+
+
+@pytest.mark.sev3
+def test_resetting_partnered_axe_lets_the_bracket_be_run_again(client, sql):
+    """Positive control. The guard must live in state, not beside it.
+
+    reset() rebuilds self.state wholesale from a literal. A guard implemented
+    as anything other than a value inside that dict (a column, an attribute, a
+    module-level set of event ids) survives the reset and leaves the operator
+    permanently unable to re-run the bracket, with the only recovery being
+    hand-editing event_state in psql at a live show. Passes before the fix and
+    has to pass after.
+    """
+    _build_pat_prelims(client, sql)
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+    assert _pat_state(sql).get("stage") == "finals"
+
+    r = client.post(f"{PAT_BASE}/reset")
+    assert r.status_code in (200, 302), r.data[:400]
+    cleared = _pat_state(sql)
+    assert cleared.get("stage") == "prelims", cleared.get("stage")
+    assert not cleared.get("pairs"), cleared.get("pairs")
+
+    _build_pat_prelims(client, sql)
+    r = client.post(f"{PAT_BASE}/advance-to-finals")
+    assert r.status_code in (200, 302), r.data[:400]
+
+    state = _pat_state(sql)
+    assert len(state.get("finalists", [])) == 4, (
+        f"after a reset the bracket could not be advanced again: "
+        f"stage={state.get('stage')!r} finalists={state.get('finalists')}. "
+        f"The idempotency guard outlived the state it is supposed to be part of.")
+
+
 # ---------------------------------------------------------------------------
 # 18. Gear free-text parser collapses multiple sharing partners to one
 #     services/gear_sharing.py:531-554 picks one name per details string
