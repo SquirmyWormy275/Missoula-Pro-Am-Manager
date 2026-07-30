@@ -66,6 +66,76 @@ def _cached_payload(key: str, builder):
     return payload
 
 
+def _serialize_bull_belle(rows: list) -> list:
+    """Flatten get_bull_belle_with_tiebreak_data output into plain data.
+
+    This used to hand the cache the CollegeCompetitor rows themselves. The
+    cache has a disk layer, the disk layer pickles, and a mapped instance
+    comes back from a pickle detached from every session. Nothing complains
+    at write time and nothing complains at read time. It breaks later, in the
+    template, on the first attribute that was not already loaded when the
+    pickle was taken: ``c.team`` was never touched before ``cache_set`` ran,
+    so the standings page raised DetachedInstanceError and returned 500 on
+    every request from the moment a gunicorn worker respawned onto a warm
+    shelf until the entry aged out.
+
+    The key names below match what the template already reads, so the flatten
+    is invisible to it: Jinja resolves ``c.team.team_code`` against a dict by
+    falling back to subscript when the attribute lookup fails.
+
+    individual_points stays a Decimal on purpose. Coercing it to float would
+    change the rendered text from "0.00" to "0.0" on every standings page.
+    """
+    out = []
+    for row in rows:
+        competitor = row['competitor']
+        team = competitor.team
+        out.append({
+            'competitor': {
+                'id': competitor.id,
+                'display_name': competitor.display_name,
+                'individual_points': competitor.individual_points,
+                'team': {'team_code': team.team_code} if team else None,
+            },
+            'placements': dict(row['placements']),
+            'tied_with_next': bool(row['tied_with_next']),
+        })
+    return out
+
+
+def _serialize_teams(teams: list) -> list:
+    """Flatten Team rows for the same reason as _serialize_bull_belle."""
+    return [
+        {
+            'id': team.id,
+            'team_code': team.team_code,
+            'school_name': team.school_name,
+            'total_points': team.total_points,
+        }
+        for team in teams
+    ]
+
+
+def _serialize_competitors(competitors: list) -> list:
+    """Flatten the plain Bull/Belle lists kept for backwards compatibility.
+
+    Nothing in this repository reads these two keys any more: the template
+    renders bull_tiebreak / belle_tiebreak and ignores bull / belle. They are
+    left in place because removing them is a behavior change rather than a
+    fix, but they cost two extra queries on every cache miss and should be
+    retired once a caller audit confirms nothing external depends on them.
+    """
+    return [
+        {
+            'id': competitor.id,
+            'display_name': competitor.display_name,
+            'individual_points': competitor.individual_points,
+            'team': {'team_code': competitor.team.team_code} if competitor.team else None,
+        }
+        for competitor in competitors
+    ]
+
+
 @reporting_bp.route('/<int:tournament_id>/college/standings')
 def college_standings(tournament_id):
     """View college standings (Bull/Belle of Woods and Team Standings).
@@ -81,11 +151,13 @@ def college_standings(tournament_id):
     payload = _cached_payload(
         f'reports:{tournament_id}:college_standings',
         lambda: {
-            'bull': tournament.get_bull_of_woods(10),
-            'belle': tournament.get_belle_of_woods(10),
-            'bull_tiebreak': tournament.get_bull_belle_with_tiebreak_data('M', 10),
-            'belle_tiebreak': tournament.get_bull_belle_with_tiebreak_data('F', 10),
-            'team_standings': tournament.get_team_standings(),
+            'bull': _serialize_competitors(tournament.get_bull_of_woods(10)),
+            'belle': _serialize_competitors(tournament.get_belle_of_woods(10)),
+            'bull_tiebreak': _serialize_bull_belle(
+                tournament.get_bull_belle_with_tiebreak_data('M', 10)),
+            'belle_tiebreak': _serialize_bull_belle(
+                tournament.get_bull_belle_with_tiebreak_data('F', 10)),
+            'team_standings': _serialize_teams(tournament.get_team_standings()),
         }
     )
 

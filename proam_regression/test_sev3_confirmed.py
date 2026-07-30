@@ -208,3 +208,176 @@ def test_dropped_gear_partner_is_not_scheduled_into_the_same_heat(client, sql):
         f"conflict between them, and the scheduler placed both in Double Buck "
         f"heat {SHARED_HEAT}. One saw, one heat, two competitors."
     )
+
+
+# ---------------------------------------------------------------------------
+# c08. The report cache's disk layer pickles live SQLAlchemy rows, so the
+#      college standings page 500s for a full TTL after a worker respawns
+#      services/report_cache.py, routes/reporting.py college_standings
+#
+#      Filed SEV2. Verified SEV3: the outage is self-limiting (it clears on
+#      the next TTL expiry or on any invalidate_tournament_caches call), the
+#      blast radius is one admin screen, and the /print variant and the
+#      spectator portal both stay 200 throughout. It is still a hard 500 on a
+#      page a judge reads between events, and the trigger, a gunicorn worker
+#      dying and respawning onto an already warm shelve file, needs nothing
+#      from the operator to happen.
+# ---------------------------------------------------------------------------
+
+RPT_URL = f"/reporting/{TID}/college/standings"
+RPT_PRINT_URL = f"/reporting/{TID}/college/standings/print"
+RPT_KEY = f"reports:{TID}:college_standings"
+
+# Real 2026 college roster. Every active college competitor in this tournament
+# has a team, so c.team is a live relationship on every row the page renders
+# and 'N/A' is never the correct output for any of them.
+RPT_TOP_MAN = "Abe Chentnik"
+RPT_TOP_MAN_TEAM = "FVC-A"
+RPT_TOP_TEAM_SCHOOL = "Colorado State University"
+
+
+def _rpt_isolate(tmp_path):
+    """Point the report cache at a private shelve file and hand back a restore.
+
+    report_cache keeps its state in module globals, so without this a test
+    would write into the checkout's instance/ directory and leak entries into
+    whatever test runs next in the same process.
+    """
+    import services.report_cache as rc
+
+    saved = (rc._shelf_path, rc._shelf_resolved, dict(rc._cache))
+    rc._shelf_path = str(tmp_path / "cache")
+    rc._shelf_resolved = True
+    with rc._lock:
+        rc._cache.clear()
+
+    def _restore():
+        with rc._lock:
+            rc._cache.clear()
+            rc._cache.update(saved[2])
+        rc._shelf_path, rc._shelf_resolved = saved[0], saved[1]
+
+    return rc, _restore
+
+
+def _rpt_break_builders(monkeypatch):
+    """Make every database-side builder for this page explode.
+
+    Without this the test is vacuous: if the disk layer fails to serve the
+    second request, the route just rebuilds the payload from the database and
+    renders a perfectly good page, and the assertion passes while measuring
+    nothing.
+    """
+    from models.tournament import Tournament
+
+    def _boom(*args, **kwargs):
+        raise AssertionError(
+            "the route rebuilt the payload from the database; the disk cache "
+            "layer never served this request, so this test proves nothing")
+
+    for name in ('get_bull_of_woods', 'get_belle_of_woods',
+                 'get_bull_belle_with_tiebreak_data', 'get_team_standings'):
+        monkeypatch.setattr(Tournament, name, _boom)
+
+
+@pytest.mark.sev3
+def test_college_standings_survives_a_worker_respawn_onto_a_warm_disk_cache(
+        client, app, tmp_path, monkeypatch):
+    """A judge reloading standings after a worker restart must get standings.
+
+    gunicorn runs the app with a single worker. When that worker dies and is
+    respawned, the module-level L1 dict dies with the process and the shelve
+    file in instance/report_cache does not. The new worker's first request for
+    this page reads the disk entry, gets back CollegeCompetitor objects that
+    are detached from every session, and dies in the template on c.team.
+    """
+    rc, restore = _rpt_isolate(tmp_path)
+    try:
+        first = client.get(RPT_URL)
+        assert first.status_code == 200, first.status_code
+        body_before = first.get_data(as_text=True)
+
+        # Controls. The page really renders competitor and team data, so a
+        # failure below is a cache failure and not an empty-roster artifact.
+        assert RPT_TOP_MAN in body_before
+        assert RPT_TOP_MAN_TEAM in body_before
+        assert RPT_TOP_TEAM_SCHOOL in body_before
+
+        # Control. The uncached print variant of the same data is fine, which
+        # localizes any failure below to the caching path.
+        assert client.get(RPT_PRINT_URL).status_code == 200
+
+        # Control. The disk layer actually engaged. On a machine where the
+        # instance directory is unwritable this assertion is the only thing
+        # standing between a green run and a meaningless one.
+        assert rc._shelf_get(RPT_KEY) is not None, (
+            "nothing reached the disk cache, so the worker-respawn path below "
+            "is not being exercised")
+
+        # The worker dies and respawns.
+        with rc._lock:
+            rc._cache.clear()
+        _rpt_break_builders(monkeypatch)
+
+        second = client.get(RPT_URL)
+        assert second.status_code == 200, (
+            f"standings returned {second.status_code} on the first request "
+            f"after a worker respawn, and will keep doing it until the cache "
+            f"entry expires")
+        body_after = second.get_data(as_text=True)
+        assert RPT_TOP_MAN in body_after
+        assert RPT_TOP_MAN_TEAM in body_after, (
+            "the page came back but the team column did not; a cached payload "
+            "that renders 'N/A' where a team code belongs is not a fix")
+        assert RPT_TOP_TEAM_SCHOOL in body_after
+        assert body_after.count("N/A") == body_before.count("N/A")
+    finally:
+        restore()
+
+
+@pytest.mark.sev3
+def test_the_cached_standings_payload_holds_no_live_database_rows(
+        client, app, tmp_path):
+    """Whatever is cached has to be able to outlive the session that built it."""
+    rc, restore = _rpt_isolate(tmp_path)
+    try:
+        assert client.get(RPT_URL).status_code == 200
+        with rc._lock:
+            payload = rc._cache[RPT_KEY]['value']
+
+        # Control: the payload is the real thing, not an empty dict that would
+        # trivially contain no entities.
+        assert payload['bull_tiebreak'], "no Bull rows to check"
+        assert payload['team_standings'], "no team rows to check"
+
+        assert not rc._contains_orm_entity(payload), (
+            "the standings payload still carries SQLAlchemy rows, so the disk "
+            "layer will hand a detached copy to the next worker")
+    finally:
+        restore()
+
+
+@pytest.mark.sev3
+def test_the_report_cache_refuses_to_put_database_rows_on_disk(app, tmp_path):
+    """The guard, tested directly, so the next caller cannot repeat c08."""
+    from models.competitor import CollegeCompetitor
+
+    rc, restore = _rpt_isolate(tmp_path)
+    try:
+        row = CollegeCompetitor.query.filter_by(tournament_id=TID).first()
+        assert row is not None, "no college competitor to build the probe from"
+
+        rc.set("reports:c08probe:entities", {"rows": [{"competitor": row}]}, 60)
+        assert rc._shelf_get("reports:c08probe:entities") is None, (
+            "a payload carrying a live database row reached the disk layer")
+        # L1 is not implicated and must keep working: the objects never leave
+        # the process that loaded them.
+        assert rc.get("reports:c08probe:entities") is not None
+
+        # Control: the guard is not a blanket refusal. Plain data still lands.
+        rc.set("reports:c08probe:plain", {"rows": [{"name": row.name}]}, 60)
+        assert rc._shelf_get("reports:c08probe:plain") is not None, (
+            "the disk layer stopped accepting plain data, which breaks the "
+            "whole point of having an L2")
+    finally:
+        restore()

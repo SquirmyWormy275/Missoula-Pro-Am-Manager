@@ -5,9 +5,19 @@ Storage strategy (in priority order):
   2. Disk shelve in instance/report_cache/ — used as L2 so that cache entries
      survive gunicorn worker recycling and Railway redeploys.  The disk layer
      is skipped gracefully if the instance directory is not writable.
+
+Callers must hand this module plain data. Anything stored here has to survive
+a pickle round trip into a different process, and a SQLAlchemy-mapped instance
+does not: it pickles without complaint, unpickles without complaint, and comes
+back detached from any session, so the first attribute the reader touches that
+was not already loaded when the pickle was taken raises DetachedInstanceError.
+The failure lands far from the write, in whatever renders the value, and it
+repeats for every request until the entry ages out. ``set`` therefore refuses
+the disk layer for values that carry mapped instances and says so in the log.
 """
 from __future__ import annotations
 
+import builtins
 import logging
 import os
 import shelve
@@ -95,6 +105,38 @@ def _shelf_delete_prefix(prefix: str) -> None:
         logger.debug('Disk cache prefix-delete error: %s', exc)
 
 
+# Deep enough for a report payload (dict -> list -> row dict -> entity), and
+# bounded so a value that nests unexpectedly cannot turn a cache write into a
+# recursion error.
+_MAX_SCAN_DEPTH = 6
+
+# builtins.set, not set: this module defines a public function called ``set``
+# that shadows the builtin at module scope, so a bare ``set`` in an isinstance
+# check below resolves to that function and raises TypeError.
+_CONTAINER_TYPES = (list, tuple, builtins.set, frozenset)
+
+
+def _contains_orm_entity(value, depth: int = 0) -> bool:
+    """True if value is, or contains, a SQLAlchemy-mapped instance.
+
+    Every mapped instance carries ``_sa_instance_state``; nothing else in a
+    report payload does. Strings and bytes are not treated as containers, so
+    this never walks into a character.
+    """
+    if hasattr(value, '_sa_instance_state'):
+        return True
+    if depth >= _MAX_SCAN_DEPTH:
+        return False
+    if isinstance(value, dict):
+        return any(
+            _contains_orm_entity(k, depth + 1) or _contains_orm_entity(v, depth + 1)
+            for k, v in value.items()
+        )
+    if isinstance(value, _CONTAINER_TYPES):
+        return any(_contains_orm_entity(item, depth + 1) for item in value)
+    return False
+
+
 def get(key: str):
     now = time.time()
     with _lock:
@@ -118,6 +160,16 @@ def set(key: str, value, ttl_seconds: int) -> None:
     expires_at = time.time() + ttl_seconds
     with _lock:
         _cache[key] = {'value': value, 'expires_at': expires_at}
+    if _contains_orm_entity(value):
+        # L1 is fine: the objects stay in the process that loaded them. L2 is
+        # not, for the reason spelled out in the module docstring. Keep the
+        # in-memory entry, refuse the disk one, and make the mistake loud
+        # rather than letting it surface later as a render-time 500.
+        logger.warning(
+            'Refusing disk cache write for %s: payload contains SQLAlchemy '
+            'entities, which unpickle detached. Serialize to plain data '
+            'before caching.', key)
+        return
     _shelf_set(key, value, expires_at)
 
 
