@@ -442,7 +442,22 @@ def export_results_job_status(tournament_id, job_id):
         return render_template('reports/export_status.html', tournament=tournament, job=job)
 
     if job_kind == 'build_pro_flights':
-        flights_built = int(job.get('result') or 0)
+        # The only producer of this kind is _build_flights_async
+        # (routes/scheduling/flights.py), and it returns a dict:
+        #   {'flights_built': int, 'relay': {...}, 'spillover': {...}}
+        #
+        # This used to read int(job.get('result') or 0), which raised
+        # TypeError: int() argument must be ... not 'dict' and handed the
+        # operator a 500 on the page they were redirected to the instant they
+        # ticked "run in background".  The flights had already committed, so
+        # the crash was pure false signal during show prep, and it repeated on
+        # every refresh because the job stays completed.
+        #
+        # No defensive branch for a non-dict result: this kind has had exactly
+        # one producer for its whole history, and swallowing a shape surprise
+        # here would just move the next mismatch somewhere quieter.
+        result = job.get('result') or {}
+        flights_built = int(result.get('flights_built') or 0)
         flash(f'Built {flights_built} flight(s).', 'success')
         return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 

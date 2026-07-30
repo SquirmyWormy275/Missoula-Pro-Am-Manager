@@ -526,10 +526,123 @@ def test_async_flight_build_status_page_returns(app, client, sql):
 
     assert s is not None and s.status_code < 500, (
         f"the flight-build status page returned {s.status_code}. "
-        f"routes/reporting.py:373 does int(job['result']) on a dict returned "
+        f"routes/reporting.py:445 does int(job['result']) on a dict returned "
         f"by _build_flights_async. The flights did build; this is a false "
         f"crash signal during show prep."
     )
+
+
+def _poll_job(client, location, tries=60):
+    """Refresh a job status URL the way the operator's browser does."""
+    import time
+    s = None
+    for _ in range(tries):
+        s = client.get(location)
+        if s.status_code >= 500:
+            return s
+        body = s.data.decode("utf-8", "replace").lower()
+        if "running" not in body and "pending" not in body:
+            return s
+        time.sleep(0.5)
+    return s
+
+
+@pytest.mark.sev2
+def test_async_flight_build_reports_the_count_it_actually_built(app, client, sql, flashes):
+    """Positive control. Not 500ing is a low bar and the cheap fixes clear it.
+
+    `int(job.get('result') or 0)` sits inside a handler that could be made to
+    stop raising in two useless ways: wrap it in try/except and flash nothing,
+    or leave the `or 0` reachable so the operator is told "Built 0 flight(s)"
+    after a build that produced seven. Both return 200 and both pass the test
+    above. Neither tells the truth, and this is the screen the operator reads
+    to decide whether the schedule is ready to print.
+
+    So: demand the number on the screen match the number of Flight rows the job
+    committed. Fails pre-fix at the 500, same as the test above, but it fails
+    for a second reason afterwards if the count is faked.
+    """
+    app.config["PROPAGATE_EXCEPTIONS"] = False
+
+    r = client.post(f"/scheduling/{TID}/flights/build",
+                    data={"run_async": "1", "flight_sizing_mode": "count",
+                          "num_flights": "4"},
+                    follow_redirects=False)
+    assert r.status_code == 302, (r.status_code, r.data[:400])
+    s = _poll_job(client, r.headers["Location"])
+    assert s.status_code < 500, s.status_code
+
+    in_db = sql("SELECT count(*) FROM flights WHERE tournament_id = :t", t=TID)[0][0]
+    assert in_db > 0, (
+        "the async job committed no flights at all, so this test cannot tell a "
+        "truthful report from a fake one. The build itself is broken.")
+
+    told = [msg for cat, msg in flashes() if "flight" in msg.lower()]
+    assert told, (
+        f"the build finished and the operator was told nothing about it. "
+        f"flashes={flashes()}")
+    numbers = [int(n) for msg in told for n in re.findall(r"\b(\d+)\b", msg)]
+    assert in_db in numbers, (
+        f"the status page reported {numbers} flight(s) but {in_db} rows are in "
+        f"the flights table. told={told}. Reporting a count the database does "
+        f"not agree with is worse than the 500, because the operator believes "
+        f"it.")
+
+
+@pytest.mark.sev2
+def test_the_synchronous_flight_build_still_reports_its_count(client, sql, flashes):
+    """Positive control. Both build paths go through the same route function.
+
+    The async branch is an early return inside `flights_build`. A fix that
+    reaches back into that function instead of into the status handler can
+    break the ordinary, non-async build that every operator who does not tick
+    the box uses. That path works today, so this test passes today, and it has
+    to keep passing.
+    """
+    r = client.post(f"/scheduling/{TID}/flights/build",
+                    data={"flight_sizing_mode": "count", "num_flights": "4"},
+                    follow_redirects=False)
+    assert r.status_code == 302, (r.status_code, r.data[:400])
+    assert "job" not in (r.headers.get("Location") or ""), (
+        "a build with no run_async flag was handed off to the background job "
+        f"queue anyway: {r.headers.get('Location')}")
+
+    in_db = sql("SELECT count(*) FROM flights WHERE tournament_id = :t", t=TID)[0][0]
+    assert in_db > 0, "the synchronous build committed no flights"
+    told = [msg for cat, msg in flashes() if "flight" in msg.lower()]
+    numbers = [int(n) for msg in told for n in re.findall(r"\b(\d+)\b", msg)]
+    assert in_db in numbers, (
+        f"the synchronous build reported {numbers} but {in_db} flights exist. "
+        f"told={told}")
+
+
+@pytest.mark.sev2
+def test_an_ordinary_export_job_still_downloads_from_the_same_status_route(
+        app, client, sql):
+    """Positive control. One route serves every background job kind.
+
+    `export_results_job_status` branches on metadata['kind']. The flight branch
+    is the broken one, but the file-download branch below it is what an
+    operator gets when they export results for the awards table, and it works
+    today. A fix that restructures the handler and drops the send_file path, or
+    that runs the flight branch for every kind, breaks that with nothing else
+    in the suite watching.
+    """
+    app.config["PROPAGATE_EXCEPTIONS"] = False
+
+    r = client.post(f"/reporting/{TID}/export-results/async",
+                    follow_redirects=False)
+    assert r.status_code == 302, (r.status_code, r.data[:400])
+    s = _poll_job(client, r.headers["Location"])
+
+    assert s.status_code < 500, (
+        f"the ordinary results export status page returned {s.status_code}")
+    assert s.status_code == 200, (
+        f"the completed export redirected ({s.status_code} -> "
+        f"{s.headers.get('Location')}) instead of delivering the file")
+    assert len(s.data) > 0 and "attachment" in (
+        s.headers.get("Content-Disposition") or ""), (
+        f"the export job completed but no file came back. headers={dict(s.headers)}")
 
 
 # ---------------------------------------------------------------------------
