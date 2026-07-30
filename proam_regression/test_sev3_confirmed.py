@@ -704,3 +704,288 @@ def test_the_ala_membership_report_can_actually_be_produced_as_a_pdf(
     # The other half of the record_print contract: a print that really did
     # deliver bytes must be recorded.
     assert len(_tracker_rows(sql, 'ala_report')) == 1
+
+
+# ---------------------------------------------------------------------------
+# 19. Flight-start SMS resolves competitors in a single integer namespace
+#     routes/scheduling/flights.py:830-840
+#
+#     Found while adversarially gating the flights candidates, not filed in the
+#     original audit. Same class as CONFIRMED SEV1 item 2: ProCompetitor and
+#     CollegeCompetitor have overlapping primary keys (21 of 64 college ids are
+#     below 49), and this path keys a dict by the bare integer. Last write wins,
+#     the flight's heats are iterated with no ORDER BY, and the college heats
+#     come back last, so a pro standing in a pro heat is relabelled college and
+#     dropped from the notify list. The college branch is a documented no-op
+#     because CollegeCompetitor has no phone column, so he is simply not texted.
+#
+#     Live today only because zero pros in the mirror have opted in. The moment
+#     one does, this is a real person who does not get his heads-up.
+# ---------------------------------------------------------------------------
+
+SMS_TRIGGER_FLIGHT_ID = 11        # flight_number 4
+SMS_TARGET_FLIGHT_NUMBER = 7      # 4 + SMS_NOTIFY_FLIGHTS_AHEAD (3)
+SMS_START_URL = f"/scheduling/{TID}/flights/{SMS_TRIGGER_FLIGHT_ID}/start"
+
+# Real pros standing in real PRO heats of flight 7 whose integer id is also a
+# real college competitor id in the same flight. Measured, not assumed.
+SMS_MASKED_PROS = {29: "Dwight Severson", 37: "Karson Wilson"}
+
+# A real pro in the same flight with no college twin. He must be texted before
+# and after the fix. Without him every assertion below could pass vacuously on
+# a path that sends nothing at all.
+SMS_CLEAN_PRO = (9, "Gillian Shannon")
+
+# A real pro who is NOT in flight 7 at all, whose id belongs to a college
+# competitor who IS. He must never be texted. This is the trap on the other
+# side: resolving the id against both tables would text the wrong man.
+SMS_GHOST_PRO = (32, "Ian Wilson")
+
+# Nothing here is invented except the opt-in flag. All four carry the phone
+# numbers they really submitted.
+
+
+@pytest.fixture()
+def sms_outbox(app, monkeypatch):
+    """Capture what the flight-start route would have texted.
+
+    is_configured() is False in every environment this suite runs in, because
+    twilio is not installed, so the notify path is a no-op unless it is forced
+    open. submit_job is intercepted so no job ever runs and no network call is
+    ever attempted.
+    """
+    import routes.scheduling.flights as flights_route
+    import services.sms_notify as sms
+
+    sent: list = []
+
+    monkeypatch.setattr(sms, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        flights_route, "submit_job",
+        lambda label, fn, *a, **k: sent.append((label, a)))
+    return sent
+
+
+def _opt_in(app, pro_ids):
+    """Turn on SMS consent for real pros who already carry a real phone."""
+    with app.app_context():
+        from database import db
+        from models.competitor import ProCompetitor
+        for pid in pro_ids:
+            comp = ProCompetitor.query.filter_by(
+                id=pid, tournament_id=TID).first()
+            assert comp is not None, f"pro {pid} is missing from the mirror"
+            assert comp.phone, (
+                f"pro {pid} has no phone in production, so opting him in "
+                f"would prove nothing")
+            comp.phone_opted_in = True
+        db.session.commit()
+
+
+def _texted(outbox):
+    return {label.split("sms:", 1)[1] for label, _ in outbox if
+            label.startswith("sms:")}
+
+
+@pytest.mark.sev3
+def test_a_pro_is_still_texted_when_a_college_competitor_shares_his_id(
+        client, app, sms_outbox):
+    """Dwight Severson and Karson Wilson are standing in flight 7.
+
+    College competitors carry the same integer ids (Greer Swoboda is 29,
+    Zach Cardenas is 37) and their heats are read last, so the type map
+    relabels both pros as college and neither one is notified.
+    """
+    _opt_in(app, list(SMS_MASKED_PROS) + [SMS_CLEAN_PRO[0]])
+
+    response = client.post(SMS_START_URL)
+    assert response.status_code in (200, 302), response.status_code
+
+    texted = _texted(sms_outbox)
+
+    # Vacuity guard. If the notify path is dead the assertions below mean
+    # nothing, so prove it is alive with a pro who has no id twin.
+    assert SMS_CLEAN_PRO[1] in texted, (
+        f"the notify path sent nothing to {SMS_CLEAN_PRO[1]}, who has no "
+        f"college twin, so this test cannot say anything about the ones who "
+        f"do. sent: {sorted(texted)}")
+
+    for pid, name in SMS_MASKED_PROS.items():
+        assert name in texted, (
+            f"{name} (pro id {pid}) is in a pro heat in flight "
+            f"{SMS_TARGET_FLIGHT_NUMBER} and opted in, but was not texted "
+            f"because college id {pid} is in the same flight. sent: "
+            f"{sorted(texted)}")
+
+
+@pytest.mark.sev3
+def test_a_pro_who_is_not_in_the_flight_is_never_texted(
+        client, app, sms_outbox):
+    """The other half of the namespace contract.
+
+    Ian Wilson is pro id 32 and is not in flight 7. College id 32 is Toby
+    Bartsch and he is. Resolving the id against both tables, which is the
+    obvious way to stop losing the masked pros above, would send Ian a heads
+    up for a flight he is not in. This test passes against unfixed code on
+    purpose.
+    """
+    _opt_in(app, [SMS_GHOST_PRO[0], SMS_CLEAN_PRO[0]])
+
+    response = client.post(SMS_START_URL)
+    assert response.status_code in (200, 302), response.status_code
+
+    texted = _texted(sms_outbox)
+
+    assert SMS_CLEAN_PRO[1] in texted, (
+        f"the notify path sent nothing at all, so the assertion below is "
+        f"vacuous. sent: {sorted(texted)}")
+    assert SMS_GHOST_PRO[1] not in texted, (
+        f"{SMS_GHOST_PRO[1]} (pro id {SMS_GHOST_PRO[0]}) is not in flight "
+        f"{SMS_TARGET_FLIGHT_NUMBER}. He was texted because college id "
+        f"{SMS_GHOST_PRO[0]} is. sent: {sorted(texted)}")
+
+
+@pytest.mark.sev3
+def test_nobody_is_texted_when_nobody_opted_in(client, sms_outbox):
+    """Consent is the gate and it stays the gate.
+
+    Every pro in the mirror has phone_opted_in False. Starting the flight must
+    send zero messages. This test passes against unfixed code on purpose; its
+    job is to fail if a fix widens the recipient set instead of correcting the
+    lookup.
+    """
+    response = client.post(SMS_START_URL)
+    assert response.status_code in (200, 302), response.status_code
+    assert sms_outbox == [], (
+        f"messages were queued for competitors who never opted in: "
+        f"{sorted(_texted(sms_outbox))}")
+
+
+@pytest.mark.sev3
+def test_starting_a_flight_still_marks_it_in_progress(
+        client, sql, sms_outbox):
+    """The route's actual job, guarded.
+
+    Notification is a side effect. If a fix raises inside the notify helper
+    the flight never flips and the booth loses its status board, so assert the
+    primary effect separately. Passes against unfixed code on purpose.
+    """
+    before = sql("SELECT status FROM flights WHERE id = :f",
+                 f=SMS_TRIGGER_FLIGHT_ID)[0][0]
+    assert before != 'in_progress', before
+
+    response = client.post(SMS_START_URL)
+    assert response.status_code in (200, 302), response.status_code
+
+    after = sql("SELECT status FROM flights WHERE id = :f",
+                f=SMS_TRIGGER_FLIGHT_ID)[0][0]
+    assert after == 'in_progress', after
+
+
+# The college half of the notify path has no observable output today:
+# CollegeCompetitor has no `phone` column, so its branch queries the database
+# and then does nothing with the rows. That deadness hides mistakes. A fix that
+# tags the pro side correctly and leaves the college side keyed on bare ints
+# passes every assertion above, because the wrong college lookup produces no
+# text either way. Measured on the mirror, that mistake hands the college table
+# 22 ids that came out of PRO heats, 9 of which are real college competitors
+# who are not in this flight at all: Mateo Angel, Teagan Wigen, Maria Pyeatt,
+# John Nelson, Trevor Norris, Cooper Driskell, Aiden Springer, Trustin Norick,
+# Ellana Schreifels. Same ghost-recipient defect as Ian Wilson below, just
+# parked on the dead side of the branch until somebody adds a phone column.
+#
+# So this one watches the actual SQL. It is not a peek at my own
+# implementation: whatever shape the notify path takes, it has no business
+# asking the college table about an id it only ever saw in a pro heat.
+
+@pytest.fixture()
+def college_lookup_params(app):
+    """Record the bound parameters of every college_competitors query."""
+    from sqlalchemy import event
+
+    from database import db
+
+    seen: list = []
+
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        if "college_competitors" in statement and parameters:
+            seen.append(parameters)
+
+    engine = db.engine
+    event.listen(engine, "before_cursor_execute", _capture)
+    yield seen
+    event.remove(engine, "before_cursor_execute", _capture)
+
+
+def _flight_id_sets(app, flight_number):
+    """The pro-heat and college-heat id sets for a flight, read from the db."""
+    with app.app_context():
+        from models import Event, Flight
+
+        flight = Flight.query.filter_by(
+            tournament_id=TID, flight_number=flight_number).first()
+        assert flight is not None, f"flight {flight_number} is not in the mirror"
+        heats = list(flight.heats.all())
+        events = {
+            e.id: e
+            for e in Event.query.filter(
+                Event.id.in_({h.event_id for h in heats})).all()
+        }
+        pro_ids, col_ids = set(), set()
+        for heat in heats:
+            event_row = events.get(heat.event_id)
+            if not event_row:
+                continue
+            for cid in heat.get_competitors():
+                target = pro_ids if event_row.event_type == "pro" else col_ids
+                target.add(int(cid))
+        return pro_ids, col_ids
+
+
+@pytest.mark.sev3
+def test_the_college_lookup_is_never_handed_an_id_from_a_pro_heat(
+        client, app, sms_outbox, college_lookup_params):
+    """The college table must only be asked about college-heat ids.
+
+    Flight 7 has 25 ids in pro heats and 11 in college heats, overlapping on
+    exactly three (29, 33, 37). An id that appears only in a pro heat must
+    never reach a college_competitors lookup, or the notify path is resolving
+    people by an integer that means two different competitors.
+    """
+    pro_ids, col_ids = _flight_id_sets(app, SMS_TARGET_FLIGHT_NUMBER)
+    pro_only = pro_ids - col_ids
+    assert pro_only, (
+        "the mirror no longer has any pro-only id in this flight, so this "
+        "test cannot discriminate anything")
+
+    _opt_in(app, [SMS_CLEAN_PRO[0]])
+    del college_lookup_params[:]      # ignore the setup traffic above
+
+    # Deliberately NOT following the redirect. The flight_list page issues 18
+    # further college lookups spanning every flight in the tournament, and an
+    # id that is pro-only in flight 7 is an ordinary college-heat id in some
+    # other flight. Following the redirect made this test read those as leaks
+    # and fail against correct code. Only the POST is the notify path.
+    resp = client.post(SMS_START_URL, follow_redirects=False)
+    assert resp.status_code == 302
+
+    assert SMS_CLEAN_PRO[1] in _texted(sms_outbox), (
+        "the flight-start notify path did not run at all, so watching its "
+        "queries proves nothing")
+
+    leaked = set()
+    for params in college_lookup_params:
+        rows = params if isinstance(params, (list, tuple)) else [params]
+        for row in rows:
+            values = row.values() if isinstance(row, dict) else row
+            for value in values:
+                if isinstance(value, int) and value in pro_only:
+                    leaked.add(value)
+                elif isinstance(value, (list, tuple)):
+                    leaked |= {v for v in value if v in pro_only}
+
+    assert not leaked, (
+        f"ids {sorted(leaked)} appear only in PRO heats of flight "
+        f"{SMS_TARGET_FLIGHT_NUMBER}, but the notify path asked the college "
+        f"table about them. Those integers name different people in the two "
+        f"tables.")

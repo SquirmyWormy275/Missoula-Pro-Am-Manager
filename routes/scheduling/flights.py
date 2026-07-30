@@ -826,18 +826,20 @@ def _send_upcoming_heat_sms(tournament_id: int, current_flight_number: int) -> N
         for e in Event.query.filter(Event.id.in_(event_ids)).all()
     } if event_ids else {}
 
-    competitor_ids_in_flight = set()
-    competitor_type_map: dict = {}
+    # ProCompetitor and CollegeCompetitor ids share one integer namespace and
+    # DO overlap on real data, so a bare-int key here silently relabels a pro
+    # as college (last write wins, and heats come back in no guaranteed order)
+    # and drops him from the notify list. Key on (event_type, id) instead.
+    tagged_ids: set = set()
     for heat in heats:
         event = events_by_id.get(heat.event_id)
         if not event:
             continue
         for cid in heat.get_competitors():
-            competitor_ids_in_flight.add(int(cid))
-            competitor_type_map[int(cid)] = event.event_type
+            tagged_ids.add((event.event_type, int(cid)))
 
-    pro_ids = [cid for cid, t in competitor_type_map.items() if t == 'pro']
-    col_ids = [cid for cid, t in competitor_type_map.items() if t == 'college']
+    pro_ids = [cid for t, cid in tagged_ids if t == 'pro']
+    col_ids = [cid for t, cid in tagged_ids if t == 'college']
 
     sms_targets: list = []  # (phone, name)
 
