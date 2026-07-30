@@ -450,8 +450,12 @@ class TestListCompetitors:
 
         pro_comps = [c for c in comps if c['comp_type'] == 'pro']
         assert len(pro_comps) == 1
-        assert 'Underhand' in pro_comps[0]['events']
-        assert 'Standing Block' in pro_comps[0]['events']
+        # 'events' entries are {'name', 'gender'}; gender is the per-enrollment
+        # ROUTING gender, which for a gendered pro event is the event's.
+        names = [e['name'] for e in pro_comps[0]['events']]
+        assert 'Underhand' in names
+        assert 'Standing Block' in names
+        assert all(e['gender'] == 'F' for e in pro_comps[0]['events'])
 
     def test_name_string_events_resolved(self, db_session, tournament, pro_events):
         """Legacy name strings should also resolve in the lottery view."""
@@ -462,7 +466,7 @@ class TestListCompetitors:
 
         pro_comps = [c for c in comps if c['comp_type'] == 'pro']
         assert len(pro_comps) == 1
-        assert 'Standing Block' in pro_comps[0]['events']
+        assert 'Standing Block' in [e['name'] for e in pro_comps[0]['events']]
 
     def test_bogus_event_excluded(self, db_session, tournament, pro_events):
         """Unrecognisable events are excluded from the list, not errors."""

@@ -1685,3 +1685,217 @@ def test_an_undo_does_not_reopen_a_heat_the_operator_scored_afterwards(
         f"the undo reopened heat {_C21_PAIR_HEAT} to {after_status!r}. The "
         f"judge completed that heat after the scratch and the undo threw it "
         f"away.")
+
+
+# ---------------------------------------------------------------------------
+# c22. Woodboss block counts and lottery cards disagree on a cross-gender entry
+#
+#      services/woodboss.py::_count_competitors routes a PRO enrollment by the
+#      EVENT's gender.  services/woodboss.py::_list_competitors, which feeds
+#      get_lottery_view, routes the same enrollment by the COMPETITOR's gender.
+#      Two spellings of one rule.  They only disagree when a pro is entered in
+#      a gendered pro event that is not their own gender, and the real 2026
+#      data has exactly one such entry.
+#
+#      Kate Page (pro 2, F) is entered in event 32, Underhand MEN, and in
+#      event 33, Underhand Women.  Both events are named "Underhand".
+#
+#      The block table orders a 13in Western White Pine for her men's entry
+#      and an 11in for her women's entry.  The lottery card deck writes both
+#      of her cards into the WOMEN's pile.  Net effect on block-turning day:
+#      one 13in block turned with no name on it, and one 11in card in the
+#      women's stack with no block behind it.
+#
+#      The totals balance (39 either way), which is why nobody caught it.
+# ---------------------------------------------------------------------------
+
+_C22_KATE = "Kate Page"
+_C22_MEN = "block_underhand_pro_M"      # Western White Pine 13in
+_C22_WOMEN = "block_underhand_pro_F"    # Western White Pine 11in
+
+# Every block category on the shipped 2026 data whose count and card deck
+# ALREADY agree before the fix.  These are the positive control: a fix that
+# reroutes the lottery view must not move any of them.
+_C22_UNTOUCHED = {
+    "block_underhand_college_M": 29,
+    "block_underhand_college_F": 26,
+    "block_standing_college_M": 17,
+    "block_standing_college_F": 7,
+    "block_springboard_college_M": 0,
+    "block_springboard_college_F": 0,
+    "block_standing_pro_M": 0,
+    "block_standing_pro_F": 10,
+    "block_springboard_pro": 9,
+    "block_1board_pro": 10,
+    "block_3board_pro": 0,
+    "block_relay_underhand": 3,
+    "block_relay_standing": 3,
+}
+
+
+def _c22_blocks(app):
+    """config_key -> number of blocks the wood order says to turn."""
+    from services import woodboss
+    with app.app_context():
+        return {
+            b["config_key"]: (b.get("competitor_count") or 0)
+            for b in woodboss.calculate_blocks(TID)
+        }
+
+
+def _c22_cards(app):
+    """config_key -> list of competitor names on the lottery note cards."""
+    from services import woodboss
+    with app.app_context():
+        label_to_key = {v: k for k, v in woodboss.BLOCK_CONFIG_LABELS.items()}
+        out = {}
+        for column in woodboss.get_lottery_view(TID):
+            for section in column["sections"]:
+                key = label_to_key.get(
+                    section["config_label"], section["config_label"])
+                out.setdefault(key, []).extend(
+                    c["name"] for c in section["competitors"])
+        return out
+
+
+@pytest.mark.sev3
+def test_every_block_that_gets_turned_has_a_lottery_card_behind_it(app):
+    """The wood order and the card deck must describe the same pile of wood.
+
+    This is the whole defect in one assertion. calculate_blocks says how many
+    blocks to turn per category; get_lottery_view says whose name goes on
+    them. If those two numbers differ for any category, somebody stands at a
+    block with no card or holds a card with no block.
+    """
+    blocks = _c22_blocks(app)
+    cards = _c22_cards(app)
+
+    mismatched = {
+        key: (count, len(cards.get(key, [])))
+        for key, count in blocks.items()
+        if count != len(cards.get(key, []))
+    }
+    assert not mismatched, (
+        "the block order and the lottery card deck disagree per category "
+        f"(config_key: blocks vs cards): {mismatched}. Totals still balance, "
+        f"blocks={sum(blocks.values())} cards="
+        f"{sum(len(v) for v in cards.values())}, which is why this is "
+        f"invisible on the summary line.")
+
+
+@pytest.mark.sev3
+def test_a_woman_entered_in_the_mens_underhand_gets_a_mens_block_card(app):
+    """The wood is turned for the EVENT, not for the person.
+
+    Event 32 is Underhand Men and it chops a 13in block. Anyone standing in
+    event 32 chops a 13in block. Kate Page is entered in it, so the men's
+    card deck owes her a card.
+    """
+    cards = _c22_cards(app)
+    men = cards.get(_C22_MEN, [])
+    assert _C22_KATE in men, (
+        f"{_C22_KATE} is entered in event 32, Underhand Men, which turns a "
+        f"13in block, and she has no card in the {_C22_MEN} deck. The block "
+        f"gets turned for her either way: calculate_blocks counts her. "
+        f"{len(men)} cards for {_c22_blocks(app).get(_C22_MEN)} blocks.")
+
+
+@pytest.mark.sev3
+def test_she_is_not_double_carded_in_the_womens_pile(app):
+    """One card per enrollment, in the pile that entry actually belongs to.
+
+    Both of her Underhand entries resolve to the event NAME "Underhand", so
+    routing both by her own gender writes her name into the women's pile
+    twice with nothing to tell the two cards apart.
+    """
+    cards = _c22_cards(app)
+    women = cards.get(_C22_WOMEN, [])
+    assert women.count(_C22_KATE) == 1, (
+        f"{_C22_KATE} appears {women.count(_C22_KATE)} times in the "
+        f"{_C22_WOMEN} deck (11in). She is entered in the women's Underhand "
+        f"once. The duplicate is her MEN's entry, misrouted by her own "
+        f"gender instead of the event's.")
+
+
+@pytest.mark.sev3
+def test_the_lottery_page_prints_her_under_the_mens_underhand_heading(client):
+    """Not just the service. The page the block crew actually reads."""
+    resp = client.get(f"/woodboss/{TID}/lottery")
+    assert resp.status_code == 200, resp.status_code
+    html = resp.get_data(as_text=True)
+
+    men_head = "Underhand — Pro Men"
+    women_head = "Underhand — Pro Women"
+    assert men_head in html, f"{men_head!r} section missing from the page"
+
+    men_block = html.split(men_head, 1)[1]
+    # Cut at the next section heading so we only read the men's card list.
+    for nxt in (women_head, "Underhand — College", "Standing Block — "):
+        if nxt in men_block:
+            men_block = men_block.split(nxt, 1)[0]
+    assert _C22_KATE in men_block, (
+        f"the printed lottery page has no {_C22_KATE} card under "
+        f"{men_head!r}. That is the sheet the block crew works off.")
+
+
+@pytest.mark.sev3
+def test_no_other_block_category_moves(app):
+    """Positive control.
+
+    Thirteen of the fifteen categories already agree on the shipped data.
+    A routing change must leave every one of them exactly where it was, in
+    both the block order and the card deck. This is the test that fails if
+    the fix "agrees" by breaking everything equally.
+    """
+    blocks = _c22_blocks(app)
+    cards = _c22_cards(app)
+    for key, expected in sorted(_C22_UNTOUCHED.items()):
+        assert blocks.get(key, 0) == expected, (
+            f"{key}: block order moved from {expected} to {blocks.get(key, 0)}")
+        assert len(cards.get(key, [])) == expected, (
+            f"{key}: card deck moved from {expected} to "
+            f"{len(cards.get(key, []))}")
+
+
+@pytest.mark.sev3
+def test_the_underhand_pro_block_order_itself_is_unchanged(app):
+    """Positive control on the two categories the fix DOES touch.
+
+    calculate_blocks is the path that is already right. 26 men's blocks and
+    13 women's is what the wood order says today and what it must still say
+    after the lottery view is repaired. Only the cards move.
+    """
+    blocks = _c22_blocks(app)
+    assert blocks.get(_C22_MEN) == 26, blocks.get(_C22_MEN)
+    assert blocks.get(_C22_WOMEN) == 13, blocks.get(_C22_WOMEN)
+
+
+@pytest.mark.sev3
+def test_a_college_competitor_is_still_routed_by_her_own_gender(app):
+    """Positive control on the branch that must NOT change.
+
+    College competitors store event NAMES, and "Underhand Hard Hit" is the
+    name of both the men's and the women's college event. The college branch
+    therefore cannot know which event was meant and has to route by the
+    competitor. That is a real limitation, not a second copy of this bug,
+    and the fix must leave it alone.
+    """
+    from services import woodboss
+    with app.app_context():
+        counts = woodboss._count_competitors(TID)
+    college_underhand = {
+        k: v for k, v in counts.items()
+        if k[1] == "college" and "underhand" in k[0]
+    }
+    assert college_underhand, "no college underhand enrollment counted at all"
+    genders = {k[2] for k in college_underhand}
+    # Both piles must survive.  A "consistency" fix that routes college by the
+    # event's gender too collapses the women's college underhand to nothing,
+    # because the stored NAME resolves to whichever of the two same-named
+    # college events the lookup map happened to keep.  `<= {"M", "F"}` was too
+    # loose to catch that: it passed with the F key gone entirely.
+    assert genders == {"M", "F"}, (
+        f"college underhand routing collapsed to {genders}. College must "
+        f"route by the competitor: counts={dict(college_underhand)}")
+    assert all(v > 0 for v in college_underhand.values()), \
+        dict(college_underhand)

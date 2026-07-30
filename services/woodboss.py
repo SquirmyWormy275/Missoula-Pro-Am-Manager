@@ -91,11 +91,16 @@ def _match_block_cfg_keys(event_lower, comp_type, gender):
     land in BOTH block_1board_pro and block_springboard_pro, shorting
     real 2-board inventory on block-turning day.
 
-    `gender` is the event's gender for event-driven callers
-    (`_active_block_keys`) or the competitor's gender for competitor-
-    driven callers (`calculate_blocks`, `get_lottery_view`). Both work
-    because college groups are always gendered (so gender must match)
-    and pro groups declare `grp_gender=None` (open — any gender matches).
+    `gender` is the ROUTING gender for one enrollment, and every caller
+    must hand in the same thing. Do not pass the competitor's gender on
+    a pro enrollment: four of the pro groups here are gendered
+    (block_underhand_pro_M/_F, block_standing_pro_M/_F), only the
+    springboard family is open. An earlier version of this docstring
+    claimed all pro groups declare `grp_gender=None` and were therefore
+    interchangeable with the event's gender. That was false, and it is
+    what let `_count_competitors` (event gender) and `_list_competitors`
+    (competitor gender) drift apart until the block order and the
+    lottery card deck disagreed. Use `_block_routing_gender`.
     """
     is_pro_one_board = comp_type == 'pro' and any(
         f in event_lower for f in PRO_ONE_BOARD_FRAGMENTS
@@ -256,6 +261,30 @@ def _get_pro_event_map(tournament_id):
     return id_map, name_map
 
 
+def _block_routing_gender(event, comp_type, comp_gender):
+    """Which gender routes this ONE enrollment to a block config_key.
+
+    The wood is turned for the EVENT, not for the person. Event 32 on the
+    2026 data is Underhand Men and chops a 13in block no matter who stands
+    at it, so a gendered PRO event routes by the event.
+
+    College cannot do that and must not try. College competitors store event
+    NAMES in events_entered (models/competitor.py), and "Underhand Hard Hit"
+    is the name of BOTH the men's and the women's college event, so the
+    stored value cannot say which one was meant. The college branch routes by
+    the competitor because that is the only gender it can trust.
+
+    Both `_count_competitors` and `_list_competitors` call this. They used to
+    spell the rule separately and drifted: the count used the event's gender,
+    the lottery card deck used the competitor's, and one cross-gender pro
+    entry on the real 2026 data put a card in the wrong pile while the totals
+    still balanced.
+    """
+    if comp_type == 'pro':
+        return event.gender or comp_gender
+    return comp_gender
+
+
 def _count_competitors(tournament_id):
     """
     Count enrolled competitors per (event_name_lower, competitor_type, gender).
@@ -305,7 +334,8 @@ def _count_competitors(tournament_id):
                 event = college_name_map.get(event_key.lower())
             if not event:
                 continue
-            key = (event.name.lower().strip(), 'college', gender)
+            key = (event.name.lower().strip(), 'college',
+                   _block_routing_gender(event, 'college', gender))
             counts[key] += 1
 
     pro_id_map, pro_name_map = _get_pro_event_map(tournament_id)
@@ -325,9 +355,8 @@ def _count_competitors(tournament_id):
                 event = pro_name_map.get(event_key.lower())
             if not event:
                 continue
-            # Use event gender if the event is gendered; else use competitor gender
-            gender = event.gender or comp_gender
-            key = (event.name.lower().strip(), 'pro', gender)
+            key = (event.name.lower().strip(), 'pro',
+                   _block_routing_gender(event, 'pro', comp_gender))
             counts[key] += 1
 
     return counts
@@ -338,9 +367,18 @@ def _list_competitors(tournament_id):
     Return all active competitors with their enrolled events for the lottery view.
 
     Returns a list of dicts:
-        {'name': str, 'affiliation': str, 'gender': str, 'comp_type': 'college'|'pro', 'events': [str]}
+        {'name': str, 'affiliation': str, 'gender': str,
+         'comp_type': 'college'|'pro',
+         'events': [{'name': str, 'gender': str}]}
 
     Pro competitor events are resolved from IDs to event names.
+
+    Each entry in `events` carries its OWN routing gender from
+    `_block_routing_gender`, which is not always the competitor's: a woman
+    entered in the men's Underhand is chopping a men's block. The top-level
+    'gender' is still the competitor's own and is not a routing input.
+    Callers that pick a block config_key must use the per-event gender, or
+    they will disagree with `_count_competitors` and card the wrong pile.
     """
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.event import Event
@@ -368,20 +406,25 @@ def _list_competitors(tournament_id):
     )
     for comp in college_comps:
         team_code = comp.team.team_code if comp.team else ''
-        event_names = []
+        comp_gender = comp.gender or 'M'
+        entries = []
         for event_entry in comp.get_events_entered():
             event_key = str(event_entry).strip()
             event = college_id_map.get(event_key)
             if not event:
                 event = college_name_map.get(event_key.lower())
             if event:
-                event_names.append(event.name)
+                entries.append({
+                    'name': event.name,
+                    'gender': _block_routing_gender(
+                        event, 'college', comp_gender),
+                })
         result.append({
             'name': comp.name,
             'affiliation': team_code,
-            'gender': comp.gender or 'M',
+            'gender': comp_gender,
             'comp_type': 'college',
-            'events': event_names,
+            'events': entries,
         })
 
     pro_id_map, pro_name_map = _get_pro_event_map(tournament_id)
@@ -393,20 +436,24 @@ def _list_competitors(tournament_id):
     )
     for comp in pro_comps:
         # Resolve event IDs (or name strings from legacy imports) to event names
-        event_names = []
+        comp_gender = comp.gender or 'M'
+        entries = []
         for event_id in comp.get_events_entered():
             event_key = str(event_id).strip()
             event = pro_id_map.get(event_key)
             if not event:
                 event = pro_name_map.get(event_key.lower())
             if event:
-                event_names.append(event.name)
+                entries.append({
+                    'name': event.name,
+                    'gender': _block_routing_gender(event, 'pro', comp_gender),
+                })
         result.append({
             'name': comp.name,
             'affiliation': '',
-            'gender': comp.gender or 'M',
+            'gender': comp_gender,
             'comp_type': 'pro',
-            'events': event_names,
+            'events': entries,
         })
 
     return result
@@ -891,9 +938,12 @@ def get_lottery_view(tournament_id):
     key_event_comps = defaultdict(lambda: defaultdict(list))
 
     for comp in competitors:
-        gender = comp['gender']
         comp_type = comp['comp_type']
-        for event_name in comp['events']:
+        for entry in comp['events']:
+            # Per-enrollment routing gender, NOT comp['gender']. See
+            # _block_routing_gender: the wood is turned for the event.
+            event_name = entry['name']
+            gender = entry['gender']
             event_lower = event_name.lower().strip()
             for cfg_key in _match_block_cfg_keys(event_lower, comp_type, gender):
                 key_event_comps[cfg_key][event_name].append({
