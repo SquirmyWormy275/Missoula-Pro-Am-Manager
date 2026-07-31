@@ -63,11 +63,8 @@ def ability_rankings(tournament_id):
             ordered_lists[(category, rest[last_underscore + 1:])] = comp_ids
 
         # Process each ordered list: ranked competitors get rank = position (1-based).
-        all_comp_ids_by_cat: dict = {}  # category → set of comp_ids that have been ranked
         for (category, _gender), comp_ids in ordered_lists.items():
-            ranked_set = all_comp_ids_by_cat.setdefault(category, set())
             for position, comp_id in enumerate(comp_ids, start=1):
-                ranked_set.add(comp_id)
                 existing = ProEventRank.query.filter_by(
                     tournament_id=tournament_id,
                     competitor_id=comp_id,
@@ -84,24 +81,56 @@ def ability_rankings(tournament_id):
                     ))
                 saved_count += 1
 
-        # Delete ranks for competitors that were NOT in any ordered list for their category.
+        # Delete ranks for competitors dragged out of a Ranked zone.
         #
-        # BUG HISTORY: previously this used `if ranked_ids else True` as the
-        # filter clause — passing Python True makes SQLAlchemy emit WHERE TRUE,
-        # which SILENTLY WIPED every rank in that category whenever the form
-        # submitted an empty Ranked zone. The user's symptom was "I set my
-        # rankings, save, and they go back to whatever your preset was."
+        # BUG HISTORY, two layers deep.
+        #
+        # First layer, fixed in V2.14.15: this used `if ranked_ids else True`
+        # as the filter clause. Passing Python True makes SQLAlchemy emit
+        # WHERE TRUE, which SILENTLY WIPED every rank in that category whenever
+        # the form submitted an empty Ranked zone. The user's symptom was "I set
+        # my rankings, save, and they go back to whatever your preset was."
         # Root cause: the form always submits every rendered Ranked zone's
         # hidden input, and empty ones were treated as "clear everything."
         #
-        # Fix: ONLY run the stale-cleanup when the user's Ranked zone(s) for
-        # that category actually contain competitor IDs. An empty Ranked zone
-        # is preserved — the user can still unrank an INDIVIDUAL by dragging
-        # them out (remaining items are submitted; the dropped one is not in
-        # ranked_ids so it's deleted). Mass-clearing a whole category requires
-        # unranking each competitor explicitly, which is rare and safer than
-        # auto-wipe.
-        for category, ranked_ids in all_comp_ids_by_cat.items():
+        # Second layer, and the reason that fix was not enough: it built ONE
+        # ranked set per category by unioning every gender's list, and skipped
+        # the cleanup only when that whole union was empty. But a rank is stored
+        # on (tournament_id, competitor_id, event_category) with NO gender,
+        # while the form submits one order_<category>_<gender> list PER GENDER.
+        # So a non-empty men's list made the union non-empty, the cleanup ran
+        # across the entire category, and every woman's rank in it was deleted.
+        # Measured on the real 2026 data: seeding four men and four women in
+        # `underhand` and saving the men's ladder with an empty women's zone
+        # deleted Kate Page, Brianna Kvinge, Chrissy Marcellus and Emma Macon.
+        # Five of the seven ranked categories on that dataset carry both
+        # genders, so this was the common case, not a corner.
+        #
+        # Fix: scope each cleanup pass to the gender zone its list came from. A
+        # submitted list may only delete ranks belonging to competitors the GET
+        # handler would have rendered in THAT zone, resolved the same way it
+        # resolves gender_key. An empty Ranked zone still deletes nothing, so
+        # the first-layer fix is preserved; mass-clearing a ladder still means
+        # unranking each competitor explicitly.
+        pro_gender: dict = dict(
+            db.session.query(ProCompetitor.id, ProCompetitor.gender)
+            .filter(ProCompetitor.tournament_id == tournament_id)
+            .all()
+        )
+
+        def _zone_of(category, comp_id):
+            """Which order_<category>_<gender> zone a competitor is rendered in.
+
+            Mirrors the gender_key branch in the GET handler below: Jack & Jill
+            is mixed so everyone shares one 'open' ladder, and a competitor with
+            no recorded gender also falls to 'open'.
+            """
+            if category == 'jack_jill':
+                return 'open'
+            g = pro_gender.get(comp_id)
+            return g if g in ('M', 'F') else 'open'
+
+        for (category, gender_key), ranked_ids in ordered_lists.items():
             if not ranked_ids:
                 continue
             stale = ProEventRank.query.filter(
@@ -110,6 +139,8 @@ def ability_rankings(tournament_id):
                 ~ProEventRank.competitor_id.in_(ranked_ids),
             ).all()
             for r in stale:
+                if _zone_of(category, r.competitor_id) != gender_key:
+                    continue
                 db.session.delete(r)
                 deleted_count += 1
 

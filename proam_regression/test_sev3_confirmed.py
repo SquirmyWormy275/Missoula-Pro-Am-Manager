@@ -809,11 +809,12 @@ def test_a_pro_is_still_texted_when_a_college_competitor_shares_his_id(
     """Dwight Severson, Jack Love and Karson Wilson are standing in flight 7.
 
     College competitors carry the same integer ids (Greer Swoboda is 29,
-    Brad Applegate is 33, Zach Cardenas is 37), so a bare-int type map
-    relabels whichever pro's heat is read after his college twin's and that
-    man is never notified. Which of the three gets dropped is decided by
-    row order the query does not fix, so this test asserts on the whole
-    measured population in SMS_MASKED_PROS, not a sample of it.
+    Brad Applegate is 33, Zach Cardenas is 37), so a bare-int type map keeps
+    only the last label written for an id. A pro is relabelled as college,
+    and so never notified, when his college twin's heat is read AFTER his
+    own. Which of the three that hits is decided by row order the query does
+    not fix, so this test asserts on the whole measured population in
+    SMS_MASKED_PROS, not a sample of it.
     """
     _opt_in(app, list(SMS_MASKED_PROS) + [SMS_CLEAN_PRO[0]])
 
