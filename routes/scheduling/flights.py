@@ -826,20 +826,24 @@ def _send_upcoming_heat_sms(tournament_id: int, current_flight_number: int) -> N
         for e in Event.query.filter(Event.id.in_(event_ids)).all()
     } if event_ids else {}
 
-    # ProCompetitor and CollegeCompetitor ids share one integer namespace and
-    # DO overlap on real data, so a bare-int key here silently relabels a pro
-    # as college (last write wins, and heats come back in no guaranteed order)
-    # and drops him from the notify list. Key on (event_type, id) instead.
-    tagged_ids: set = set()
+    # ProCompetitor and CollegeCompetitor ids shared one integer namespace
+    # until the c38 reseed fenced them apart; a bare-int key here silently
+    # relabeled a pro as college (last write wins on unordered heats) and
+    # dropped him from the notify list. This is the first production caller
+    # of EntityKey (c40): the discriminator is now part of the value and
+    # cannot be lost by a refactor, a signature, or a JSON round trip.
+    from services.entity_key import EntityKey
+
+    tagged: set = set()
     for heat in heats:
         event = events_by_id.get(heat.event_id)
         if not event:
             continue
         for cid in heat.get_competitors():
-            tagged_ids.add((event.event_type, int(cid)))
+            tagged.add(EntityKey(kind=event.event_type, id=int(cid)))
 
-    pro_ids = [cid for t, cid in tagged_ids if t == 'pro']
-    col_ids = [cid for t, cid in tagged_ids if t == 'college']
+    pro_ids = [k.id for k in tagged if k.is_pro]
+    col_ids = [k.id for k in tagged if k.is_college]
 
     sms_targets: list = []  # (phone, name)
 

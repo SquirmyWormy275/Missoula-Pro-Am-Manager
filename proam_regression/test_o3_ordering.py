@@ -146,3 +146,30 @@ def test_the_snake_draft_input_is_registration_order_not_heap_order(app):
     assert _is_sorted(ids), (
         f"snake draft input is not registration order: {ids}"
     )
+
+
+@pytest.mark.sev3
+def test_entity_key_adoption_never_goes_backwards(app):
+    """c40 ratchet. services/entity_key.py sat imported by nothing while
+    hand-rolled pair-keying spread to six sites (backlog section E class).
+    This counts production importers and refuses to let the number shrink;
+    raise the floor as call sites convert. The lint rule proper (banning new
+    bare-int competitor keys outside entity_key) is filed as tranche-2 work;
+    a ratchet is what fits in a test today."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(rig.APP_ROOT)
+    importers = set()
+    for sub in ("routes", "services"):
+        for p in (root / sub).rglob("*.py"):
+            if p.name == "entity_key.py":
+                continue
+            if re.search(r"from services\.entity_key import|import services\.entity_key",
+                         p.read_text(encoding="utf-8")):
+                importers.add(str(p.relative_to(root)))
+    FLOOR = 1  # c40: routes/scheduling/flights.py (the c29 SMS site)
+    assert len(importers) >= FLOOR, (
+        f"EntityKey production importers fell below the ratchet floor "
+        f"({FLOOR}): {sorted(importers)}"
+    )
