@@ -207,7 +207,10 @@ class TestReportingTemplates:
         tid = seeded_app['tournament'].id
         _assert_renders(admin_client.get(f'/reporting/{tid}/all-results'))
 
-    @pytest.mark.xfail(reason='DetachedInstanceError: lazy load of team in standings template after session rollback')
+    # xfail marker removed at c41: the test had XPASSED consistently since at
+    # least 60adbb2 (flagged by the VS Code session's 2026-07-30 audit). The
+    # DetachedInstanceError it guarded no longer reproduces, and a stale
+    # expected-failure marker hides the real regression the day it returns.
     def test_college_standings(self, admin_client, seeded_app):
         tid = seeded_app['tournament'].id
         _assert_renders(admin_client.get(f'/reporting/{tid}/college/standings'))
