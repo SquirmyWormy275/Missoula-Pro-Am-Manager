@@ -20,6 +20,7 @@ import re
 
 import pytest
 import rig
+from population import Claim, register
 
 TID = rig.TOURNAMENT_ID
 
@@ -759,6 +760,74 @@ SMS_GHOST_PRO = (32, "Ian Wilson")
 
 # Nothing here is invented except the opt-in flag. All four carry the phone
 # numbers they really submitted.
+
+# O5: every claim above is registered against the query that measures it.
+# The two-name version of SMS_MASKED_PROS is exactly the defect class these
+# guards exist for; had this registration existed then, the sample would
+# have failed collection-side instead of surviving a battery run.
+_SMS_FLIGHT_HEAT_IDS = """
+    WITH fh AS (
+        SELECT h.competitors, e.event_type
+        FROM heats h
+        JOIN events e ON e.id = h.event_id
+        JOIN flights f ON f.id = h.flight_id
+        WHERE f.tournament_id = :t AND f.flight_number = :fn
+    ),
+    pro_ids AS (
+        SELECT DISTINCT jsonb_array_elements_text(competitors::jsonb)::int AS cid
+        FROM fh WHERE event_type = 'pro'
+    ),
+    col_ids AS (
+        SELECT DISTINCT jsonb_array_elements_text(competitors::jsonb)::int AS cid
+        FROM fh WHERE event_type = 'college'
+    )
+"""
+
+register(Claim(
+    name=("SMS_MASKED_PROS is the WHOLE pro/college id collision population "
+          "of flight 7, not a sample of it"),
+    claimed=SMS_MASKED_PROS,
+    sql=_SMS_FLIGHT_HEAT_IDS + """
+    SELECT p.cid, pc.name
+    FROM pro_ids p
+    JOIN col_ids c ON c.cid = p.cid
+    JOIN pro_competitors pc ON pc.id = p.cid AND pc.tournament_id = :t
+    ORDER BY p.cid
+    """,
+    params={"t": TID, "fn": SMS_TARGET_FLIGHT_NUMBER},
+    shape=lambda rows: {int(r[0]): r[1] for r in rows},
+))
+
+register(Claim(
+    name=("SMS_CLEAN_PRO stands in a flight-7 pro heat and has no college "
+          "twin in any flight-7 heat"),
+    claimed=SMS_CLEAN_PRO,
+    sql=_SMS_FLIGHT_HEAT_IDS + """
+    SELECT p.cid, pc.name
+    FROM pro_ids p
+    JOIN pro_competitors pc ON pc.id = p.cid AND pc.tournament_id = :t
+    WHERE p.cid NOT IN (SELECT cid FROM col_ids)
+    ORDER BY p.cid
+    """,
+    params={"t": TID, "fn": SMS_TARGET_FLIGHT_NUMBER},
+    shape=lambda rows: [(int(r[0]), r[1]) for r in rows],
+    mode="member",
+))
+
+register(Claim(
+    name=("SMS_GHOST_PRO exists as a pro, is absent from every flight-7 pro "
+          "heat, and his integer id stands in a flight-7 college heat"),
+    claimed={SMS_GHOST_PRO[0]: SMS_GHOST_PRO[1]},
+    sql=_SMS_FLIGHT_HEAT_IDS + """
+    SELECT pc.id, pc.name
+    FROM pro_competitors pc
+    WHERE pc.id = :gid AND pc.tournament_id = :t
+      AND pc.id IN (SELECT cid FROM col_ids)
+      AND pc.id NOT IN (SELECT cid FROM pro_ids)
+    """,
+    params={"t": TID, "fn": SMS_TARGET_FLIGHT_NUMBER, "gid": SMS_GHOST_PRO[0]},
+    shape=lambda rows: {int(r[0]): r[1] for r in rows},
+))
 
 
 @pytest.fixture()

@@ -14,6 +14,7 @@ import re
 
 import pytest
 import rig
+from population import Claim, register
 
 TID = rig.TOURNAMENT_ID
 
@@ -31,6 +32,19 @@ def _loads(value):
 PRO_DB_EVENT = 38          # pro Double Buck
 PRO_DB_HEAT = 425          # competitors [23, 21, 24, 27, 45, 28, 48]
 PRO_DB_TIMES = {23: "9.10", 21: "9.10", 24: "10.20", 27: "10.20"}
+
+# O5: the roster in the comment above is a claim about heat 425, and every
+# key in PRO_DB_TIMES rides on it. Registered against the stored row.
+register(Claim(
+    name="PRO_DB_HEAT 425 holds exactly the seven-man Double Buck roster",
+    claimed=[23, 21, 24, 27, 45, 28, 48],
+    sql=("SELECT competitors FROM heats "
+         "WHERE id = :h AND event_id = :e"),
+    params={"h": PRO_DB_HEAT, "e": PRO_DB_EVENT},
+    shape=lambda rows: (json.loads(rows[0][0])
+                        if rows and isinstance(rows[0][0], str)
+                        else (rows[0][0] if rows else [])),
+))
 
 
 def _score_pro_double_buck(client, sql, heat_id=PRO_DB_HEAT, times=None):
