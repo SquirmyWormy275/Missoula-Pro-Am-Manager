@@ -696,3 +696,296 @@ def test_entries_matching_no_event_on_this_day_read_as_no_events(app):
     assert f["competitors_no_events"] == 1
     assert f["competitors_missing_from_heats"] == EXPECTED_FRIDAY_MISSING - 1
     assert f["competitors_placed"] == EXPECTED_FRIDAY_PLACED
+
+
+# ===========================================================================
+# Item 3 of 4: Stock Saw solos stranded on stand 8.
+#
+#     Reported symptom: the race-day printout showed six straight solo heats
+#     on stand 8, so the judges set up the same physical stand every heat
+#     with no off-stand to prepare. V2.14.13 wired the solo-stand rebalance
+#     into five route sites and missed the authoritative one:
+#     services/scratch_cascade.py::execute_cascade. V2.14.15 wired it there.
+#
+#     Measured on the real mirror: the race-day layout is STILL LIVE DATA.
+#     College Stock Saw Men (event 20) holds six consecutive solos, heats 1
+#     through 6, every one on stand 8, with three pairs behind them on 7+8.
+#     The women's event (21) holds five solos, all on stand 8. The rebalance
+#     fix runs at generation and mutation time and nothing has mutated these
+#     rows since it shipped, so the 2026 pattern sits in production exactly
+#     as it was printed. Same disease as the stale birling brackets, item 4:
+#     a generator fix is not a data fix.
+#
+#     Verified by probe before writing these tests: scratching Mateo Angel
+#     (id 30, the stand-7 seat of pair heat 7) through the real cascade
+#     route removed him, left Dustin Haley as a solo, and re-alternated
+#     every solo in the event to 7,8,7,8,7,8,7. One real scratch repairs the
+#     whole event retroactively. The wiring is what these tests lock.
+# ===========================================================================
+
+# Measured layout of college Stock Saw Men (event 20) on the mirror.
+STOCK_SAW_M = 20
+STOCK_SAW_F = 21
+SINGLE_BUCK_M = 15
+# heats 1-6: solo competitor ids, in heat order, every one assigned stand 8.
+SS_M_SOLOS_BEFORE = {1: 62, 2: 59, 3: 58, 4: 51, 5: 46, 6: 44}
+# heats 7-9: pairs (stand-7 seat, stand-8 seat).
+SS_M_PAIRS_BEFORE = {7: (30, 43), 8: (35, 41), 9: (37, 38)}
+SS_SCRATCH_ID = 30       # Mateo Angel, stand-7 seat of heat 7
+SS_SURVIVOR_ID = 43      # Dustin Haley, stand-8 seat of heat 7
+
+
+def _stock_saw_layout(event_id):
+    """[(heat_number, [competitor ids], {id: stand})] in run+heat order."""
+    from database import db
+    from models.heat import Heat
+
+    db.session.expire_all()
+    out = []
+    for h in (
+        Heat.query.filter_by(event_id=event_id)
+        .order_by(Heat.run_number, Heat.heat_number)
+        .all()
+    ):
+        out.append(
+            (h.heat_number, [int(c) for c in h.get_competitors()],
+             {int(k): v for k, v in h.get_stand_assignments().items()})
+        )
+    return out
+
+
+def _scratch_through_the_real_route(client, comp_id, comp_type):
+    """GET the preview, check every effect, POST the confirm. The route
+    aborts 400 without competitor_type because pro and college ids collide
+    on this database; both real entry points send it."""
+    r = client.get(
+        f"/scoring/{TID}/competitor/{comp_id}/scratch-preview"
+        f"?competitor_type={comp_type}",
+        headers={"Accept": "application/json"},
+    )
+    assert r.status_code == 200, r.status_code
+    effects = r.get_json()["effects"]
+    form = {"effect_count": str(len(effects)), "competitor_type": comp_type}
+    for i, e in enumerate(effects):
+        form[f"effect_type_{i}"] = e["effect_type"]
+        form[f"affected_entity_id_{i}"] = str(e["affected_entity_id"])
+        form[f"effect_checked_{i}"] = "on"
+    r2 = client.post(
+        f"/scoring/{TID}/competitor/{comp_id}/scratch-confirm", data=form
+    )
+    assert r2.status_code in (200, 302), r2.status_code
+
+
+def _assert_solo_alternation(layout, event_label):
+    """The DOMAIN_CONTRACT: solos alternate 7,8,7,8... in heat order within a
+    run, starting at 7, pairs always occupy exactly {7, 8}, and no stand
+    outside [7, 8] ever appears in Stock Saw."""
+    expected_next = 7
+    for heat_number, comps, stands in layout:
+        assert set(stands.values()) <= {7, 8}, (
+            f"{event_label} heat {heat_number} uses a stand outside 7/8: {stands}"
+        )
+        if len(comps) == 1:
+            got = stands.get(comps[0])
+            assert got == expected_next, (
+                f"{event_label} heat {heat_number}: solo on stand {got}, "
+                f"alternation expected {expected_next}"
+            )
+            expected_next = 15 - expected_next  # 7 <-> 8
+        elif len(comps) == 2:
+            assert set(stands.values()) == {7, 8}, (
+                f"{event_label} heat {heat_number}: pair not on 7+8: {stands}"
+            )
+
+
+@pytest.mark.sev1
+def test_the_race_day_stand_8_pattern_is_still_live_production_data(app):
+    """Population guard and a finding in its own right: the mirror holds the
+    exact printout pattern from April 2026. Six consecutive Stock Saw solos,
+    all on stand 8. If this test starts failing because the data was
+    repaired, update the constants; if it fails any other way, the mirror
+    is not the world these tests were written against.
+    """
+    layout = {hn: (c, s) for hn, c, s in _stock_saw_layout(STOCK_SAW_M)}
+    for hn, comp_id in SS_M_SOLOS_BEFORE.items():
+        comps, stands = layout[hn]
+        assert comps == [comp_id]
+        assert stands == {comp_id: 8}, (
+            f"heat {hn}: expected the race-day stand-8 stranding, got {stands}"
+        )
+    for hn, (seat7, seat8) in SS_M_PAIRS_BEFORE.items():
+        comps, stands = layout[hn]
+        assert sorted(comps) == sorted([seat7, seat8])
+        assert stands == {seat7: 7, seat8: 8}
+
+
+@pytest.mark.sev1
+def test_a_cascade_scratch_rebalances_the_whole_stock_saw_event(app, client):
+    """THE 2026 WIRING GAP. Scratching through the authoritative cascade
+    path must trigger the solo-stand rebalance, exactly as the five wired
+    route sites do. Before V2.14.15 this path left the survivor on whatever
+    stand the scratched partner left him, and the printout read six straight
+    heats on stand 8.
+
+    The rebalance normalizes the entire event, so this single scratch must
+    also retroactively repair the six stranded solos. Asserted against the
+    documented contract (alternate from 7 within each run), not against a
+    hardcoded stand list.
+    """
+    _scratch_through_the_real_route(client, SS_SCRATCH_ID, "college")
+
+    layout = _stock_saw_layout(STOCK_SAW_M)
+    by_heat = {hn: (c, s) for hn, c, s in layout}
+
+    survivor_comps, survivor_stands = by_heat[7]
+    assert survivor_comps == [SS_SURVIVOR_ID], (
+        f"heat 7 after scratching {SS_SCRATCH_ID}: {survivor_comps}"
+    )
+    assert SS_SCRATCH_ID not in survivor_stands, (
+        "the scratched man is gone from the heat but still holds a stand"
+    )
+    _assert_solo_alternation(layout, "Stock Saw M")
+
+    # The untouched pairs keep their exact seats. A rebalance that churns
+    # already-correct pairs passes a set-based check ({7,8} either way) and
+    # still reprints every judge sheet for no reason.
+    for hn in (8, 9):
+        seat7, seat8 = SS_M_PAIRS_BEFORE[hn]
+        assert by_heat[hn][1] == {seat7: 7, seat8: 8}, (
+            f"heat {hn}: pair orientation churned to {by_heat[hn][1]}"
+        )
+
+    # The concrete race-day complaint, stated directly: no two consecutive
+    # solo heats on the same physical stand anywhere in the event.
+    solo_stands = [
+        stands[comps[0]] for _, comps, stands in layout if len(comps) == 1
+    ]
+    for a, b in zip(solo_stands, solo_stands[1:]):
+        assert a != b, f"consecutive solos share stand {a}: {solo_stands}"
+
+
+@pytest.mark.sev1
+def test_a_mens_scratch_does_not_touch_the_womens_stock_saw(app, client):
+    """The cascade rebalances the events it MUTATED, not every Stock Saw in
+    the tournament. The women's event carries the same five-solos-on-8
+    pattern; a men's scratch has no business rewriting it."""
+    before = _stock_saw_layout(STOCK_SAW_F)
+    _scratch_through_the_real_route(client, SS_SCRATCH_ID, "college")
+    assert _stock_saw_layout(STOCK_SAW_F) == before
+
+
+@pytest.mark.sev1
+def test_a_scratch_in_another_event_leaves_stock_saw_and_its_own_stands_alone(
+    app, client
+):
+    """Two scopes at once. Scratching a Single Buck man must not wake the
+    Stock Saw rebalance (event scoping), and the rebalance must not touch
+    Single Buck's own stands (the _is_stock_saw early return: Single Buck
+    legitimately uses stands outside 7/8, and a rebalance that 'repaired'
+    it onto 7/8 would corrupt the event while looking like a fix).
+    """
+    from models.heat import Heat
+
+    ss_before = _stock_saw_layout(STOCK_SAW_M)
+
+    # 61 stands only in Single Buck heat 3 (pair with 41) among heat events.
+    sb_before = {
+        h.heat_number: dict(h.get_stand_assignments())
+        for h in Heat.query.filter_by(event_id=SINGLE_BUCK_M).all()
+    }
+    _scratch_through_the_real_route(client, 61, "college")
+
+    assert _stock_saw_layout(STOCK_SAW_M) == ss_before, (
+        "a Single Buck scratch rewrote Stock Saw stand assignments"
+    )
+
+    from database import db
+
+    db.session.expire_all()
+    for h in Heat.query.filter_by(event_id=SINGLE_BUCK_M).all():
+        after = {k: v for k, v in h.get_stand_assignments().items() if k != "61"}
+        expected = {k: v for k, v in sb_before[h.heat_number].items() if k != "61"}
+        assert after == expected, (
+            f"Single Buck heat {h.heat_number} stands changed for survivors: "
+            f"{sb_before[h.heat_number]} -> {h.get_stand_assignments()}"
+        )
+
+
+@pytest.mark.sev1
+def test_run_two_alternation_starts_fresh_at_stand_7(app, client):
+    """Runs are balanced independently (the generator's documented rule):
+    run 2's first solo starts back at 7 no matter where run 1 ended. The
+    real event has one run, so the second is staged; a rebalance that
+    carries alternation across the run boundary passes every single-run
+    test and still hands the crew a back-to-back on race day.
+    """
+    import json as _json
+
+    from database import db
+    from models.heat import Heat
+
+    template = Heat.query.filter_by(event_id=STOCK_SAW_M, heat_number=1).first()
+    for hn, comp_id in ((1, 35), (2, 37)):
+        db.session.add(
+            Heat(
+                event_id=STOCK_SAW_M,
+                heat_number=hn,
+                run_number=2,
+                competitors=_json.dumps([comp_id]),
+                stand_assignments=_json.dumps({str(comp_id): 8}),
+                status=template.status,
+            )
+        )
+    db.session.commit()
+
+    _scratch_through_the_real_route(client, SS_SCRATCH_ID, "college")
+
+    layout = _stock_saw_layout(STOCK_SAW_M)
+    run2 = [
+        (hn, comps, stands)
+        for hn, comps, stands in layout[-2:]
+    ]
+    assert [stands[comps[0]] for _, comps, stands in run2] == [7, 8], (
+        f"run 2 solos must restart alternation at 7: {run2}"
+    )
+
+
+@pytest.mark.sev1
+def test_completed_heats_keep_their_recorded_stands(app, client):
+    """Completed heats are historical record (Codex P2, V2.14.15): their
+    stands match what was actually run and the score sheet is keyed to them.
+    The rebalance must walk them, advancing the alternation counter, without
+    rewriting them. A mid-event scratch that silently edits past stand
+    assignments corrupts the paper trail the judges reconcile against.
+
+    Heats 1 and 2 are marked completed where they sit (both solos on stand
+    8, the race-day layout). After the scratch: 1 and 2 untouched on 8, and
+    the counter they consumed (two flips from 7) leaves the pending solos
+    starting back at 7.
+    """
+    from database import db
+    from models.heat import Heat
+
+    for hn in (1, 2):
+        h = Heat.query.filter_by(
+            event_id=STOCK_SAW_M, heat_number=hn, run_number=1
+        ).first()
+        h.status = "completed"
+    db.session.commit()
+
+    _scratch_through_the_real_route(client, SS_SCRATCH_ID, "college")
+
+    by_heat = {hn: (c, s) for hn, c, s in _stock_saw_layout(STOCK_SAW_M)}
+    for hn in (1, 2):
+        comp_id = SS_M_SOLOS_BEFORE[hn]
+        assert by_heat[hn][1] == {comp_id: 8}, (
+            f"completed heat {hn} was rewritten: {by_heat[hn][1]}"
+        )
+    # Two completed solos consumed 7 then 8; pending solos resume at 7.
+    expected = {3: 7, 4: 8, 5: 7, 6: 8}
+    for hn, stand in expected.items():
+        comp_id = SS_M_SOLOS_BEFORE[hn]
+        assert by_heat[hn][1] == {comp_id: stand}, (
+            f"pending heat {hn}: expected stand {stand}, got {by_heat[hn][1]}"
+        )
+    assert by_heat[7][1] == {SS_SURVIVOR_ID: 7}
