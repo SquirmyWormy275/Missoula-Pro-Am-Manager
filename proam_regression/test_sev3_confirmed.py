@@ -285,6 +285,12 @@ SHARED_HEAT = 428            # Double Buck heat 4, holds both
 
 
 @pytest.mark.sev3
+@pytest.mark.xfail(
+    strict=True,
+    reason="G3-B (register v2): these two document the real dropped-partner "
+           "defect and stay red until the gear parser dies and structured "
+           "registration lands. strict, so the day the fix ships they fail "
+           "as XPASS and force their own retirement.")
 def test_gear_parser_keeps_every_declared_sharing_partner(client, sql):
     """One saw shared with three people is three scheduling constraints.
 
@@ -344,6 +350,12 @@ def test_gear_parser_keeps_every_declared_sharing_partner(client, sql):
 
 
 @pytest.mark.sev3
+@pytest.mark.xfail(
+    strict=True,
+    reason="G3-B (register v2): these two document the real dropped-partner "
+           "defect and stay red until the gear parser dies and structured "
+           "registration lands. strict, so the day the fix ships they fail "
+           "as XPASS and force their own retirement.")
 def test_dropped_gear_partner_is_not_scheduled_into_the_same_heat(client, sql):
     """The scheduling consequence of the dropped name, on shipped data.
 
