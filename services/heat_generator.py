@@ -567,18 +567,27 @@ def _move_partial_heats_to_end(heats: list, sizes: list, max_per_heat: int) -> t
     the heat size (e.g. odd N with 2-up stock saw), the leftover competitor or
     partial heat closes out the event rather than starting it. Snake-draft on
     its own leaves the partial in heat 0 because the second pass turns around
-    early; this reorders heat 0 to the end of the list while preserving the
-    relative order of the other heats so the skill mix is unchanged.
+    early; this sorts the heats by fill count, largest first, so every short
+    heat runs after every fuller one. The sort is STABLE, so heats of equal
+    fill keep their draft order and the skill mix is unchanged.
+
+    Ordering by fill count rather than partitioning into full-vs-partial
+    matters whenever NO heat reaches `max_per_heat`. Eleven cutters over five
+    stands generates 3/4/4: a full-vs-partial split finds no full heat at all
+    and leaves the short heat opening the event, which is the case this
+    convention exists to prevent. Ordering by size handles it, and handles a
+    three-level shape (5/3/4 under a cap of 6) that a threshold of any kind
+    cannot.
 
     `sizes` is parallel to `heats` and reports the *capacity-relevant* fill
     count for each heat — stand-units for partnered events, competitor count
-    otherwise — so the partial check matches the generator's own bookkeeping.
+    otherwise — so the ordering matches the generator's own bookkeeping.
 
     Returns `(reordered_heats, old_to_new)` where `old_to_new[i]` is the new
     index of what used to be heat `i`. Identity mapping when no reorder runs
-    (single heat, all-partial, all-full, or any heat over capacity — the last
-    case being intentional springboard LH overflow that must stay pinned to
-    the final heat).
+    (single heat, all heats the same size, or any heat over capacity — the
+    last case being intentional springboard LH overflow that must stay pinned
+    to the final heat).
 
     Callers MUST use `old_to_new` to remap any side-channel data that carries
     pre-reorder heat indices (gear_violations, lh_warnings) — otherwise those
@@ -589,11 +598,9 @@ def _move_partial_heats_to_end(heats: list, sizes: list, max_per_heat: int) -> t
         return heats, identity
     if any(s > max_per_heat for s in sizes):
         return heats, identity
-    full_idx = [i for i, s in enumerate(sizes) if s >= max_per_heat]
-    partial_idx = [i for i, s in enumerate(sizes) if s < max_per_heat]
-    if not partial_idx or not full_idx:
+    new_order = sorted(range(len(heats)), key=lambda i: (-sizes[i], i))
+    if new_order == list(range(len(heats))):
         return heats, identity
-    new_order = full_idx + partial_idx
     old_to_new = {old: new for new, old in enumerate(new_order)}
     return [heats[i] for i in new_order], old_to_new
 

@@ -3135,3 +3135,239 @@ def test_a_unit_is_not_forced_into_a_conflicting_heat_while_a_clean_one_has_room
     assert landed == [0, 9, 10, 13], (
         f"unit 13 landed with {landed}; the conflict-free heat was {sorted(safe)}")
     assert violations == [], violations
+
+
+# ---------------------------------------------------------------------------
+# 20. A short heat opens the event instead of closing it whenever no heat
+#     lands exactly on the cap
+#     services/heat_generator.py:563 — _move_partial_heats_to_end splits the
+#     heats into "full" (size >= max_per_heat) and "partial" and moves the
+#     partials to the end. When NO heat reaches the cap, `full_idx` is empty,
+#     the `if not partial_idx or not full_idx` guard fires, and the function
+#     returns the snake-draft order untouched. Snake draft leaves the short
+#     heat FIRST, so the event opens on the short heat, which is precisely the
+#     convention the helper's own docstring says it exists to enforce:
+#     "the leftover competitor or partial heat closes out the event rather
+#     than starting it."
+#
+#     Measured on the 2026 card by instrumenting the helper and regenerating
+#     every event: 36 of 37 events are correct. Events 9 and 10, both
+#     Underhand Speed, both 11 entrants over a cap of 5, generate 3/4/4 and
+#     take the all-partial no-op branch. Events 11 and 33 are structurally
+#     identical events at the same cap with 13 entrants, generate 5/4/4, hit
+#     the cap on one heat, and are reordered correctly. The difference is
+#     entrant arithmetic, nothing else.
+#
+#     SEV4. Presentation order only. Conservation holds on both events
+#     (lost=[] on the real POST), no score or fee is affected.
+# ---------------------------------------------------------------------------
+
+
+def _heat_sizes(sql, event_id):
+    return [len(r) for r in _heat_rosters(sql, event_id)]
+
+
+def _opens_short(sizes):
+    """True when a LARGER heat runs after a SMALLER one."""
+    return any(b > a for a, b in zip(sizes, sizes[1:]))
+
+
+@pytest.mark.sev3
+def test_mens_underhand_speed_does_not_open_on_the_short_heat(client, sql):
+    """DEFECT. 11 cutters over 5 stands generates 3/4/4 and ships it that way.
+
+    The event opens with a three-man heat and then runs two full ones. The
+    rosters themselves are correct and nobody is lost; only the running order
+    violates the rule. 13 cutters at the same cap would have produced 5/4/4
+    and been reordered, because one heat would have touched the cap.
+    """
+    _generate_heats(client, 9)
+    rosters = _heat_rosters(sql, 9)
+    assert sorted(c for r in rosters for c in r) == sorted(
+        [30, 42, 44, 32, 41, 58, 77, 38, 40, 61, 67]), rosters
+    assert not _opens_short([len(r) for r in rosters]), (
+        f"event 9 runs {[len(r) for r in rosters]}, short heat first")
+    assert rosters == [
+        [32, 41, 58, 77],
+        [38, 40, 61, 67],
+        [30, 42, 44],
+    ]
+
+
+@pytest.mark.sev3
+def test_womens_underhand_speed_does_not_open_on_the_short_heat(client, sql):
+    """DEFECT. The women's half of the same event, same shape, same cause."""
+    _generate_heats(client, 10)
+    rosters = _heat_rosters(sql, 10)
+    assert sorted(c for r in rosters for c in r) == sorted(
+        [34, 71, 72, 48, 70, 83, 92, 54, 65, 88, 91]), rosters
+    assert not _opens_short([len(r) for r in rosters]), (
+        f"event 10 runs {[len(r) for r in rosters]}, short heat first")
+    assert rosters == [
+        [48, 70, 83, 92],
+        [54, 65, 88, 91],
+        [34, 71, 72],
+    ]
+
+
+# --- STAGED: the helper itself ---------------------------------------------
+# Driven straight through _move_partial_heats_to_end. The three-level shape
+# below cannot be produced by the 2026 card, where every all-partial event is
+# uniform (17, 18, 30, 35) except 9 and 10, which are two-level. It is the
+# only thing that separates a correct descending sort from the obvious
+# alternative fix of keeping the two-bucket split and moving the threshold
+# from max_per_heat down to max(sizes).
+
+@pytest.mark.sev3
+def test_three_distinct_heat_sizes_all_under_the_cap_run_largest_first():
+    """DEFECT, staged. 5/3/4 under a cap of 6 must run 5/4/3.
+
+    Re-pointing the threshold at max(sizes) gives full=[0] and partial=[1,2]
+    and returns 5/3/4 unchanged, which still leaves a 3 ahead of a 4. Only a
+    full ordering by size fixes this shape.
+    """
+    import services.heat_generator as hg
+
+    heats = [["a"], ["b"], ["c"]]
+    out, mapping = hg._move_partial_heats_to_end(heats, [5, 3, 4], 6)
+    assert out == [["a"], ["c"], ["b"]], out
+    assert mapping == {0: 0, 1: 2, 2: 1}, mapping
+
+
+@pytest.mark.sev3
+def test_the_all_partial_reorder_reports_where_each_heat_moved():
+    """DEFECT, staged. The mapping is the contract, not a convenience.
+
+    Callers remap gear_violations off `old_to_new`. If the all-partial branch
+    starts reordering while still returning the identity mapping, every judge
+    warning recorded on the moved heat points at the wrong heat.
+    """
+    import services.heat_generator as hg
+
+    heats = [["a"], ["b"], ["c"]]
+    out, mapping = hg._move_partial_heats_to_end(heats, [3, 4, 4], 5)
+    assert out == [["b"], ["c"], ["a"]], out
+    assert mapping == {0: 2, 1: 0, 2: 1}, mapping
+
+    violations = [{"heat_index": 0, "comp_id": 30}]
+    hg._remap_violation_heat_indices(violations, mapping)
+    assert violations[0]["heat_index"] == 2, violations
+
+
+@pytest.mark.sev3
+def test_an_over_capacity_heat_still_pins_the_whole_order():
+    """CONTROL, staged. The springboard LH-overflow guard.
+
+    A heat over the cap is deliberate overflow that must stay where the
+    generator put it, at the end. A size-ordered reorder without this bail
+    would move it to the FRONT, which is the exact inversion of the rule.
+    """
+    import services.heat_generator as hg
+
+    heats = [["a"], ["b"], ["c"]]
+    out, mapping = hg._move_partial_heats_to_end(heats, [4, 4, 6], 4)
+    assert out == heats, out
+    assert mapping == {0: 0, 1: 1, 2: 2}, mapping
+
+
+@pytest.mark.sev3
+def test_uniform_and_single_heat_shapes_are_left_alone():
+    """CONTROL, staged. No reorder where there is nothing to order."""
+    import services.heat_generator as hg
+
+    for sizes in ([4], [3, 3, 3], [4, 4, 4], [2, 2]):
+        heats = [[f"h{i}"] for i in range(len(sizes))]
+        out, mapping = hg._move_partial_heats_to_end(heats, list(sizes), 4)
+        assert out == heats, (sizes, out)
+        assert mapping == {i: i for i in range(len(sizes))}, (sizes, mapping)
+
+
+@pytest.mark.sev3
+def test_the_cap_hitting_events_keep_their_shipped_order(client, sql):
+    """CONTROL. Every event on the card where the reorder already fires.
+
+    These are the shapes where a two-bucket partition and a full size ordering
+    agree, so the fix must not move a single competitor in any of them. 7, 11
+    and 33 are the two-level underhand and standing block fields, 43 is the
+    seven-heat Cookie Stack, 20 and 25 carry a single leftover competitor.
+    """
+    _generate_heats(client, 7)
+    assert _heat_rosters(sql, 7) == [
+        [32, 50, 51, 80, 85], [33, 43, 59, 79, 86],
+        [37, 42, 60, 78], [38, 39, 61, 74]]
+
+    _generate_heats(client, 11)
+    assert _heat_rosters(sql, 11) == [
+        [35, 59, 66, 86, 87], [44, 58, 67, 85], [50, 51, 78, 79]]
+
+    _generate_heats(client, 33)
+    assert _heat_rosters(sql, 33) == [
+        [16, 9, 11, 18, 19], [2, 8, 12, 17], [5, 7, 13, 15]]
+
+    _generate_heats(client, 43)
+    assert _heat_rosters(sql, 43) == [
+        [1, 26, 27, 42, 43], [8, 24, 29, 40, 47], [14, 23, 30, 38, 48],
+        [6, 25, 28, 44], [15, 22, 31, 37], [18, 21, 32, 36],
+        [19, 20, 33, 34]]
+
+    _generate_heats(client, 20)
+    assert _heat_rosters(sql, 20) == [
+        [35, 80], [37, 79], [38, 77], [41, 76], [43, 74],
+        [44, 69], [46, 66], [51, 62], [58, 59], [30]]
+
+    _generate_heats(client, 25)
+    assert _heat_rosters(sql, 25) == [
+        [31, 92], [55, 89], [57, 71], [29]]
+
+
+@pytest.mark.sev3
+def test_the_uniform_all_partial_events_are_untouched(client, sql):
+    """CONTROL. The other four events that take the all-partial branch.
+
+    17 and 18 are Double Buck, 30 is Springboard, 35 is Hot Saw. All four are
+    uniform, so the branch becoming live must produce no change at all here.
+    """
+    for eid, expect in ((17, [3, 3, 3]), (18, [3, 3]),
+                        (30, [3, 3, 3]), (35, [3, 3, 3])):
+        _generate_heats(client, eid)
+        rosters = _heat_rosters(sql, eid)
+        sizes = [len(r) for r in rosters]
+        assert not _opens_short(sizes), (eid, sizes)
+        assert sizes == expect or sorted(sizes, reverse=True) == sizes, (
+            eid, sizes)
+
+
+@pytest.mark.sev3
+def test_a_full_heat_does_not_stop_the_shorter_ones_being_ordered():
+    """DEFECT, staged. 5/3/4 at a cap of 5, so heat 0 IS full.
+
+    The narrow repair is to leave the full-vs-partial split alone and only
+    reach for an ordering when no heat reaches the cap. That fixes events 9
+    and 10 and still returns 5/3/4 here, because the split throws every heat
+    under the cap into one undifferentiated bucket. The 2026 card has no
+    three-level event, so nothing on it can tell the two apart.
+    """
+    import services.heat_generator as hg
+
+    heats = [["a"], ["b"], ["c"]]
+    out, mapping = hg._move_partial_heats_to_end(heats, [5, 3, 4], 5)
+    assert out == [["a"], ["c"], ["b"]], out
+    assert mapping == {0: 0, 1: 2, 2: 1}, mapping
+
+
+@pytest.mark.sev3
+def test_the_order_is_taken_from_the_capacity_sizes_not_the_roster_length():
+    """DEFECT, staged. `sizes` is stand-units, len(heat) is people.
+
+    For a partnered event a heat of 4 stands holds 8 competitors, so ordering
+    on len(heat) is ordering on a different quantity that happens to agree
+    everywhere on the 2026 card, where every partnered event is uniform. Here
+    the two disagree: heat 0 holds five people in three stand-units, heat 1
+    holds one person in four.
+    """
+    import services.heat_generator as hg
+
+    heats = [["a", "b", "c", "d", "e"], ["f"]]
+    out, mapping = hg._move_partial_heats_to_end(heats, [3, 4], 5)
+    assert out == [["f"], ["a", "b", "c", "d", "e"]], out
+    assert mapping == {0: 1, 1: 0}, mapping
