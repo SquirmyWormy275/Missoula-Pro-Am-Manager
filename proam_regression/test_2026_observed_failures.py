@@ -989,3 +989,188 @@ def test_completed_heats_keep_their_recorded_stands(app, client):
             f"pending heat {hn}: expected stand {stand}, got {by_heat[hn][1]}"
         )
     assert by_heat[7][1] == {SS_SURVIVOR_ID: 7}
+
+
+# ===========================================================================
+# Item 4 of 4: stale birling brackets.
+#
+#     Reported symptom: V2.14.14 (April 23) fixed the generator to produce
+#     compact non-power-of-two brackets, but generators do not auto-rerun on
+#     deploy, so the existing Event.payouts JSON kept the old power-of-two
+#     shape and the printouts still showed seeds 8 and 9 stacked into a
+#     phantom W1_8 match. On April 25 the Men's (12) and Women's (9)
+#     brackets were hand-built as PDFs. The post-event remedy is
+#     rebuild_if_stale_shape: an auto-migration wired into the manage page
+#     GET and the print path, gated so it never tears down a bracket with
+#     judge-entered results.
+#
+#     Measured on the real mirror: BOTH brackets are still stale at rest,
+#     fifteen months later. Men's: 8 round-1 matches with 4 byes for 12
+#     entrants (compact is 6 pairs, 0 byes). Women's: 8 matches with 7 byes
+#     for 9 entrants, and W1_8 is the phantom itself, Evvy Chatfield (16)
+#     stacked against Teagan Wigen (31), where the compact shape gives the
+#     top seed the single bye. The repair exists and runs on touch; nothing
+#     repairs at rest. Item 3's stand-8 finding, same disease, second organ.
+#
+#     Gate 3 before writing tests: one authenticated GET of each manage page
+#     rewrote both payouts to the compact shape with seeding preserved.
+# ===========================================================================
+
+BIRLING_M = 28   # 12 entrants
+BIRLING_F = 29   # 9 entrants
+BIRLING_F_PHANTOM = ("W1_8", 16, 31)   # the race-day stacked match
+BIRLING_F_TOP_SEED = 5                 # Mackenzie Breitner, gets the compact bye
+
+
+def _bracket_shape(event_id):
+    """(entrants, round1_matches, byes, seeding, {match_id: (c1, c2)})."""
+    import json as _json
+
+    from database import db
+    from models.event import Event
+
+    db.session.expire_all()
+    d = _json.loads(db.session.get(Event, event_id).payouts or "{}")
+    r1 = ((d.get("bracket") or {}).get("winners") or [[]])[0]
+    pairs = {
+        m["match_id"]: (m.get("competitor1"), m.get("competitor2"))
+        for m in r1
+    }
+    return (
+        len(d.get("competitors") or []),
+        len(r1),
+        sum(1 for m in r1 if m.get("is_bye")),
+        d.get("seeding"),
+        pairs,
+    )
+
+
+def _write_payouts(event_id, mutate):
+    """Load, mutate, and store an event's payouts JSON."""
+    import json as _json
+
+    from database import db
+    from models.event import Event
+
+    ev = db.session.get(Event, event_id)
+    d = _json.loads(ev.payouts or "{}")
+    mutate(d)
+    ev.payouts = _json.dumps(d)
+    db.session.commit()
+
+
+@pytest.mark.sev1
+def test_both_race_day_brackets_are_still_stale_at_rest(app):
+    """Population guard and the finding itself: the April 2026 bracket JSON
+    sits in production unchanged, phantom match included."""
+    n, r1, byes, seeding, pairs = _bracket_shape(BIRLING_M)
+    assert (n, r1, byes) == (12, 8, 4), f"men's bracket: {(n, r1, byes)}"
+
+    n, r1, byes, seeding, pairs = _bracket_shape(BIRLING_F)
+    assert (n, r1, byes) == (9, 8, 7), f"women's bracket: {(n, r1, byes)}"
+    mid, c1, c2 = BIRLING_F_PHANTOM
+    assert pairs[mid] == (c1, c2), (
+        f"the phantom stacked match is gone from the mirror: {pairs.get(mid)}"
+    )
+
+
+@pytest.mark.sev1
+def test_opening_the_manage_page_rebuilds_both_stale_brackets(app, client):
+    """THE DATA FIX. A plain GET must migrate the power-of-two JSON to the
+    compact shape: 12 entrants become 6 pairs with no byes, 9 entrants
+    become 1 bye plus 4 pairs with the bye going to the TOP seed, and the
+    seeding order survives so the judges reprint the matchups they expect.
+    """
+    seed_m_before = _bracket_shape(BIRLING_M)[3]
+    seed_f_before = _bracket_shape(BIRLING_F)[3]
+
+    for eid in (BIRLING_M, BIRLING_F):
+        r = client.get(f"/scheduling/{TID}/event/{eid}/birling")
+        assert r.status_code == 200
+
+    n, r1, byes, seeding, pairs = _bracket_shape(BIRLING_M)
+    assert (n, r1, byes) == (12, 6, 0), f"men's not compact: {(n, r1, byes)}"
+    assert seeding == seed_m_before, "men's seeding was not preserved"
+
+    n, r1, byes, seeding, pairs = _bracket_shape(BIRLING_F)
+    assert (n, r1, byes) == (9, 5, 1), f"women's not compact: {(n, r1, byes)}"
+    assert seeding == seed_f_before, "women's seeding was not preserved"
+    bye_pairs = [p for p in pairs.values() if p[1] is None]
+    assert bye_pairs == [(BIRLING_F_TOP_SEED, None)], (
+        f"the compact bye must go to the top seed, got {bye_pairs}"
+    )
+    assert BIRLING_F_PHANTOM[0] not in pairs or pairs[
+        BIRLING_F_PHANTOM[0]
+    ] != BIRLING_F_PHANTOM[1:], "the phantom stacked match survived the rebuild"
+
+
+@pytest.mark.sev1
+def test_the_print_path_repairs_the_bracket_too(app, client):
+    """The 2026 failure surfaced on PAPER. The print route reaches the same
+    auto-migration, so a judge who prints without ever opening the manage
+    page still gets the compact bracket, not the phantom."""
+    r = client.get(f"/scheduling/{TID}/event/{BIRLING_F}/birling/print-blank")
+    assert r.status_code == 200
+    n, r1, byes, _seeding, _pairs = _bracket_shape(BIRLING_F)
+    assert (n, r1, byes) == (9, 5, 1), (
+        f"print route served without repairing the stale bracket: {(n, r1, byes)}"
+    )
+
+
+@pytest.mark.sev1
+def test_a_recorded_fall_blocks_the_rebuild(app, client):
+    """Judge work is sacred. Birling is best-of-3, so a single recorded fall
+    in the phantom match is real state, and the migration must refuse to
+    tear the bracket down under it, winner or no winner."""
+    def add_fall(d):
+        for m in d["bracket"]["winners"][0]:
+            if m["match_id"] == BIRLING_F_PHANTOM[0]:
+                m["falls"] = [16]
+    _write_payouts(BIRLING_F, add_fall)
+
+    r = client.get(f"/scheduling/{TID}/event/{BIRLING_F}/birling")
+    assert r.status_code == 200
+
+    n, r1, byes, _seeding, pairs = _bracket_shape(BIRLING_F)
+    assert (n, r1, byes) == (9, 8, 7), (
+        "a bracket with a recorded fall was rebuilt underneath the judge"
+    )
+    assert pairs[BIRLING_F_PHANTOM[0]] == BIRLING_F_PHANTOM[1:]
+
+
+@pytest.mark.sev1
+def test_recorded_placements_block_the_rebuild(app, client):
+    """Same gate, other end of the day: a bracket with final placements is
+    history, not a layout problem."""
+    def add_placement(d):
+        d["placements"] = {"9": 1}
+    _write_payouts(BIRLING_M, add_placement)
+
+    r = client.get(f"/scheduling/{TID}/event/{BIRLING_M}/birling")
+    assert r.status_code == 200
+    n, r1, byes, _s, _p = _bracket_shape(BIRLING_M)
+    assert (n, r1, byes) == (12, 8, 4), (
+        "a bracket with recorded placements was rebuilt"
+    )
+
+
+@pytest.mark.sev1
+def test_the_repair_happens_once_not_on_every_page_view(app, client):
+    """After the migration the bracket is compact, the staleness test is
+    False, and further GETs must not rewrite the stored JSON at all. A
+    repair that re-fires on every view churns payouts forever and makes
+    every page load a write."""
+    from database import db
+    from models.event import Event
+
+    r = client.get(f"/scheduling/{TID}/event/{BIRLING_F}/birling")
+    assert r.status_code == 200
+    db.session.expire_all()
+    first = db.session.get(Event, BIRLING_F).payouts
+
+    r = client.get(f"/scheduling/{TID}/event/{BIRLING_F}/birling")
+    assert r.status_code == 200
+    db.session.expire_all()
+    assert db.session.get(Event, BIRLING_F).payouts == first, (
+        "second GET rewrote payouts after the bracket was already compact"
+    )
