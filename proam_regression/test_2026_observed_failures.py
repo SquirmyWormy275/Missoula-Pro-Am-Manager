@@ -384,3 +384,315 @@ def test_submitted_order_is_stored_as_one_based_positions(app, client):
     after = _ranked("underhand")
     assert [after[m.id] for m in reversed_men] == [1, 2, 3, 4]
     assert [after[w.id] for w in women] == [1, 2, 3]
+
+
+# ===========================================================================
+# Item 2 of 4: the opaque "Placed: 37 / 64" panel.
+#
+#     Reported symptom: the Events page status card said "Placed: 37 / 64
+#     competitors" and nothing else. Operators could not tell whether heat
+#     generation had skipped someone, or who, or why. It was replaced
+#     post-event (V2.14.15) with four categorized buckets: placed,
+#     non_heat_only, no_events, missing_from_heats, plus a name sample.
+#
+#     Measured on the real mirror: the panel reproduces the race-day number
+#     EXACTLY. Friday reports placed 37 of 64 with 27 active college
+#     competitors in missing_from_heats. Those 27 are genuinely absent: each
+#     is entered in college events that have heats and appears in none of
+#     them, and their ids cluster at the top of the table (66+), which is
+#     consistent with late registrants added after heat generation with no
+#     rebuild. The race-day number was TRUE. The failure was showing it with
+#     no names attached.
+#
+#     These tests lock the replacement panel's arithmetic and its naming
+#     behavior against the real data, so the panel can never again report a
+#     number whose people cannot be listed.
+#
+#     Known limits, stated: missing_sample is capped at 10 names of the 27,
+#     and the competitor query behind it carries no ORDER BY, so WHICH 10
+#     appear is row-order dependent (O3 territory). The tests therefore
+#     assert sample membership against the independently computed missing
+#     set, never an exact sample list. Also filed: missing_from_heats is
+#     commented "BUG surface" in schedule_status.py yet feeds neither the
+#     warnings list nor overall_severity, so a fully-heated schedule with 27
+#     stranded competitors still reads "Schedule ready". That is the c23
+#     dead-detector shape and is a product decision (D3/D5), not silently
+#     changed here.
+# ===========================================================================
+
+# Measured on proam_prod_mirror_p0. The guard test asserts these so a reseed
+# fails loudly instead of silently rebasing every assertion below.
+EXPECTED_ACTIVE_COLLEGE = 64
+EXPECTED_FRIDAY_PLACED = 37
+EXPECTED_FRIDAY_MISSING = 27
+SAMPLE_CAP = 10
+
+
+def _college_ground_truth():
+    """Independently computed (placed_ids, missing_ids) for active college
+    competitors, straight from the heat tables, no schedule_status code."""
+    from models.competitor import CollegeCompetitor
+    from models.event import Event
+    from models.heat import Heat
+
+    active = CollegeCompetitor.query.filter_by(
+        tournament_id=TID, status="active"
+    ).all()
+    active_ids = {c.id for c in active}
+    in_heats: set = set()
+    heats = (
+        Heat.query.join(Event)
+        .filter(Event.tournament_id == TID, Event.event_type == "college")
+        .all()
+    )
+    for h in heats:
+        for cid in h.get_competitors():
+            if int(cid) in active_ids:
+                in_heats.add(int(cid))
+    return in_heats, active_ids - in_heats
+
+
+def _status():
+    from flask import current_app
+
+    from database import db
+    from models import Tournament
+    from services.schedule_status import build_schedule_status
+
+    # build_schedule_status calls url_for for the drill-down links, which
+    # needs a request context. The production caller is a GET route, so a
+    # test request context is the honest equivalent, not a workaround.
+    with current_app.test_request_context():
+        return build_schedule_status(db.session.get(Tournament, TID))
+
+
+@pytest.mark.sev1
+def test_the_real_2026_placed_panel_names_its_missing_27(app):
+    """The race-day number, now with every one of its people accounted for.
+
+    Friday must report placed 37 of 64 and missing 27, those two sets must
+    match an independent read of the heat tables, and every sampled name
+    must belong to the measured missing population.
+    """
+    from models.competitor import CollegeCompetitor
+
+    placed_ids, missing_ids = _college_ground_truth()
+    assert len(placed_ids) == EXPECTED_FRIDAY_PLACED
+    assert len(missing_ids) == EXPECTED_FRIDAY_MISSING
+
+    f = _status()["friday"]
+    assert f["competitors_total"] == EXPECTED_ACTIVE_COLLEGE
+    assert f["competitors_placed"] == EXPECTED_FRIDAY_PLACED
+    assert f["competitors_missing_from_heats"] == EXPECTED_FRIDAY_MISSING
+
+    missing_names = {
+        c.name
+        for c in CollegeCompetitor.query.filter(
+            CollegeCompetitor.id.in_(missing_ids)
+        ).all()
+    }
+    sample = f["competitors_missing_sample"]
+    assert len(sample) == SAMPLE_CAP, (
+        f"27 missing must fill the {SAMPLE_CAP}-name sample, got {len(sample)}"
+    )
+    strangers = [n for n in sample if n not in missing_names]
+    assert not strangers, (
+        f"panel sampled names that are not in the measured missing set: {strangers}"
+    )
+
+
+@pytest.mark.sev1
+def test_the_four_buckets_sum_to_the_total_on_both_days(app):
+    """placed + non_heat_only + no_events + missing_from_heats == total.
+
+    This is the arithmetic contract that makes the panel readable at a
+    glance. The 2026 panel had no buckets at all; a replacement whose
+    buckets overlap or leak would be opacity with more numbers.
+    """
+    s = _status()
+    for day in ("friday", "saturday"):
+        d = s[day]
+        total = (
+            d["competitors_placed"]
+            + d["competitors_non_heat_only"]
+            + d["competitors_no_events"]
+            + d["competitors_missing_from_heats"]
+        )
+        assert total == d["competitors_total"], (
+            f"{day}: buckets sum to {total}, total is {d['competitors_total']}"
+        )
+
+
+@pytest.mark.sev1
+def test_saturday_reports_every_pro_placed(app):
+    """The pro side of the real data is fully placed: 49 of 49, empty
+    buckets. Locks the healthy case so a classifier change that starts
+    leaking placed pros into a bucket is caught by the day that is clean."""
+    d = _status()["saturday"]
+    assert d["competitors_total"] == EXPECTED_ACTIVE_MEN + EXPECTED_ACTIVE_WOMEN
+    assert d["competitors_placed"] == d["competitors_total"]
+    assert d["competitors_missing_from_heats"] == 0
+    assert d["competitors_non_heat_only"] == 0
+    assert d["competitors_no_events"] == 0
+    assert d["competitors_missing_sample"] == []
+
+
+@pytest.mark.sev1
+def test_a_competitor_pulled_from_every_heat_is_counted_and_named(app):
+    """The panel's entire reason to exist: lose someone, and it says WHO.
+
+    Removes one placed college competitor from every heat they stand in,
+    rebuilds the status, and requires them counted in missing_from_heats.
+    The name must be retrievable through the missing set; the 10-name
+    display sample is order-dependent with 28 missing, so membership is
+    asserted against the population, not the sample.
+    """
+    import json as _json
+
+    from database import db
+    from models.competitor import CollegeCompetitor
+    from models.event import Event
+    from models.heat import Heat
+
+    placed_ids, _ = _college_ground_truth()
+    victim_id = min(placed_ids)
+    victim = db.session.get(CollegeCompetitor, victim_id)
+
+    heats = (
+        Heat.query.join(Event)
+        .filter(Event.tournament_id == TID, Event.event_type == "college")
+        .all()
+    )
+    removed_from = 0
+    for h in heats:
+        ids = [c for c in h.get_competitors() if int(c) != victim_id]
+        if len(ids) != len(h.get_competitors()):
+            h.competitors = _json.dumps(ids)
+            removed_from += 1
+    assert removed_from > 0, "victim was not standing in any heat"
+    db.session.commit()
+
+    f = _status()["friday"]
+    assert f["competitors_placed"] == EXPECTED_FRIDAY_PLACED - 1
+    assert f["competitors_missing_from_heats"] == EXPECTED_FRIDAY_MISSING + 1
+
+    _, missing_now = _college_ground_truth()
+    assert victim_id in missing_now, f"{victim.name} vanished without being counted"
+
+
+@pytest.mark.sev1
+def test_a_scratched_competitor_left_in_heats_does_not_inflate_placed(app):
+    """The '38 / 37' regression, on real data.
+
+    Scratching a placed competitor without cleaning their heats must shrink
+    both the numerator and the denominator, never push placed above total.
+    The active-population bound in _day_status is what this locks.
+    """
+    from database import db
+    from models.competitor import CollegeCompetitor
+
+    placed_ids, _ = _college_ground_truth()
+    victim = db.session.get(CollegeCompetitor, max(placed_ids))
+    victim.status = "scratched"
+    db.session.commit()
+
+    f = _status()["friday"]
+    assert f["competitors_total"] == EXPECTED_ACTIVE_COLLEGE - 1
+    assert f["competitors_placed"] == EXPECTED_FRIDAY_PLACED - 1
+    assert f["competitors_placed"] <= f["competitors_total"]
+    assert f["competitors_missing_from_heats"] == EXPECTED_FRIDAY_MISSING
+
+
+# The three tests below stage conditions the 2026 data happens not to contain.
+# Each corresponds to a mutant that survived the battery's first run purely
+# because the mirror is data-equivalent on that path: no heat stores string
+# ids, no active competitor has an empty entry list, and nobody is entered
+# only in events that do not exist on their day. Same lesson as item 1's M7:
+# the real data is not a sufficient oracle, so the missing cases are built.
+
+
+@pytest.mark.sev1
+def test_string_ids_in_a_heats_json_do_not_unplace_its_competitors(app):
+    """Heat.competitors is free-form JSON and the id-shape is not enforced;
+    events_entered already mixes strings and numbers on this very database
+    (c22). A reader that stops coercing would silently unplace every
+    competitor in any heat written with string ids, with no error anywhere.
+    """
+    import json as _json
+
+    from database import db
+    from models.event import Event
+    from models.heat import Heat
+
+    heats = (
+        Heat.query.join(Event)
+        .filter(Event.tournament_id == TID, Event.event_type == "college")
+        .all()
+    )
+    # Every heat, not a sample: a competitor standing in six events survives
+    # a partial rewrite through their other heats, and the mutant this test
+    # exists to kill (int() coercion dropped) walks free.
+    rewritten = 0
+    for h in heats:
+        ids = h.get_competitors()
+        if ids:
+            h.competitors = _json.dumps([str(i) for i in ids])
+            rewritten += 1
+    assert rewritten > 0
+    db.session.commit()
+
+    f = _status()["friday"]
+    assert f["competitors_placed"] == EXPECTED_FRIDAY_PLACED, (
+        "string ids in heat JSON unplaced competitors who are standing in heats"
+    )
+    assert f["competitors_missing_from_heats"] == EXPECTED_FRIDAY_MISSING
+
+
+@pytest.mark.sev1
+def test_an_empty_entry_list_reads_as_no_events_not_as_a_scheduling_bug(app):
+    """A competitor who entered nothing is a registration fact, not a heat
+    generation failure. Filing them under missing_from_heats would page the
+    operator about a bug that does not exist.
+    """
+    from database import db
+    from models.competitor import CollegeCompetitor
+
+    _, missing_ids = _college_ground_truth()
+    comp = db.session.get(CollegeCompetitor, min(missing_ids))
+    comp.events_entered = "[]"
+    db.session.commit()
+
+    f = _status()["friday"]
+    assert f["competitors_no_events"] == 1
+    assert f["competitors_missing_from_heats"] == EXPECTED_FRIDAY_MISSING - 1
+    assert f["competitors_placed"] == EXPECTED_FRIDAY_PLACED
+    assert (
+        f["competitors_placed"]
+        + f["competitors_non_heat_only"]
+        + f["competitors_no_events"]
+        + f["competitors_missing_from_heats"]
+        == f["competitors_total"]
+    )
+
+
+@pytest.mark.sev1
+def test_entries_matching_no_event_on_this_day_read_as_no_events(app):
+    """The else branch: entered events exist but none of them belong to this
+    day (the service's own example is a pro-only name tallied on Friday).
+    Misfiling these as missing_from_heats would make the bug-surface count
+    unreadable at any tournament where the days share a registration form.
+    """
+    import json as _json
+
+    from database import db
+    from models.competitor import CollegeCompetitor
+
+    _, missing_ids = _college_ground_truth()
+    comp = db.session.get(CollegeCompetitor, max(missing_ids))
+    comp.events_entered = _json.dumps(["Springboard"])  # pro-only event name
+    db.session.commit()
+
+    f = _status()["friday"]
+    assert f["competitors_no_events"] == 1
+    assert f["competitors_missing_from_heats"] == EXPECTED_FRIDAY_MISSING - 1
+    assert f["competitors_placed"] == EXPECTED_FRIDAY_PLACED
