@@ -653,7 +653,21 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
         placed = False
 
         # First pass: look for a heat with capacity and no gear-sharing conflict.
-        for _ in range(num_heats):
+        #
+        # Both passes are bounded by heats EXAMINED, not by steps taken.
+        # _advance_snake_index BOUNCES at both boundaries: given (num_heats-1,
+        # +1) it returns (num_heats-1, -1), the same index. That bounce is what
+        # makes a snake draft a snake draft (0,1,2,2,1,0,0,...) and must stay,
+        # but it means a loop bounded by num_heats STEPS spends steps without
+        # examining a new heat, so it can run out while a heat still has a free
+        # stand. When the fallback ran out that way the unit was dropped with no
+        # heat, no gear violation, and nothing the operator could see.
+        examined = set()
+        while len(examined) < num_heats:
+            if heat_idx in examined:
+                heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
+                continue
+            examined.add(heat_idx)
             if (
                 (stands_used[heat_idx] + 1) <= max_per_heat and
                 not any(_has_gear_sharing_conflict(comp, heats[heat_idx], event) for comp in unit)
@@ -667,8 +681,16 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
         # Fallback: place despite conflict if every heat conflicts/full.
         # Record any gear-sharing conflict introduced here so the caller can
         # surface a warning to the judge (gear audit fix G2 — 2026-04-07).
+        # Its own `examined` set: this pass must be able to revisit the heats
+        # the conflict-avoiding pass already rejected, since rejecting them is
+        # the whole reason it is running.
         if not placed:
-            for _ in range(num_heats):
+            examined = set()
+            while len(examined) < num_heats:
+                if heat_idx in examined:
+                    heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
+                    continue
+                examined.add(heat_idx)
                 if (stands_used[heat_idx] + 1) <= max_per_heat:
                     if gear_violations is not None:
                         for comp in unit:

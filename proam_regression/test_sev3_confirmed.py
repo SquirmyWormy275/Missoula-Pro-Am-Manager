@@ -2910,3 +2910,228 @@ def test_a_rebuilt_heat_keeps_its_rows_in_running_order(client, sql, flashes):
         "SELECT competitor_id FROM heat_assignments WHERE heat_id = :h ORDER BY id", h=hid)]
     assert rebuilt == reversed_order, (
         f"rows were reinserted in {rebuilt}, JSON running order is {reversed_order}")
+
+
+# ---------------------------------------------------------------------------
+# 19. The snake-draft placement walk gives up before it has looked at every
+#     heat, and a unit it cannot place is discarded without a word
+#     services/heat_generator.py:648-694 — both placement loops are bounded by
+#     `for _ in range(num_heats)`, i.e. by STEPS. _advance_snake_index BOUNCES
+#     at both boundaries: from (num_heats-1, +1) it returns (num_heats-1, -1),
+#     the same index. Every bounce burns one of the steps without examining a
+#     new heat, so a walk that bounces examines fewer heats than exist and can
+#     exhaust itself while a heat still has room. When the fallback loop runs
+#     out that way, `placed` stays False, no gear violation is recorded, and
+#     the unit is dropped on the floor.
+# ---------------------------------------------------------------------------
+
+DB_EVENT = 38                    # Men's Double Buck: 12 real pairs, 3 heats, 4 stands
+DB_DROPPED = [39, 40]            # Mike Johnson + Owen Vredenburg, one pair
+
+
+def _generate_heats(client, event_id):
+    r = client.post(
+        f"/scheduling/{TID}/event/{event_id}/generate-heats",
+        data={"confirm": "true"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303), r.status_code
+    return r
+
+
+def _heat_rosters(sql, event_id):
+    """Stored heat rosters for an event, in running order."""
+    rows = sql(
+        "SELECT competitors FROM heats WHERE event_id = :e "
+        " ORDER BY heat_number, run_number", e=event_id)
+    return [json.loads(c) if isinstance(c, str) else (c or []) for (c,) in rows]
+
+
+@pytest.mark.sev3
+def test_regenerating_double_buck_leaves_no_entrant_out_of_the_event(client, sql):
+    """DEFECT. Two competitors vanish from the event on a plain regenerate.
+
+    The 2026 rows ship with all 24 entrants placed. Press Regenerate on the
+    heats page with the code as it stands and 22 come back. The pair that
+    disappears is 39 + 40, whose gear map puts them in conflict with the only
+    heat that still had a free stand by the time the walk reached them.
+    """
+    before = sorted(c for roster in _heat_rosters(sql, DB_EVENT) for c in roster)
+    assert len(before) == 24, before
+    assert all(c in before for c in DB_DROPPED), before
+
+    _generate_heats(client, DB_EVENT)
+
+    after = sorted(c for roster in _heat_rosters(sql, DB_EVENT) for c in roster)
+    missing = sorted(set(before) - set(after))
+    assert missing == [], f"regenerate dropped competitor(s) {missing} from event {DB_EVENT}"
+    assert after == before
+
+
+@pytest.mark.sev3
+def test_regenerating_double_buck_fills_the_third_heat(client, sql):
+    """DEFECT. 12 pairs over 3 heats of 4 stands is 4/4/4, not 4/4/3.
+
+    The filed symptom was an unbalanced field. The balance is a shadow of the
+    real event: the missing stand is missing because the pair that belonged on
+    it was thrown away, not because the draft distributed badly.
+    """
+    _generate_heats(client, DB_EVENT)
+    sizes = [len(r) for r in _heat_rosters(sql, DB_EVENT)]
+    assert sizes == [8, 8, 8], sizes
+
+
+@pytest.mark.sev3
+def test_a_pair_that_cannot_dodge_a_gear_conflict_is_flagged_not_deleted(client, sql, flashes):
+    """DEFECT. The fallback exists to place a unit ANYWAY and warn the judge.
+
+    services/heat_generator.py already carries that machinery: the fallback
+    records every forced gear-sharing conflict in gear_violations and the
+    generate-heats route turns it into a WARNING flash. The operator never
+    sees it, because the walk gives up before reaching the heat with room, so
+    nothing is placed and nothing is recorded. Silence here reads as success.
+    """
+    _generate_heats(client, DB_EVENT)
+
+    placed = [c for roster in _heat_rosters(sql, DB_EVENT) for c in roster]
+    assert all(c in placed for c in DB_DROPPED), (
+        f"{[c for c in DB_DROPPED if c not in placed]} still not in any heat")
+
+    msgs = [m for _c, m in flashes()]
+    assert any("gear-sharing conflict" in m for m in msgs), msgs
+
+
+# --- CONTROLS: the snake draft itself must not move ------------------------
+# _advance_snake_index's bounce is not a typo, it is what makes a snake draft
+# a snake draft: 0,1,2,2,1,0,0,1,2. "Fixing" the bounce reshuffles every heat
+# in the tournament. These four events are pinned to the placement the code
+# produces today, in order, so any change to the walk ORDER fails here.
+
+@pytest.mark.sev3
+def test_the_underhand_snake_draft_is_unchanged(client, sql):
+    """CONTROL. 25 pros, 5 heats of 5, one gear conflict dodged in the draft."""
+    _generate_heats(client, 32)
+    assert _heat_rosters(sql, 32) == [
+        [1, 30, 32, 43, 44],
+        [20, 28, 33, 41, 45],
+        [21, 27, 34, 40, 47],
+        [23, 26, 36, 39, 49],
+        [24, 25, 37, 38, 48],
+    ]
+
+
+@pytest.mark.sev3
+def test_the_cookie_stack_snake_draft_is_unchanged(client, sql):
+    """CONTROL. Seven heats is the most bounces of any pro event on the card."""
+    _generate_heats(client, 43)
+    assert _heat_rosters(sql, 43) == [
+        [1, 26, 27, 42, 43],
+        [8, 24, 29, 40, 47],
+        [14, 23, 30, 38, 48],
+        [6, 25, 28, 44],
+        [15, 22, 31, 37],
+        [18, 21, 32, 36],
+        [19, 20, 33, 34],
+    ]
+
+
+@pytest.mark.sev3
+def test_the_single_buck_partial_heats_still_close_the_event(client, sql):
+    """CONTROL. 22 pros, 6 heats: 4/4/4/4/3/3 with the short heats LAST.
+
+    _move_partial_heats_to_end runs off the same stands_used bookkeeping the
+    walk maintains, so a change to placement shows up here as a reordering as
+    well as a rebalancing.
+    """
+    _generate_heats(client, 36)
+    assert _heat_rosters(sql, 36) == [
+        [3, 32, 35, 48],
+        [20, 29, 36, 47],
+        [23, 27, 39, 45],
+        [24, 26, 40, 44],
+        [1, 33, 34],
+        [21, 28, 38],
+    ]
+
+
+@pytest.mark.sev3
+def test_gear_conflict_avoidance_still_steers_the_small_events(client, sql):
+    """CONTROL. Both of these regenerate differently with the conflict check
+    disabled, so they pin the fact that the check still fires and still moves
+    people. Pole Climb runs 2 heats of 2, Women's Single Buck 4 + 3."""
+    _generate_heats(client, 42)
+    assert _heat_rosters(sql, 42) == [[23, 41], [31, 49]]
+    _generate_heats(client, 37)
+    assert _heat_rosters(sql, 37) == [[5, 11, 13, 19], [8, 9, 15]]
+
+
+# --- STAGED: the walk itself ----------------------------------------------
+# Two scenarios driven straight through _generate_standard_heats with the gear
+# predicate stubbed. Nothing about them is invented data: they are the two
+# distinct ways a step-bounded walk loses a heat, and the second one cannot be
+# reproduced from the 2026 card because it needs five heats and the biggest
+# conflicted pro event has three.
+
+def _synthetic(n):
+    return [{"id": i, "name": f"C{i}"} for i in range(n)]
+
+
+@pytest.mark.sev3
+def test_a_unit_is_placed_while_any_heat_still_has_a_free_stand(monkeypatch):
+    """DEFECT, staged. The event 38 shape with the data taken out of it.
+
+    12 units, 3 heats, 4 stands. By the last unit the pointer sits on heat 0
+    heading down, so the first pass bounces (h0, h0, h1) and the fallback
+    bounces the other way (h2, h2, h1). Heat 0 has a free stand the whole
+    time and neither walk ever looks at it again.
+    """
+    import services.heat_generator as hg
+
+    safe = {0, 5, 6}
+    monkeypatch.setattr(
+        hg, "_has_gear_sharing_conflict",
+        lambda comp, members, event: comp["id"] == 11
+        and any(m["id"] in safe for m in members))
+
+    violations = []
+    heats = hg._generate_standard_heats(
+        _synthetic(12), 3, 4, event=None, gear_violations=violations)
+
+    placed = sorted(c["id"] for h in heats for c in h)
+    assert placed == list(range(12)), f"unit(s) {sorted(set(range(12)) - set(placed))} discarded"
+    assert sorted(len(h) for h in heats) == [4, 4, 4]
+    assert [v["comp_id"] for v in violations] == [11], violations
+
+
+@pytest.mark.sev3
+def test_a_unit_is_not_forced_into_a_conflicting_heat_while_a_clean_one_has_room(monkeypatch):
+    """DEFECT, staged. The half-fix that looks like it works.
+
+    14 units, 5 heats, 4 stands. The last unit starts its walk on heat 3
+    heading up, so the first pass spends its five steps on h3, h4, h4, h3, h2
+    and never reaches h1 or h0. Heats 0 and 1 both have room; heat 1 conflicts
+    and heat 0 does not.
+
+    Repairing only the FALLBACK loop places this unit in heat 1 and records a
+    gear-sharing conflict that did not have to happen, and it still clears
+    every assertion that the real event 38 can make. The conflict-avoiding
+    pass is the loop that has to be able to finish.
+    """
+    import services.heat_generator as hg
+
+    safe = {0, 9, 10}
+    monkeypatch.setattr(
+        hg, "_has_gear_sharing_conflict",
+        lambda comp, members, event: comp["id"] == 13
+        and any(m["id"] not in safe for m in members))
+
+    violations = []
+    heats = hg._generate_standard_heats(
+        _synthetic(14), 5, 4, event=None, gear_violations=violations)
+
+    placed = sorted(c["id"] for h in heats for c in h)
+    assert placed == list(range(14)), f"unit(s) {sorted(set(range(14)) - set(placed))} discarded"
+    landed = next(sorted(c["id"] for c in h) for h in heats if any(c["id"] == 13 for c in h))
+    assert landed == [0, 9, 10, 13], (
+        f"unit 13 landed with {landed}; the conflict-free heat was {sorted(safe)}")
+    assert violations == [], violations
