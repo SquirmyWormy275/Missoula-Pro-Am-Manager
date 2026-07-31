@@ -3309,6 +3309,16 @@ def test_the_cap_hitting_events_keep_their_shipped_order(client, sql):
     agree, so the fix must not move a single competitor in any of them. 7, 11
     and 33 are the two-level underhand and standing block fields, 43 is the
     seven-heat Cookie Stack, 20 and 25 carry a single leftover competitor.
+
+    REPINNED ONCE, cycle c35 (O3). The original pins captured the draft as
+    fed by PHYSICAL ROW ORDER, and the production heap is not in id order:
+    pro row 16 sits second (moved by an update), 35 of 64 college rows are
+    displaced. When O3 gave the draft an explicit ORDER BY id, five of the
+    six events reproduced their pins exactly and event 33 moved, because its
+    field includes the displaced pro row. Both lanes (normal and reversed
+    row order) now produce these rosters identically; the old event-33 pin
+    could only be reproduced by a database whose heap accident matched
+    April 2026's.
     """
     _generate_heats(client, 7)
     assert _heat_rosters(sql, 7) == [
@@ -3321,7 +3331,7 @@ def test_the_cap_hitting_events_keep_their_shipped_order(client, sql):
 
     _generate_heats(client, 33)
     assert _heat_rosters(sql, 33) == [
-        [16, 9, 11, 18, 19], [2, 8, 12, 17], [5, 7, 13, 15]]
+        [2, 11, 12, 18, 19], [5, 9, 13, 17], [7, 8, 15, 16]]
 
     _generate_heats(client, 43)
     assert _heat_rosters(sql, 43) == [

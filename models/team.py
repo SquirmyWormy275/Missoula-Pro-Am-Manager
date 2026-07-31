@@ -47,7 +47,8 @@ class Team(db.Model):
     )
 
     # Relationships
-    members = db.relationship('CollegeCompetitor', backref='team', lazy='dynamic')
+    members = db.relationship('CollegeCompetitor', backref='team', lazy='dynamic',
+                              order_by='CollegeCompetitor.id')
 
     __table_args__ = (
         db.UniqueConstraint('tournament_id', 'team_code', name='unique_team_code_per_tournament'),

@@ -86,8 +86,13 @@ class Event(db.Model):
     )
 
     # Relationships
-    heats = db.relationship('Heat', backref='event', lazy='dynamic', cascade='all, delete-orphan')
-    results = db.relationship('EventResult', backref='event', lazy='dynamic', cascade='all, delete-orphan')
+    # O3: deterministic default order. Matches the dominant read convention
+    # for event heats (run, then heat number); id breaks remaining ties so
+    # two rows can never legally swap between reads.
+    heats = db.relationship('Heat', backref='event', lazy='dynamic', cascade='all, delete-orphan',
+                            order_by='Heat.run_number, Heat.heat_number, Heat.id')
+    results = db.relationship('EventResult', backref='event', lazy='dynamic', cascade='all, delete-orphan',
+                              order_by='EventResult.id')
 
     def __repr__(self):
         gender_str = f" ({self.gender})" if self.gender else ""

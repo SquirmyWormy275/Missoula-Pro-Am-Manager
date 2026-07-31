@@ -39,11 +39,21 @@ class Tournament(db.Model):
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    teams = db.relationship('Team', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
-    college_competitors = db.relationship('CollegeCompetitor', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
-    pro_competitors = db.relationship('ProCompetitor', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
-    events = db.relationship('Event', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
-    wood_configs = db.relationship('WoodConfig', backref='tournament', lazy='dynamic', cascade='all, delete-orphan')
+    # O3: every dynamic relationship carries a deterministic default order.
+    # Primary key everywhere below: registration order, stable across
+    # backends, and the least surprising tiebreak for call sites that
+    # never thought about ordering at all (247 of them at the time this
+    # landed). Reads that need a domain order must say so explicitly.
+    teams = db.relationship('Team', backref='tournament', lazy='dynamic', cascade='all, delete-orphan',
+                            order_by='Team.id')
+    college_competitors = db.relationship('CollegeCompetitor', backref='tournament', lazy='dynamic', cascade='all, delete-orphan',
+                                          order_by='CollegeCompetitor.id')
+    pro_competitors = db.relationship('ProCompetitor', backref='tournament', lazy='dynamic', cascade='all, delete-orphan',
+                                      order_by='ProCompetitor.id')
+    events = db.relationship('Event', backref='tournament', lazy='dynamic', cascade='all, delete-orphan',
+                             order_by='Event.id')
+    wood_configs = db.relationship('WoodConfig', backref='tournament', lazy='dynamic', cascade='all, delete-orphan',
+                                   order_by='WoodConfig.id')
 
     def get_schedule_config(self) -> dict:
         """Return parsed schedule config dict (friday/saturday event selections)."""

@@ -481,16 +481,24 @@ def _get_event_competitors(event: Event) -> list:
         existing_result_comp_ids.add(result.competitor_id)
 
     # Phase 2: Scan ALL active competitors for this event to catch new entrants.
+    #
+    # O3: ORDER BY id, explicitly. This list is the snake draft's input, and
+    # when no ability ranks exist _sort_by_ability_rank returns it unchanged
+    # under the comment "fall back to registration order". Without an ORDER BY
+    # that was really PHYSICAL ROW ORDER, which Postgres does not guarantee:
+    # measured on the 2026 mirror with rows reinserted in reverse, every
+    # generated heat roster changed. id order is registration order, so this
+    # makes the fallback's comment true instead of coincidental.
     if event.event_type == 'college':
         all_comps = CollegeCompetitor.query.filter_by(
             tournament_id=event.tournament_id,
             status='active'
-        ).all()
+        ).order_by(CollegeCompetitor.id).all()
     else:
         all_comps = ProCompetitor.query.filter_by(
             tournament_id=event.tournament_id,
             status='active'
-        ).all()
+        ).order_by(ProCompetitor.id).all()
 
     # Filter by gender if gendered event.
     # Record who this drops before dropping them. An active competitor who is

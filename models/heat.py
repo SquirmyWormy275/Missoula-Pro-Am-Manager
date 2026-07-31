@@ -224,7 +224,12 @@ class Flight(db.Model):
     notes = db.Column(db.Text, nullable=True)  # For special instructions
 
     # Relationships
-    heats = db.relationship('Heat', backref='flight', lazy='dynamic')
+    # O3: default order matches get_heats_ordered below minus the NULL
+    # handling (relationship order_by is a plain clause list; the case()
+    # there exists for cross-backend NULL placement and callers who need
+    # it use get_heats_ordered). id last so the order is total.
+    heats = db.relationship('Heat', backref='flight', lazy='dynamic',
+                            order_by='Heat.flight_position, Heat.id')
 
     def __repr__(self):
         return f'<Flight {self.flight_number}>'
