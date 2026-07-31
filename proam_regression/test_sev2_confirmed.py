@@ -1331,7 +1331,7 @@ def test_scratch_preview_still_answers_json_when_json_is_asked_for(client, sql):
         "?format=json was ignored in favour of the browser Accept header")
 
 
-SCRATCH_COLLEGE = 29       # Greer Swoboda, team 5, active, 6 event_results.
+SCRATCH_COLLEGE = 100029   # Greer Swoboda, team 5, active, 6 event_results.
                            # Inside the 29-49 id range that collides with the
                            # pro roster, so this doubles as a check that the
                            # rendered page names the right human.
@@ -1350,8 +1350,10 @@ def test_college_scratch_button_renders_the_page_for_the_right_human(client, sql
     """
     college_name = sql("SELECT name FROM college_competitors WHERE id = :c",
                        c=SCRATCH_COLLEGE)[0][0]
+    # Post-c39 the twin lives at SCRATCH_COLLEGE - 100000: ids no longer
+    # collide, but type resolution must still pick the right table.
     pro_twin = sql("SELECT name FROM pro_competitors WHERE id = :c",
-                   c=SCRATCH_COLLEGE)
+                   c=SCRATCH_COLLEGE - 100000)
     assert pro_twin and pro_twin[0][0] != college_name, (
         f"id {SCRATCH_COLLEGE} no longer collides across the two rosters, so "
         "this test proves nothing")

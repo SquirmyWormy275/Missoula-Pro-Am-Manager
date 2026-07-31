@@ -29,6 +29,16 @@ import rig
 TID = rig.TOURNAMENT_ID
 OFFSET = 100000
 
+# c39: the lane templates are reseeded at the source now. This module's job
+# is to keep proving the MIGRATION on real unreseeded data, so it pins its
+# clones to the archival pristine snapshot taken before the cutover.
+PRISTINE = "proam_prod_mirror_2026pristine"
+
+
+@pytest.fixture(autouse=True)
+def _use_pristine_template(monkeypatch):
+    monkeypatch.setattr(rig, "TEMPLATE_DB", PRISTINE)
+
 # Measured on the mirror. The era-1 ghost counts are load-bearing: the
 # reseed must neither create nor destroy one.
 PRE_COLLISIONS = 21

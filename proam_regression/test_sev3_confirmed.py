@@ -783,10 +783,15 @@ _SMS_FLIGHT_HEAT_IDS = """
     )
 """
 
+# POST-RESEED (c39): the collision population this claim once measured is
+# structurally extinct. College ids live at +100000 and the sequence is
+# fenced, so the measured set must be EMPTY forever; any member appearing
+# here means the fence broke. SMS_MASKED_PROS remains above as the
+# historical population the texting assertions still exercise.
 register(Claim(
-    name=("SMS_MASKED_PROS is the WHOLE pro/college id collision population "
-          "of flight 7, not a sample of it"),
-    claimed=SMS_MASKED_PROS,
+    name=("the flight-7 pro/college id collision population is EMPTY: the "
+          "c38 reseed fence holds"),
+    claimed={},
     sql=_SMS_FLIGHT_HEAT_IDS + """
     SELECT p.cid, pc.name
     FROM pro_ids p
@@ -816,13 +821,14 @@ register(Claim(
 
 register(Claim(
     name=("SMS_GHOST_PRO exists as a pro, is absent from every flight-7 pro "
-          "heat, and his integer id stands in a flight-7 college heat"),
+          "heat, and his former college twin (id+100000 post-reseed) stands "
+          "in a flight-7 college heat"),
     claimed={SMS_GHOST_PRO[0]: SMS_GHOST_PRO[1]},
     sql=_SMS_FLIGHT_HEAT_IDS + """
     SELECT pc.id, pc.name
     FROM pro_competitors pc
     WHERE pc.id = :gid AND pc.tournament_id = :t
-      AND pc.id IN (SELECT cid FROM col_ids)
+      AND pc.id + 100000 IN (SELECT cid FROM col_ids)
       AND pc.id NOT IN (SELECT cid FROM pro_ids)
     """,
     params={"t": TID, "fn": SMS_TARGET_FLIGHT_NUMBER, "gid": SMS_GHOST_PRO[0]},
@@ -1507,11 +1513,11 @@ def test_a_finals_score_can_still_be_corrected_after_the_bracket_completes(
 # ---------------------------------------------------------------------------
 
 _C21_SOLO_EVENT = 12        # Standing Block Hard Hit, college F
-_C21_SOLO_HEAT = 381        # holds exactly one competitor: college 29
-_C21_SOLO_COMP = 29
+_C21_SOLO_HEAT = 381        # holds exactly one competitor: college 100029
+_C21_SOLO_COMP = 100029
 _C21_PAIR_EVENT = 42        # Pole Climb, pro
 _C21_PAIR_HEAT = 449        # [23, 31]
-_C21_LIVE_HEAT = 450        # [41, 49]
+_C21_LIVE_HEAT = 450        # [100041, 100049]
 _C21_SHIPPED_EMPTY = 392    # event 21, ships empty and pending on real data
 
 
@@ -3272,13 +3278,14 @@ def test_mens_underhand_speed_does_not_open_on_the_short_heat(client, sql):
     _generate_heats(client, 9)
     rosters = _heat_rosters(sql, 9)
     assert sorted(c for r in rosters for c in r) == sorted(
-        [30, 42, 44, 32, 41, 58, 77, 38, 40, 61, 67]), rosters
+        [100030, 100042, 100044, 100032, 100041, 100058, 100077,
+         100038, 100040, 100061, 100067]), rosters
     assert not _opens_short([len(r) for r in rosters]), (
         f"event 9 runs {[len(r) for r in rosters]}, short heat first")
     assert rosters == [
-        [32, 41, 58, 77],
-        [38, 40, 61, 67],
-        [30, 42, 44],
+        [100032, 100041, 100058, 100077],
+        [100038, 100040, 100061, 100067],
+        [100030, 100042, 100044],
     ]
 
 
@@ -3288,13 +3295,14 @@ def test_womens_underhand_speed_does_not_open_on_the_short_heat(client, sql):
     _generate_heats(client, 10)
     rosters = _heat_rosters(sql, 10)
     assert sorted(c for r in rosters for c in r) == sorted(
-        [34, 71, 72, 48, 70, 83, 92, 54, 65, 88, 91]), rosters
+        [100034, 100071, 100072, 100048, 100070, 100083, 100092,
+         100054, 100065, 100088, 100091]), rosters
     assert not _opens_short([len(r) for r in rosters]), (
         f"event 10 runs {[len(r) for r in rosters]}, short heat first")
     assert rosters == [
-        [48, 70, 83, 92],
-        [54, 65, 88, 91],
-        [34, 71, 72],
+        [100048, 100070, 100083, 100092],
+        [100054, 100065, 100088, 100091],
+        [100034, 100071, 100072],
     ]
 
 
@@ -3391,12 +3399,12 @@ def test_the_cap_hitting_events_keep_their_shipped_order(client, sql):
     """
     _generate_heats(client, 7)
     assert _heat_rosters(sql, 7) == [
-        [32, 50, 51, 80, 85], [33, 43, 59, 79, 86],
-        [37, 42, 60, 78], [38, 39, 61, 74]]
+        [100032, 100050, 100051, 100080, 100085], [100033, 100043, 100059, 100079, 100086],
+        [100037, 100042, 100060, 100078], [100038, 100039, 100061, 100074]]
 
     _generate_heats(client, 11)
     assert _heat_rosters(sql, 11) == [
-        [35, 59, 66, 86, 87], [44, 58, 67, 85], [50, 51, 78, 79]]
+        [100035, 100059, 100066, 100086, 100087], [100044, 100058, 100067, 100085], [100050, 100051, 100078, 100079]]
 
     _generate_heats(client, 33)
     assert _heat_rosters(sql, 33) == [
@@ -3410,12 +3418,12 @@ def test_the_cap_hitting_events_keep_their_shipped_order(client, sql):
 
     _generate_heats(client, 20)
     assert _heat_rosters(sql, 20) == [
-        [35, 80], [37, 79], [38, 77], [41, 76], [43, 74],
-        [44, 69], [46, 66], [51, 62], [58, 59], [30]]
+        [100035, 100080], [100037, 100079], [100038, 100077], [100041, 100076], [100043, 100074],
+        [100044, 100069], [100046, 100066], [100051, 100062], [100058, 100059], [100030]]
 
     _generate_heats(client, 25)
     assert _heat_rosters(sql, 25) == [
-        [31, 92], [55, 89], [57, 71], [29]]
+        [100031, 100092], [100055, 100089], [100057, 100071], [100029]]
 
 
 @pytest.mark.sev3

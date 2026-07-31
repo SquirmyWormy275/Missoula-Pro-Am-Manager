@@ -728,11 +728,11 @@ STOCK_SAW_M = 20
 STOCK_SAW_F = 21
 SINGLE_BUCK_M = 15
 # heats 1-6: solo competitor ids, in heat order, every one assigned stand 8.
-SS_M_SOLOS_BEFORE = {1: 62, 2: 59, 3: 58, 4: 51, 5: 46, 6: 44}
+SS_M_SOLOS_BEFORE = {1: 100062, 2: 100059, 3: 100058, 4: 100051, 5: 100046, 6: 100044}
 # heats 7-9: pairs (stand-7 seat, stand-8 seat).
-SS_M_PAIRS_BEFORE = {7: (30, 43), 8: (35, 41), 9: (37, 38)}
-SS_SCRATCH_ID = 30       # Mateo Angel, stand-7 seat of heat 7
-SS_SURVIVOR_ID = 43      # Dustin Haley, stand-8 seat of heat 7
+SS_M_PAIRS_BEFORE = {7: (100030, 100043), 8: (100035, 100041), 9: (100037, 100038)}
+SS_SCRATCH_ID = 100030   # Mateo Angel, stand-7 seat of heat 7
+SS_SURVIVOR_ID = 100043  # Dustin Haley, stand-8 seat of heat 7
 
 
 def _stock_saw_layout(event_id):
@@ -893,7 +893,7 @@ def test_a_scratch_in_another_event_leaves_stock_saw_and_its_own_stands_alone(
         h.heat_number: dict(h.get_stand_assignments())
         for h in Heat.query.filter_by(event_id=SINGLE_BUCK_M).all()
     }
-    _scratch_through_the_real_route(client, 61, "college")
+    _scratch_through_the_real_route(client, 100061, "college")
 
     assert _stock_saw_layout(STOCK_SAW_M) == ss_before, (
         "a Single Buck scratch rewrote Stock Saw stand assignments"
@@ -903,8 +903,8 @@ def test_a_scratch_in_another_event_leaves_stock_saw_and_its_own_stands_alone(
 
     db.session.expire_all()
     for h in Heat.query.filter_by(event_id=SINGLE_BUCK_M).all():
-        after = {k: v for k, v in h.get_stand_assignments().items() if k != "61"}
-        expected = {k: v for k, v in sb_before[h.heat_number].items() if k != "61"}
+        after = {k: v for k, v in h.get_stand_assignments().items() if k != "100061"}
+        expected = {k: v for k, v in sb_before[h.heat_number].items() if k != "100061"}
         assert after == expected, (
             f"Single Buck heat {h.heat_number} stands changed for survivors: "
             f"{sb_before[h.heat_number]} -> {h.get_stand_assignments()}"
@@ -925,7 +925,7 @@ def test_run_two_alternation_starts_fresh_at_stand_7(app, client):
     from models.heat import Heat
 
     template = Heat.query.filter_by(event_id=STOCK_SAW_M, heat_number=1).first()
-    for hn, comp_id in ((1, 35), (2, 37)):
+    for hn, comp_id in ((1, 100035), (2, 100037)):
         db.session.add(
             Heat(
                 event_id=STOCK_SAW_M,
@@ -1018,7 +1018,7 @@ def test_completed_heats_keep_their_recorded_stands(app, client):
 
 BIRLING_M = 28   # 12 entrants
 BIRLING_F = 29   # 9 entrants
-BIRLING_F_PHANTOM = ("W1_8", 16, 31)   # the race-day stacked match
+BIRLING_F_PHANTOM = ("W1_8", 16, 100031)  # stacked match; 16 is an era-1 GHOST and does not shift
 BIRLING_F_TOP_SEED = 5                 # Mackenzie Breitner, gets the compact bye
 
 

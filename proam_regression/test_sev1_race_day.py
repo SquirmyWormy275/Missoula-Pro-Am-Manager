@@ -119,20 +119,27 @@ def _colliding_ids(sql):
 
 @pytest.mark.sev1
 def test_id_collision_actually_exists_in_production_data(sql):
-    """Guard test. If this ever returns empty the collision tests are vacuous."""
+    """INVERTED at c39, name kept for history. The c38 reseed made the
+    collision population structurally extinct: college ids live at +100000
+    behind a fenced sequence. This is now the fence invariant; a single row
+    here means the fence broke and the entire bare-int bug class is back."""
     rows = _colliding_ids(sql)
-    assert len(rows) > 0, (
-        "No pro/college id collisions in this data. The scratch-resolution "
-        "tests below would pass vacuously; re-verify the dataset."
+    assert len(rows) == 0, (
+        f"pro/college id collisions have REAPPEARED post-reseed: {rows[:5]}"
     )
 
 
 @pytest.mark.sev1
 def test_scratch_preview_resolves_the_college_competitor_not_the_pro(client, sql):
     """Scratching a college competitor must not target the pro of the same id."""
-    rows = _colliding_ids(sql)
-    assert rows, "no colliding ids in this dataset"
-    cid, college_name, pro_name = rows[0]
+    # Post-c39 there are no live collisions; the historical twin pair keeps
+    # the type-resolution question honest: college 100029 (Greer Swoboda),
+    # former pro twin 29 (Dwight Severson).
+    cid = 100029
+    college_name = sql("SELECT name FROM college_competitors WHERE id = :c",
+                       c=cid)[0][0]
+    pro_name = sql("SELECT name FROM pro_competitors WHERE id = 29")[0][0]
+    assert college_name != pro_name
     assert college_name != pro_name, "pick a collision where the names differ"
 
     r = client.get(
@@ -223,8 +230,8 @@ def test_scratch_undo_restores_heat_membership(client, sql):
 
 COLLEGE_DB_EVENT = 18
 COLLEGE_DB_HEATS = {
-    344: {29: "12.10", 31: "12.10", 48: "14.50", 49: "14.50"},
-    343: {54: "13.00", 57: "13.00", 64: "16.00", 65: "16.00"},
+    344: {100029: "12.10", 100031: "12.10", 100048: "14.50", 100049: "14.50"},
+    343: {100054: "13.00", 100057: "13.00", 100064: "16.00", 100065: "16.00"},
 }
 
 

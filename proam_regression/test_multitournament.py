@@ -135,9 +135,9 @@ def test_heat_generation_for_2026_ignores_the_2027_roster(mt, client, sql):
     # Both pins are the c35 deterministic rosters.
     assert regen(33) == [
         [2, 11, 12, 18, 19], [5, 9, 13, 17], [7, 8, 15, 16]]
-    assert regen(7) == [
+    assert regen(7) == [[i + 100000 for i in h] for h in [
         [32, 50, 51, 80, 85], [33, 43, 59, 79, 86],
-        [37, 42, 60, 78], [38, 39, 61, 74]]
+        [37, 42, 60, 78], [38, 39, 61, 74]]]
 
 
 @pytest.mark.sev2
