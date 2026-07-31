@@ -729,8 +729,23 @@ SMS_TARGET_FLIGHT_NUMBER = 7      # 4 + SMS_NOTIFY_FLIGHTS_AHEAD (3)
 SMS_START_URL = f"/scheduling/{TID}/flights/{SMS_TRIGGER_FLIGHT_ID}/start"
 
 # Real pros standing in real PRO heats of flight 7 whose integer id is also a
-# real college competitor id in the same flight. Measured, not assumed.
-SMS_MASKED_PROS = {29: "Dwight Severson", 37: "Karson Wilson"}
+# real college competitor id in the same flight. Measured, not assumed: the
+# pro-heat id set and the college-heat id set of flight 7 intersect in exactly
+# these three integers, so this dict is the whole population, not a sample.
+#
+# Completeness here is load-bearing, and it is the thing this list originally
+# got wrong. It named 29 and 37, because those are the two the unfixed route
+# drops on the row order this database happens to return. Id 33 is masked in
+# exactly the same way and survived only because his pro heat was read after
+# his college twin's. A first-write-wins mutant, which is the other obvious
+# way somebody might "fix" a last-write-wins dict, loses 33 and keeps 29 and
+# 37, so it passed a battery run against the two-name version of this list.
+# Naming all three is what makes the assertion independent of row order.
+SMS_MASKED_PROS = {
+    29: "Dwight Severson",   # college id 29 is Greer Swoboda
+    33: "Jack Love",         # college id 33 is Brad Applegate
+    37: "Karson Wilson",     # college id 37 is Zach Cardenas
+}
 
 # A real pro in the same flight with no college twin. He must be texted before
 # and after the fix. Without him every assertion below could pass vacuously on
