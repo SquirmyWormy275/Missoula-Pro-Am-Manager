@@ -42,7 +42,8 @@ class TestKindInference:
         Pro-Am Relay is stored with event_type='pro' but its event_state holds
         college_members[].id. An earlier version of this audit trusted
         event_type and reported 64 dangling references on the production dump
-        instead of 45: every college id under the relay was checked against the
+        instead of 45 (as counted then): every college id under the relay was
+        checked against the
         pro pool and came back unresolved. Nineteen phantom findings from one
         wrong assumption.
         """
@@ -83,9 +84,12 @@ class TestKindInference:
 
 class TestWalkBlob:
     def test_named_entries_carry_the_name_and_bare_slots_do_not(self):
-        """This decides repairable versus regenerate-only, so it is load
-        bearing rather than cosmetic. 24 of the 45 production findings are bare
-        slots, and for those there is nothing in the blob to repair from."""
+        """`name_in_blob` is a fact about the position, not about the data.
+
+        A bracket slot is a bare integer no matter how recoverable it turns out
+        to be. Keeping that separate from `name_in_row` is what stopped the two
+        questions getting confused a second time.
+        """
         blob = {
             'competitors': [{'id': 9, 'name': 'Davis Underwood (UM-B)'}],
             'bracket': {'winners': [[{'competitor1': 9, 'competitor2': 11,
@@ -102,11 +106,79 @@ class TestWalkBlob:
         bare = by_path['e28.payouts.bracket.winners[0][0].competitor1']
         assert bare.name_in_blob is None
 
-    def test_every_bracket_slot_shape_is_found(self):
-        blob = {'bracket': {'winners': [[{
-            'competitor1': 1, 'competitor2': 2, 'winner': 1, 'loser': 2}]]}}
+    def test_a_bare_slot_is_recoverable_from_its_sibling_competitors_entry(self):
+        """The correction that changed the plan.
+
+        The first version of this module asked only whether a position carried
+        a name of its own. That reported the 24 production bracket slots as
+        unrecoverable, which turned "repair the 2026 college birling brackets"
+        into "reconstruct the recorded results" and put a question to the
+        operator that did not need asking. Every one of those ids is sitting in
+        the same blob's `competitors[]` array with the name attached.
+
+        Competitor 11 is the control: it appears only in the match, so it stays
+        unrecoverable and the index is not just returning true for everything.
+        """
+        blob = {
+            'competitors': [{'id': 9, 'name': 'Davis Underwood (UM-B)'}],
+            'bracket': {'winners': [[{'competitor1': 9, 'competitor2': 11}]]},
+        }
+        by_path = {s.path: s for s in walk_blob(
+            blob, 'e28.payouts', 'college', 'events.payouts', 28)}
+
+        recoverable = by_path['e28.payouts.bracket.winners[0][0].competitor1']
+        assert recoverable.name_in_blob is None
+        assert recoverable.name_in_row == 'Davis Underwood (UM-B)'
+
+        control = by_path['e28.payouts.bracket.winners[0][0].competitor2']
+        assert control.name_in_row is None
+
+    def test_the_name_index_does_not_borrow_a_match_name(self):
+        """`{"competitor1": 9, "name": "Match 1"}` must not register 9 as being
+        called "Match 1". Only the `id` form contributes to the index."""
+        blob = {'bracket': {'winners': [[{'competitor1': 9, 'name': 'Match 1'}]]}}
         sites = walk_blob(blob, 'e1.payouts', 'college', 'events.payouts', 1)
-        assert len(sites) == 4
+        assert [s.name_in_row for s in sites] == [None]
+
+    def test_an_id_with_two_names_in_one_blob_is_not_guessed_at(self):
+        """A Pro-Am Relay blob holds `eligible_college` and `eligible_pro` side
+        by side, both id-keyed from 1, so one integer legitimately names two
+        different people. Event 44 of the 2026 dump has four of these. Taking
+        whichever was walked last would hand back a real, wrong human, which is
+        the failure this module exists to report, not to commit."""
+        blob = {
+            'eligible_college': [{'id': 8, 'name': 'Alpine Griffin'}],
+            'eligible_pro': [{'id': 8, 'name': 'Erin LaVoie'}],
+            'bracket': {'winners': [[{'competitor1': 8}]]},
+        }
+        sites = walk_blob(blob, 'e44.event_state', 'college',
+                          'events.event_state', 44)
+        bare = [s for s in sites if s.name_in_blob is None]
+        assert bare, 'the bracket slot should still be audited'
+        assert all(s.name_in_row is None for s in bare)
+
+    def test_an_id_named_the_same_way_twice_is_still_resolved(self):
+        """The same competitor listed in two arrays of one blob, which is the
+        normal case, must not be mistaken for a collision and dropped."""
+        blob = {
+            'eligible_college': [{'id': 8, 'name': 'Alpine Griffin'}],
+            'drawn_college': [{'id': 8, 'name': 'Alpine Griffin'}],
+            'bracket': {'winners': [[{'competitor1': 8}]]},
+        }
+        sites = walk_blob(blob, 'e44.event_state', 'college',
+                          'events.event_state', 44)
+        bare = [s for s in sites if s.name_in_blob is None]
+        assert [s.name_in_row for s in bare] == ['Alpine Griffin']
+
+    def test_every_bracket_slot_shape_is_found(self):
+        """`eliminated` is in this list because the reseed remapper rewrites it.
+        It was missing from the first version of this module, which is the class
+        of gap the remapper ratchet below exists to stop."""
+        blob = {'bracket': {'winners': [[{
+            'competitor1': 1, 'competitor2': 2, 'winner': 1, 'loser': 2,
+            'eliminated': 2}]]}}
+        sites = walk_blob(blob, 'e1.payouts', 'college', 'events.payouts', 1)
+        assert len(sites) == 5
         assert {s.raw_id for s in sites} == {1, 2}
 
     def test_booleans_are_not_competitor_references(self):
@@ -126,6 +198,92 @@ class TestWalkBlob:
     def test_empty_blob_is_not_an_error(self):
         assert walk_blob({}, 'e1.payouts', 'college', 'events.payouts', 1) == []
         assert walk_blob([], 'e1.payouts', 'college', 'events.payouts', 1) == []
+
+
+class TestBareReferenceContainers:
+    """Containers that hold competitor ids with no key on the id itself.
+
+    These are the five the first version of this module missed. They are not
+    exotic: `seeding` alone accounts for 10 of the production findings, and it
+    was invisible because a bare integer inside a list has no key to match on.
+    """
+
+    def test_seeding_is_a_list_of_bare_competitor_ids(self):
+        blob = {'competitors': [{'id': 9, 'name': 'Davis Underwood'}],
+                'seeding': [9, 44, 42]}
+        sites = walk_blob(blob, 'e28.payouts', 'college', 'events.payouts', 28)
+        seeds = [s for s in sites if '.seeding[' in s.path]
+        assert [s.raw_id for s in seeds] == [9, 44, 42]
+        assert seeds[0].name_in_row == 'Davis Underwood'
+        assert seeds[0].name_in_blob is None
+
+    def test_falls_inside_a_match_is_a_list_of_bare_ids(self):
+        blob = {'bracket': {'winners': [[{'falls': [7, 8]}]]}}
+        sites = walk_blob(blob, 'e1.payouts', 'college', 'events.payouts', 1)
+        assert {s.raw_id for s in sites} == {7, 8}
+
+    @pytest.mark.parametrize('key', ['pre_seedings', 'placements'])
+    def test_id_keyed_dicts_are_audited_on_the_key(self, key):
+        """JSON object keys are strings, so these ids arrive as `"31"`."""
+        blob = {key: {'31': 1, '33': 2}}
+        sites = walk_blob(blob, 'e1.payouts', 'college', 'events.payouts', 1)
+        assert sorted(s.raw_id for s in sites) == [31, 33]
+
+    def test_a_non_numeric_key_is_skipped_not_guessed_at(self):
+        blob = {'placements': {'31': 1, 'unseeded': 2}}
+        sites = walk_blob(blob, 'e1.payouts', 'college', 'events.payouts', 1)
+        assert [s.raw_id for s in sites] == [31]
+
+    def test_integer_lists_that_are_not_references_are_left_alone(self):
+        """An allowlist, not "walk every int list". Entry fees, event ids and
+        team numbers are integers and none of them address a competitor."""
+        blob = {'events_entered': [1, 2, 3], 'entry_fees': {'1': 25},
+                'teams': [{'team_number': 4}]}
+        assert walk_blob(blob, 'e1.payouts', 'pro', 'events.payouts', 1) == []
+
+    def test_covers_every_container_the_reseed_remapper_rewrites(self):
+        """Drift ratchet against scripts/reseed_college_ids.py.
+
+        That remapper is the authoritative list of which JSON positions hold a
+        competitor id, because it is the code that has to rewrite all of them
+        when college ids move. This module was built by looking at what happened
+        to be broken instead, and missed five of them. Reading the remapper's
+        own constants means a key added there fails here until it is audited.
+
+        Structural keys are listed explicitly rather than filtered by heuristic,
+        so adding one is a visible decision rather than a silent widening.
+        """
+        from scripts.reseed_college_ids import remap_bracket_payouts
+        from services.reference_audit import _BARE_LIST_KEYS, _ID_KEYED_DICT_KEYS, _REFERENCE_KEYS
+
+        structural = {
+            'bracket', 'winners', 'losers', 'finals', 'true_finals',
+            'competitors', '{}',
+        }
+
+        def string_consts(code):
+            out = set()
+            for const in code.co_consts:
+                if isinstance(const, str):
+                    out.add(const)
+                elif isinstance(const, tuple):
+                    out |= {c for c in const if isinstance(c, str)}
+                elif hasattr(const, 'co_consts'):
+                    out |= string_consts(const)
+            return out
+
+        keys = {c for c in string_consts(remap_bracket_payouts.__code__)
+                if c and '.' not in c and '<' not in c}
+        audited = set(_REFERENCE_KEYS) | set(_BARE_LIST_KEYS) \
+            | set(_ID_KEYED_DICT_KEYS)
+
+        unaudited = keys - audited - structural
+        assert not unaudited, (
+            f'scripts/reseed_college_ids.py rewrites {sorted(unaudited)} as a '
+            f'competitor reference and services/reference_audit.py does not '
+            f'audit it. Add it to _REFERENCE_KEYS, _BARE_LIST_KEYS or '
+            f'_ID_KEYED_DICT_KEYS, or to `structural` here if it is not a '
+            f'reference.')
 
 
 class TestClassification:
@@ -207,7 +365,7 @@ class TestClassification:
         """The finding that decides the design of the write-time gate.
 
         "Does this competitor id exist" is the obvious gate and it is useless
-        here. Every one of the 45 production findings passes it, because each
+        here. Every one of the 55 production findings passes it, because each
         id does exist, in the other table. Asserting that directly so that a
         future simplification of the gate breaks this test instead of
         production.
@@ -229,7 +387,11 @@ class TestClassification:
         assert audit(db_session)[0].verdict == CROSS_KIND, \
             'the kind-aware gate catches it'
 
-    def test_repairability_splits_on_whether_a_name_was_stored(self, db_session, seeded):
+    def test_repairability_follows_the_blob_not_the_position(self, db_session, seeded):
+        """A bare slot whose id is named elsewhere in the same blob is
+        repairable. This is the production shape: `competitors[]` carries the
+        roster with names, the bracket carries the same ids bare, and both got
+        the same stale numbers from the same reseed."""
         collider = seeded['pro_ids'][1]
         make_event(
             db_session, seeded['tournament'], 'College Birling',
@@ -243,9 +405,23 @@ class TestClassification:
         findings = audit(db_session)
         assert len(findings) == 2
         summary = summarize(findings)
-        assert summary['repairable_from_blob'] == 1
-        assert summary['not_repairable'] == 1
+        assert summary['repairable_from_blob'] == 2
+        assert summary['not_repairable'] == 0
         assert summary[CROSS_KIND] == 2
+
+    def test_a_slot_with_no_name_anywhere_is_not_repairable(self, db_session, seeded):
+        """The counterweight. If the id is bare and the blob never names it,
+        repairability must report false, or the flag means nothing."""
+        collider = seeded['pro_ids'][1]
+        make_event(
+            db_session, seeded['tournament'], 'College Birling',
+            event_type='college',
+            payouts={'bracket': {'winners': [[{'competitor1': collider}]]}})
+        db_session.flush()
+
+        summary = summarize(audit(db_session))
+        assert summary['repairable_from_blob'] == 0
+        assert summary['not_repairable'] == 1
 
     def test_unknown_discriminator_is_its_own_verdict(self, db_session, seeded):
         """A garbage competitor_type is worse than a garbage id: the id may be
@@ -325,7 +501,7 @@ class TestGateForm:
 
     def test_check_blob_needs_no_other_rows(self, db_session):
         """The gate validates the value in hand. It must not depend on the rest
-        of the database being clean, or it can never be turned on while the 45
+        of the database being clean, or it can never be turned on while the 55
         known findings are still sitting there."""
         tournament = make_tournament(db_session)
         pro = make_pro_competitor(db_session, tournament, 'Pro One')

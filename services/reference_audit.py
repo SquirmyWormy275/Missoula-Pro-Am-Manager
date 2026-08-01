@@ -8,9 +8,13 @@ integer inside ``Heat.competitors``, ``Heat.stand_assignments``,
 A sibling ``competitor_type`` string, or the shape of the JSON path, is the
 only thing that says which of the two competitor tables the integer addresses.
 
-Measured on the 2026 production dump: 45 references do not resolve in the pool
-their context implies, and **all 45 of them resolve to a live competitor in the
+Measured on the 2026 production dump: 55 references do not resolve in the pool
+their context implies, and **all 55 of them resolve to a live competitor in the
 other discipline**. They are not dangling. They address the wrong human.
+
+All 55 are also recoverable without leaving the blob they sit in, because every
+stale id appears somewhere in the same blob with a name on it. Repair, not
+regeneration. See :attr:`Finding.repairable_from_blob`.
 
 The arithmetic behind that is not a coincidence and will not go away on its
 own. The era-1 reseed moved college ids up to 29-92. Pro ids run 1-49. Every
@@ -26,7 +30,7 @@ to catch this by reading a heat sheet.
 Why a naive gate does not work
 ==============================
 The obvious write-time check is "does this competitor id exist". That check
-**passes every one of the 45**, because each id does exist, in the other
+**passes every one of the 55**, because each id does exist, in the other
 table. A reference gate is only meaningful if it resolves against the pool the
 reference's context implies, which is what this module does. The permanent
 answer is ``competitors.uid`` (see ``models/competitor_identity.py``), which is
@@ -56,8 +60,34 @@ from services.entity_key import COLLEGE, PRO
 # be repaired from the blob or only regenerated, so it is recorded per site
 # rather than inferred later.
 _NAMED_KEY = 'id'
-_BARE_SLOT_KEYS = ('competitor1', 'competitor2', 'winner', 'loser')
+_BARE_SLOT_KEYS = ('competitor1', 'competitor2', 'winner', 'loser',
+                   'eliminated')
 _REFERENCE_KEYS = (_NAMED_KEY,) + _BARE_SLOT_KEYS
+
+# Dict keys whose VALUE is a list of bare competitor ids, e.g.
+# ``"seeding": [9, 44, 42]``. A plain integer list carries no key to match on,
+# so these have to be named. An allowlist rather than "walk every int list"
+# because ``entry_fees``, ``events_entered`` and ``team_number`` are also
+# integers and are not competitor references.
+_BARE_LIST_KEYS = ('seeding', 'falls')
+
+# Dict keys whose VALUE is a dict KEYED BY competitor id, e.g.
+# ``"placements": {"31": 1, "33": 2}``. The reference is the key, and JSON
+# object keys are strings, so these are parsed rather than matched.
+_ID_KEYED_DICT_KEYS = ('pre_seedings', 'placements')
+
+# Where this list comes from
+# ==========================
+# Not from observing which positions happened to be broken. That is how the
+# first version of this module was built and it missed five containers:
+# ``eliminated``, ``seeding``, ``falls``, ``pre_seedings`` and ``placements``.
+# The authoritative statement of "these JSON positions hold competitor
+# references" is ``remap_bracket_payouts`` in ``scripts/reseed_college_ids.py``,
+# because that is the function that has to rewrite all of them when college ids
+# move. The two lists are held in sync by
+# ``test_covers_every_container_the_reseed_remapper_rewrites``, which reads the
+# remapper's own constants and fails if it grows a key this module does not
+# audit.
 
 # Ordered path-segment rules for deciding which pool a JSON reference belongs
 # to. First match wins, checked against the full dotted path.
@@ -65,7 +95,8 @@ _REFERENCE_KEYS = (_NAMED_KEY,) + _BARE_SLOT_KEYS
 # This list exists because ``event_type`` is a liar for the mixed events.
 # Pro-Am Relay is ``event_type='pro'``, but its ``event_state`` holds
 # ``college_members[].id``. An earlier version of this audit trusted
-# ``event_type`` and reported 64 dangling references instead of 45: every
+# ``event_type`` and reported 64 dangling references instead of 45 (counts as
+# measured then, before the bare-int containers below were covered): every
 # college id under the relay was checked against the pro pool and came back
 # unresolved. The path knows what the event type does not.
 _PATH_RULES = (
@@ -129,6 +160,25 @@ class ReferenceSite:
     name_in_blob: Optional[str] = None
     """The name stored alongside, when there is one. ``None`` for bare slots."""
 
+    name_in_row: Optional[str] = None
+    """The name this id carries *anywhere else in the same blob*.
+
+    Bracket match slots, seeding lists and placement keys are bare integers, but
+    the blob that holds them almost always also holds a ``competitors[]`` entry
+    for the same id with the name on it. Repairing a bare slot therefore does
+    not need anything outside the blob: read the name off the sibling entry and
+    re-resolve it.
+
+    Kept separate from :attr:`name_in_blob` because they answer different
+    questions. ``name_in_blob`` is "does this position carry a name", which is a
+    fact about the schema. ``name_in_row`` is "can this reference be recovered",
+    which is a fact about the data and is the one that decides repair versus
+    regeneration.
+
+    ``None`` when the blob is self-contradictory about that id. See
+    :func:`name_index`.
+    """
+
 
 KIND_SOURCES = ('column', 'json_path', 'event_type')
 
@@ -146,12 +196,21 @@ class Finding:
 
     @property
     def repairable_from_blob(self):
-        """Whether the stored name is enough to re-resolve this reference.
+        """Whether a name inside the same blob is enough to re-resolve this.
 
-        Bracket match slots carry no name, so for those the answer is no under
-        any interpretation and regeneration is the only option.
+        An earlier version asked only whether *this position* carried a name,
+        which reported the 24 bracket match slots in the 2026 dump as
+        unrecoverable and turned "repair the brackets" into "regenerate the
+        recorded results". That was wrong: every one of those ids also appears
+        in the same blob's ``competitors[]`` array with the name attached.
+        Measured on the production mirror, all 55 findings are recoverable
+        without leaving the blob.
+
+        Recoverable is not the same as repaired. The name still has to resolve
+        to exactly one live competitor, and that is a separate check the caller
+        makes against the roster, not something this property can answer.
         """
-        return bool(self.site.name_in_blob)
+        return bool(self.site.name_in_row or self.site.name_in_blob)
 
 
 def kind_for_path(path, event_type):
@@ -169,6 +228,51 @@ def kind_for_path(path, event_type):
     return PRO, 'event_type'
 
 
+def _is_int(value):
+    """A real integer. ``bool`` is a subclass of ``int`` and is never an id."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def name_index(blob):
+    """Map ``competitor id -> name`` for every named reference in one blob.
+
+    This is what makes a bare bracket slot repairable. Built from the
+    :data:`_NAMED_KEY` form only, since that is the one position where the name
+    provably belongs to the competitor rather than to the surrounding match.
+
+    An id that carries two different names inside one blob is dropped rather
+    than resolved to whichever was walked last. This is not hypothetical and it
+    is not rare: a Pro-Am Relay blob holds ``eligible_college`` and
+    ``eligible_pro`` side by side, both id-keyed from 1, so id 8 is Alpine
+    Griffin in one array and Erin LaVoie in the other. Four such collisions sit
+    in event 44 of the 2026 dump. Guessing between them would hand back a real,
+    wrong human, which is the exact failure this whole module exists to report.
+    An unrepairable finding is a correct answer. A confidently wrong name is
+    not.
+    """
+    index = {}
+    contested = set()
+
+    def _walk(node):
+        if isinstance(node, dict):
+            value = node.get(_NAMED_KEY)
+            name = node.get('name')
+            if _is_int(value) and isinstance(name, str) and name.strip():
+                name = name.strip()
+                if index.setdefault(value, name) != name:
+                    contested.add(value)
+            for child in node.values():
+                _walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                _walk(child)
+
+    _walk(blob)
+    for value in contested:
+        del index[value]
+    return index
+
+
 def walk_blob(blob, root_path, event_type, store, row_id):
     """Yield every :class:`ReferenceSite` inside one decoded JSON blob.
 
@@ -176,6 +280,16 @@ def walk_blob(blob, root_path, event_type, store, row_id):
     decision about what a parse failure means. Nothing here swallows one.
     """
     sites = []
+    names = name_index(blob)
+
+    def _add(path, raw_id, own_name=None):
+        kind, source = kind_for_path(path, event_type)
+        sites.append(ReferenceSite(
+            store=store, row_id=row_id, path=path, raw_id=raw_id,
+            kind=kind, kind_source=source,
+            name_in_blob=own_name,
+            name_in_row=names.get(raw_id),
+        ))
 
     def _walk(node, path):
         if isinstance(node, dict):
@@ -183,21 +297,23 @@ def walk_blob(blob, root_path, event_type, store, row_id):
             name = name.strip() if isinstance(name, str) and name.strip() else None
             for key, value in node.items():
                 child = f'{path}.{key}'
-                if key in _REFERENCE_KEYS and isinstance(value, int) \
-                        and not isinstance(value, bool):
-                    kind, source = kind_for_path(path, event_type)
-                    sites.append(ReferenceSite(
-                        store=store,
-                        row_id=row_id,
-                        path=child,
-                        raw_id=value,
-                        kind=kind,
-                        kind_source=source,
-                        # A bracket slot's name, if the dict even has one,
-                        # describes the match and not the competitor. Only the
-                        # `id` form gets to claim a recoverable name.
-                        name_in_blob=name if key == _NAMED_KEY else None,
-                    ))
+                if key in _REFERENCE_KEYS and _is_int(value):
+                    # A bracket slot's name, if the dict even has one,
+                    # describes the match and not the competitor. Only the
+                    # `id` form gets to claim a name of its own.
+                    _add(child, value, name if key == _NAMED_KEY else None)
+                elif key in _BARE_LIST_KEYS and isinstance(value, list):
+                    for index, item in enumerate(value):
+                        if _is_int(item):
+                            _add(f'{child}[{index}]', item)
+                elif key in _ID_KEYED_DICT_KEYS and isinstance(value, dict):
+                    for raw_key in value:
+                        try:
+                            _add(f'{child}[{raw_key!r}]', int(raw_key))
+                        except (TypeError, ValueError):
+                            # A non-numeric key here is not a competitor
+                            # reference. Skipped rather than guessed at.
+                            continue
                 else:
                     _walk(value, child)
         elif isinstance(node, list):
@@ -268,7 +384,7 @@ def collect_sites(session):
     for row_id, competitors, stands, event_type in heats:
         kind, source = kind_for_path('', event_type)
         for index, value in enumerate(_loads(competitors, [])):
-            if isinstance(value, int) and not isinstance(value, bool):
+            if _is_int(value):
                 sites.append(ReferenceSite(
                     store='heats.competitors', row_id=row_id,
                     path=f'heats[{row_id}].competitors[{index}]',

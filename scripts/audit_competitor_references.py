@@ -11,7 +11,7 @@ Usage
 
 Without ``--all`` it prints only ``cross_kind`` findings, which are the ones
 that put a real, wrong human's name on a heat sheet. Everything else is
-suppressed because on the 2026 dump there is nothing else: all 45 findings are
+suppressed because on the 2026 dump there is nothing else: all 55 findings are
 cross_kind, none are merely dangling.
 
 Exit codes
