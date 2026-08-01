@@ -17,9 +17,11 @@ from services.reference_audit import (
     OK,
     UNKNOWN_KIND,
     ReferenceSite,
+    RewriteCollision,
     audit,
     check_blob,
     kind_for_path,
+    rewrite_blob,
     summarize,
     walk_blob,
 )
@@ -559,6 +561,148 @@ class TestGateForm:
         assert audit(db_session), 'precondition: the database is dirty'
 
         assert check_blob(db_session, {'competitors': []}, 'pending', 'college') == []
+
+
+class TestRewriteBlob:
+    """The repair half of the shared traversal.
+
+    `rewrite_blob` exists so a repair cannot disagree with the detector about
+    which JSON positions hold a competitor id. Two independent enumerations of
+    the same positions is the failure that produced the era-1 ghosts, and this
+    module's own container list had to be corrected once for missing five of
+    them. The first test below is the ratchet that keeps them fused.
+
+    The `pre_seedings`/`placements` cases matter out of proportion to their
+    production footprint: the 2026 data has zero findings in either, so nothing
+    in the mirror exercises the rekey path. It is tested here or it is not
+    tested.
+    """
+
+    def _blob(self):
+        return {
+            'competitors': [{'id': 9, 'name': 'Davis Underwood (UM-B)'},
+                            {'id': 2, 'name': 'Tyler Cook (UM-A)'}],
+            'seeding': [9, 2],
+            'placements': {'9': 1, '2': 2},
+            'bracket': {'winners': [[{'competitor1': 9, 'competitor2': 2,
+                                      'winner': 9, 'falls': [2]}]]},
+        }
+
+    def _rewrite(self, blob, decide):
+        return rewrite_blob(blob, 'e28.payouts', 'college',
+                            'events.payouts', 28, decide)
+
+    def test_it_visits_exactly_what_the_detector_walks(self):
+        """Drift ratchet. Add a container to one and this fails until both see it."""
+        blob = self._blob()
+        seen = []
+
+        self._rewrite(blob, lambda site: seen.append(site) or None)
+
+        expected = walk_blob(self._blob(), 'e28.payouts', 'college',
+                             'events.payouts', 28)
+        assert seen == expected
+
+    def test_deciding_nothing_changes_nothing(self):
+        blob = self._blob()
+        assert self._rewrite(blob, lambda site: None) == []
+        assert blob == self._blob()
+
+    def test_returning_the_same_id_is_not_a_change(self):
+        """Otherwise a no-op repair reports work it did not do, and the
+        post-check diff that proves only the planned paths moved is worthless."""
+        blob = self._blob()
+        assert self._rewrite(blob, lambda site: site.raw_id) == []
+        assert blob == self._blob()
+
+    def test_every_container_shape_is_actually_rewritten(self):
+        blob = self._blob()
+        changes = self._rewrite(blob, lambda site: site.raw_id + 100076)
+
+        assert blob == {
+            'competitors': [{'id': 100085, 'name': 'Davis Underwood (UM-B)'},
+                            {'id': 100078, 'name': 'Tyler Cook (UM-A)'}],
+            'seeding': [100085, 100078],
+            'placements': {'100085': 1, '100078': 2},
+            'bracket': {'winners': [[{'competitor1': 100085,
+                                      'competitor2': 100078,
+                                      'winner': 100085, 'falls': [100078]}]]},
+        }
+        assert len(changes) == 10
+        assert all(new == site.raw_id + 100076 for site, new in changes)
+
+    def test_a_partial_rewrite_leaves_the_rest_alone(self):
+        blob = self._blob()
+        changes = self._rewrite(blob, lambda s: 100085 if s.raw_id == 9 else None)
+
+        assert [new for _site, new in changes] == [100085] * 5
+        assert blob['seeding'] == [100085, 2]
+        assert blob['placements'] == {'100085': 1, '2': 2}
+        assert blob['competitors'][1] == {'id': 2, 'name': 'Tyler Cook (UM-A)'}
+
+    def test_names_are_indexed_before_any_rewriting_starts(self):
+        """A bare slot rewritten late must still see the name its id carried in
+        the original blob, not whatever the partly-repaired blob says."""
+        blob = self._blob()
+        seen = {}
+
+        def decide(site):
+            seen.setdefault(site.raw_id, site.name_in_row)
+            return site.raw_id + 100076
+
+        self._rewrite(blob, decide)
+        assert seen == {9: 'Davis Underwood (UM-B)', 2: 'Tyler Cook (UM-A)'}
+
+    def test_a_key_collision_raises_rather_than_losing_a_placing(self):
+        """Two competitors collapsed onto one `placements` key silently drops a
+        finishing position. There is no salvage, so it is structural."""
+        blob = {'placements': {'9': 1, '2': 2}}
+        with pytest.raises(RewriteCollision):
+            self._rewrite(blob, lambda site: 100085)
+
+    def test_a_non_numeric_key_survives_the_rebuild_untouched(self):
+        blob = {'placements': {'9': 1, 'unseeded': ['x']}}
+        self._rewrite(blob, lambda site: 100085)
+        assert blob == {'placements': {'100085': 1, 'unseeded': ['x']}}
+
+    def test_an_integer_key_stays_an_integer(self):
+        """JSON gives string keys, but a blob built in Python may not have gone
+        through JSON yet, and turning its key into a string changes the type the
+        caller's own code will read back."""
+        blob = {'pre_seedings': {9: 1}}
+        self._rewrite(blob, lambda site: 100085)
+        assert blob == {'pre_seedings': {100085: 1}}
+
+    def test_the_id_keyed_rebuild_preserves_insertion_order(self):
+        blob = {'placements': {'3': 1, '9': 2, '5': 3}}
+        self._rewrite(blob, lambda s: 100085 if s.raw_id == 9 else None)
+        assert list(blob['placements']) == ['3', '100085', '5']
+
+    def test_the_sites_it_hands_the_decider_are_full_reference_sites(self):
+        blob = {'bracket': {'winners': [[{'competitor1': 9}]]},
+                'competitors': [{'id': 9, 'name': 'Davis Underwood (UM-B)'}]}
+        sites = []
+        self._rewrite(blob, lambda site: sites.append(site) or None)
+
+        slot = next(s for s in sites if s.path.endswith('.competitor1'))
+        assert slot.store == 'events.payouts'
+        assert slot.row_id == 28
+        assert slot.kind == COLLEGE
+        assert slot.name_in_blob is None
+        assert slot.name_in_row == 'Davis Underwood (UM-B)'
+
+    def test_it_touches_no_database(self, db_session):
+        """No session argument by design. A repair decides against a roster the
+        caller loaded once; it must not go re-reading rows mid-blob."""
+        tournament = make_tournament(db_session)
+        make_pro_competitor(db_session, tournament, 'Pro One')
+        db_session.commit()
+
+        self._rewrite(self._blob(), lambda site: site.raw_id + 100076)
+
+        assert not db_session.dirty
+        assert not db_session.new
+        assert not db_session.deleted
 
 
 class TestSummarize:

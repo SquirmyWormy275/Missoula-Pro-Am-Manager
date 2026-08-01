@@ -39,10 +39,17 @@ module is what holds the line until every call site carries a uid.
 
 Scope
 =====
-Read-only and side effect free. It reports; it does not repair and it does not
-block. Wiring :func:`check_blob` into the write paths is a separate change
-that needs a decision on fail-closed versus log-and-continue, and that decision
-has not been made.
+Nothing here touches the database. :func:`audit` and :func:`check_blob` read
+and report; they do not block. Wiring :func:`check_blob` into the write paths is
+a separate change that needs a decision on fail-closed versus log-and-continue,
+and that decision has not been made.
+
+:func:`rewrite_blob` is the one function that mutates, and it mutates only the
+decoded blob the caller hands it. It exists so a repair cannot disagree with the
+detector about which JSON positions are competitor references: both drive the
+same :func:`_traverse`. Two independent enumerations of the same positions is
+precisely the failure that produced the era-1 ghosts, and the detector's own
+container list had to be corrected once already for missing five of them.
 
 Six stores are covered, enumerated in :func:`collect_sites`.
 
@@ -328,6 +335,118 @@ def name_index(blob):
     return index
 
 
+def _dict_setter(node, key):
+    def _set(new_id):
+        node[key] = new_id
+    return _set
+
+
+def _list_setter(seq, index):
+    def _set(new_id):
+        seq[index] = new_id
+    return _set
+
+
+class RewriteCollision(Exception):
+    """Two ids in one id-keyed dict were rewritten onto the same key.
+
+    Raised structurally rather than reported, because there is no correct
+    salvage. ``placements`` maps competitor id to a finishing position; collapse
+    two competitors onto one key and a placing silently disappears. The caller's
+    blob is left mutated up to the point of the raise, which is why
+    :func:`rewrite_blob` is always handed a copy.
+    """
+
+
+def _visit_id_keyed(node, path, visit):
+    """Walk a dict KEYED BY competitor id, rebuilding it if anything is rewritten.
+
+    The reference here is the key, so a rewrite is a rename, and renaming keys
+    during iteration is how you lose entries. The keys are snapshotted, the
+    visitor's replacements are recorded rather than applied, and the dict is
+    rebuilt wholesale afterward with a length check that turns a key collision
+    into a raise instead of a vanished row.
+
+    JSON object keys are strings, but a blob constructed in Python may carry
+    integer keys, so the rebuilt key keeps the type the original had.
+    """
+    original = list(node.items())
+    renames = {}
+
+    def _setter(raw_key):
+        def _set(new_id):
+            renames[raw_key] = new_id
+        return _set
+
+    for raw_key, _value in original:
+        try:
+            raw_id = int(raw_key)
+        except (TypeError, ValueError):
+            # A non-numeric key here is not a competitor reference. Skipped
+            # rather than guessed at.
+            continue
+        visit(f'{path}[{raw_key!r}]', raw_id, None, _setter(raw_key))
+
+    if not renames:
+        return
+
+    rebuilt = {}
+    for raw_key, value in original:
+        if raw_key in renames:
+            new_id = renames[raw_key]
+            rebuilt[str(new_id) if isinstance(raw_key, str) else new_id] = value
+        else:
+            rebuilt[raw_key] = value
+
+    if len(rebuilt) != len(original):
+        raise RewriteCollision(
+            f'{path}: rewriting {len(renames)} of {len(original)} keys '
+            f'collapsed the dict to {len(rebuilt)} entries')
+
+    node.clear()
+    node.update(rebuilt)
+
+
+def _traverse(blob, root_path, visit):
+    """Call ``visit`` once at every competitor reference position in a blob.
+
+    ``visit(path, raw_id, own_name, replace)``. ``own_name`` is the name stored
+    alongside, or ``None`` where the position is a bare integer.
+    ``replace(new_id)`` writes an integer back at that position; a visitor that
+    only wants to look ignores it entirely and the blob is untouched.
+
+    One traversal, two callers. :func:`walk_blob` collects sites and
+    :func:`rewrite_blob` edits them, and neither can drift into a different
+    opinion about which positions are references.
+    """
+    def _walk(node, path):
+        if isinstance(node, dict):
+            name = node.get('name')
+            name = name.strip() if isinstance(name, str) and name.strip() else None
+            for key, value in list(node.items()):
+                child = f'{path}.{key}'
+                if key in _REFERENCE_KEYS and _is_int(value):
+                    # A bracket slot's name, if the dict even has one,
+                    # describes the match and not the competitor. Only the
+                    # `id` form gets to claim a name of its own.
+                    visit(child, value, name if key == _NAMED_KEY else None,
+                          _dict_setter(node, key))
+                elif key in _BARE_LIST_KEYS and isinstance(value, list):
+                    for index, item in enumerate(value):
+                        if _is_int(item):
+                            visit(f'{child}[{index}]', item, None,
+                                  _list_setter(value, index))
+                elif key in _ID_KEYED_DICT_KEYS and isinstance(value, dict):
+                    _visit_id_keyed(value, child, visit)
+                else:
+                    _walk(value, child)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                _walk(value, f'{path}[{index}]')
+
+    _walk(blob, root_path)
+
+
 def walk_blob(blob, root_path, event_type, store, row_id):
     """Yield every :class:`ReferenceSite` inside one decoded JSON blob.
 
@@ -337,7 +456,7 @@ def walk_blob(blob, root_path, event_type, store, row_id):
     sites = []
     names = name_index(blob)
 
-    def _add(path, raw_id, own_name=None):
+    def _visit(path, raw_id, own_name, _replace):
         kind, source = kind_for_path(path, event_type)
         sites.append(ReferenceSite(
             store=store, row_id=row_id, path=path, raw_id=raw_id,
@@ -346,37 +465,44 @@ def walk_blob(blob, root_path, event_type, store, row_id):
             name_in_row=names.get(raw_id),
         ))
 
-    def _walk(node, path):
-        if isinstance(node, dict):
-            name = node.get('name')
-            name = name.strip() if isinstance(name, str) and name.strip() else None
-            for key, value in node.items():
-                child = f'{path}.{key}'
-                if key in _REFERENCE_KEYS and _is_int(value):
-                    # A bracket slot's name, if the dict even has one,
-                    # describes the match and not the competitor. Only the
-                    # `id` form gets to claim a name of its own.
-                    _add(child, value, name if key == _NAMED_KEY else None)
-                elif key in _BARE_LIST_KEYS and isinstance(value, list):
-                    for index, item in enumerate(value):
-                        if _is_int(item):
-                            _add(f'{child}[{index}]', item)
-                elif key in _ID_KEYED_DICT_KEYS and isinstance(value, dict):
-                    for raw_key in value:
-                        try:
-                            _add(f'{child}[{raw_key!r}]', int(raw_key))
-                        except (TypeError, ValueError):
-                            # A non-numeric key here is not a competitor
-                            # reference. Skipped rather than guessed at.
-                            continue
-                else:
-                    _walk(value, child)
-        elif isinstance(node, list):
-            for index, value in enumerate(node):
-                _walk(value, f'{path}[{index}]')
-
-    _walk(blob, root_path)
+    _traverse(blob, root_path, _visit)
     return sites
+
+
+def rewrite_blob(blob, root_path, event_type, store, row_id, decide):
+    """Apply ``decide(site) -> Optional[int]`` at every reference position.
+
+    Returns the ``(site, new_id)`` pairs actually changed, in traversal order.
+    ``decide`` returning ``None``, or returning the id it was given, leaves the
+    position alone.
+
+    Mutates ``blob`` in place and touches nothing else: no session, no I/O, no
+    module state. Hand it a copy if you want the original to survive, and note
+    that a :class:`RewriteCollision` leaves the blob half-edited.
+
+    The sites handed to ``decide`` are built exactly as :func:`walk_blob` builds
+    them, ``name_in_row`` included, and ``name_in_row`` is indexed before any
+    rewriting starts so a decision is never made against a partly-repaired blob.
+    """
+    names = name_index(blob)
+    changes = []
+
+    def _visit(path, raw_id, own_name, replace):
+        kind, source = kind_for_path(path, event_type)
+        site = ReferenceSite(
+            store=store, row_id=row_id, path=path, raw_id=raw_id,
+            kind=kind, kind_source=source,
+            name_in_blob=own_name,
+            name_in_row=names.get(raw_id),
+        )
+        new_id = decide(site)
+        if new_id is None or new_id == raw_id:
+            return
+        replace(new_id)
+        changes.append((site, new_id))
+
+    _traverse(blob, root_path, _visit)
+    return changes
 
 
 class _Pools:
