@@ -5,6 +5,7 @@ import json
 import logging
 
 import sqlalchemy as sa
+from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -16,6 +17,33 @@ from .competitor_identity import attach_identity_allocator
 logger = logging.getLogger(__name__)
 
 MAX_NAME_LENGTH = 100  # Hard cap; String(200) column has room but UI breaks above ~100 chars
+
+# Contact fields live on the identity spine (models/competitor_identity.py) as of
+# migration q6e7f8a0b2c3.  Both competitor models reach them through
+# association_proxy rather than re-declaring columns.
+#
+# Why a proxy and not a plain Python property
+# ===========================================
+# A property gives correct reads and writes and a silently wrong query.
+# `ProCompetitor.phone == '406...'` on a property compares a property object to
+# a string, which is False at class definition time, so the filter compiles to a
+# constant-false predicate and the query returns nothing.  No error, no row, no
+# clue.  `routes/scheduling/flights.py` filters on exactly these fields to build
+# an SMS list, and a silently empty SMS list on show day looks identical to
+# "nobody opted in".
+#
+# An association_proxy produces a real SQL expression for the class-level
+# comparison (an EXISTS against `competitors`), so filters keep working.  It also
+# means the four templates that render `competitor.phone` and friends need no
+# change at all, which matters more than it sounds: Jinja here has no
+# StrictUndefined, so an attribute this app stopped exposing would render as an
+# empty string and the contact block would just quietly go blank.
+#
+# The one thing it does NOT paper over is a competitor row that has not been
+# flushed yet.  `attach_identity_allocator` creates the spine row in a
+# `before_insert` mapper event using Core, so `self.identity` is None until the
+# flush finishes and writing through it raises AttributeError.  That failure is
+# wanted, and there are exactly two callers that had to be taught to flush first.
 
 
 class CollegeCompetitor(db.Model):
@@ -55,11 +83,8 @@ class CollegeCompetitor(db.Model):
     gear_sharing = db.Column(db.Text, nullable=False, default='{}')  # Dict: event_id -> partner sharing gear
     portal_pin_hash = db.Column(db.String(255), nullable=True)
 
-    # Headshot and SMS (#14, #2)
+    # Headshot (#14).  SMS opt-in (#2) moved to the identity spine.
     headshot_filename = db.Column(db.Text, nullable=True)
-    phone_opted_in = db.Column(
-        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
-    )
 
     # Status
     status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched
@@ -74,6 +99,29 @@ class CollegeCompetitor(db.Model):
     # exist in the production mirror); `uid` cannot.
     uid = db.Column(BIG_ID, db.ForeignKey('competitors.uid'),
                     nullable=False, unique=True)
+
+    # selectin, not joined: the scheduling queries already attach their own
+    # eager-load options and alias these tables, and a join-based strategy would
+    # add a LEFT OUTER JOIN into query plans that were tuned without it.
+    # selectin costs one extra batched SELECT per result set and cannot change
+    # the shape of the primary query.
+    #
+    # delete-orphan because contact now lives on the identity row: deleting a
+    # competitor has to take their phone number with it, which it did back when
+    # the column was on this table.  single_parent is required for delete-orphan
+    # on a many-to-one and is already guaranteed by the unique constraint on uid.
+    identity = db.relationship(
+        'Competitor',
+        foreign_keys=[uid],
+        lazy='selectin',
+        cascade='all, delete-orphan',
+        single_parent=True,
+    )
+
+    address = association_proxy('identity', 'address')
+    phone = association_proxy('identity', 'phone')
+    email = association_proxy('identity', 'email')
+    phone_opted_in = association_proxy('identity', 'phone_opted_in')
 
     _PRO_AM_LOTTERY_META_KEY = '__pro_am_lottery_opt_in__'
 
@@ -236,10 +284,10 @@ class ProCompetitor(db.Model):
     name = db.Column(db.String(200), nullable=False)
     gender = db.Column(db.String(1), nullable=False)  # 'M' or 'F'
 
-    # Contact info
-    address = db.Column(db.Text, nullable=True)
-    phone = db.Column(db.String(50), nullable=True)
-    email = db.Column(db.String(200), nullable=True)
+    # Contact info.  address / phone / email moved to the identity spine in
+    # q6e7f8a0b2c3 and are reached through association_proxy below.  shirt_size
+    # stayed: it is an entry-fee/merch fact about one registration, not a way to
+    # reach a person.
     shirt_size = db.Column(db.String(10), nullable=True)
 
     # Membership and lottery
@@ -266,11 +314,8 @@ class ProCompetitor(db.Model):
         db.Boolean, nullable=False, default=False, server_default=sa.text("false")
     )  # #21 payout settlement checklist
 
-    # Headshot and SMS (#14, #2)
+    # Headshot (#14).  SMS opt-in (#2) moved to the identity spine.
     headshot_filename = db.Column(db.Text, nullable=True)
-    phone_opted_in = db.Column(
-        db.Boolean, nullable=False, default=False, server_default=sa.text("false")
-    )
 
     # Status
     status = db.Column(db.String(20), nullable=False, default='active')  # active, scratched
@@ -294,6 +339,21 @@ class ProCompetitor(db.Model):
     # exist in the production mirror); `uid` cannot.
     uid = db.Column(BIG_ID, db.ForeignKey('competitors.uid'),
                     nullable=False, unique=True)
+
+    # See the identical block on CollegeCompetitor for why selectin and why
+    # delete-orphan.
+    identity = db.relationship(
+        'Competitor',
+        foreign_keys=[uid],
+        lazy='selectin',
+        cascade='all, delete-orphan',
+        single_parent=True,
+    )
+
+    address = association_proxy('identity', 'address')
+    phone = association_proxy('identity', 'phone')
+    email = association_proxy('identity', 'email')
+    phone_opted_in = association_proxy('identity', 'phone_opted_in')
 
     @property
     def display_name(self):

@@ -118,6 +118,14 @@ with app.app_context():
     pro_map, col_map = {}, {}
     for comp in ProCompetitor.query.filter_by(tournament_id=SRC_T).all():
         ident = Competitor(kind="pro", tournament_id=T3)
+        # Contact is no longer in ProCompetitor.__table__.columns, so the `data`
+        # comprehension below cannot pick it up. Copy it onto the identity
+        # directly or the staged tournament loses every phone number and the
+        # oracle lane stops being a faithful copy.
+        ident.address = comp.address
+        ident.phone = comp.phone
+        ident.email = comp.email
+        ident.phone_opted_in = comp.phone_opted_in
         db.session.add(ident)
         db.session.flush()
         data = {c.name: getattr(comp, c.name) for c in ProCompetitor.__table__.columns
@@ -131,6 +139,10 @@ with app.app_context():
         pro_map[comp.id] = clone.id
     for comp in CollegeCompetitor.query.filter_by(tournament_id=SRC_T).all():
         ident = Competitor(kind="college", tournament_id=T3)
+        ident.address = comp.address
+        ident.phone = comp.phone
+        ident.email = comp.email
+        ident.phone_opted_in = comp.phone_opted_in
         db.session.add(ident)
         db.session.flush()
         data = {c.name: getattr(comp, c.name) for c in CollegeCompetitor.__table__.columns

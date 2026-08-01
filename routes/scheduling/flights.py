@@ -8,6 +8,7 @@ import strings as text
 from database import db
 from models import Event, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
+from models.competitor_identity import Competitor
 from services.audit import log_action
 from services.background_jobs import submit as submit_job
 
@@ -847,23 +848,29 @@ def _send_upcoming_heat_sms(tournament_id: int, current_flight_number: int) -> N
 
     sms_targets: list = []  # (phone, name)
 
-    if pro_ids:
-        pros = ProCompetitor.query.filter(
-            ProCompetitor.id.in_(pro_ids),
-            ProCompetitor.phone_opted_in == True,  # noqa: E712
-        ).all()
-        for comp in pros:
-            if comp.phone:
-                sms_targets.append((comp.phone, comp.name))
-
-    if col_ids:
-        colleges = CollegeCompetitor.query.filter(
-            CollegeCompetitor.id.in_(col_ids),
-            CollegeCompetitor.phone_opted_in == True,  # noqa: E712
-        ).all()
-        for comp in colleges:
-            # CollegeCompetitor has no phone column — skip silently
-            pass
+    # Opt-in and phone both live on the identity spine now (q6e7f8a0b2c3), so
+    # both branches ask the same table the same question and the college branch
+    # can finally answer it. Before the move, `college_competitors` carried an
+    # opt-in flag and no phone column, so this loop existed, ran, and did
+    # nothing. Joining the spine explicitly rather than filtering through the
+    # association proxy keeps this a single join instead of an EXISTS subquery
+    # per predicate; the proxy is still what reads `comp.phone` below.
+    for model, ids in ((ProCompetitor, pro_ids), (CollegeCompetitor, col_ids)):
+        if not ids:
+            continue
+        opted_in = (
+            model.query
+            .join(Competitor, model.uid == Competitor.uid)
+            .filter(
+                model.id.in_(ids),
+                Competitor.phone_opted_in.is_(True),
+                Competitor.phone.isnot(None),
+                Competitor.phone != '',
+            )
+            .all()
+        )
+        for comp in opted_in:
+            sms_targets.append((comp.phone, comp.name))
 
     msg = (
         f'Heads up! Flight {target_flight_number} at the Missoula Pro-Am is '

@@ -329,9 +329,12 @@ def confirm_pro_entries(tournament_id):
             # ---- Scalar fields ----
             competitor.name          = entry['name']
             competitor.gender        = entry['gender']
+            # email / phone / address now write through to the identity spine
+            # (q6e7f8a0b2c3). No flush needed first: the identity exists from
+            # the moment the ProCompetitor is constructed.
             competitor.email         = entry.get('email')
             competitor.phone         = entry.get('phone')
-            competitor.address       = entry.get('mailing_address')  # existing column
+            competitor.address       = entry.get('mailing_address')
             competitor.is_ala_member = entry.get('ala_member', False)
             competitor.pro_am_lottery_opt_in = entry.get('relay_lottery', False)
             competitor.waiver_accepted    = entry.get('waiver_accepted', False)

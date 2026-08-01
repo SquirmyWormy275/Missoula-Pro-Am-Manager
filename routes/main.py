@@ -659,7 +659,14 @@ def clone_tournament(tournament_id):
         )
         db.session.add(new_comp)
 
-    # Copy pro competitors (reset earned data)
+    # Copy pro competitors (reset earned data).
+    #
+    # address / phone / email are still passed here even though they now live on
+    # the identity spine: the association proxy writes them through to the
+    # identity that the model creates at construction time.
+    #
+    # phone_opted_in is deliberately still not copied. Consent was given for one
+    # tournament's notifications and a clone is a different event.
     pro_count = 0
     for comp in source.pro_competitors.all():
         pro_count += 1
