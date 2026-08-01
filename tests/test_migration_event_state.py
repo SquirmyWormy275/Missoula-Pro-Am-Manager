@@ -52,7 +52,11 @@ class TestEventModelAttributes:
     def test_event_state_accepts_json_string(self, db_session):
         t = make_tournament(db_session)
         event = make_event(db_session, t, "Pro-Am Relay", event_type="pro")
-        state = {"teams": [{"id": 1, "members": []}]}
+        # A team is keyed by team_number, not by id. The relay's stored state
+        # has never had a teams[].id and this test invented one, which the
+        # reference gate correctly read as a competitor reference to nobody.
+        state = {"teams": [{"team_number": 1, "name": "Team 1",
+                            "pro_members": [], "college_members": []}]}
         event.event_state = json.dumps(state)
         db_session.flush()
 

@@ -200,6 +200,17 @@ def _gate(session, _flush_context, _instances):
                 raise BadReferenceWrite(obj.id, column, findings)
 
 
+def is_installed(session_factory):
+    """Whether the gate is currently armed on this session factory.
+
+    Exists so a test fixture can disarm the gate and put it back the way it
+    found it rather than the way it assumes it was. A module with no app
+    fixture has no gate, and re-arming one there would leave a listener on the
+    global scoped session for every module that ran after it.
+    """
+    return sa_event.contains(session_factory, 'before_flush', _gate)
+
+
 def install(session_factory):
     """Attach the gate to a session factory. Idempotent.
 

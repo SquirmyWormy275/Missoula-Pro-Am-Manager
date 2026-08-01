@@ -34,6 +34,11 @@ from tests.conftest import (
     make_tournament,
 )
 
+# This module seeds the damage it detects. The write-time gate would refuse
+# every one of those seeds, which is the gate doing its job to a module that
+# is not its subject. See tests/conftest.py::reference_gate_disarmed.
+pytestmark = pytest.mark.usefixtures('reference_gate_disarmed')
+
 
 class TestKindInference:
     """Which pool a reference belongs to, and how confident that answer is."""

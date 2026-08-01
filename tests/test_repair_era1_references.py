@@ -71,6 +71,12 @@ def _rosters(college=(), pro=()):
     return by_id, by_name
 
 
+# This module seeds the damage it repairs. The write-time gate would refuse
+# every one of those seeds, which is the gate doing its job to a module that
+# is not its subject. See tests/conftest.py::reference_gate_disarmed.
+pytestmark = pytest.mark.usefixtures('reference_gate_disarmed')
+
+
 class TestNormalizeName:
     """The whole matching rule. Anything it folds together, the repair merges."""
 

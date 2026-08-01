@@ -162,6 +162,34 @@ def scorer_user(db_session):
 
 
 @pytest.fixture()
+def reference_gate_disarmed():
+    """Let a test seed a deliberately bad competitor reference.
+
+    ``services/reference_gate.py`` is armed on the scoped session by the app
+    factory, so a module whose *subject* is bad references cannot write its own
+    subject matter. Two modules need this and neither of them is testing the
+    gate: ``test_reference_audit.py``, which needs damage to detect, and
+    ``test_repair_era1_references.py``, which needs damage to repair. The
+    gate's own tests in ``test_reference_gate.py`` arm it on purpose and do not
+    use this.
+
+    Restores whatever it found rather than unconditionally re-arming. ``app``
+    is module scoped and the scoped session outlives the test, so a fixture
+    that armed a gate a module never had would leak a listener forward.
+    """
+    from database import db
+    from services import reference_gate
+
+    was_armed = reference_gate.is_installed(db.session)
+    reference_gate.uninstall(db.session)
+    try:
+        yield
+    finally:
+        if was_armed:
+            reference_gate.install(db.session)
+
+
+@pytest.fixture()
 def client(app):
     """Return an unauthenticated test client."""
     return app.test_client()
