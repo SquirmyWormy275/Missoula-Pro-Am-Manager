@@ -2868,27 +2868,46 @@ def test_a_drifted_stand_number_counts_as_a_repair(client, sql, flashes):
 
 
 @pytest.mark.sev3
-def test_a_duplicate_assignment_row_counts_as_a_repair(client, sql, flashes):
+def test_a_duplicate_assignment_row_cannot_be_staged_any_more(client, sql,
+                                                              flashes):
     """CONTROL, staged. Zero duplicate rows exist on the real 2026 data.
 
     Same shape as c25's M-e: a condition that never occurs in production
-    cannot be tested by production data. A comparison on SETS would collapse
-    the duplicate and report the heat in sync forever.
+    cannot be tested by production data. This test used to stage the
+    duplicate and then assert the bulk sync repaired it, because a comparison
+    on SETS would collapse the duplicate and report the heat in sync forever.
+
+    s8a0b2c3d4e5 put a unique constraint on (heat_id, uid), so that state can
+    no longer reach the table. The property being protected has not gone
+    away, it moved: the comparison still runs on lists, but the database now
+    refuses the row before the comparison ever sees it. Asserting the refusal
+    is the honest version of this test. Keeping the old body would assert a
+    repair of damage that cannot be created, which passes for the wrong
+    reason on any engine that quietly drops the insert and fails loudly on
+    every engine that does not.
     """
+    from sqlalchemy.exc import IntegrityError
+
     from database import db
 
     hid = sorted(_event_heat_ids(sql, BULK_SYNC_TARGET_EVENT))[0]
     want = _heat_content(sql)[hid]
-    db.session.execute(db.text(
-        "INSERT INTO heat_assignments (heat_id, competitor_id, competitor_type, stand_number) "
-        "SELECT heat_id, competitor_id, competitor_type, stand_number "
-        "  FROM heat_assignments WHERE heat_id = :h LIMIT 1"), {"h": hid})
-    db.session.commit()
-    assert [h for h, _n in _desynced_heats(sql)] == [hid]
+    before = _desynced_heats(sql)
 
-    msg = _autofix(client, flashes)
+    with pytest.raises(IntegrityError):
+        db.session.execute(db.text(
+            "INSERT INTO heat_assignments "
+            "  (heat_id, uid, competitor_id, competitor_type, stand_number) "
+            "SELECT heat_id, uid, competitor_id, competitor_type, stand_number "
+            "  FROM heat_assignments WHERE heat_id = :h LIMIT 1"), {"h": hid})
+        db.session.commit()
+    db.session.rollback()
+
+    # The refusal is not allowed to have cost the heat anything. A constraint
+    # that protects the table by emptying it would also pass a test that only
+    # checked for the raise.
     assert _heat_content(sql).get(hid) == want, _heat_content(sql).get(hid)
-    assert re.search(r"repaired 1 of 17\d heat assignment sets", msg), msg
+    assert _desynced_heats(sql) == before
 
 
 @pytest.mark.sev3
