@@ -730,8 +730,14 @@ def test_the_ala_membership_report_can_actually_be_produced_as_a_pdf(
 #     below 49), and this path keys a dict by the bare integer. Last write wins,
 #     the flight's heats are iterated with no ORDER BY, and the college heats
 #     come back last, so a pro standing in a pro heat is relabelled college and
-#     dropped from the notify list. The college branch is a documented no-op
-#     because CollegeCompetitor has no phone column, so he is simply not texted.
+#     dropped from the notify list. The college branch was a documented no-op
+#     when this was written, because CollegeCompetitor had no phone column and
+#     the relabelled pro was therefore simply not texted. G2-C removed that:
+#     contact lives on the identity spine as of q6e7f8a0b2c3 and the per-kind
+#     columns are gone as of r7f8a0b2c3d4, so the college branch is now live and
+#     resolves a real phone number. Nothing visible changed on 2026 data because
+#     no college competitor in the mirror carries one, but the branch can no
+#     longer be relied on to swallow the mislabelling.
 #
 #     Live today only because zero pros in the mirror have opted in. The moment
 #     one does, this is a real person who does not get his heads-up.

@@ -2274,10 +2274,15 @@ def _imp_run(client, app, tmp_path, rows):
 
 
 def _imp_rows_named(sql, name):
+    # email lives on the identity spine as of r7f8a0b2c3d4, not on
+    # pro_competitors. The join is on uid, which is NOT NULL and a foreign key,
+    # so it cannot drop a row the old single-table SELECT would have returned.
     return sql("""
-        SELECT id, name, email FROM pro_competitors
-        WHERE tournament_id = :t AND lower(btrim(name)) = :n
-        ORDER BY id
+        SELECT p.id, p.name, c.email
+        FROM pro_competitors p
+        JOIN competitors c ON c.uid = p.uid
+        WHERE p.tournament_id = :t AND lower(btrim(p.name)) = :n
+        ORDER BY p.id
     """, t=TID, n=name.strip().lower())
 
 
