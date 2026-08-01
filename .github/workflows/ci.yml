@@ -104,6 +104,66 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/missoula_pro_am_test
         run: pytest tests/test_postgres_runtime_smoke.py -q
 
+  # D14-B: the whole unit suite on the engine production actually runs.
+  #
+  # The `test` job above is the fast lane: SQLite, create_all, ~4 minutes. It
+  # stays, because a 4-minute answer on every push is worth having. But it
+  # cannot see anything that only breaks under PostgreSQL, and this codebase
+  # has shipped exactly that kind of bug before (a global connect listener
+  # that fired SQLite PRAGMAs at PostgreSQL connections, invisible in the
+  # fast lane and in production alike). This job closes that hole.
+  #
+  # The suite builds one schema template via migrations, then clones it per
+  # app (createdb -T, ~100ms). Nothing here is shared with the `postgres-smoke`
+  # job, which only proves migrations apply and a handful of routes answer.
+  unit-postgres:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      # Same reason as the fast lane: without a seeded instance DB,
+      # test_route_smoke.py replays the alembic chain once per parametrized
+      # route and peaks near 5 GB.
+      - name: Build seeded route-smoke database
+        run: python scripts/ci_build_smoke_db.py
+
+      - name: Run the unit suite on PostgreSQL
+        env:
+          FLASK_ENV: testing
+          SECRET_KEY: ci-unit-postgres-secret-key
+          PROAM_UNIT_PG: "1"
+          PROAM_UNIT_PG_HOST: localhost
+          PROAM_UNIT_PG_USER: postgres
+          PROAM_UNIT_PG_PASSWORD: postgres
+        run: pytest tests -q --tb=short -p no:randomly
+
   lint:
     runs-on: ubuntu-latest
 

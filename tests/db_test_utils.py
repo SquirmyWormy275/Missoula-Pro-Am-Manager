@@ -9,13 +9,29 @@ any possibility of test data leaking into instance/proam.db.
 Import this from any test file:
     from tests.db_test_utils import create_test_app
 
-D14-B (c43): set PROAM_UNIT_PG=1 to back the same factory with PostgreSQL
-instead of SQLite. A schema template database (proam_unit_template) is built
-once per interpreter via migrations, then every create_test_app() call
-clones it (createdb -T, ~100ms) and returns a connection string to a private
+D14-B: set PROAM_UNIT_PG=1 to back the same factory with PostgreSQL instead
+of SQLite. A schema template database (proam_unit_template) is built once
+per interpreter via migrations, then every create_test_app() call clones it
+(createdb -T, ~100ms) and returns a connection string to a private
 throwaway database. Same engine as production: same locking, same NULL
-ordering, same jsonb. The SQLite path remains the default until a full
-green run under PG flips it; the split-engine caveats retire with it.
+ordering, same jsonb.
+
+Which engine runs when, and why (c44):
+
+  local default   SQLite. Roughly 9 minutes versus 5-8 for PostgreSQL, and
+                  it needs no server, so `pytest` works on a laptop with
+                  nothing installed. Flipping this default is a separate
+                  call, because it breaks every checkout without a local
+                  server and role.
+  CI, fast lane   SQLite (the `test` job). Answer on every push in ~4 min.
+  CI, unit-postgres
+                  The full suite under PROAM_UNIT_PG=1. This is the gate
+                  that matters: engine-specific bugs cannot merge past it.
+
+Both engines are green on the same tree and the difference between them is
+exactly two skips, both in the backup/restore path, both deliberate and
+documented at skip_unless_sqlite(). Any new divergence is a bug in one of
+the two, not an accepted cost of the split.
 """
 import os
 import tempfile
@@ -25,8 +41,13 @@ os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
 from database import db as _db
 
+# The rig's local role is proam/proam. CI brings its own service with a
+# different superuser, so every piece of the connection is overridable.
 _PG_HOST = os.environ.get("PROAM_UNIT_PG_HOST", "localhost")
-_PG_URL = f"postgresql://proam:proam@{_PG_HOST}:5432"
+_PG_PORT = os.environ.get("PROAM_UNIT_PG_PORT", "5432")
+_PG_USER = os.environ.get("PROAM_UNIT_PG_USER", "proam")
+_PG_PASSWORD = os.environ.get("PROAM_UNIT_PG_PASSWORD", "proam")
+_PG_URL = f"postgresql://{_PG_USER}:{_PG_PASSWORD}@{_PG_HOST}:{_PG_PORT}"
 _PG_TEMPLATE = "proam_unit_template"
 _pg_template_ready = False
 _pg_counter = [0]
@@ -35,9 +56,31 @@ _pg_counter = [0]
 def _pg_run(sql, dbname="postgres"):
     import subprocess
     return subprocess.run(
-        ["psql", "-h", _PG_HOST, "-U", "proam", "-d", dbname, "-tAc", sql],
-        env={**os.environ, "PGPASSWORD": "proam"},
+        ["psql", "-h", _PG_HOST, "-p", _PG_PORT, "-U", _PG_USER,
+         "-d", dbname, "-tAc", sql],
+        env={**os.environ, "PGPASSWORD": _PG_PASSWORD},
         capture_output=True, text=True)
+
+
+def _pg_preflight():
+    """Fail loudly and specifically when PROAM_UNIT_PG=1 has nothing to talk to.
+
+    Without this, an unreachable server produces a chain of quiet non-zero
+    psql exits, an empty template probe, a CREATE DATABASE that also fails,
+    and finally an unrelated-looking error several layers away. The person
+    reading that traceback has no way to tell it means "start postgres".
+    """
+    probe = _pg_run("SELECT 1")
+    if probe.stdout.strip() == "1":
+        return
+    raise RuntimeError(
+        "PROAM_UNIT_PG=1 but the unit-suite PostgreSQL server is not "
+        f"reachable at {_PG_USER}@{_PG_HOST}:{_PG_PORT}.\n"
+        f"psql said: {(probe.stderr or '').strip() or '(no output; is psql installed?)'}\n"
+        "Either start it and ensure the role exists with CREATEDB, override "
+        "PROAM_UNIT_PG_HOST / _PORT / _USER / _PASSWORD, or unset "
+        "PROAM_UNIT_PG to run the suite on SQLite."
+    )
 
 
 def _ensure_pg_template():
@@ -45,6 +88,7 @@ def _ensure_pg_template():
     global _pg_template_ready
     if _pg_template_ready:
         return
+    _pg_preflight()
     # Sweep clones orphaned by earlier runs (callers that os.unlink() the
     # handle no-op on PG names, so crashes leave databases behind).
     stale = _pg_run(
