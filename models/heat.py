@@ -21,7 +21,7 @@ from ._types import BIG_ID
 class BadHeatAssignment(ValueError):
     """A heat's competitors JSON cannot be turned into assignment rows.
 
-    Raised by ``Heat.sync_assignments`` before it writes anything, in the three
+    Raised by ``Heat.set_roster`` before it writes anything, in the three
     cases the database would otherwise reject with a bare driver error: an id
     that is not usable as a reference at all, an id that names no competitor of
     that kind, and the same competitor listed twice in one heat.
@@ -38,8 +38,8 @@ class HeatAssignment(db.Model):
 
     ``uid`` is the real reference: a foreign key onto the identity spine,
     unique within a heat.  ``competitor_id`` and ``competitor_type`` are the
-    legacy pair, kept in step by ``Heat.sync_assignments`` and still what every
-    reader in this tree uses.  Neither of those two is constrained, separately
+    legacy pair, written by ``Heat.set_roster`` alongside the uid and still
+    what every reader in this tree uses.  Neither of those two is constrained, separately
     or together, which is the whole reason the uid exists: the pro and college
     id sequences overlap, so the integer alone does not name a human.  D12-C
     phase 2 moves the readers across; this revision only makes the row capable
@@ -156,83 +156,158 @@ class Heat(db.Model):
         assignments = self.get_stand_assignments()
         return assignments.get(str(competitor_id))
 
-    def sync_assignments(self, competitor_type: str) -> bool:
-        """Rebuild HeatAssignment rows to match the authoritative competitors JSON.
+    def set_roster(self, competitor_type, comp_ids, stands=None) -> bool:
+        """Write this heat's roster to ``heat_assignments``, then render the JSON.
 
-        Must be called after self.id is assigned (i.e., after db.session.flush()).
-        competitor_type should be 'pro' or 'college' (matches event.event_type).
+        This is the write target. D12-C commit A gave the rows a real reference;
+        this is where they become the thing being written TO, with
+        ``competitors`` and ``stand_assignments`` demoted to a rendering of what
+        the rows say rather than the record the rows are copied from. Phase 2
+        moves the readers across and drops the two columns, at which point
+        :meth:`_project_json` is the only thing that has to be deleted.
 
-        Returns True if the rows were actually rewritten, False if they already
-        matched the JSON and nothing was touched.
+        ``competitor_type`` is 'pro' or 'college' and matches event.event_type.
+        ``comp_ids`` is the running order: the order the judge sheet prints and
+        the order the rows are written in. ``stands`` maps a competitor id to a
+        stand number and may be keyed by int or by str.
 
-        The ~20 per-heat callers of this method call it straight after mutating
-        competitors or stand_assignments, so for them the compare is a cheap
-        miss and the rebuild happens exactly as before. The return value exists
-        for the two BULK sweepers, run_preflight_autofix and heat_sync_fix,
-        which walk every heat in a tournament or an event. Without it they had
-        no way to tell a heat they repaired from a heat they merely visited, so
-        they reported the walk count as a repair count and rewrote every row in
-        the table to produce it.
+        Requires ``self.id``, so call it after the flush that assigns one.
 
-        The comparison carries all four columns the rebuild writes, and it
-        compares SORTED LISTS rather than sets. Sets would collapse a duplicate
-        row and report a heat clean forever. competitor_type matters because
-        pro and college competitor ids overlap, so a row with the wrong type
-        points at the wrong person while holding the right number. uid matters
-        for the same reason from the other end: a row whose uid disagrees with
-        its legacy pair is drift, and before uid was on the table there was
-        nothing to disagree with.
+        Returns True if anything was rewritten, rows or JSON, and False if the
+        heat already said exactly this. The two bulk sweepers,
+        ``run_preflight_autofix`` and ``heat_sync_fix``, walk every heat in a
+        tournament or an event and use the return value to tell a heat they
+        repaired from a heat they merely visited; without it they reported the
+        walk count as a repair count and rewrote every row in the table to
+        produce it. The JSON half is inside that answer on purpose: until phase
+        2 lands, most readers are still reading the JSON, so a heat whose rows
+        are right and whose JSON disagrees is exactly as broken to a reader as
+        the reverse, and a sweeper that fixed it should say so.
 
-        Raises BadHeatAssignment, before touching anything, when the JSON names
-        a competitor that does not exist or names one twice. Both of those are
-        constraint violations on the table as of s8a0b2c3d4e5; catching them
-        here is what turns a driver IntegrityError arriving from somewhere
-        unrelated at the next autoflush into an error that says which heat.
+        Raises :class:`BadHeatAssignment`, before touching anything, when the
+        roster names a competitor that does not exist or names one twice. Both
+        are constraint violations on the table as of s8a0b2c3d4e5. Catching them
+        here is what turns a driver IntegrityError arriving from an unrelated
+        autoflush into an error that says which heat.
         """
-        assignments = self.get_stand_assignments()
-        comp_ids = self.get_competitors()
-        uids = self._resolve_assignment_uids(comp_ids, competitor_type)
+        raw_ids = list(comp_ids or [])
+        stands = {str(k): v for k, v in (stands or {}).items()}
+        resolved = self._resolve_assignment_uids(raw_ids, competitor_type)
 
-        wanted = sorted(
-            (comp_id, competitor_type, assignments.get(str(comp_id)), uids[comp_id])
-            for comp_id in comp_ids
-        )
-        existing = sorted(
-            (row.competitor_id, row.competitor_type, row.stand_number, row.uid)
-            for row in HeatAssignment.query.filter_by(heat_id=self.id).all()
-        )
-        if existing == wanted:
+        # Keyed on the canonical int rather than on the raw JSON value, so `5`
+        # and `"5"` are one competitor with one stand instead of two entries the
+        # unique constraint would then have to reject.
+        roster = [resolved[raw][:2] + (stands.get(str(resolved[raw][0])),)
+                  for raw in raw_ids]
+
+        rows = (HeatAssignment.query
+                .filter_by(heat_id=self.id)
+                .order_by(HeatAssignment.id)
+                .all())
+
+        # Sorted lists, not sets. A set collapses a duplicate row and would
+        # report a heat clean forever. All four columns the rebuild writes are
+        # carried: competitor_type because the two id sequences overlap, so a
+        # row with the wrong type points at the wrong person while holding the
+        # right number, and uid for the same reason from the other end.
+        wanted = sorted((cid, competitor_type, stand, uid)
+                        for cid, uid, stand in roster)
+        existing = sorted((r.competitor_id, r.competitor_type, r.stand_number,
+                           r.uid) for r in rows)
+
+        rows_changed = existing != wanted
+        if rows_changed:
+            # Insert in roster order, not in `wanted` order. `wanted` is sorted
+            # for the comparison only; rebuilding from it would silently reorder
+            # the rows, and their autoincrement ids, relative to the heat's
+            # running order, which is a change nobody asked for.
+            HeatAssignment.query.filter_by(heat_id=self.id).delete()
+            for cid, uid, stand in roster:
+                db.session.add(HeatAssignment(
+                    heat_id=self.id,
+                    uid=uid,
+                    competitor_id=cid,
+                    competitor_type=competitor_type,
+                    stand_number=stand,
+                ))
+            projection = [(cid, stand) for cid, _uid, stand in roster]
+        else:
+            # Render the rows that are actually there, in the order they are
+            # actually in. When the rows were not rewritten this can differ from
+            # `roster`, and the rows are the ones that win. That is the whole
+            # difference between a projection and an echo of the argument.
+            projection = [(r.competitor_id, r.stand_number) for r in rows]
+
+        json_changed = self._project_json(projection)
+        return rows_changed or json_changed
+
+    def sync_assignments(self, competitor_type: str) -> bool:
+        """Write the roster the JSON columns currently describe.
+
+        The compatibility shim for the call sites that still express a roster
+        change by mutating ``competitors`` or ``stand_assignments`` and then
+        asking the rows to catch up. Each of those becomes a :meth:`set_roster`
+        call as it is converted, and this method is what keeps them working in
+        the meantime. It is what gets deleted when the last one moves.
+
+        Reading the JSON and projecting it straight back is not a no-op. What
+        lands in the column afterwards is what the rows say, normalised, not
+        what the caller wrote: a stand assignment naming somebody who is not in
+        the heat is dropped, `"5"` and `5` collapse to one competitor, and a
+        heat whose rows disagree with its JSON is rendered from the rows.
+
+        Same return value and same refusals as :meth:`set_roster`.
+        """
+        return self.set_roster(competitor_type, self.get_competitors(),
+                               self.get_stand_assignments())
+
+    def _project_json(self, projection):
+        """Render ``competitors`` and ``stand_assignments`` from the rows.
+
+        ``projection`` is a list of ``(competitor_id, stand_number)`` in row
+        order. Returns True if either column changed.
+
+        Compares the serialised form rather than the parsed one, because the
+        stored column is what every reader in this tree parses, and a difference
+        that survives ``json.dumps`` is a difference a reader can see. It also
+        keeps this from dirtying the ``Heat`` row for a change that is not one:
+        ``Heat`` carries a ``version_id_col``, so a pointless assignment here
+        would bump the version and hand a StaleDataError to whichever other
+        request was holding the heat.
+
+        A row with no stand contributes no key, which is the shape this column
+        has always had: ``stand_assignments`` has never carried an explicit
+        null.
+        """
+        competitors = json.dumps([cid for cid, _stand in projection])
+        stand_assignments = json.dumps(
+            {str(cid): stand for cid, stand in projection if stand is not None})
+
+        if (competitors == self.competitors
+                and stand_assignments == self.stand_assignments):
             return False
-
-        # Insert in JSON order, not in `wanted` order. `wanted` is sorted for
-        # the comparison only; rebuilding from it would silently reorder the
-        # rows (and their autoincrement ids) relative to the heat's running
-        # order, which is a change nobody asked for.
-        HeatAssignment.query.filter_by(heat_id=self.id).delete()
-        for comp_id in comp_ids:
-            db.session.add(HeatAssignment(
-                heat_id=self.id,
-                uid=uids[comp_id],
-                competitor_id=comp_id,
-                competitor_type=competitor_type,
-                stand_number=assignments.get(str(comp_id)),
-            ))
+        self.competitors = competitors
+        self.stand_assignments = stand_assignments
         return True
 
     def _resolve_assignment_uids(self, comp_ids, competitor_type):
-        """Map every id in `comp_ids` to a competitors.uid, or refuse.
+        """Map every id in `comp_ids` to its canonical id and a competitors.uid.
 
-        Returns a dict keyed by the raw JSON id, so the caller can look up by
-        the value it already has rather than rebuilding an EntityKey per row.
+        Returns ``{raw_json_id: (canonical_id, uid)}``, keyed by the value the
+        caller already has so it does not have to rebuild an EntityKey per row,
+        and carrying the canonical id because the raw one may be a string. The
+        canonical id is what reaches the integer column and what keys the stand
+        lookup, so `5` and `"5"` cannot describe two different competitors with
+        two different stands.
 
-        The three refusals are the three ways the JSON can describe a heat the
+        The three refusals are the three ways a roster can describe a heat the
         database will not store. All are raised before the delete, so a heat
         that fails this leaves its existing rows exactly as they were: this is
-        fail-closed, not fail-halfway, which is the only version that is safe
-        to hit during a live show.
+        fail-closed, not fail-halfway, which is the only version that is safe to
+        hit during a live show.
 
         The duplicate check is made on the EntityKey rather than on the raw
-        JSON value, and so runs after the keys are built. `5` and `"5"` are two
+        value, and so runs after the keys are built. `5` and `"5"` are two
         distinct JSON entries that name one competitor and would resolve to one
         uid, and checking the raw values would let that pair through to the
         unique constraint as an IntegrityError. Neither the production data nor
@@ -284,7 +359,7 @@ class Heat(db.Model):
             if uid is None:
                 missing.append(key.id)
             else:
-                out[comp_id] = uid
+                out[comp_id] = (key.id, uid)
         if missing:
             raise BadHeatAssignment(
                 f'heat {self.id} names {competitor_type} competitor(s) '
