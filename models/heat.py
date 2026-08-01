@@ -59,6 +59,8 @@ class HeatAssignment(db.Model):
     competitor_type = db.Column(db.String(20), nullable=False)  # 'pro' or 'college'
     stand_number = db.Column(db.Integer, nullable=True)
 
+    heat = db.relationship('Heat', back_populates='assignments')
+
     def __repr__(self):
         return f'<HeatAssignment heat={self.heat_id} competitor={self.competitor_id}>'
 
@@ -108,6 +110,31 @@ class Heat(db.Model):
     # Optional flight assignment (pro only)
     flight_id = db.Column(db.Integer, db.ForeignKey('flights.id'), nullable=True)
     flight_position = db.Column(db.Integer, nullable=True)  # 1-based order within a flight
+
+    #: This heat's roster, in running order (D12-C phase 2, commit C).
+    #:
+    #: Ordered by ``HeatAssignment.id`` because that is the order
+    #: :meth:`set_roster` inserts them in, which is the order the judge sheet
+    #: prints. There is no explicit position column and adding one is not this
+    #: commit's business; the insert order is load-bearing either way, and
+    #: saying so here is cheaper than a reader discovering it.
+    #:
+    #: ``delete-orphan`` because an assignment row has no meaning apart from
+    #: its heat. Detaching one and leaving it behind would produce exactly the
+    #: orphan ``heat_assignments`` rows that D12-C exists to make impossible.
+    #:
+    #: Six places delete heats or rosters with a bulk
+    #: ``HeatAssignment.query...delete()``, which bypasses this cascade
+    #: entirely. They are correct as they stand and are not being converted
+    #: here: a bulk delete is the right tool for "every row in this
+    #: tournament", and the ORM cascade is the right tool for one heat's
+    #: roster. What matters is that neither leaves rows behind.
+    assignments = db.relationship(
+        'HeatAssignment',
+        back_populates='heat',
+        order_by='HeatAssignment.id',
+        cascade='all, delete-orphan',
+    )
 
     def __repr__(self):
         run_str = f" Run {self.run_number}" if self.run_number > 1 else ""
@@ -171,7 +198,12 @@ class Heat(db.Model):
         the order the rows are written in. ``stands`` maps a competitor id to a
         stand number and may be keyed by int or by str.
 
-        Requires ``self.id``, so call it after the flush that assigns one.
+        Does not require ``self.id``. The rows go on the ``assignments``
+        relationship, so a heat that has not been flushed yet gets a roster and
+        the rows pick up their ``heat_id`` when it does. That matters because
+        ``services/heat_generator.py`` builds a heat, sets its roster and only
+        then adds it to the session, which the previous version of this method
+        could not have served.
 
         Returns True if anything was rewritten, rows or JSON, and False if the
         heat already said exactly this. The two bulk sweepers,
@@ -200,10 +232,7 @@ class Heat(db.Model):
         roster = [resolved[raw][:2] + (stands.get(str(resolved[raw][0])),)
                   for raw in raw_ids]
 
-        rows = (HeatAssignment.query
-                .filter_by(heat_id=self.id)
-                .order_by(HeatAssignment.id)
-                .all())
+        rows = list(self.assignments)
 
         # Sorted lists, not sets. A set collapses a duplicate row and would
         # report a heat clean forever. All four columns the rebuild writes are
@@ -221,15 +250,15 @@ class Heat(db.Model):
             # for the comparison only; rebuilding from it would silently reorder
             # the rows, and their autoincrement ids, relative to the heat's
             # running order, which is a change nobody asked for.
-            HeatAssignment.query.filter_by(heat_id=self.id).delete()
-            for cid, uid, stand in roster:
-                db.session.add(HeatAssignment(
-                    heat_id=self.id,
+            self._replace_assignments([
+                HeatAssignment(
                     uid=uid,
                     competitor_id=cid,
                     competitor_type=competitor_type,
                     stand_number=stand,
-                ))
+                )
+                for cid, uid, stand in roster
+            ], rows)
             projection = [(cid, stand) for cid, _uid, stand in roster]
         else:
             # Render the rows that are actually there, in the order they are
@@ -240,6 +269,44 @@ class Heat(db.Model):
 
         json_changed = self._project_json(projection)
         return rows_changed or json_changed
+
+    def _replace_assignments(self, new_rows, old_rows):
+        """Swap this heat's roster rows out for ``new_rows``, in two steps.
+
+        The two steps are the whole point, and collapsing them into a single
+        ``self.assignments = new_rows`` is wrong in a way that only shows up on
+        real data.
+
+        SQLAlchemy's unit of work orders a flush by mapper operation, INSERTs
+        before DELETEs, not by the order the collection was mutated. A wholesale
+        replacement therefore tries to insert the new rows while the old ones
+        are still in the table, and ``uq_heat_assignments_heat_uid`` rejects
+        that the moment one competitor appears in both rosters. Which is most of
+        them: the common edit is a stand change or a reorder, where every
+        competitor is in both. The constraint is not DEFERRABLE and cannot be
+        made so on SQLite, so there is nothing to defer it to.
+
+        Reconciling the rows in place instead, matching old to new by position
+        and mutating, has the same defect from the other side: two competitors
+        swapping stands is two UPDATEs, and whichever one lands first collides
+        with the row the other has not vacated yet.
+
+        So: detach the old rows, flush the DELETEs on their own, then attach the
+        new ones. The flush is not a new behaviour. The bulk
+        ``HeatAssignment.query.filter_by(...).delete()`` this replaced autoflushed
+        the session and emitted its DELETE immediately, which is precisely why
+        the old code was safe.
+
+        The flush is skipped when none of the old rows was ever persisted, which
+        is the case for a heat built and rostered before its first flush. Nothing
+        is in the table to collide with, and flushing there would push a
+        half-built heat at the database earlier than the caller asked for.
+        """
+        needs_flush = any(r.id is not None for r in old_rows)
+        self.assignments = []
+        if needs_flush:
+            db.session.flush()
+        self.assignments = new_rows
 
     def sync_assignments(self, competitor_type: str) -> bool:
         """Write the roster the JSON columns currently describe.

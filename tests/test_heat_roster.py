@@ -213,6 +213,156 @@ class TestSetRoster:
                 for r in _rows(heat)] == before_rows
 
 
+class TestTheAssignmentsRelationship:
+    """``Heat.assignments`` is the collection ``set_roster`` writes through.
+
+    Commit B made the rows the write target while still reaching them with
+    ``HeatAssignment.query.filter_by(heat_id=...)``, which cannot see a heat
+    that has no id yet, cannot be eager-loaded, and leaves the heat's own
+    collection stale after a rebuild. This is the commit that gives the two
+    tables a relationship and routes the rebuild through it.
+    """
+
+    def test_the_collection_is_the_rows_in_running_order(self, heat_of_three):
+        """Ordered by row id, which is insert order, which is running order.
+
+        There is no position column. The judge sheet prints the collection in
+        the order it comes back in, so the ordering is load-bearing and belongs
+        in a test rather than in the reader that happens to depend on it.
+        """
+        heat, (a, b, c) = heat_of_three
+
+        heat.set_roster('pro', [c.id, a.id, b.id])
+
+        assert [r.competitor_id for r in heat.assignments] == [c.id, a.id, b.id]
+        assert [r.competitor_id for r in _rows(heat)] == [c.id, a.id, b.id]
+
+    def test_the_collection_is_current_after_a_rebuild(self, heat_of_three,
+                                                        db_session):
+        """The stale-collection case the query-based version could not fix.
+
+        A rebuild that deleted rows out from under a loaded collection left the
+        heat holding objects the database no longer had. Writing through the
+        collection is what makes a second read agree with the first.
+        """
+        heat, (a, b, _c) = heat_of_three
+        heat.set_roster('pro', [a.id, b.id])
+        db_session.flush()
+        assert len(heat.assignments) == 2
+
+        heat.set_roster('pro', [b.id])
+        db_session.flush()
+
+        assert [r.competitor_id for r in heat.assignments] == [b.id]
+        assert [r.competitor_id for r in _rows(heat)] == [b.id]
+
+    def test_a_competitor_who_stays_does_not_collide_with_himself(
+            self, heat_of_three, db_session):
+        """The reason the rebuild flushes between the delete and the insert.
+
+        ``uq_heat_assignments_heat_uid`` is not deferrable, and SQLAlchemy's
+        unit of work emits INSERTs before DELETEs. A rebuild that handed the
+        collection both at once would try to insert a second row for every
+        competitor who is in the old roster and the new one, which on the
+        commonest edit of all, a stand change, is all of them.
+        """
+        heat, (a, b, _c) = heat_of_three
+        heat.set_roster('pro', [a.id, b.id], {a.id: 1, b.id: 2})
+        db_session.flush()
+
+        assert heat.set_roster('pro', [a.id, b.id], {a.id: 2, b.id: 1}) is True
+        db_session.flush()
+
+        assert [(r.competitor_id, r.stand_number) for r in _rows(heat)] == [
+            (a.id, 2), (b.id, 1)]
+
+    def test_a_competitor_returning_to_his_old_position_gets_it(
+            self, heat_of_three, db_session):
+        """Scratch-undo puts a competitor back at the index he was scratched
+        from, which is a reorder AND a membership change at once.
+
+        ``services/scratch_cascade.py`` restores by
+        ``comp_ids.insert(idx, competitor_id)``. Every competitor after him is
+        in both the old roster and the new one, at a different position, so the
+        rebuild has to survive reinserting all of them. It is also the case
+        that proves the roster order, not the sorted comparison order, is what
+        reaches the rows.
+
+        A reorder with no membership change is a different matter and this
+        method still declines to do one; see
+        ``test_the_json_takes_the_row_order_when_they_disagree``.
+        """
+        heat, (a, b, c) = heat_of_three
+        heat.set_roster('pro', [a.id, c.id])
+        db_session.flush()
+
+        assert heat.set_roster('pro', [a.id, b.id, c.id]) is True
+        db_session.flush()
+
+        assert [r.competitor_id for r in _rows(heat)] == [a.id, b.id, c.id]
+        assert heat.get_competitors() == [a.id, b.id, c.id]
+
+    def test_a_heat_can_be_rostered_before_it_has_an_id(self, heat_of_three,
+                                                         db_session):
+        """``services/heat_generator.py`` builds a heat, fills its roster, and
+        only then adds it to the session.
+
+        The query-based rebuild could not have served that order: with
+        ``self.id`` still None it would have filtered on NULL, found nothing,
+        and written rows carrying a null ``heat_id``. Phase 2 converts that
+        module, so this has to work first.
+        """
+        from models.event import Event
+        from models.heat import Heat
+
+        heat, (a, b, _c) = heat_of_three
+        fresh = Heat(event_id=db_session.get(Event, heat.event_id).id,
+                     heat_number=7, run_number=1)
+
+        assert fresh.set_roster('pro', [a.id, b.id], {a.id: 3}) is True
+        assert fresh.id is None
+
+        db_session.add(fresh)
+        db_session.flush()
+
+        assert fresh.id is not None
+        assert [(r.heat_id, r.competitor_id, r.stand_number)
+                for r in _rows(fresh)] == [(fresh.id, a.id, 3),
+                                           (fresh.id, b.id, None)]
+
+    def test_deleting_a_heat_takes_its_rows_with_it(self, heat_of_three,
+                                                     db_session):
+        """delete-orphan, so no caller has to remember the child table.
+
+        ``heat_assignments.heat_id`` is a real foreign key, so a heat deleted
+        without its rows is not a leak, it is an IntegrityError at flush. Four
+        call sites clear the rows by hand to avoid exactly that.
+        """
+        heat, (a, b, _c) = heat_of_three
+        heat.set_roster('pro', [a.id, b.id])
+        db_session.flush()
+        heat_id = heat.id
+
+        db_session.delete(heat)
+        db_session.flush()
+
+        assert HeatAssignment.query.filter_by(heat_id=heat_id).count() == 0
+
+    def test_a_dropped_competitor_leaves_no_orphan_row(self, heat_of_three,
+                                                        db_session):
+        """Detaching a row from the collection deletes it rather than nulling
+        its ``heat_id``, which the column would refuse anyway."""
+        heat, (a, b, c) = heat_of_three
+        heat.set_roster('pro', [a.id, b.id, c.id])
+        db_session.flush()
+
+        heat.set_roster('pro', [a.id])
+        db_session.flush()
+
+        assert HeatAssignment.query.filter_by(heat_id=heat.id).count() == 1
+        assert [r.competitor_id for r in heat.assignments] == [a.id]
+
+
 class TestSyncAssignmentsIsNowAShim:
     """The ~19 legacy call sites keep working, through one code path."""
 

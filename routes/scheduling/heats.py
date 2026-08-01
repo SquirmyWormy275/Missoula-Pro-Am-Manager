@@ -820,8 +820,16 @@ def delete_heat(tournament_id, event_id, heat_id):
                                             tournament_id=tournament_id, event_id=event_id))
                 heats_to_delete.append(partner_run)
 
+        # No bulk delete of the assignment rows here any more. `Heat.assignments`
+        # is a real relationship as of D12-C phase 2 commit C, and its
+        # delete-orphan cascade clears them ahead of the parent. Doing both is
+        # not belt-and-braces, it is a trap: the bulk delete runs with
+        # `synchronize_session=False`, so a heat whose collection was already
+        # loaded keeps holding rows the database no longer has, and the cascade
+        # then emits a DELETE that matches nothing. Nothing loads that
+        # collection today, which is exactly why this is the moment to remove
+        # the line rather than the moment to discover it.
         for h in heats_to_delete:
-            HeatAssignment.query.filter_by(heat_id=h.id).delete(synchronize_session=False)
             if h.flight_id:
                 h.flight_id = None
                 h.flight_position = None
