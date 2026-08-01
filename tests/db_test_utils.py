@@ -83,8 +83,50 @@ def _pg_preflight():
     )
 
 
+_MIGRATIONS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'migrations')
+
+
+def _chain_head():
+    """The revision the migration chain currently ends at.
+
+    Read from the files rather than from any database, because this is the
+    thing a stamped database is being compared against.
+    """
+    from alembic.script import ScriptDirectory
+    return ScriptDirectory(_MIGRATIONS_DIR).get_current_head()
+
+
+def _template_is_stale(head):
+    """True when proam_unit_template exists but is not stamped at `head`.
+
+    The template is a real database that outlives the interpreter that built
+    it, so "it exists" is not the same question as "it is the schema this
+    checkout describes". Before this check, adding a revision left every
+    developer and every CI runner with a warm template one revision behind,
+    and the whole PostgreSQL lane failed against a schema no migration ever
+    produced. That was found the hard way on s8a0b2c3d4e5: 77 failures, all
+    of them "column heat_assignments.uid does not exist", none of them a bug
+    in the code under test.
+
+    A missing alembic_version table, an unreadable one, or more than one row
+    all read as stale. Rebuilding costs one `flask db upgrade`; guessing
+    wrong in the other direction costs a red lane nobody can explain.
+    """
+    stamped = _pg_run("SELECT version_num FROM alembic_version",
+                      dbname=_PG_TEMPLATE)
+    if stamped.returncode != 0:
+        return True
+    lines = stamped.stdout.split()
+    return len(lines) != 1 or lines[0] != head
+
+
 def _ensure_pg_template():
-    """Build the schema template once per interpreter via flask db upgrade."""
+    """Build the schema template once per interpreter via flask db upgrade.
+
+    Rebuilds it when a template left behind by an earlier interpreter is
+    stamped at anything other than the current chain head.
+    """
     global _pg_template_ready
     if _pg_template_ready:
         return
@@ -96,8 +138,13 @@ def _ensure_pg_template():
         f"AND datname <> '{_PG_TEMPLATE}'")
     for name in stale.stdout.split():
         _pg_run(f'DROP DATABASE IF EXISTS {name} (FORCE)')
+    head = _chain_head()
     probe = _pg_run(
         f"SELECT 1 FROM pg_database WHERE datname='{_PG_TEMPLATE}'")
+    if probe.stdout.strip() == "1" and _template_is_stale(head):
+        _pg_run(f'DROP DATABASE IF EXISTS {_PG_TEMPLATE} (FORCE)')
+        probe = _pg_run(
+            f"SELECT 1 FROM pg_database WHERE datname='{_PG_TEMPLATE}'")
     if probe.stdout.strip() != "1":
         _pg_run(f'CREATE DATABASE {_PG_TEMPLATE}')
         old = os.environ.get('DATABASE_URL')
@@ -109,9 +156,7 @@ def _ensure_pg_template():
             _tapp = create_app()
             with _tapp.app_context():
                 _db.engine.dispose()
-                upgrade(directory=os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                    'migrations'))
+                upgrade(directory=_MIGRATIONS_DIR)
                 # createdb TEMPLATE requires zero connections to the source;
                 # drop ours and terminate any pooled stragglers.
                 _db.engine.dispose()

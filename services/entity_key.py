@@ -20,11 +20,17 @@ disciplines, with real foreign keys.  ``EntityKey`` is what carries the legacy
 pair safely until every call site has been converted to a uid.  ``resolve_uid``
 is the bridge between the two.
 
-Phase 0 scope
-=============
-This module is imported by nothing.  It is landed now so that later phases have
-it available without a second migration-adjacent change, and so its semantics
-can be reviewed on their own rather than in the middle of a route conversion.
+Who imports this
+================
+``models/heat.py``, as of D12-C commit A.  ``Heat.sync_assignments`` builds one
+``EntityKey`` per id in a heat's competitors JSON and calls ``resolve_uids`` to
+turn them into the ``heat_assignments.uid`` values the table now requires.
+
+It landed a cycle earlier than that with no importer at all, deliberately, so
+its semantics could be reviewed on their own rather than in the middle of a
+route conversion.  That is the only reason this section exists: the first
+version of this docstring said "imported by nothing", and a line like that goes
+stale the moment it stops being true.
 
 Deliberately not here
 =====================

@@ -481,8 +481,17 @@ class TestStoreCoverage:
                            event_type='pro')
         heat = make_heat(db_session, event, competitors=[901],
                          stand_assignments={'902': 1})
+        # The uid is real and the legacy pair is a ghost, because that is the
+        # only shape a bad heat_assignments reference can still take: as of
+        # s8a0b2c3d4e5 uid is NOT NULL with a foreign key onto the spine, while
+        # competitor_id is still the bare integer this audit walks. A row where
+        # the two disagree is exactly the drift D12-C phase 2 exists to remove,
+        # and until then it is what the audit has to keep finding.
+        real_pro = make_pro_competitor(db_session, tournament, name='Real Pro',
+                                       gender='M', events=[event.id])
         db_session.add(HeatAssignment(
-            heat_id=heat.id, competitor_id=903, competitor_type=PRO,
+            heat_id=heat.id, uid=real_pro.uid,
+            competitor_id=903, competitor_type=PRO,
             stand_number=1))
         db_session.add(EventResult(
             event_id=event.id, competitor_id=904, competitor_type=PRO,

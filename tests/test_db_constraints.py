@@ -22,6 +22,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from tests.conftest import (
+    ensure_competitors,
     make_college_competitor,
     make_event,
     make_event_result,
@@ -263,6 +264,7 @@ class TestDataIntegrity:
         from models.heat import HeatAssignment
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Sync Event', event_type='pro')
+        ensure_competitors(db_session, t, [10, 20, 30], 'pro')
         h = make_heat(db_session, e, competitors=[10, 20, 30],
                       stand_assignments={'10': 1, '20': 2, '30': 3})
         db_session.flush()

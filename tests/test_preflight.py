@@ -97,11 +97,29 @@ def _make_heat(db_session, event, heat_number=1, run_number=1,
 
 
 def _make_heat_assignment(db_session, heat_id, competitor_id,
-                          competitor_type='pro', stand_number=None):
-    """Create a HeatAssignment row."""
+                          competitor_type='pro', stand_number=None, uid=None):
+    """Create a HeatAssignment row.
+
+    As of s8a0b2c3d4e5 the row carries a NOT NULL uid with a foreign key onto
+    the identity spine, so this cannot be built from the legacy pair alone.
+    When `uid` is not given it is resolved from the pair, which is what every
+    caller in this file wants: they all pass a competitor they just created.
+    Pass `uid` explicitly only to build a row whose uid disagrees with its
+    legacy pair, which is drift rather than a normal assignment.
+    """
     from models.heat import HeatAssignment
+    from services.entity_key import EntityKey, resolve_uid
+
+    if uid is None:
+        key = EntityKey.from_legacy(competitor_id, competitor_type)
+        uid = resolve_uid(db_session, key)
+        assert uid is not None, (
+            f'no {competitor_type} competitor with id {competitor_id}; this '
+            f'helper builds valid rows, see the uid argument for drift'
+        )
     ha = HeatAssignment(
         heat_id=heat_id,
+        uid=uid,
         competitor_id=competitor_id,
         competitor_type=competitor_type,
         stand_number=stand_number,

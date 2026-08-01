@@ -9,14 +9,52 @@ import sqlalchemy as sa
 from config import HEAT_LOCK_TTL_SECONDS  # noqa: F401 — single source in config.py
 from database import db
 
+# services/entity_key.py imports nothing but dataclasses, so a model importing
+# it does not create the models-import-services cycle that would normally make
+# this the wrong direction. It is here rather than inside the function because
+# a lazy import would hide that dependency from anyone reading the header.
+from services.entity_key import EntityKey, resolve_uids
+
+from ._types import BIG_ID
+
+
+class BadHeatAssignment(ValueError):
+    """A heat's competitors JSON cannot be turned into assignment rows.
+
+    Raised by ``Heat.sync_assignments`` before it writes anything, in the three
+    cases the database would otherwise reject with a bare driver error: an id
+    that is not usable as a reference at all, an id that names no competitor of
+    that kind, and the same competitor listed twice in one heat.
+
+    It is a ``ValueError`` so a caller that has never heard of it still sees a
+    programming error rather than a database error, and it names the heat and
+    the offending ids so an operator can find the heat without reading a
+    traceback.
+    """
+
 
 class HeatAssignment(db.Model):
-    """Represents a competitor's assignment to a specific heat."""
+    """Represents a competitor's assignment to a specific heat.
+
+    ``uid`` is the real reference: a foreign key onto the identity spine,
+    unique within a heat.  ``competitor_id`` and ``competitor_type`` are the
+    legacy pair, kept in step by ``Heat.sync_assignments`` and still what every
+    reader in this tree uses.  Neither of those two is constrained, separately
+    or together, which is the whole reason the uid exists: the pro and college
+    id sequences overlap, so the integer alone does not name a human.  D12-C
+    phase 2 moves the readers across; this revision only makes the row capable
+    of being read that way.
+    """
 
     __tablename__ = 'heat_assignments'
+    __table_args__ = (
+        db.UniqueConstraint('heat_id', 'uid', name='uq_heat_assignments_heat_uid'),
+        db.Index('ix_heat_assignments_uid', 'uid'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     heat_id = db.Column(db.Integer, db.ForeignKey('heats.id'), nullable=False)
+    uid = db.Column(BIG_ID, db.ForeignKey('competitors.uid'), nullable=False)
     competitor_id = db.Column(db.Integer, nullable=False)
     competitor_type = db.Column(db.String(20), nullable=False)  # 'pro' or 'college'
     stand_number = db.Column(db.Integer, nullable=True)
@@ -136,19 +174,31 @@ class Heat(db.Model):
         they reported the walk count as a repair count and rewrote every row in
         the table to produce it.
 
-        The comparison carries all three columns the rebuild writes, and it
+        The comparison carries all four columns the rebuild writes, and it
         compares SORTED LISTS rather than sets. Sets would collapse a duplicate
         row and report a heat clean forever. competitor_type matters because
         pro and college competitor ids overlap, so a row with the wrong type
-        points at the wrong person while holding the right number.
+        points at the wrong person while holding the right number. uid matters
+        for the same reason from the other end: a row whose uid disagrees with
+        its legacy pair is drift, and before uid was on the table there was
+        nothing to disagree with.
+
+        Raises BadHeatAssignment, before touching anything, when the JSON names
+        a competitor that does not exist or names one twice. Both of those are
+        constraint violations on the table as of s8a0b2c3d4e5; catching them
+        here is what turns a driver IntegrityError arriving from somewhere
+        unrelated at the next autoflush into an error that says which heat.
         """
         assignments = self.get_stand_assignments()
+        comp_ids = self.get_competitors()
+        uids = self._resolve_assignment_uids(comp_ids, competitor_type)
+
         wanted = sorted(
-            (comp_id, competitor_type, assignments.get(str(comp_id)))
-            for comp_id in self.get_competitors()
+            (comp_id, competitor_type, assignments.get(str(comp_id)), uids[comp_id])
+            for comp_id in comp_ids
         )
         existing = sorted(
-            (row.competitor_id, row.competitor_type, row.stand_number)
+            (row.competitor_id, row.competitor_type, row.stand_number, row.uid)
             for row in HeatAssignment.query.filter_by(heat_id=self.id).all()
         )
         if existing == wanted:
@@ -159,14 +209,89 @@ class Heat(db.Model):
         # rows (and their autoincrement ids) relative to the heat's running
         # order, which is a change nobody asked for.
         HeatAssignment.query.filter_by(heat_id=self.id).delete()
-        for comp_id in self.get_competitors():
+        for comp_id in comp_ids:
             db.session.add(HeatAssignment(
                 heat_id=self.id,
+                uid=uids[comp_id],
                 competitor_id=comp_id,
                 competitor_type=competitor_type,
                 stand_number=assignments.get(str(comp_id)),
             ))
         return True
+
+    def _resolve_assignment_uids(self, comp_ids, competitor_type):
+        """Map every id in `comp_ids` to a competitors.uid, or refuse.
+
+        Returns a dict keyed by the raw JSON id, so the caller can look up by
+        the value it already has rather than rebuilding an EntityKey per row.
+
+        The three refusals are the three ways the JSON can describe a heat the
+        database will not store. All are raised before the delete, so a heat
+        that fails this leaves its existing rows exactly as they were: this is
+        fail-closed, not fail-halfway, which is the only version that is safe
+        to hit during a live show.
+
+        The duplicate check is made on the EntityKey rather than on the raw
+        JSON value, and so runs after the keys are built. `5` and `"5"` are two
+        distinct JSON entries that name one competitor and would resolve to one
+        uid, and checking the raw values would let that pair through to the
+        unique constraint as an IntegrityError. Neither the production data nor
+        any parity mirror contains a non-integer id; the check is written for
+        the ones this code has not seen.
+        """
+        if not comp_ids:
+            return {}
+
+        # A list of pairs, not a dict, so that two JSON entries which normalise
+        # onto the same key are both still present for the duplicate check.
+        pairs = []
+        malformed = []
+        for comp_id in comp_ids:
+            try:
+                key = EntityKey.from_legacy(comp_id, competitor_type)
+            except (TypeError, ValueError) as exc:
+                malformed.append(f'{comp_id!r} ({exc})')
+                continue
+            if key is None:
+                malformed.append(f'{comp_id!r} (null competitor id)')
+                continue
+            pairs.append((comp_id, key))
+        if malformed:
+            raise BadHeatAssignment(
+                f'heat {self.id} carries competitor ids that are not usable as '
+                f'a {competitor_type!r} reference: ' + '; '.join(malformed)
+            )
+
+        seen = set()
+        duplicates = set()
+        for _, key in pairs:
+            if key in seen:
+                duplicates.add(key.id)
+            seen.add(key)
+        if duplicates:
+            raise BadHeatAssignment(
+                f'heat {self.id} lists {competitor_type} competitor(s) '
+                f'{sorted(duplicates)} more than once; a competitor runs in a '
+                f'heat once'
+            )
+
+        resolved = resolve_uids(db.session, seen)
+
+        out = {}
+        missing = []
+        for comp_id, key in pairs:
+            uid = resolved.get(key)
+            if uid is None:
+                missing.append(key.id)
+            else:
+                out[comp_id] = uid
+        if missing:
+            raise BadHeatAssignment(
+                f'heat {self.id} names {competitor_type} competitor(s) '
+                f'{sorted(missing)} that do not exist, or that carry no '
+                f'identity row'
+            )
+        return out
 
     @property
     def competitor_count(self):

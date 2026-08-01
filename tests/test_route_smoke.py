@@ -124,12 +124,21 @@ def smoke_env(monkeypatch):
     app = create_app()
     app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
 
+    # Migrate unconditionally, including the copied database.  A copy of
+    # instance/proam.db is stamped at whatever revision that developer's
+    # machine last ran, which is not necessarily head, and running these routes
+    # against a stale schema produces failures that look like route bugs.
+    # D12-C commit A is where this first bit: nine smoke tests failed with
+    # "no such column: heat_assignments.uid" on a machine holding a dev
+    # database, and passed in CI, where SOURCE_DB does not exist and the
+    # fresh-DB branch below already migrated.  On a copy already at head this
+    # is a no-op that costs one alembic_version read.
+    from flask_migrate import upgrade
+    migrations_dir = PROJECT_ROOT / "migrations"
+    with app.app_context():
+        upgrade(directory=str(migrations_dir))
+
     if not use_real_db:
-        # Fresh DB: run migrations and seed minimal fixtures
-        from flask_migrate import upgrade
-        migrations_dir = PROJECT_ROOT / "migrations"
-        with app.app_context():
-            upgrade(directory=str(migrations_dir))
         _seed_minimal_smoke_data(app)
 
     with app.app_context():

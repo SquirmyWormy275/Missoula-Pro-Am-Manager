@@ -57,6 +57,14 @@ def qa_env(monkeypatch):
     app = create_app()
     app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
 
+    # Migrate the copy.  instance/proam.db is stamped at whatever revision the
+    # developer's machine last ran, and a copy that skips the chain runs these
+    # tests against a schema no production database has.  See the same comment
+    # in tests/test_route_smoke.py for how this was found.
+    from flask_migrate import upgrade
+    with app.app_context():
+        upgrade(directory=str(PROJECT_ROOT / "migrations"))
+
     with app.app_context():
         from models import User
 

@@ -156,6 +156,18 @@ def _seed_non_saw_event(db, tournament):
 
 
 def _seed_heat(db, event, heat_number, competitors, stand_assignments):
+    # Materialise the competitors this heat names. These fixtures invent ids,
+    # which was harmless until s8a0b2c3d4e5 gave heat_assignments a NOT NULL uid
+    # with a foreign key onto the identity spine. sync_assignments now refuses a
+    # heat that names nobody, so the heat has to name somebody.
+    from models.tournament import Tournament
+    from tests.conftest import ensure_competitors
+
+    ensure_competitors(
+        db.session, Tournament.query.get(event.tournament_id),
+        competitors, event.event_type,
+    )
+
     from models import Heat
 
     h = Heat(

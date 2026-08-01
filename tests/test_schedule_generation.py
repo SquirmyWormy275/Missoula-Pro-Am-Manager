@@ -58,6 +58,15 @@ def _make_heat(db_session, event, competitor_ids=None):
 
     heat = Heat(event_id=event.id, heat_number=1, run_number=1)
     if competitor_ids is not None:
+        # See tests/conftest.py::ensure_competitors. heat_assignments carries a
+        # NOT NULL uid as of s8a0b2c3d4e5, so an invented id is no longer a
+        # heat the database will store.
+        from models.tournament import Tournament
+        from tests.conftest import ensure_competitors
+        ensure_competitors(
+            db_session, Tournament.query.get(event.tournament_id),
+            competitor_ids, event.event_type,
+        )
         heat.set_competitors(competitor_ids)
     db_session.add(heat)
     db_session.flush()

@@ -98,7 +98,20 @@ def _make_heat(
     flight_position=None,
 ):
     """Create a Heat with pre-populated competitors + stand_assignments JSON."""
+    # Materialise the competitors this heat names. These fixtures invent ids,
+    # which was harmless until s8a0b2c3d4e5 gave heat_assignments a NOT NULL uid
+    # with a foreign key onto the identity spine. sync_assignments now refuses a
+    # heat that names nobody, so the heat has to name somebody.
     from models import Heat
+    from models.tournament import Tournament
+    from tests.conftest import ensure_competitors
+
+    ensure_competitors(
+        db_session,
+        Tournament.query.get(event.tournament_id),
+        competitors,
+        event.event_type,
+    )
 
     h = Heat(
         event_id=event.id,

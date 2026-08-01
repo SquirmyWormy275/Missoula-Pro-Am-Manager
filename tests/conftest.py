@@ -25,6 +25,7 @@ import os
 import pathlib
 
 import pytest
+from sqlalchemy import text as sa_text
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-conftest')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
@@ -267,6 +268,84 @@ def make_pro_competitor(session, tournament, name, gender='M', events=None,
     session.add(c)
     session.flush()
     return c
+
+
+def ensure_competitors(session, tournament, ids, competitor_type='pro',
+                       team=None, events=None):
+    """Create a real competitor row for each id in `ids`, if it is missing.
+
+    ``heat_assignments.uid`` is NOT NULL with a foreign key onto the identity
+    spine as of s8a0b2c3d4e5, so ``Heat.sync_assignments`` refuses a heat whose
+    competitors JSON names an id that is in no competitor row. A number of
+    fixtures in this suite predate that and build heats out of invented ids
+    like [1, 2, 3, 4] because nothing ever checked. This materialises exactly
+    those ids so those fixtures keep meaning what they meant.
+
+    The ids are set explicitly. That is normally the wrong thing to do here,
+    because the pro and college id sequences are shared with rows a test did
+    not create and a hardcoded id is a guess about somebody else's counter.
+    It is safe in this one function: every caller passes ids it invented, the
+    rows are created inside the test's nested transaction, and on PostgreSQL
+    the sequence is advanced past whatever was inserted so a later
+    default-valued insert in the same test cannot land on one of them. SQLite
+    picks max(rowid)+1 and needs no help.
+
+    Returns {id: competitor}, including ids that already existed.
+    """
+    from models.competitor import CollegeCompetitor, ProCompetitor
+
+    if competitor_type == 'college':
+        from models import Team
+        model = CollegeCompetitor
+        if team is None:
+            # Reuse the tournament's team rather than making one per call.
+            # team_code is unique per tournament and callers hit this helper
+            # once per heat, so a fresh team every time is an IntegrityError on
+            # the second heat.
+            team = (Team.query.filter_by(tournament_id=tournament.id)
+                    .order_by(Team.id).first())
+            if team is None:
+                team = make_team(session, tournament)
+    elif competitor_type == 'pro':
+        model = ProCompetitor
+        team = None
+    else:
+        raise ValueError(f'competitor_type must be pro or college, '
+                         f'not {competitor_type!r}')
+
+    out = {}
+    created = False
+    for raw in ids:
+        comp_id = int(raw)
+        existing = session.get(model, comp_id)
+        if existing is not None:
+            out[comp_id] = existing
+            continue
+        kwargs = dict(
+            id=comp_id,
+            tournament_id=tournament.id,
+            name=f'{competitor_type.title()} {comp_id}',
+            gender='M',
+            events_entered=json.dumps(events or []),
+            status='active',
+        )
+        if team is not None:
+            kwargs['team_id'] = team.id
+        comp = model(**kwargs)
+        session.add(comp)
+        out[comp_id] = comp
+        created = True
+
+    session.flush()
+
+    if created and session.get_bind().dialect.name == 'postgresql':
+        session.execute(sa_text(
+            "SELECT setval(pg_get_serial_sequence(:t, 'id'), "
+            "GREATEST((SELECT COALESCE(MAX(id), 1) FROM " + model.__tablename__
+            + "), 1))"
+        ), {'t': model.__tablename__})
+
+    return out
 
 
 def make_event(session, tournament, name, event_type='pro', gender=None,
