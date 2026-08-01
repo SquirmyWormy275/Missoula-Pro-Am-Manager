@@ -28,8 +28,60 @@ touches the template itself.
 | oracle    | proam_prod_mirror_mt           | mirror + staged 2027 tournament; cross-tournament leak detector (c37) |
 | pristine  | proam_prod_mirror_2026pristine | pre-reseed archive; used only by test_college_id_reseed.py to keep proving the c38 migration |
 
-Standing numbers: the only expected failures anywhere are the two blocked
-gear-parser tests (die with register decision G3/D2).
+The pristine lane is invoked differently and getting it wrong is silent.
+`test_college_id_reseed.py` hardcodes its own template name, so it runs with
+**no** `PROAM_RIG_TEMPLATE` set at all:
+
+    PROAM_APP_ROOT=<repo root> SECRET_KEY=<any 64 chars> \
+    python -m pytest proam_regression/test_college_id_reseed.py -p no:randomly -q
+
+## Standing numbers
+
+Measured at `971d5f0` (G2-C commit B). A lane that comes back different from
+this is telling you something, and the something is usually yours.
+
+| lane      | passed | skipped | xfailed | failed |
+|-----------|--------|---------|---------|--------|
+| normal    | 218    | 6       | 2       | 0      |
+| reversed  | 218    | 6       | 2       | 0      |
+| oracle    | 222    | 0       | 2       | 2      |
+| pristine  | 3      | 0       | 0       | 0      |
+
+The 2 xfails on every lane are the blocked gear-parser tests, which die with
+register decision G3/D2.
+
+The 2 oracle failures are **known and pre-existing**, proven against baseline
+`184667e` by running them from a detached worktree at that sha:
+
+  - `test_the_schedule_panel_tells_the_operator_the_stands_are_double_booked`
+  - `test_the_show_order_is_not_touched`
+
+Root cause is `_flight_ordered_heats` in `test_sev3_confirmed.py`, which is not
+scoped to a tournament and therefore counts both tournaments' heats on a
+two-tournament template (150 where it expects 75). It is a defect in the test,
+not in the app, and it is open question 8 awaiting the operator's approval to
+scope. Do not "fix" it by changing the expected number.
+
+## Two traps that have each cost a cycle
+
+**The lanes cannot be run in parallel.** `rig.py::drop_orphans()` drops every
+database matching `proam_rt_%` with no ownership filter and no age filter, so a
+second lane starting up will reap the first lane's live clone out from under it.
+Serialize them. (Guarding this is open question 10.)
+
+**`rig.py` does not migrate its template.** After any new Alembic revision,
+every template above has to be upgraded by hand before its lane will run:
+
+    for d in proam_prod_mirror_p0 proam_prod_mirror_p0rev \
+             proam_prod_mirror_mt proam_prod_mirror_2026pristine; do
+      DATABASE_URL="postgresql://proam:proam@localhost:5432/$d" \
+      SECRET_KEY=<any 64 chars> python -m flask db upgrade
+    done
+
+`tests/db_test_utils.py::_ensure_pg_template` has the same hole for the unit
+suite's `proam_unit_template`: it builds the template only when it is absent and
+never compares its `alembic_version` against head, so after a new revision the
+template must be dropped by hand to force a rebuild. That is open question 7.
 
 ## Where the evidence lands
 
@@ -41,9 +93,16 @@ before fix, mutation battery results, and regression counts per lane.
 
 ## Standing up the rig elsewhere
 
-Until register decision D11-C lands (bootstrap script + database dump
-artifact), building the templates requires the cloud rig's Postgres. After
-D11-C, one command rebuilds the full rig from the repo on any machine; that
-is the path to running this suite in CI and on the operator's machine.
-Template build/rebuild procedures: see the C32 recovery doc and the
+Register decision D11-C landed in c42: `scripts/rig_bootstrap.sh` plus a
+`pg_dump` artifact rebuild the full rig from the repo on any machine.
+
+**Deviation from the register text, deliberate and standing.** D11-C says the
+dump ships as a GitHub release asset. It does not, and it must not. This repo is
+public, release assets on a public repo are public, and the pristine dump
+carries real competitor contact details including 45 phone numbers. The dump
+travels privately to the operator and lives wherever he keeps it. Anything in
+this suite that compares real contact data prints digests or counts, never the
+values themselves; keep it that way.
+
+Template build and rebuild procedures: see the C32 recovery doc and the
 docstrings in `stage_multitournament.py` and `test_o3_ordering.py`.
