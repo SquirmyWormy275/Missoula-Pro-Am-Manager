@@ -31,6 +31,7 @@ from models.competitor import ProCompetitor
 from models.competitor_identity import Competitor
 from services.entity_key import COLLEGE, PRO, EntityKey, resolve_uid, resolve_uids
 from tests.conftest import make_college_competitor, make_pro_competitor, make_team, make_tournament
+from tests.db_test_utils import skip_unless_migrated
 
 
 def _inspector(session):
@@ -129,6 +130,16 @@ class TestCheckConstraintsSurviveBatchRebuild:
         db_session.rollback()
 
     def test_uid_constraints_landed(self, db_session):
+        # `uid` is declared inline on the model (unique=True,
+        # db.ForeignKey(...)), so db.create_all() emits the constraints
+        # ANONYMOUSLY while the migration that added them named them
+        # uq_/fk_<table>_uid. The three sibling tests in this class pass on
+        # both paths only because their CHECKs carry explicit name= in
+        # __table_args__. The real fix is a naming_convention on the model
+        # MetaData, which changes autogenerate output and has not been
+        # approved; until then this guard is a statement about the migrated
+        # schema, which is the one production runs.
+        skip_unless_migrated(db_session, 'the uid identity constraints')
         insp = _inspector(db_session)
         for table in ('college_competitors', 'pro_competitors'):
             uniques = {u['name'] for u in insp.get_unique_constraints(table)}

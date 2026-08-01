@@ -258,3 +258,33 @@ def skip_unless_sqlite(app, subject):
             f'{subject} is implemented for SQLite only; this app is on '
             f'{uri.split(":", 1)[0]}. See PROAM_2026_C44 restore gap.'
         )
+
+
+def skip_unless_migrated(session, subject):
+    """Skip a test that asserts on schema only Alembic produces.
+
+    TEST_USE_CREATE_ALL=1 builds the schema from the models via
+    db.create_all() instead of replaying the migration chain. The two are
+    not the same schema. Constraints declared inline on a column
+    (unique=True, db.ForeignKey(...)) come out ANONYMOUS under create_all,
+    while the migration that added them gave them names. Constraints
+    declared in __table_args__ with an explicit name= survive both paths,
+    which is why most of these guards pass either way.
+
+    Detected from the database rather than from the env var: create_all
+    never writes an alembic_version table, so its absence means this schema
+    did not come from migrations. Same principle as skip_unless_sqlite.
+
+    That divergence is itself worth knowing about. If you want these
+    assertions to hold on both paths, the fix is a naming_convention on the
+    model MetaData, not a looser test. That is a change with autogenerate
+    consequences and it has not been made.
+    """
+    import pytest
+    import sqlalchemy as sa
+    if 'alembic_version' not in sa.inspect(session.get_bind()).get_table_names():
+        pytest.skip(
+            f'{subject} asserts on migration-produced schema; this database '
+            'was built by db.create_all() (TEST_USE_CREATE_ALL=1), which '
+            'emits anonymous constraints for inline unique/ForeignKey.'
+        )
