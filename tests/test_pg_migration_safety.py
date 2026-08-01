@@ -375,3 +375,96 @@ class TestNoRenderAsInUpgrades:
                 "Violations:\n" + "\n".join(violations)
             )
             pytest.fail(msg)
+
+
+# ── Engine-level listener hygiene (D14-B phase 2, c44) ──────────────────────
+
+
+class TestEngineConnectListenerHygiene:
+    """The SQLite PRAGMA hook must not follow apps around.
+
+    ``app.py`` listens on the global ``Engine`` CLASS for 'connect'. That
+    listener therefore fires for every connection of every engine in the
+    process, not just the app that registered it. It used to be registered
+    inside the app factory and gated on the enclosing app's
+    SQLALCHEMY_DATABASE_URI, which meant two things went wrong at once:
+    every ``create_app()`` leaked another permanent listener, and a
+    SQLite-backed app's listener answered "is this SQLite?" for connections
+    belonging to a PostgreSQL app. The result was
+    ``syntax error at or near "PRAGMA"`` on PG. It accounted for all 1,758
+    divergences in the first full PG run of the unit suite.
+
+    These tests are cheap and need no database.
+    """
+
+    def test_listener_registered_once_regardless_of_app_count(self):
+
+
+        import app as app_module
+
+        # Build several apps first: the leak this guards against only shows
+        # up once more than one app exists in the process.
+        for _ in range(3):
+            try:
+                app_module.create_app()
+            except Exception:
+                # A build failure is a different test's problem; the listener
+                # is registered at import time either way.
+                pass
+
+        # 'connect' is a PoolEvents event; listening on Engine routes it to
+        # the pool class hierarchy. Count our listener at the base class.
+        from sqlalchemy.pool import Pool
+        clslevel = Pool.dispatch.connect._clslevel
+        mine = [f for f in clslevel.get(Pool, ())
+                if getattr(f, '__name__', '') == '_set_sqlite_pragma']
+        assert len(mine) == 1, (
+            f'expected exactly one _set_sqlite_pragma listener on the global '
+            f'Engine class, found {len(mine)}. Registering it inside '
+            f'create_app() leaks one listener per app, and each one decides '
+            f'what to run from its own app config rather than from the '
+            f'connection being opened.'
+        )
+        assert app_module._set_sqlite_pragma is not None
+
+    def test_pragma_decision_comes_from_the_connection_not_an_app(self):
+        """A non-sqlite DBAPI connection must be left alone.
+
+        Drive the listener directly with a fake connection object whose
+        module is not sqlite3. If the guard consults anything other than the
+        connection, this blows up or wrongly issues a PRAGMA.
+        """
+        from app import _set_sqlite_pragma
+
+        class _FakeCursor:
+            executed = []
+
+            def execute(self, sql):
+                _FakeCursor.executed.append(sql)
+
+            def close(self):
+                pass
+
+        class _FakePGConnection:
+            # __module__ of a real psycopg2 connection is 'psycopg2.extensions'
+            def cursor(self):
+                return _FakeCursor()
+
+        _FakePGConnection.__module__ = 'psycopg2.extensions'
+        _set_sqlite_pragma(_FakePGConnection(), None)
+        assert _FakeCursor.executed == [], (
+            f'the connect listener issued {_FakeCursor.executed} at a '
+            f'non-sqlite connection'
+        )
+
+        class _FakeSQLiteConnection:
+            def cursor(self):
+                return _FakeCursor()
+
+        _FakeSQLiteConnection.__module__ = 'sqlite3'
+        _set_sqlite_pragma(_FakeSQLiteConnection(), None)
+        assert _FakeCursor.executed == ['PRAGMA foreign_keys=ON'], (
+            f'sqlite connections must still get FK enforcement; got '
+            f'{_FakeCursor.executed}. Silently dropping this is worse than '
+            f'the bug it replaced.'
+        )

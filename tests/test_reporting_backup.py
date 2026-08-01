@@ -63,3 +63,54 @@ def test_submit_database_backup_job_is_tournament_bound(monkeypatch):
     assert captured['args'] == ('sqlite:///proam.db', 42, '/instance')
     assert captured['metadata'] == {'tournament_id': 42, 'kind': 'backup'}
     assert captured['kwargs'] == {}
+
+
+def test_restore_refuses_on_non_sqlite_engines(app, db_session, auth_client, monkeypatch):
+    """Pin the production gap: restore is a no-op on PostgreSQL.
+
+    Railway production runs PostgreSQL. `restore_database` in
+    routes/reporting.py checks the URI prefix and, on anything that is not
+    sqlite:///, flashes a warning and redirects without reading the upload.
+    The backup half is the same story one layer down
+    (`sqlite_backup_download_plan` returns reason='unsupported').
+
+    So the disaster-recovery path advertised in the admin UI does nothing in
+    the environment that actually holds the real data, and the failure is
+    silent: no exception, no 'database_restore_failed' audit row, just a
+    warning flash on a redirect.
+
+    This test does not assert that the behaviour is correct. It asserts that
+    it is what the code does, so that fixing it is a visible, deliberate
+    change rather than an accident. Filed as a production finding in
+    PROAM_2026_C44; not fixed here because backup/restore against a managed
+    PostgreSQL instance is a design decision, not a patch.
+    """
+    import io
+
+    from models.audit_log import AuditLog
+    from tests.conftest import make_tournament
+
+    tournament = make_tournament(db_session)
+    db_session.commit()
+
+    monkeypatch.setitem(
+        app.config, 'SQLALCHEMY_DATABASE_URI', 'postgresql://proam@localhost/whatever')
+
+    response = auth_client.post(
+        f'/reporting/{tournament.id}/restore',
+        data={'backup_file': (io.BytesIO(b'SQLite format 3\x00payload'), 'x.db')},
+        content_type='multipart/form-data',
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    failures = (
+        AuditLog.query
+        .filter_by(action='database_restore_failed', entity_id=tournament.id)
+        .count()
+    )
+    assert failures == 0, (
+        'restore now reaches its failure path on PostgreSQL. If that is '
+        'intentional, the gap filed in PROAM_2026_C44 is closed and this '
+        'guard should be replaced with a real restore test.'
+    )

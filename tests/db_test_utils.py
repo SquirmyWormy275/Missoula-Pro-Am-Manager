@@ -191,3 +191,26 @@ def create_test_app():
             os.environ.pop('DATABASE_URL', None)
         else:
             os.environ['DATABASE_URL'] = old_db_url
+
+
+def skip_unless_sqlite(app, subject):
+    """Skip a test whose subject is a SQLite-only code path.
+
+    The decision is made from the app in front of us, not from the
+    PROAM_UNIT_PG env var, for the same reason `_set_sqlite_pragma` in
+    app.py decides from the connection: an env var describes what the
+    runner intended, the URI describes what the test actually got.
+
+    `subject` names the production code path, not the test, so the skip
+    line in the pytest report reads as a statement about the codebase.
+    Every use of this helper is a place where production behaviour differs
+    by engine, and Railway production runs PostgreSQL. Treat a new call
+    site as a finding, not as a way to quiet a red test.
+    """
+    import pytest
+    uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    if not uri.startswith('sqlite'):
+        pytest.skip(
+            f'{subject} is implemented for SQLite only; this app is on '
+            f'{uri.split(":", 1)[0]}. See PROAM_2026_C44 restore gap.'
+        )

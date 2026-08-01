@@ -10,7 +10,7 @@ import tempfile
 
 import pytest
 
-from tests.db_test_utils import create_test_app
+from tests.db_test_utils import create_test_app, skip_unless_sqlite
 
 
 @pytest.fixture()
@@ -178,6 +178,13 @@ def test_heat_generation_rejects_zero_max_stands(app):
 
 
 def test_restore_rejects_schema_mismatch(app, admin_client):
+    # D14-B: the restore route refuses outright on any non-SQLite engine
+    # (routes/reporting.py), so on the Postgres twin this posts a file the
+    # route never opens and lands on the ordinary tournament page. The
+    # schema-mismatch guard below is real, it just only exists on one
+    # engine. The production consequence of that is pinned separately by
+    # test_restore_refuses_on_non_sqlite_engines in test_reporting_backup.py.
+    skip_unless_sqlite(app, 'database restore')
     tournament_id = app.config['_FIX_TOURNAMENT_ID']
     fd, bad_restore = tempfile.mkstemp(
         prefix='remedial-restore-',

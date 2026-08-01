@@ -202,6 +202,33 @@ def _print_startup_error_banner(error: BaseException) -> None:
     print('', file=_sys.stderr, flush=True)
 
 
+@sa_event.listens_for(Engine, 'connect')
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    """Turn on SQLite foreign key enforcement, which is off by default.
+
+    Registered ONCE at import, and the decision is made from the connection
+    being opened rather than from any app's config. Both of those matter.
+
+    This listener binds to the global ``Engine`` CLASS, so it fires for every
+    connection of every engine in the process. It used to be registered
+    inside the app factory, guarded by ``app.config['SQLALCHEMY_DATABASE_URI']``
+    from the enclosing app. That meant each ``create_app()`` call left another
+    permanent listener behind, and each listener answered "is this SQLite?"
+    by consulting ITS OWN app rather than the connection in front of it. In
+    any process that builds more than one app, a SQLite-backed app's listener
+    would fire ``PRAGMA foreign_keys=ON`` at a PostgreSQL connection.
+
+    Found by D14-B phase 2 (c44): it accounted for all 1,758 divergences
+    between the SQLite and PostgreSQL runs of the unit suite. Production only
+    builds one app, so the bug stayed invisible there.
+    """
+    if type(dbapi_connection).__module__.split('.')[0] != 'sqlite3':
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute('PRAGMA foreign_keys=ON')
+    cursor.close()
+
+
 def create_app():
     """Create and configure the Flask application."""
     try:
@@ -374,12 +401,10 @@ def _create_app_inner():
         _init_limiter(app)
         _init_write_limiter(app)
 
-    @sa_event.listens_for(Engine, 'connect')
-    def _set_sqlite_pragma(dbapi_connection, connection_record):
-        if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite'):
-            cursor = dbapi_connection.cursor()
-            cursor.execute('PRAGMA foreign_keys=ON')
-            cursor.close()
+    # SQLite FK enforcement lives at module scope now; see _set_sqlite_pragma
+    # defined above create_app(). Registering it here bound one listener per
+    # app to the global Engine class and let one app's config decide what ran
+    # on another app's connection.
 
     # Service worker must be served from root scope, not /static/
     @app.route('/sw.js')

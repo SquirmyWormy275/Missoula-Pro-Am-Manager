@@ -224,8 +224,18 @@ class TestConfiguration:
 
         Also: on Windows the temp DB file remains locked by SQLite until the
         engine disposes, so we dispose explicitly before unlinking.
+
+        D14-B: this pins the SQLite branch of the helper specifically, so it
+        clears PROAM_UNIT_PG as well. On the Postgres branch there is no temp
+        file, the URI is postgresql://, and upgrade() runs once per
+        interpreter while building the shared template rather than on every
+        create_test_app() call, so none of the assertions below apply. The
+        Postgres branch does build its template from this same migrations
+        directory (see `_ensure_pg_template`), but that is not asserted here:
+        forcing a template rebuild would cost ~30s on every run.
         """
         monkeypatch.delenv('TEST_USE_CREATE_ALL', raising=False)
+        monkeypatch.delenv('PROAM_UNIT_PG', raising=False)
         from tests import db_test_utils
 
         captured: dict[str, object] = {}

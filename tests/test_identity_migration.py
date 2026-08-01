@@ -24,8 +24,6 @@ Three things are pinned here, all of which a future change could break silently:
    whole point of the phase, so it gets a direct assertion rather than being
    implied by the schema.
 """
-import re
-
 import pytest
 import sqlalchemy as sa
 
@@ -35,51 +33,53 @@ from services.entity_key import COLLEGE, PRO, EntityKey, resolve_uid, resolve_ui
 from tests.conftest import make_college_competitor, make_pro_competitor, make_team, make_tournament
 
 
-def _table_sql(session, table_name):
-    row = session.execute(
-        sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:n"),
-        {'n': table_name},
-    ).first()
-    assert row is not None, f'table {table_name} not found'
-    return row[0]
+def _inspector(session):
+    """Dialect-neutral schema reflection.
+
+    These guards used to read raw DDL out of `sqlite_master` and regex the
+    constraint names out of the text. That worked, but it was SQLite-only, so
+    the whole class silently became unrunnable the moment the suite gained a
+    PostgreSQL backend (D14-B). The inspector answers the same questions on
+    both engines, and it reads the constraints the database actually holds
+    rather than the string it happened to be created with, which is a
+    stronger claim than the original made.
+    """
+    return sa.inspect(session.get_bind())
 
 
-def _named_checks(sql):
-    return set(re.findall(r'CONSTRAINT (\w+) CHECK', sql))
-
-
-def _check_occurrences(sql):
-    return re.findall(r'CONSTRAINT (\w+) CHECK', sql)
+def _check_names(session, table_name):
+    """Names of CHECK constraints on a table, one entry per constraint."""
+    insp = _inspector(session)
+    assert table_name in insp.get_table_names(), f'table {table_name} not found'
+    return sorted(c['name'] for c in insp.get_check_constraints(table_name))
 
 
 class TestCheckConstraintsSurviveBatchRebuild:
     """The batch rebuild must neither drop nor duplicate CHECK constraints."""
 
     def test_college_competitors_has_exactly_three_checks(self, db_session):
-        sql = _table_sql(db_session, 'college_competitors')
-        occurrences = _check_occurrences(sql)
-        assert len(occurrences) == 3, (
+        names = _check_names(db_session, 'college_competitors')
+        assert len(names) == 3, (
             f'expected exactly 3 CHECK constraints on college_competitors, '
-            f'got {len(occurrences)}: {occurrences}. '
+            f'got {len(names)}: {names}. '
             f'More than 3 means something is emitting them twice (batch '
             f'reflection plus an explicit table_args). Fewer than 3 means the '
             f'batch rebuild dropped them and the database is no longer '
             f'enforcing gender, status, or non-negative points.'
         )
-        assert _named_checks(sql) == {
+        assert set(names) == {
             'ck_college_competitors_gender_valid',
             'ck_college_competitors_status_valid',
             'ck_college_competitors_points_nonnegative',
         }
 
     def test_pro_competitors_has_exactly_four_checks(self, db_session):
-        sql = _table_sql(db_session, 'pro_competitors')
-        occurrences = _check_occurrences(sql)
-        assert len(occurrences) == 4, (
+        names = _check_names(db_session, 'pro_competitors')
+        assert len(names) == 4, (
             f'expected exactly 4 CHECK constraints on pro_competitors, '
-            f'got {len(occurrences)}: {occurrences}'
+            f'got {len(names)}: {names}'
         )
-        assert _named_checks(sql) == {
+        assert set(names) == {
             'ck_pro_competitors_gender_valid',
             'ck_pro_competitors_status_valid',
             'ck_pro_competitors_earnings_nonnegative',
@@ -129,13 +129,19 @@ class TestCheckConstraintsSurviveBatchRebuild:
         db_session.rollback()
 
     def test_uid_constraints_landed(self, db_session):
+        insp = _inspector(db_session)
         for table in ('college_competitors', 'pro_competitors'):
-            sql = _table_sql(db_session, table)
-            assert f'uq_{table}_uid' in sql, f'{table} lost its uid UNIQUE constraint'
-            assert f'fk_{table}_uid' in sql, f'{table} lost its uid FOREIGN KEY'
-            assert re.search(r'\buid\b[^,]*NOT NULL', sql), (
-                f'{table}.uid is not NOT NULL'
+            uniques = {u['name'] for u in insp.get_unique_constraints(table)}
+            assert f'uq_{table}_uid' in uniques, (
+                f'{table} lost its uid UNIQUE constraint; have {sorted(uniques)}'
             )
+            fks = {f['name'] for f in insp.get_foreign_keys(table)}
+            assert f'fk_{table}_uid' in fks, (
+                f'{table} lost its uid FOREIGN KEY; have {sorted(map(str, fks))}'
+            )
+            uid_col = [c for c in insp.get_columns(table) if c['name'] == 'uid']
+            assert uid_col, f'{table} has no uid column at all'
+            assert uid_col[0]['nullable'] is False, f'{table}.uid is not NOT NULL'
 
 
 class TestIdentityAllocator:
@@ -278,8 +284,13 @@ class TestEventLogTable:
     """`tournament_event` is inert in this phase but must exist and constrain."""
 
     def test_table_exists_with_unique_seq(self, db_session):
-        sql = _table_sql(db_session, 'tournament_event')
-        assert 'uq_tournament_event_tournament_seq' in sql
+        insp = _inspector(db_session)
+        assert 'tournament_event' in insp.get_table_names()
+        uniques = {u['name'] for u in
+                   insp.get_unique_constraints('tournament_event')}
+        assert 'uq_tournament_event_tournament_seq' in uniques, (
+            f'have {sorted(uniques)}'
+        )
 
     def test_duplicate_seq_within_tournament_rejected(self, db_session):
         from models.tournament_event import TournamentEvent
