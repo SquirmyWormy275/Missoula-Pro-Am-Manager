@@ -43,6 +43,61 @@ Read-only and side effect free. It reports; it does not repair and it does not
 block. Wiring :func:`check_blob` into the write paths is a separate change
 that needs a decision on fail-closed versus log-and-continue, and that decision
 has not been made.
+
+Six stores are covered, enumerated in :func:`collect_sites`.
+
+What is deliberately NOT covered
+================================
+This list was produced by enumerating every column in ``information_schema``
+and classifying it, rather than by observing which columns happened to hold bad
+data. That distinction matters: three of the four uncovered stores below are
+invisible to any data-driven census, because their tables are empty in the 2026
+dump.
+
+``pro_event_ranks.competitor_id``
+    A bare int, no foreign key, no ``competitor_type`` sibling, pro implied by
+    the table name alone. Zero rows in 2026, but ``services/heat_generator.py``
+    reads it to order the snake draft. Live code against an empty table, not
+    dead code.
+
+``users.competitor_id`` / ``users.competitor_type``
+    The same column-discriminated shape as ``heat_assignments``, which *is*
+    covered. Null throughout the 2026 dump. Portal login linkage.
+
+``tournament_event.payload``
+    The event log. Empty table with no production writer today; only tests
+    construct ``TournamentEvent`` rows. It is the D12-C write target, so its
+    payloads will carry competitor ids and this module will have to follow.
+
+``audit_logs.entity_id`` where ``entity_type='pro_competitor'``
+    Three rows in 2026. Uncovered on purpose: audit logs are history, and a
+    reseed that rewrote them would be falsifying the record. A stale id in a
+    log entry was correct when it was written.
+
+Name-based references are a different problem
+    ``college_competitors.partners`` stores ``{event name: partner first
+    name}`` and ``pro_competitors.partners`` stores ``{event id: partner full
+    name}``, both free text, both already inconsistent in 2026 ("MARIA" and
+    "Maria" for the same person). Those references can dangle. They cannot be
+    cross-*kind* wrong, which is what this module is for.
+
+Two limits inside the stores that ARE covered
+=============================================
+:class:`_Pools` loads both competitor tables with **no tournament filter**, so
+an id belonging to another tournament's competitor of the same kind is judged
+``OK``. Zero such references exist in either mirror today, including the
+two-tournament one, but the check cannot catch one by construction. This is the
+cross-kind failure shape rotated one axis: a pool wider than the context
+implies.
+
+``heats.competitors`` and ``heats.stand_assignments`` get their kind from
+:func:`kind_for_path` with an **empty path**, so ``event_type`` decides alone
+and :data:`_PATH_RULES` cannot fire. For the one event type known to lie, the
+Pro-Am Relay, this is unreachable rather than fixed: the relay's only Heat is a
+rendering placeholder that ``flight_builder`` creates with
+``set_competitors([])``, and heat moves are intra-event. Give the relay real
+heat contents and this store starts reading college members against the pro
+pool.
 """
 import json
 from dataclasses import dataclass
@@ -354,7 +409,13 @@ class _Pools:
 
 
 def collect_sites(session):
-    """Every competitor reference in the database, from all five stores.
+    """Every competitor reference in the database, from all six stores.
+
+    ``heat_assignments``, ``event_results``, ``heats.competitors``,
+    ``heats.stand_assignments``, ``events.payouts``, ``events.event_state``.
+    Four tables, six stores, because ``heats`` and ``events`` each carry two
+    independent reference columns. The module docstring lists the stores that
+    exist and are NOT walked here, and why.
 
     The two column-discriminated stores come first because their ``kind`` is
     stored rather than inferred, which makes them the trustworthy half of any

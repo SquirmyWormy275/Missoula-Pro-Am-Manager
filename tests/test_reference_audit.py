@@ -435,13 +435,60 @@ class TestClassification:
 
 
 class TestStoreCoverage:
-    """All five stores are walked, not just the two that are currently dirty.
+    """All six stores are walked, not just the two that are currently dirty.
 
     On the production dump every finding sits in events.payouts and
     events.event_state, and heat_assignments, event_results and the heat JSON
     are clean. That is a fact about the reseed's coverage, not a guarantee
     about those stores, so they stay in scope.
     """
+
+    # Four tables, six stores: heats and events each carry two independent
+    # reference columns. Named here rather than derived, so that adding a store
+    # to collect_sites is a deliberate act with a docstring edit attached.
+    DOCUMENTED_STORES = {
+        'heat_assignments',
+        'event_results',
+        'heats.competitors',
+        'heats.stand_assignments',
+        'events.payouts',
+        'events.event_state',
+    }
+
+    def test_the_walked_stores_are_exactly_the_documented_ones(self, db_session):
+        """Pin the store set in both directions.
+
+        A store that stops being walked fails this, and so does one that starts
+        being walked without the module docstring following. That docstring also
+        carries the list of stores which exist in the schema and are NOT walked
+        (``pro_event_ranks``, ``users``, ``tournament_event``, ``audit_logs``).
+        That list came from enumerating information_schema, and three of those
+        four tables are empty in the 2026 dump, so no amount of staring at
+        production data would have produced it.
+        """
+        from models.event import EventResult
+        from models.heat import HeatAssignment
+
+        tournament = make_tournament(db_session)
+        event = make_event(db_session, tournament, 'Underhand',
+                           event_type='pro')
+        heat = make_heat(db_session, event, competitors=[901],
+                         stand_assignments={'902': 1})
+        db_session.add(HeatAssignment(
+            heat_id=heat.id, competitor_id=903, competitor_type=PRO,
+            stand_number=1))
+        db_session.add(EventResult(
+            event_id=event.id, competitor_id=904, competitor_type=PRO,
+            competitor_name='Ghost Four', status='pending',
+            points_awarded=0, payout_amount=0.0))
+        event.payouts = json.dumps(
+            {'bracket': {'winners': [[{'competitor1': 905}]]}})
+        event.event_state = json.dumps(
+            {'teams': [{'id': 906, 'name': 'Ghost Six'}]})
+        db_session.flush()
+
+        stores = {f.site.store for f in audit(db_session)}
+        assert stores == self.DOCUMENTED_STORES
 
     def test_heat_json_references_are_audited(self, db_session):
         tournament = make_tournament(db_session)
