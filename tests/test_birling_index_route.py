@@ -23,7 +23,12 @@ import uuid
 
 import pytest
 
-from tests.conftest import make_event, make_tournament
+from tests.conftest import (
+    make_college_competitor,
+    make_event,
+    make_team,
+    make_tournament,
+)
 
 
 @pytest.fixture()
@@ -54,8 +59,25 @@ def _make_birling(session, tournament, gender):
     )
 
 
-def _seed_bracket(event):
+def _real_pair(session, tournament):
+    """Two live college competitors for the bracket blob to cite.
+
+    This used to be the literal ids 1 and 2, which existed in no table.
+    ``services/reference_gate.py`` refuses a save whose references resolve to
+    nobody, and it is right to: a route test that renders a bracket of
+    competitors who do not exist was asserting against a shape the application
+    can no longer produce.
+    """
+    team = make_team(session, tournament, code=f"UM-{uuid.uuid4().hex[:4]}")
+    alice = make_college_competitor(session, tournament, team, name="Alice")
+    bob = make_college_competitor(session, tournament, team, name="Bob")
+    session.flush()
+    return alice.id, bob.id
+
+
+def _seed_bracket(session, tournament, event):
     """Minimal generated-bracket payload (no matches played)."""
+    first, second = _real_pair(session, tournament)
     event.payouts = json.dumps(
         {
             "bracket": {
@@ -64,8 +86,8 @@ def _seed_bracket(event):
                         {
                             "match_id": "W1_1",
                             "round": "winners_1",
-                            "competitor1": 1,
-                            "competitor2": 2,
+                            "competitor1": first,
+                            "competitor2": second,
                             "winner": None,
                             "loser": None,
                             "falls": [],
@@ -94,8 +116,9 @@ def _seed_bracket(event):
                     "needed": False,
                 },
             },
-            "competitors": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}],
-            "seeding": [1, 2],
+            "competitors": [{"id": first, "name": "Alice"},
+                            {"id": second, "name": "Bob"}],
+            "seeding": [first, second],
             "placements": {},
         }
     )
@@ -135,7 +158,7 @@ class TestBirlingIndex:
         t = make_tournament(db_session)
         men = _make_birling(db_session, t, gender="M")
         _make_birling(db_session, t, gender="F")
-        _seed_bracket(men)
+        _seed_bracket(db_session, t, men)
         db_session.flush()
 
         resp = bi_auth_client.get(f"/scheduling/{t.id}/birling")

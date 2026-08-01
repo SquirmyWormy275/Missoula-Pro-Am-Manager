@@ -19,7 +19,12 @@ import uuid
 
 import pytest
 
-from tests.conftest import make_event, make_tournament
+from tests.conftest import (
+    make_college_competitor,
+    make_event,
+    make_team,
+    make_tournament,
+)
 
 
 @pytest.fixture()
@@ -52,9 +57,26 @@ def _make_bracket_event(session, tournament, name="Birling", gender="M"):
     )
 
 
-def _seed_generated_bracket(event):
+def _real_pair(session, tournament):
+    """Two live college competitors for the bracket blob to cite.
+
+    This used to be the literal ids 1 and 2, which existed in no table.
+    ``services/reference_gate.py`` refuses a save whose references resolve to
+    nobody, and it is right to: a print test whose bracket holds competitors
+    who do not exist was asserting against a shape the application can no
+    longer produce.
+    """
+    team = make_team(session, tournament, code=f"UM-{uuid.uuid4().hex[:4]}")
+    alice = make_college_competitor(session, tournament, team, name="Alice")
+    bob = make_college_competitor(session, tournament, team, name="Bob")
+    session.flush()
+    return alice.id, bob.id
+
+
+def _seed_generated_bracket(session, tournament, event):
     """Give `event` a minimal generated-bracket payload so
     build_birling_print_context returns a real context."""
+    first, second = _real_pair(session, tournament)
     payload = {
         "bracket": {
             "winners": [
@@ -62,8 +84,8 @@ def _seed_generated_bracket(event):
                     {
                         "match_id": "W1_1",
                         "round": "winners_1",
-                        "competitor1": 1,
-                        "competitor2": 2,
+                        "competitor1": first,
+                        "competitor2": second,
                         "winner": None,
                         "loser": None,
                         "falls": [],
@@ -105,10 +127,10 @@ def _seed_generated_bracket(event):
             },
         },
         "competitors": [
-            {"id": 1, "name": "Alice"},
-            {"id": 2, "name": "Bob"},
+            {"id": first, "name": "Alice"},
+            {"id": second, "name": "Bob"},
         ],
-        "seeding": [1, 2],
+        "seeding": [first, second],
         "placements": {},
     }
     event.payouts = json.dumps(payload)
@@ -143,7 +165,7 @@ class TestPerEventPrint:
     ):
         t = make_tournament(db_session)
         ev = _make_bracket_event(db_session, t)
-        _seed_generated_bracket(ev)
+        _seed_generated_bracket(db_session, t, ev)
         db_session.flush()
 
         resp = bp_auth_client.get(
@@ -222,7 +244,7 @@ class TestPrintAll:
         t = make_tournament(db_session)
         men = _make_bracket_event(db_session, t, name="Birling", gender="M")
         _make_bracket_event(db_session, t, name="Birling", gender="F")
-        _seed_generated_bracket(men)
+        _seed_generated_bracket(db_session, t, men)
         db_session.flush()
 
         resp = bp_auth_client.get(f"/scheduling/{t.id}/birling/print-all")
@@ -237,8 +259,8 @@ class TestPrintAll:
         t = make_tournament(db_session)
         men = _make_bracket_event(db_session, t, name="Birling", gender="M")
         women = _make_bracket_event(db_session, t, name="Birling", gender="F")
-        _seed_generated_bracket(men)
-        _seed_generated_bracket(women)
+        _seed_generated_bracket(db_session, t, men)
+        _seed_generated_bracket(db_session, t, women)
         db_session.flush()
 
         resp = bp_auth_client.get(f"/scheduling/{t.id}/birling/print-all")
@@ -289,7 +311,7 @@ class TestPrintAll:
         t = make_tournament(db_session)
         men = _make_bracket_event(db_session, t, name="Birling", gender="M")
         women = _make_bracket_event(db_session, t, name="Birling", gender="F")
-        _seed_generated_bracket(men)
+        _seed_generated_bracket(db_session, t, men)
         db_session.flush()
         women_id = women.id
 

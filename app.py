@@ -26,6 +26,7 @@ from sqlalchemy.engine import Engine
 import config
 import strings as text
 from database import db, init_db
+from services import reference_gate
 from services.background_jobs import configure as configure_jobs
 from services.logging_setup import (
     configure_error_monitoring,
@@ -277,6 +278,13 @@ def _create_app_inner():
 
     # Initialize database
     init_db(app)
+
+    # Refuse writes that introduce a reference to the wrong competitor. Armed
+    # on the session, not at the eight places that assign to Event.payouts or
+    # Event.event_state: eight call sites is eight chances to add a ninth and
+    # forget, which is the shape of the failure that produced the era-1 ghosts
+    # in the first place. See services/reference_gate.py.
+    reference_gate.install(db.session)
 
     # Initialize CSRF protection
     csrf.init_app(app)
