@@ -244,13 +244,28 @@ def generate_event_heats(event: Event) -> int:
     stand_numbers = _stand_numbers_for_event(event, max_per_heat, stand_config)
     is_partnered = bool(getattr(event, 'is_partnered', False))
     created_heats = []
+
+    # 'pro' or 'college'.  Hoisted above the build loop because each heat now
+    # writes its roster once, here, instead of writing JSON here and having a
+    # second pass copy it into the rows after the flush.
+    comp_type = event.event_type
     for heat_num, heat_competitors in enumerate(heats, start=1):
         heat = Heat(
             event_id=event.id,
             heat_number=heat_num,
             run_number=1
         )
-        heat.set_competitors([c['id'] for c in heat_competitors])
+        heat_comp_ids = [c['id'] for c in heat_competitors]
+
+        # Stands accumulate in a plain dict and are written once, with the
+        # roster, at the bottom of this block.  They used to be pushed into the
+        # heat one at a time.  That was free while `set_stand_assignment` only
+        # edited a JSON blob, and stops being free the moment a roster write
+        # touches the `heat_assignments` rows: a six-competitor heat would tear
+        # its roster down and rebuild it seven times, once per stand, and
+        # resolve every competitor's uid again on each pass.  Nothing here needs
+        # the intermediate states, so nothing here should be paying for them.
+        stands = {}
 
         # Assign stands.  For partnered events each PAIR shares one stand —
         # both partners receive the same stand number.  Non-partnered events
@@ -261,7 +276,7 @@ def generate_event_heats(event: Event) -> int:
             for unit in pair_units:
                 stand_num = stand_numbers[stand_idx] if stand_idx < len(stand_numbers) else stand_idx + 1
                 for comp in unit:
-                    heat.set_stand_assignment(comp['id'], stand_num)
+                    stands[comp['id']] = stand_num
                 stand_idx += 1
         elif event.stand_type == 'springboard':
             # Phase 5 rule: Dummy 4 is the LH-configured physical dummy. If any
@@ -313,7 +328,7 @@ def generate_event_heats(event: Event) -> int:
                         'lh_names': [c.get('name', '') for c in lh_comps_in_heat],
                     })
                 # LH cutter goes on the left-hand dummy.
-                heat.set_stand_assignment(lh_comp['id'], LH_SPRINGBOARD_STAND)
+                stands[lh_comp['id']] = LH_SPRINGBOARD_STAND
                 # Everyone else fills the event's other stands in order. Order
                 # is preserved rather than sorted so the assignment stays the
                 # same as it was for four-stand events, which is the case the
@@ -336,19 +351,20 @@ def generate_event_heats(event: Event) -> int:
                         # had already handed out.
                         stand_num = (
                             overflow_base + 1 + (rh_stand_idx - len(rh_stands)))
-                    heat.set_stand_assignment(comp['id'], stand_num)
+                    stands[comp['id']] = stand_num
                     rh_stand_idx += 1
             else:
                 # No LH cutter — plain per-index assignment (stand 4 may still
                 # be used by whoever lands in index 3 of heat_competitors).
                 for i, comp in enumerate(heat_competitors):
                     stand_num = stand_numbers[i] if i < len(stand_numbers) else i + 1
-                    heat.set_stand_assignment(comp['id'], stand_num)
+                    stands[comp['id']] = stand_num
         else:
             for i, comp in enumerate(heat_competitors):
                 stand_num = stand_numbers[i] if i < len(stand_numbers) else i + 1
-                heat.set_stand_assignment(comp['id'], stand_num)
+                stands[comp['id']] = stand_num
 
+        heat.set_roster(comp_type, heat_comp_ids, stands)
         db.session.add(heat)
         created_heats.append(heat)
 
@@ -360,7 +376,8 @@ def generate_event_heats(event: Event) -> int:
                 heat_number=heat_num,
                 run_number=2
             )
-            heat.set_competitors([c['id'] for c in heat_competitors])
+            heat_comp_ids = [c['id'] for c in heat_competitors]
+            stands = {}
 
             # Swap stand assignments for run 2 (e.g., Course 1 <-> Course 2).
             # Reverse only the stands actually used by THIS heat, not the full list.
@@ -371,28 +388,33 @@ def generate_event_heats(event: Event) -> int:
                 for unit_idx, unit in enumerate(pair_units):
                     s = run2_stands[unit_idx] if unit_idx < len(run2_stands) else unit_idx + 1
                     for comp in unit:
-                        heat.set_stand_assignment(comp['id'], s)
+                        stands[comp['id']] = s
+                heat.set_roster(comp_type, heat_comp_ids, stands)
                 db.session.add(heat)
                 created_heats.append(heat)
                 continue
             heat_size = len(heat_competitors)
             run2_stands = list(reversed(stand_numbers[:heat_size]))
             for i, comp in enumerate(heat_competitors):
-                heat.set_stand_assignment(comp['id'], run2_stands[i])
+                stands[comp['id']] = run2_stands[i]
 
+            heat.set_roster(comp_type, heat_comp_ids, stands)
             db.session.add(heat)
             created_heats.append(heat)
 
     event.status = 'in_progress'
     db.session.flush()
 
-    comp_type = event.event_type  # 'pro' or 'college'
-    for heat in created_heats:
-        heat.sync_assignments(comp_type)
+    # The `for heat in created_heats: heat.sync_assignments(comp_type)` pass
+    # that used to sit here is gone.  Every heat above already wrote its rows
+    # through `set_roster` before it was added to the session, so this loop had
+    # nothing left to copy: it re-read the JSON each heat had just been rendered
+    # from and handed it straight back, for one uid-resolution query per heat.
+    # The flush above is what puts the rows in the table, and it is still here.
 
     # Stock Saw: alternate solo-heat stands across 7 and 8 so consecutive
-    # solos don't pile onto the same physical stand. Must run after
-    # sync_assignments so the HeatAssignment rows reflect the final layout.
+    # solos don't pile onto the same physical stand. Must run after the flush
+    # above so the HeatAssignment rows reflect the final layout.
     rebalance_stock_saw_solo_stands(event)
 
     # Promote any fallback gear-sharing violations recorded by the snake-draft
@@ -1261,7 +1283,12 @@ def rebalance_stock_saw_solo_stands(event: Event) -> int:
         # past stand assignments. (Codex P2 finding, V2.14.15.)
         is_locked = (getattr(heat, 'status', None) or '').lower() == 'completed'
 
+        # Edited in place and written back once at the bottom of the loop body,
+        # rather than pushed into the heat a stand at a time.  Same reason as
+        # the build loop: a roster write is a rows write now, and this branch
+        # can make two of them for one heat.
         assignments = heat.get_stand_assignments()
+        heat_changed = False
 
         if len(comp_ids) == 1:
             sole_id = comp_ids[0]
@@ -1270,8 +1297,8 @@ def rebalance_stock_saw_solo_stands(event: Event) -> int:
             except (TypeError, ValueError):
                 current_stand = 0
             if not is_locked and current_stand != next_solo_stand:
-                heat.set_stand_assignment(sole_id, next_solo_stand)
-                changed_heats.add(heat.id)
+                assignments[str(sole_id)] = next_solo_stand
+                heat_changed = True
             next_solo_stand = 8 if next_solo_stand == 7 else 7
         else:
             # Pair (or larger): stock saw only has 2 stands, so the first two
@@ -1284,14 +1311,18 @@ def rebalance_stock_saw_solo_stands(event: Event) -> int:
                 except (TypeError, ValueError):
                     current_stand = 0
                 if not is_locked and current_stand != desired[i]:
-                    heat.set_stand_assignment(cid, desired[i])
-                    changed_heats.add(heat.id)
+                    assignments[str(cid)] = desired[i]
+                    heat_changed = True
+
+        if heat_changed:
+            heat.set_roster(event.event_type, comp_ids, assignments)
+            changed_heats.add(heat.id)
 
     if changed_heats:
+        # The rows were written above.  This flush is what sends them, and the
+        # `sync_assignments` pass that used to follow it is gone for the same
+        # reason it went from the build loop: there is nothing left to copy.
         db.session.flush()
-        for heat in heats:
-            if heat.id in changed_heats:
-                heat.sync_assignments(event.event_type)
 
     return len(changed_heats)
 

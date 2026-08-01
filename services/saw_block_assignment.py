@@ -26,6 +26,7 @@ heat composition.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from database import db
@@ -114,9 +115,8 @@ def remap_heat_to_block(heat: Heat, target_block: list[int]) -> bool:
       3. Build a slot map: unique[i] -> target_block[i].
       4. If the mapping is an identity (heat already on target block),
          return False — no write.
-      5. Apply the slot map via heat.set_stand_assignment().
-      6. Call heat.sync_assignments() with the event's comp type to
-         rebuild HeatAssignment rows.
+      5. Apply the slot map to the loaded dict.
+      6. Write the roster once, stands included, via heat.set_roster().
       7. Return True.
 
     Returns:
@@ -167,12 +167,21 @@ def remap_heat_to_block(heat: Heat, target_block: list[int]) -> bool:
             comp_id_int = int(comp_id_str)
         except (TypeError, ValueError):
             continue
-        heat.set_stand_assignment(comp_id_int, new_stand)
+        # Into the loaded dict, not through the heat.  A saw heat holds up to
+        # four competitors and the block remap moves all of them, so the
+        # per-call version rebuilt this heat's assignment rows four times to
+        # reach one final layout.
+        assignments[str(comp_id_int)] = new_stand
 
     event = heat.event
     if event and event.event_type in ("college", "pro"):
-        heat.sync_assignments(event.event_type)
+        heat.set_roster(event.event_type, heat.get_competitors(), assignments)
     else:
+        # No usable competitor type means the rows cannot be written at all,
+        # because an assignment row's uid is resolved against one pool. The
+        # stands still go into the column so the remap is not silently lost,
+        # which is what this branch has always done.
+        heat.stand_assignments = json.dumps(assignments)
         logger.warning(
             "saw_block: heat %s has unexpected event_type=%r; "
             "stand_assignments written but HeatAssignment rows not synced",

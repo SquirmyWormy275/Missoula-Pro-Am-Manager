@@ -369,15 +369,17 @@ def _prepare_partnered_axe_show_heats(event: Event | None) -> list[Heat]:
             heat_number=idx,
             run_number=1
         )
-        heat.set_competitors(comp_ids)
-        for comp_id in comp_ids:
-            heat.set_stand_assignment(comp_id, 1)
+        # One roster write per heat, stands included.  Both partners of a
+        # qualifier pair share stand 1, which is what the two-line version of
+        # this said and what this says.
+        heat.set_roster('pro', comp_ids, {cid: 1 for cid in comp_ids})
         db.session.add(heat)
         created.append(heat)
 
+    # The rows went on each heat's `assignments` before it was added, so this
+    # flush inserts heats and rows together.  The `sync_assignments` pass that
+    # used to follow it had nothing left to copy.
     db.session.flush()
-    for heat in created:
-        heat.sync_assignments('pro')
     return created
 
 
@@ -946,10 +948,15 @@ def optimize_flight_for_ability(flight: Flight, event: Event):
             group = reordered[idx]
         else:
             group = []
-        heat.set_competitors(group)
-        for position, comp_id in enumerate(group, start=1):
-            heat.set_stand_assignment(comp_id, position)
-        heat.sync_assignments('pro')
+        # Stand number is the competitor's position in the reordered group.
+        # Written with the roster in one call: these are existing heat rows, so
+        # a stand-at-a-time version would rebuild each heat's assignment rows
+        # once per competitor and flush between them.
+        heat.set_roster(
+            'pro', group,
+            {comp_id: position
+             for position, comp_id in enumerate(group, start=1)},
+        )
 
 
 def insert_axe_throw_finals(tournament: Tournament, top_teams: list):

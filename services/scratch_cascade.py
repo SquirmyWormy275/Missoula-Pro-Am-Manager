@@ -498,15 +498,14 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                     "auto_completed": False,
                 }
                 heat_snapshot.append(_h_snap)
-                heat.remove_competitor(competitor.id)
-                assignments = heat.get_stand_assignments()
-                if str(competitor.id) in assignments:
-                    del assignments[str(competitor.id)]
-                    heat.stand_assignments = json.dumps(assignments)
-                # Keep HeatAssignment rows aligned with the JSON source-of-truth.
-                # Without this, validation/judge sheets show the scratched competitor
-                # until someone manually clicks the heat-sync recovery button.
-                heat.sync_assignments(heat_type)
+                # One roster write, and the mirror of what reverse_cascade
+                # does to put him back.  Was a `remove_competitor`, a
+                # hand-rolled delete out of the stand dict, and a
+                # `sync_assignments` to copy the pair into the rows.
+                comp_ids.remove(competitor.id)
+                assignments = dict(_pre_assignments)
+                assignments.pop(str(competitor.id), None)
+                heat.set_roster(heat_type, comp_ids, assignments)
                 # A heat this scratch just emptied is done, and closing it is
                 # not cosmetic.  routes/scheduling/heats.py scratch_competitor
                 # already does exactly this for the other scratch entry point,
@@ -874,10 +873,10 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                     # Heat shrank since the scratch (another scratch, a move).
                     # Membership matters more than order; take the tail.
                     comp_ids.append(competitor_id)
-                heat.set_competitors(comp_ids)
+            stands = heat.get_stand_assignments()
             stand = h_snap.get("stand")
             if stand is not None:
-                heat.set_stand_assignment(competitor_id, stand)
+                stands[str(competitor_id)] = stand
             # Undo the auto-complete, and ONLY that.  The flag is the whole
             # point: a heat can also be 'completed' because the judge scored
             # the survivors after the scratch, and blindly writing the
@@ -889,10 +888,13 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
             # position None.
             if h_snap.get("auto_completed") and heat.status == "completed":
                 heat.status = h_snap.get("status") or "pending"
-            # Realign HeatAssignment rows with the JSON source of truth, exactly
-            # as the scratch side does.  Without it the judge sheet and the
-            # validation screen keep showing the pre-undo roster.
-            heat.sync_assignments(comp_type)
+            # One roster write, membership and stand together.  This used to
+            # be a `set_competitors`, then a `set_stand_assignment`, then a
+            # `sync_assignments` to copy the result into the rows.  Writing the
+            # rows directly is the same end state and does not pass through an
+            # intermediate roster that has the competitor back without his
+            # stand.
+            heat.set_roster(comp_type, comp_ids, stands)
             restored_event_ids.add(heat.event_id)
 
         # Mirror of the scratch-side rebalance.  It is not optional symmetry:

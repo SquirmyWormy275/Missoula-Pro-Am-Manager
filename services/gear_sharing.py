@@ -1821,25 +1821,32 @@ def fix_heat_gear_conflicts(tournament) -> dict:
 
                     target_ids = best_target.get_competitors()
 
-                    # Remove mover from source heat.
-                    heat.set_competitors([cid for cid in comp_ids if cid != mover.id])
+                    # Remove mover from source heat.  One roster write per
+                    # heat, membership and stands together, rather than a
+                    # `set_competitors`, a raw JSON stand write and a
+                    # `sync_assignments` per side.  The two heats cannot
+                    # collide with each other: the unique constraint is on
+                    # (heat_id, uid), so the source losing the mover and the
+                    # target gaining him are independent.
                     src_assignments = heat.get_stand_assignments()
                     src_assignments.pop(str(mover.id), None)
-                    heat.stand_assignments = json.dumps(src_assignments)
+                    heat.set_roster(
+                        'pro', [cid for cid in comp_ids if cid != mover.id],
+                        src_assignments,
+                    )
 
                     # Add mover to target heat.
-                    best_target.set_competitors(target_ids + [mover.id])
                     tgt_assignments = best_target.get_stand_assignments()
                     used_stands = {int(v) for v in tgt_assignments.values() if str(v).lstrip('-').isdigit()}
                     next_stand = 1
                     while next_stand in used_stands:
                         next_stand += 1
                     tgt_assignments[str(mover.id)] = next_stand
-                    best_target.stand_assignments = json.dumps(tgt_assignments)
+                    best_target.set_roster(
+                        'pro', target_ids + [mover.id], tgt_assignments,
+                    )
 
                     db.session.flush()
-                    heat.sync_assignments('pro')
-                    best_target.sync_assignments('pro')
 
                     fixed += 1
                     made_fix_this_pass = True

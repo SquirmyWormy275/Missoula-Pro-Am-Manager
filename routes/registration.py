@@ -1489,20 +1489,22 @@ def _remove_college_competitor_from_unfinished_heats(competitor_id: int, tournam
     for heat in heats:
         comp_ids = heat.get_competitors()
         if competitor_id in comp_ids:
-            heat.remove_competitor(competitor_id)
+            # One roster write.  This was a `remove_competitor`, then a
+            # hand-rolled delete out of the stand dict, then a
+            # `sync_assignments` to copy the pair into the rows; three writes
+            # to say the competitor is out of this heat.
+            comp_ids.remove(competitor_id)
             assignments = heat.get_stand_assignments()
-            if str(competitor_id) in assignments:
-                del assignments[str(competitor_id)]
-                heat.stand_assignments = json.dumps(assignments)
-            heat.sync_assignments('college')
+            assignments.pop(str(competitor_id), None)
+            heat.set_roster('college', comp_ids, assignments)
 
 
 def _remove_pro_competitor_from_unfinished_heats(competitor_id: int, tournament_id: int):
     """Remove a competitor from uncompleted pro heats and stand assignments.
 
-    Calls heat.sync_assignments after each mutation so HeatAssignment rows stay
-    aligned with the authoritative Heat.competitors JSON. See companion docstring
-    on the college variant above.
+    Writes the roster once per heat via heat.set_roster, which is what puts the
+    removal in the HeatAssignment rows. See companion docstring on the college
+    variant above.
     """
     heats = Heat.query.join(Event).filter(
         Event.tournament_id == tournament_id,
@@ -1514,12 +1516,11 @@ def _remove_pro_competitor_from_unfinished_heats(competitor_id: int, tournament_
     for heat in heats:
         comp_ids = heat.get_competitors()
         if competitor_id in comp_ids:
-            heat.remove_competitor(competitor_id)
+            # See the college variant above.
+            comp_ids.remove(competitor_id)
             assignments = heat.get_stand_assignments()
-            if str(competitor_id) in assignments:
-                del assignments[str(competitor_id)]
-                heat.stand_assignments = json.dumps(assignments)
-            heat.sync_assignments('pro')
+            assignments.pop(str(competitor_id), None)
+            heat.set_roster('pro', comp_ids, assignments)
 
 
 # ---------------------------------------------------------------------------
