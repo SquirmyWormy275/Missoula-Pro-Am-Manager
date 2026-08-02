@@ -131,6 +131,8 @@ def _seed_competitor_data(app):
         )
         _db.session.add(heat)
         _db.session.flush()
+        heat.set_roster('college', [pc.id], {str(pc.id): 1})
+        _db.session.flush()
 
     # Result for Bob
     res = EventResult.query.filter_by(event_id=evt.id, competitor_id=pc.id).first()

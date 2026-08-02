@@ -129,28 +129,36 @@ class TestEventJsonSafety:
 
 
 class TestHeatJsonSafety:
-    """Heat JSON getters survive corruption."""
+    """Heat legacy-column readers survive corruption.
+
+    These used to be aimed at ``get_competitors`` / ``get_stand_assignments``.
+    As of D12-C commit E those two read ``heat_assignments`` rows and never
+    touch the columns, so pointing corruption tests at them would assert
+    nothing: an empty heat returns empty whether or not the column is
+    garbage. The corruption tolerance still has to live somewhere until the
+    columns are dropped in commit F, and it lives on the raw readers.
+    """
 
     def test_corrupt_competitors_json(self, db_session, tournament):
         e = make_event(db_session, tournament, 'Heat JSON Test')
         h = make_heat(db_session, e)
         h.competitors = '{bad json}'
         db_session.flush()
-        assert h.get_competitors() == []
+        assert h.json_competitors() == []
 
     def test_corrupt_stand_assignments(self, db_session, tournament):
         e = make_event(db_session, tournament, 'Stand JSON Test')
         h = make_heat(db_session, e)
         h.stand_assignments = 'not valid'
         db_session.flush()
-        assert h.get_stand_assignments() == {}
+        assert h.json_stand_assignments() == {}
 
     def test_none_competitors(self, db_session, tournament):
         e = make_event(db_session, tournament, 'None Comps')
         h = make_heat(db_session, e)
         # In-memory only — DB column is NOT NULL. Getter must tolerate None.
         h.competitors = None
-        assert h.get_competitors() == []
+        assert h.json_competitors() == []
 
 
 class TestTournamentScheduleConfigSafety:
@@ -300,34 +308,60 @@ class TestHeatLocking:
 # ---------------------------------------------------------------------------
 
 class TestHeatCompetitorManagement:
-    """Heat.add_competitor(), remove_competitor(), set_competitors()."""
+    """Heat.set_roster(), the one writer left.
 
-    def test_add_competitor(self, db_session, tournament):
-        e = make_event(db_session, tournament, 'Add Comp Test')
+    ``add_competitor`` / ``remove_competitor`` / ``set_competitors`` are gone
+    as of D12-C commit E. Each was a read-modify-write of a JSON blob, and
+    each is now expressed as a whole-roster write, because an assignment row
+    carries a uid that has to resolve against a real competitor pool. The
+    three cases below are the same three cases, said the new way: append,
+    drop, replace.
+    """
+
+    def _roster(self, db_session, tournament, label, count):
+        """A heat on a real event with ``count`` real pro competitors."""
+        e = make_event(db_session, tournament, label)
         h = make_heat(db_session, e, competitors=[])
+        comps = [
+            make_pro_competitor(db_session, tournament, f'{label} Pro {i}')
+            for i in range(count)
+        ]
         db_session.flush()
+        return h, [c.id for c in comps]
 
-        h.add_competitor(42)
-        assert 42 in h.get_competitors()
+    def test_appending_to_the_roster(self, db_session, tournament):
+        h, ids = self._roster(db_session, tournament, 'Add Comp Test', 3)
+        h.set_roster('pro', ids[:2])
+        assert h.get_competitors() == ids[:2]
 
-    def test_remove_competitor(self, db_session, tournament):
-        e = make_event(db_session, tournament, 'Remove Comp Test')
-        h = make_heat(db_session, e, competitors=[10, 20, 30])
-        db_session.flush()
+        h.set_roster('pro', ids)
+        assert h.get_competitors() == ids
 
-        h.remove_competitor(20)
+    def test_dropping_from_the_roster(self, db_session, tournament):
+        h, ids = self._roster(db_session, tournament, 'Remove Comp Test', 3)
+        h.set_roster('pro', ids)
+
+        h.set_roster('pro', [ids[0], ids[2]])
         comps = h.get_competitors()
-        assert 20 not in comps
-        assert 10 in comps
-        assert 30 in comps
+        assert ids[1] not in comps
+        assert ids[0] in comps
+        assert ids[2] in comps
 
-    def test_set_competitors_replaces(self, db_session, tournament):
-        e = make_event(db_session, tournament, 'Set Comp Test')
-        h = make_heat(db_session, e, competitors=[1, 2, 3])
-        db_session.flush()
+    def test_set_roster_replaces(self, db_session, tournament):
+        h, ids = self._roster(db_session, tournament, 'Set Comp Test', 5)
+        h.set_roster('pro', ids[:3])
+        assert h.get_competitors() == ids[:3]
 
-        h.set_competitors([4, 5])
-        assert h.get_competitors() == [4, 5]
+        h.set_roster('pro', ids[3:])
+        assert h.get_competitors() == ids[3:]
+
+    def test_a_competitor_who_does_not_exist_is_refused(self, db_session,
+                                                        tournament):
+        from models.heat import BadHeatAssignment
+
+        h, ids = self._roster(db_session, tournament, 'Ghost Comp Test', 1)
+        with pytest.raises(BadHeatAssignment):
+            h.set_roster('pro', ids + [987654])
 
 
 # ---------------------------------------------------------------------------

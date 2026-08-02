@@ -111,6 +111,8 @@ def _make_heat(
     )
     db_session.add(h)
     db_session.flush()
+    h.set_roster(event.event_type, competitors, stand_assignments)
+    db_session.flush()
     return h
 
 

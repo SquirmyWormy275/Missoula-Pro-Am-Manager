@@ -19,6 +19,11 @@ import pytest
 
 from database import db as _db
 
+# D12-C commit E: the roster is `heat_assignments` rows now, so a heat
+# built here has to be seated for real. `seat_roster` materialises the
+# invented competitor ids this module uses before writing the rows.
+from tests.conftest import seat_roster
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -81,7 +86,18 @@ def _make_event(db_session, tournament, name, event_type='pro', gender=None,
 
 def _make_heat(db_session, event, heat_number=1, run_number=1,
                competitor_ids=None, flight_id=None):
-    """Create and return a Heat with optional competitor JSON."""
+    """Create and return a Heat carrying competitor JSON and no rows.
+
+    Deliberately column-only, and it stays that way through D12-C commit E.
+    The thing this module tests is `heat_sync_mismatch`, which fires when
+    `heats.competitors` and `heat_assignments` disagree, so a helper that
+    wrote both could never build the disagreement. Rows are added explicitly
+    by `_make_heat_assignment` below, and which heats get them is the whole
+    point of each test. Both this helper and that one die in commit F along
+    with the column and the check.
+    """
+    import json
+
     from models.heat import Heat
     h = Heat(
         event_id=event.id,
@@ -90,7 +106,7 @@ def _make_heat(db_session, event, heat_number=1, run_number=1,
         flight_id=flight_id,
     )
     if competitor_ids is not None:
-        h.set_competitors(competitor_ids)
+        h.competitors = json.dumps(list(competitor_ids))
     db_session.add(h)
     db_session.flush()
     return h

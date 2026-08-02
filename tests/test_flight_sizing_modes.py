@@ -98,7 +98,7 @@ def _make_heat(session, event, heat_number, run_number=1):
     from models import Heat
 
     h = Heat(event_id=event.id, heat_number=heat_number, run_number=run_number)
-    h.set_competitors([])
+    h.set_roster(event.event_type, [])
     session.add(h)
     session.flush()
     return h

@@ -153,6 +153,11 @@ def _seed_rich_db(app):
     )
     _db.session.add(heat)
     _db.session.flush()
+    # The JSON above is the malformed dict-shaped roster this smoke fixture has
+    # always carried; it stays so the raw-column readers still see it. The rows
+    # are what the app reads as of D12-C commit E, so seat the pro for real.
+    heat.set_roster("pro", [pro.id])
+    _db.session.flush()
 
     # Event result
     result = EventResult(

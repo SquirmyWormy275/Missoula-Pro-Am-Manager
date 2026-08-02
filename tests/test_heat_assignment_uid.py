@@ -42,7 +42,8 @@ class TestUidIsWritten:
         a = make_pro_competitor(db_session, t, 'Pro A')
         b = make_pro_competitor(db_session, t, 'Pro B')
         heat = make_heat(db_session, e, competitors=[a.id, b.id],
-                         stand_assignments={str(a.id): 1, str(b.id): 2})
+                         stand_assignments={str(a.id): 1, str(b.id): 2},
+                         seat=False)
 
         assert heat.sync_assignments('pro') is True
         db_session.flush()
@@ -56,7 +57,7 @@ class TestUidIsWritten:
         e = make_event(db_session, t, 'Single Buck', event_type='college')
         a = make_college_competitor(db_session, t, team, 'College A')
         heat = make_heat(db_session, e, competitors=[a.id],
-                         stand_assignments={str(a.id): 1})
+                         stand_assignments={str(a.id): 1}, seat=False)
 
         assert heat.sync_assignments('college') is True
         db_session.flush()
@@ -82,9 +83,9 @@ class TestUidIsWritten:
         ensure_competitors(db_session, t, [shared_id], 'college', team=team)
 
         pro_heat = make_heat(db_session, pro_event, heat_number=1,
-                             competitors=[shared_id])
+                             competitors=[shared_id], seat=False)
         col_heat = make_heat(db_session, col_event, heat_number=2,
-                             competitors=[shared_id])
+                             competitors=[shared_id], seat=False)
         pro_heat.sync_assignments('pro')
         col_heat.sync_assignments('college')
         db_session.flush()
@@ -104,7 +105,7 @@ class TestRefusals:
     def test_a_competitor_that_does_not_exist(self, db_session):
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
-        heat = make_heat(db_session, e, competitors=[999001])
+        heat = make_heat(db_session, e, competitors=[999001], seat=False)
 
         with pytest.raises(BadHeatAssignment) as exc:
             heat.sync_assignments('pro')
@@ -116,7 +117,7 @@ class TestRefusals:
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
-        heat = make_heat(db_session, e, competitors=[a.id, a.id])
+        heat = make_heat(db_session, e, competitors=[a.id, a.id], seat=False)
 
         with pytest.raises(BadHeatAssignment) as exc:
             heat.sync_assignments('pro')
@@ -181,7 +182,7 @@ class TestFailClosed:
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
         heat = make_heat(db_session, e, competitors=[a.id],
-                         stand_assignments={str(a.id): 1})
+                         stand_assignments={str(a.id): 1}, seat=False)
         heat.sync_assignments('pro')
         db_session.flush()
         before = [(r.uid, r.competitor_id, r.stand_number) for r in _rows(heat)]
@@ -219,7 +220,7 @@ class TestDriftDetection:
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
         b = make_pro_competitor(db_session, t, 'Pro B')
-        heat = make_heat(db_session, e, competitors=[a.id])
+        heat = make_heat(db_session, e, competitors=[a.id], seat=False)
         heat.sync_assignments('pro')
         db_session.flush()
 
@@ -236,7 +237,7 @@ class TestDriftDetection:
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
         heat = make_heat(db_session, e, competitors=[a.id],
-                         stand_assignments={str(a.id): 3})
+                         stand_assignments={str(a.id): 3}, seat=False)
         assert heat.sync_assignments('pro') is True
         db_session.flush()
 

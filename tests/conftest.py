@@ -378,9 +378,51 @@ def make_event(session, tournament, name, event_type='pro', gender=None,
     return e
 
 
+def seat_roster(session, heat, comp_ids, stands=None):
+    """Seat `comp_ids` on an already-flushed `heat` as real assignment rows.
+
+    D12-C commit E moved the roster off `heats.competitors` and onto
+    `heat_assignments`, so a fixture that only writes the JSON column builds a
+    heat that every reader in the app sees as empty. A dozen modules in this
+    suite carry their own private `_make_heat` that does exactly that, and
+    each one wants the same four lines: find the event, make the invented ids
+    real, write the rows, flush. They live here instead of being retyped
+    twelve times.
+
+    `ensure_competitors` runs first because most of those fixtures name ids
+    like [1, 2, 3, 4] that never belonged to a competitor row. An assignment
+    row carries a uid with a foreign key onto the identity spine, so the ids
+    have to exist before they can be seated.
+    """
+    from models import Tournament
+    from models.event import Event
+
+    if not comp_ids:
+        return heat
+
+    event = session.get(Event, heat.event_id)
+    tournament = session.get(Tournament, event.tournament_id)
+    ensure_competitors(session, tournament, comp_ids,
+                       competitor_type=event.event_type)
+    heat.set_roster(event.event_type, list(comp_ids), stands or {})
+    session.flush()
+    return heat
+
+
 def make_heat(session, event, heat_number=1, run_number=1,
               competitors=None, stand_assignments=None, status='pending',
-              flight_id=None, flight_position=None):
+              flight_id=None, flight_position=None, seat=True):
+    """Build a heat, seating `competitors` as real assignment rows by default.
+
+    Pass ``seat=False`` to get the pre-D12-C behaviour: the two JSON columns
+    are written and no ``heat_assignments`` row is. That is what a fixture
+    wants when the thing under test IS the row write (``sync_assignments``,
+    the preflight drift check) or when it needs the columns to name a
+    competitor that deliberately does not exist (the reference audit's
+    dangling-reference cases). Everywhere else the default is what you want:
+    every roster reader in the app goes through the rows now, so an unseated
+    heat reads as empty no matter what the columns say.
+    """
     from models.heat import Heat
     h = Heat(
         event_id=event.id,
@@ -394,6 +436,28 @@ def make_heat(session, event, heat_number=1, run_number=1,
     )
     session.add(h)
     session.flush()
+
+    # D12-C commit E: the roster is `heat_assignments` rows now, and the two
+    # JSON columns above are a cache that `set_roster` rewrites. Writing the
+    # columns alone used to be the whole job; as of this commit it seeds a
+    # heat that every reader in the app sees as empty. 312 call sites in this
+    # suite pass `competitors=`, so the repair belongs here and not in each
+    # of them.
+    #
+    # `ensure_competitors` runs first because most of those call sites invent
+    # ids like [1, 2, 3, 4]. An assignment row carries a uid with a foreign
+    # key onto the identity spine, so an invented id has to become a real
+    # competitor before it can be seated. See that helper for why setting the
+    # ids explicitly is safe in this one place.
+    if competitors and seat:
+        from models import Tournament
+        tournament = session.get(Tournament, event.tournament_id)
+        ensure_competitors(session, tournament, competitors,
+                           competitor_type=event.event_type)
+        h.set_roster(event.event_type, list(competitors),
+                     stand_assignments or {})
+        session.flush()
+
     return h
 
 

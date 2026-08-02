@@ -479,8 +479,11 @@ class TestStoreCoverage:
         tournament = make_tournament(db_session)
         event = make_event(db_session, tournament, 'Underhand',
                            event_type='pro')
+        # seat=False: 901 and 902 are ghosts on purpose. Seating them would
+        # materialise the very competitors this audit is supposed to report as
+        # missing, and the assertion below would then be true of an empty set.
         heat = make_heat(db_session, event, competitors=[901],
-                         stand_assignments={'902': 1})
+                         stand_assignments={'902': 1}, seat=False)
         # The uid is real and the legacy pair is a ghost, because that is the
         # only shape a bad heat_assignments reference can still take: as of
         # s8a0b2c3d4e5 uid is NOT NULL with a foreign key onto the spine, while
@@ -510,8 +513,9 @@ class TestStoreCoverage:
         tournament = make_tournament(db_session)
         make_pro_competitor(db_session, tournament, 'Pro One')
         event = make_event(db_session, tournament, 'Underhand', event_type='pro')
+        # seat=False: 999 is the dangling reference under test.
         make_heat(db_session, event, competitors=[999],
-                  stand_assignments={'999': 1})
+                  stand_assignments={'999': 1}, seat=False)
         db_session.flush()
 
         findings = audit(db_session)

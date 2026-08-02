@@ -26,7 +26,6 @@ heat composition.
 
 from __future__ import annotations
 
-import json
 import logging
 
 from database import db
@@ -177,17 +176,30 @@ def remap_heat_to_block(heat: Heat, target_block: list[int]) -> bool:
     if event and event.event_type in ("college", "pro"):
         heat.set_roster(event.event_type, heat.get_competitors(), assignments)
     else:
-        # No usable competitor type means the rows cannot be written at all,
-        # because an assignment row's uid is resolved against one pool. The
-        # stands still go into the column so the remap is not silently lost,
-        # which is what this branch has always done.
-        heat.stand_assignments = json.dumps(assignments)
+        # No usable competitor type means the rows cannot be written at all:
+        # an assignment row's uid resolves against exactly one pool and there
+        # is no pool to resolve against here.
+        #
+        # This branch used to write `heat.stand_assignments` directly and
+        # return True, on the theory that a column-only write was better than
+        # losing the remap. As of D12-C commit E that theory is dead. Every
+        # stand reader in this tree goes through `get_stand_assignments`,
+        # which reads the rows, so a column-only write is invisible to all of
+        # them: the remap is lost either way and returning True says it landed.
+        # Commit F drops the column outright.
+        #
+        # Reachability, measured rather than assumed: `models/event.py` carries
+        # `ck_events_event_type_valid` (event_type IN ('college','pro')), live
+        # in pg_constraint on the production mirror, and that mirror holds only
+        # pro and college events. So the only way in is a Heat whose `event` is
+        # None, i.e. an orphan. Refusing is the honest answer for an orphan.
         logger.warning(
-            "saw_block: heat %s has unexpected event_type=%r; "
-            "stand_assignments written but HeatAssignment rows not synced",
+            "saw_block: heat %s has no usable event_type (event=%r); "
+            "the stand remap cannot be written and was discarded",
             heat.id,
             getattr(event, "event_type", None),
         )
+        return False
 
     return True
 

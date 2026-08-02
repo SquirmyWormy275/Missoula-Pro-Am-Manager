@@ -1,18 +1,24 @@
 """
 Workflow invariants for ``Heat.competitors`` ↔ ``HeatAssignment`` sync.
 
-DOMAIN_CONTRACT (2026-04-27): every route or service that mutates
-``Heat.competitors`` (the JSON source of truth) MUST call
-``heat.sync_assignments(comp_type)`` so the ``HeatAssignment`` rows used by
-the validation service, judge sheets, and exports stay in lockstep. This
-test module exercises each mutation entry point and asserts the invariant
-post-mutation rather than relying on each callsite to remember.
+DOMAIN_CONTRACT (2026-04-27, inverted by D12-C commit E): the contract this
+module was written to enforce ran JSON-first. ``Heat.competitors`` was the
+source of truth, four mutators wrote it, and every caller had to remember
+``heat.sync_assignments(comp_type)`` afterwards or the ``HeatAssignment``
+rows the validation service, judge sheets and exports read would drift.
 
-Each test calls a service-layer mutator in isolation (no route plumbing),
-performs the mutation, and re-queries the DB to confirm the JSON list and
-HeatAssignment rows agree. If a future change introduces a mutation site
-that forgets to call ``sync_assignments``, the test catches the drift
-before it ships.
+The rows are the source of truth now and the four mutators are gone, so
+that contract cannot be violated by a caller any more: there is no way to
+write a roster except :meth:`Heat.set_roster`, which writes the rows first
+and renders the columns from them. What survives here, and what these tests
+now pin, is the other direction: ``sync_assignments`` adopting a JSON
+roster that arrived from outside the model, which is what the preflight
+autofix and the ``/heats/sync-fix`` route call it for. So each test writes
+the legacy columns directly, the way a stale row in the database would
+carry them, and asserts the rows come to match.
+
+That makes this module the last place in the suite that writes those
+columns on purpose. It goes when they do, in commit F.
 
 Run: pytest tests/test_heat_sync_invariants.py -v
 """
@@ -104,6 +110,19 @@ def _make_heat(session, event, heat_number, comp_ids, stand_assignments):
     return h
 
 
+def _write_json_roster(heat, comp_ids, stands):
+    """Write the legacy columns directly, the way the dead mutators did.
+
+    ``set_competitors`` was ``self.competitors = json.dumps(ids)`` and
+    ``set_stand_assignment`` was the same one level down in a dict. Nothing
+    else. Reproducing the write here rather than mourning the methods keeps
+    these tests aimed at what they were always aimed at, which is
+    ``sync_assignments`` picking the change up.
+    """
+    heat.competitors = json.dumps(comp_ids)
+    heat.stand_assignments = json.dumps({str(k): v for k, v in stands.items()})
+
+
 def _table_ids(heat_id):
     from models import HeatAssignment
 
@@ -114,7 +133,10 @@ def _table_ids(heat_id):
 
 def _assert_in_sync(heat):
     """Hard invariant: JSON list must match HeatAssignment rows by id."""
-    json_ids = set(heat.get_competitors())
+    # `json_competitors`, not `get_competitors`: as of D12-C commit E the
+    # accessor reads the rows, so asking it here would compare the rows
+    # against themselves and this assertion could never fail.
+    json_ids = set(heat.json_competitors())
     table_ids = _table_ids(heat.id)
     assert (
         json_ids == table_ids
@@ -122,11 +144,11 @@ def _assert_in_sync(heat):
 
 
 # ---------------------------------------------------------------------------
-# Mutation #1: heat.set_competitors() + sync_assignments
+# Mutation #1: the roster column is replaced wholesale, then synced
 # ---------------------------------------------------------------------------
 
 
-def test_set_competitors_then_sync_keeps_assignments_in_lockstep(db_session):
+def test_replacing_the_roster_column_then_syncing_keeps_lockstep(db_session):
     t = _make_tournament(db_session)
     ev = _make_event(db_session, t)
     a = _make_pro(db_session, t, "Alice", "F")
@@ -136,18 +158,17 @@ def test_set_competitors_then_sync_keeps_assignments_in_lockstep(db_session):
     h.sync_assignments(ev.event_type)
     _assert_in_sync(h)
 
-    h.set_competitors([a.id, c.id])
-    h.set_stand_assignment(c.id, 2)
+    _write_json_roster(h, [a.id, c.id], {str(a.id): 1, str(c.id): 2})
     h.sync_assignments(ev.event_type)
     _assert_in_sync(h)
 
 
 # ---------------------------------------------------------------------------
-# Mutation #2: heat.add_competitor()
+# Mutation #2: a competitor is appended to the roster column
 # ---------------------------------------------------------------------------
 
 
-def test_add_competitor_then_sync_keeps_assignments_in_lockstep(db_session):
+def test_appending_to_the_roster_column_then_syncing_keeps_lockstep(db_session):
     t = _make_tournament(db_session)
     ev = _make_event(db_session, t)
     a = _make_pro(db_session, t, "A", "M")
@@ -155,8 +176,7 @@ def test_add_competitor_then_sync_keeps_assignments_in_lockstep(db_session):
     h = _make_heat(db_session, ev, 1, [a.id], {str(a.id): 1})
     h.sync_assignments(ev.event_type)
 
-    h.add_competitor(b.id)
-    h.set_stand_assignment(b.id, 2)
+    _write_json_roster(h, [a.id, b.id], {str(a.id): 1, str(b.id): 2})
     h.sync_assignments(ev.event_type)
 
     _assert_in_sync(h)
@@ -164,11 +184,11 @@ def test_add_competitor_then_sync_keeps_assignments_in_lockstep(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Mutation #3: heat.remove_competitor()
+# Mutation #3: a competitor is dropped from the roster column
 # ---------------------------------------------------------------------------
 
 
-def test_remove_competitor_then_sync_drops_assignment_row(db_session):
+def test_dropping_from_the_roster_column_then_syncing_drops_the_row(db_session):
     t = _make_tournament(db_session)
     ev = _make_event(db_session, t)
     a = _make_pro(db_session, t, "A", "M")
@@ -176,7 +196,7 @@ def test_remove_competitor_then_sync_drops_assignment_row(db_session):
     h = _make_heat(db_session, ev, 1, [a.id, b.id], {str(a.id): 1, str(b.id): 2})
     h.sync_assignments(ev.event_type)
 
-    h.remove_competitor(b.id)
+    _write_json_roster(h, [a.id], {str(a.id): 1})
     h.sync_assignments(ev.event_type)
 
     _assert_in_sync(h)

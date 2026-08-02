@@ -151,6 +151,8 @@ def _seed_hardening_data(app):
             status='completed',
         )
         _db.session.add(heat)
+        _db.session.flush()
+        heat.set_roster('pro', [pro_a.id], {str(pro_a.id): 1})
 
     # Audit log entry (admin-only data)
     if not AuditLog.query.first():

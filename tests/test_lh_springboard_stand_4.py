@@ -258,7 +258,7 @@ class TestLhFlightContentionWarning:
             # Place each LH cutter in its own heat so flight builder has
             # many LH-containing heats to spread.
             h = Heat(event_id=ev.id, heat_number=i + 1, run_number=1)
-            h.set_competitors([comp.id])
+            h.set_roster(ev.event_type, [comp.id])
             db_session.add(h)
         db_session.flush()
 
@@ -290,7 +290,7 @@ class TestLhFlightContentionWarning:
             rh = _make_pro_competitor(db_session, t, f"RH {i}")
             _enroll(rh, ev)
             h = Heat(event_id=ev.id, heat_number=i, run_number=1)
-            h.set_competitors([rh.id])
+            h.set_roster(ev.event_type, [rh.id])
             db_session.add(h)
         db_session.flush()
 
@@ -322,7 +322,7 @@ class TestLhFlightContentionWarning:
             rh = _make_pro_competitor(db_session, t, f"RH {i}")
             _enroll(rh, ev)
             h = Heat(event_id=ev.id, heat_number=i, run_number=1)
-            h.set_competitors([rh.id])
+            h.set_roster(ev.event_type, [rh.id])
             db_session.add(h)
         db_session.flush()
 

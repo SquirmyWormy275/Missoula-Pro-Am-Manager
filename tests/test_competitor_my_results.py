@@ -111,6 +111,8 @@ def _seed(app):
         )
         _db.session.add(heat)
         _db.session.flush()
+        heat.set_roster('pro', [pro.id], {str(pro.id): 3})
+        _db.session.flush()
 
     res = EventResult.query.filter_by(event_id=evt.id, competitor_id=pro.id).first()
     if not res:

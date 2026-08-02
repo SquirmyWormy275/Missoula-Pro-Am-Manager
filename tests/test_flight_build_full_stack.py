@@ -251,10 +251,10 @@ def _seed_full_stack(session, relay_status="drawn"):
         for n in range(1, heat_count + 1):
             Heat(event_id=event.id, heat_number=n, run_number=1)
             h1 = Heat(event_id=event.id, heat_number=n, run_number=1)
-            h1.set_competitors([])
+            h1.set_roster(event.event_type, [])
             session.add(h1)
             h2 = Heat(event_id=event.id, heat_number=n, run_number=2)
-            h2.set_competitors([])
+            h2.set_roster(event.event_type, [])
             session.add(h2)
         session.flush()
 
@@ -296,7 +296,7 @@ def _seed_full_stack(session, relay_status="drawn"):
     # Obstacle Pole college — single-run spillover event.
     for n in range(1, 3):
         h = Heat(event_id=ev_op_college_m.id, heat_number=n, run_number=1)
-        h.set_competitors([])
+        h.set_roster(ev_op_college_m.event_type, [])
         session.add(h)
     session.flush()
 

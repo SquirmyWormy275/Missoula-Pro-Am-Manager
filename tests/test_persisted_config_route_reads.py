@@ -302,7 +302,7 @@ class TestAsyncGenerateArtifactsChainsRelayAndSpillover:
         t.set_schedule_config({"saturday_college_event_ids": [cp.id]})
         # Seed one pro heat so pro_heats > 0 and the chain runs.
         h = Heat(event_id=pe.id, heat_number=1, run_number=1)
-        h.set_competitors([])
+        h.set_roster(pe.event_type, [])
         db_session.add(h)
         db_session.flush()
         tid = t.id

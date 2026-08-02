@@ -20,6 +20,7 @@ import os
 import pytest
 
 from database import db as _db
+from tests.conftest import seat_roster
 
 
 @pytest.fixture()
@@ -114,6 +115,7 @@ def _make_heat(session, ev, competitor_ids):
     )
     session.add(h)
     session.flush()
+    seat_roster(session, h, [int(c) for c in competitor_ids])
     return h
 
 

@@ -231,6 +231,8 @@ def _seed_heat(
         h.flight_position = flight_position
     db.session.add(h)
     db.session.flush()
+    h.set_roster(event.event_type, competitors, stand_assignments)
+    db.session.flush()
     return h
 
 

@@ -201,8 +201,11 @@ def _seed_heat_with_results(
             db.session.add(comp)
             db.session.flush()
 
-            heat.add_competitor(comp.id)
-            heat.set_stand_assignment(comp.id, idx)
+            heat.set_roster(
+                event.event_type,
+                heat.get_competitors() + [comp.id],
+                {**heat.get_stand_assignments(), str(comp.id): idx},
+            )
             db.session.add(
                 EventResult(
                     event_id=event.id,
@@ -275,8 +278,12 @@ def _seed_day_of_operations_state(app):
             db.session.flush()
 
             target_heat = heat_a if idx <= 2 else heat_b
-            target_heat.add_competitor(comp.id)
-            target_heat.set_stand_assignment(comp.id, 1 if idx % 2 == 1 else 2)
+            target_heat.set_roster(
+                event.event_type,
+                target_heat.get_competitors() + [comp.id],
+                {**target_heat.get_stand_assignments(),
+                 str(comp.id): 1 if idx % 2 == 1 else 2},
+            )
             db.session.add(
                 EventResult(
                     event_id=event.id,

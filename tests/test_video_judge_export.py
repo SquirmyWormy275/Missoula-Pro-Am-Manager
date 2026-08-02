@@ -32,6 +32,7 @@ from tests.conftest import (
     make_pro_competitor,
     make_team,
     make_tournament,
+    seat_roster,
 )
 
 
@@ -46,12 +47,12 @@ def _make_heat(
         heat_number=heat_number,
         run_number=run_number,
     )
-    h.set_competitors(comp_ids)
-    if stand_assignments:
-        for cid, stand in stand_assignments.items():
-            h.set_stand_assignment(cid, stand)
     session.add(h)
     session.flush()
+    # Seat after the flush, not before: an assignment row's uid resolves
+    # against a real competitor row, so the ids have to exist first and the
+    # heat has to be in the session for the resolve to see them.
+    seat_roster(session, h, comp_ids, stand_assignments or {})
     return h
 
 

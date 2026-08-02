@@ -889,7 +889,11 @@ def heat_sync_check(tournament_id, event_id):
 
     mismatches = []
     for heat in event.heats.order_by(Heat.heat_number, Heat.run_number).all():
-        json_ids = set(heat.get_competitors())
+        # D12-C commit E: the raw column, not the accessor. `get_competitors`
+        # reads `heat_assignments` now, so asking it here would compare the
+        # rows against themselves and this route would report ok forever.
+        # Same fate as the preflight twin: dies with the column in commit F.
+        json_ids = set(heat.json_competitors())
         table_ids = set(
             a.competitor_id
             for a in HeatAssignment.query.filter_by(heat_id=heat.id).all()

@@ -129,11 +129,24 @@ class Heat(db.Model):
     #: here: a bulk delete is the right tool for "every row in this
     #: tournament", and the ORM cascade is the right tool for one heat's
     #: roster. What matters is that neither leaves rows behind.
+    #: ``selectin`` as of commit E, when :meth:`get_competitors` started
+    #: reading this collection. A lazy select would have turned every
+    #: heat-shaped loop in the tree into one query per heat: the preflight
+    #: sweep alone walks 173 of them on the longest user-visible request of
+    #: race day, and it is not the worst one. ``selectin`` batches the whole
+    #: page of heats into a second query, so a loop that cost one query before
+    #: this commit costs two after it, whatever the heat count.
+    #:
+    #: The price is one extra query for a Heat loaded by something that never
+    #: asks for the roster. Measured against the alternative that is worth
+    #: paying: almost everything that loads a heat in this app loads it to
+    #: find out who is in it.
     assignments = db.relationship(
         'HeatAssignment',
         back_populates='heat',
         order_by='HeatAssignment.id',
         cascade='all, delete-orphan',
+        lazy='selectin',
     )
 
     def __repr__(self):
@@ -141,42 +154,59 @@ class Heat(db.Model):
         return f'<Heat {self.heat_number}{run_str}>'
 
     def get_competitors(self):
-        """Return list of competitor IDs in this heat."""
+        """Return this heat's roster, in running order.
+
+        D12-C phase 2, commit E: this reads ``heat_assignments`` rather than
+        the ``competitors`` column. All ninety-five call sites in this tree
+        moved with it and not one of them changed, because the shape is the
+        shape :meth:`_project_json` has been rendering into that column since
+        commit C: a list of ints in the order the rows were written, which is
+        the order the judge sheet prints.
+
+        The rows are the roster now. Where the two disagree the rows win, and
+        after commit F drops the columns there is nothing left to disagree
+        with. Read the column itself with :meth:`json_competitors`, which is
+        what the drift checks want and what nothing else should.
+        """
+        return [a.competitor_id for a in self.assignments]
+
+    def get_stand_assignments(self):
+        """Return ``{str(competitor_id): stand_number}`` from the rows.
+
+        Keyed by string and omitting rows with no stand, which is the shape
+        this has always had: ``stand_assignments`` never carried an explicit
+        null, and every reader in this tree looks up ``str(comp_id)``.
+        """
+        return {str(a.competitor_id): a.stand_number
+                for a in self.assignments if a.stand_number is not None}
+
+    def json_competitors(self):
+        """Return the roster the legacy ``competitors`` column describes.
+
+        The old body of :meth:`get_competitors` under a name that says what it
+        reads. It exists for the two checks that compare the column against
+        the rows to detect drift, and for :meth:`sync_assignments`, which
+        adopts the column on purpose. It is deleted with the column in commit
+        F.
+
+        Tolerates a corrupt column by returning empty, because a race-day
+        request that cannot parse a heat should render it as unknown rather
+        than 500.
+        """
         try:
             return json.loads(self.competitors or '[]')
         except json.JSONDecodeError:
             return []
 
-    def set_competitors(self, competitor_ids):
-        """Set the list of competitor IDs."""
-        self.competitors = json.dumps(competitor_ids)
+    def json_stand_assignments(self):
+        """Return the stands the legacy ``stand_assignments`` column describes.
 
-    def add_competitor(self, competitor_id):
-        """Add a competitor to this heat."""
-        comps = self.get_competitors()
-        if competitor_id not in comps:
-            comps.append(competitor_id)
-            self.competitors = json.dumps(comps)
-
-    def remove_competitor(self, competitor_id):
-        """Remove a competitor from this heat."""
-        comps = self.get_competitors()
-        if competitor_id in comps:
-            comps.remove(competitor_id)
-            self.competitors = json.dumps(comps)
-
-    def get_stand_assignments(self):
-        """Return dict of competitor_id -> stand_number."""
+        The old body of :meth:`get_stand_assignments`. Same reason, same fate.
+        """
         try:
             return json.loads(self.stand_assignments or '{}')
         except json.JSONDecodeError:
             return {}
-
-    def set_stand_assignment(self, competitor_id, stand_number):
-        """Assign a competitor to a specific stand."""
-        assignments = self.get_stand_assignments()
-        assignments[str(competitor_id)] = stand_number
-        self.stand_assignments = json.dumps(assignments)
 
     def get_stand_for_competitor(self, competitor_id):
         """Get the stand number assigned to a competitor."""
@@ -325,8 +355,8 @@ class Heat(db.Model):
 
         Same return value and same refusals as :meth:`set_roster`.
         """
-        return self.set_roster(competitor_type, self.get_competitors(),
-                               self.get_stand_assignments())
+        return self.set_roster(competitor_type, self.json_competitors(),
+                               self.json_stand_assignments())
 
     def _project_json(self, projection):
         """Render ``competitors`` and ``stand_assignments`` from the rows.

@@ -287,10 +287,10 @@ class TestStockSawSoloAlternationOnGeneration:
                 (int(cid) for cid, stand in assignments.items() if int(stand) == 7),
                 ids[0],
             )
-            h.remove_competitor(victim)
             stripped = h.get_stand_assignments()
             stripped.pop(str(victim), None)
-            h.stand_assignments = json.dumps(stripped)
+            h.set_roster(ev.event_type,
+                         [c for c in ids if int(c) != victim], stripped)
             # Also mark their EventResult scratched like the real route does.
             result = EventResult.query.filter_by(
                 event_id=ev.id, competitor_id=victim, competitor_type="college"

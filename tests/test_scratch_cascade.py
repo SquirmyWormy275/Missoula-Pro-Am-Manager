@@ -884,6 +884,12 @@ class TestStockSawRebalanceAfterCascadeScratch:
                 stand_assignments=_json.dumps({str(c7.id): 7, str(c8.id): 8}),
             )
             db.session.add(h)
+            db.session.flush()
+            # D12-C commit E: the columns above are a cache. The rebalance this
+            # test measures reads stands off `heat_assignments`, so the pair has
+            # to be seated for real or every heat reads as empty.
+            h.set_roster("college", [c7.id, c8.id],
+                         {str(c7.id): 7, str(c8.id): 8})
             # Add EventResult rows so compute_scratch_effects() sees them.
             db.session.add(
                 EventResult(
@@ -1035,11 +1041,18 @@ class TestStockSawRebalanceAfterCascadeScratch:
                             competitor_type="college", competitor_name=uh2.name,
                             status="pending"),
             ])
-            db.session.add(Heat(
+            uh_heat = Heat(
                 event_id=underhand.id, heat_number=1, run_number=1,
                 competitors=_json.dumps([uh1.id, uh2.id]),
                 stand_assignments=_json.dumps({str(uh1.id): 1, str(uh2.id): 2}),
-            ))
+            )
+            db.session.add(uh_heat)
+            db.session.flush()
+            # D12-C commit E: the cascade reads the roster off
+            # `heat_assignments`, so the columns above are not enough to put
+            # uh1 in a heat any more.
+            uh_heat.set_roster("college", [uh1.id, uh2.id],
+                               {str(uh1.id): 1, str(uh2.id): 2})
 
             # Independent pair of stock saw competitors in one heat on [7, 8].
             # These competitors are NOT entered in Underhand, so the scratch
@@ -1064,11 +1077,18 @@ class TestStockSawRebalanceAfterCascadeScratch:
                             competitor_type="college", competitor_name=ss2.name,
                             status="pending"),
             ])
-            ss_heat_id = db.session.add(Heat(
+            # `db.session.add` returns None, so the old `ss_heat_id = ...`
+            # here never held an id; nothing read it. Bind the heat instead,
+            # which is what seating the roster needs anyway.
+            ss_heat = Heat(
                 event_id=stock_saw.id, heat_number=1, run_number=1,
                 competitors=_json.dumps([ss1.id, ss2.id]),
                 stand_assignments=_json.dumps({str(ss1.id): 7, str(ss2.id): 8}),
-            ))
+            )
+            db.session.add(ss_heat)
+            db.session.flush()
+            ss_heat.set_roster("college", [ss1.id, ss2.id],
+                               {str(ss1.id): 7, str(ss2.id): 8})
             db.session.flush()
             db.session.commit()
 

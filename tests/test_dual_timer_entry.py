@@ -32,6 +32,8 @@ from database import db as _db
 # ---------------------------------------------------------------------------
 # Self-contained app fixture (module-scoped)
 # ---------------------------------------------------------------------------
+from tests.conftest import seat_roster  # noqa: E402
+
 
 @pytest.fixture(scope='module')
 def app():
@@ -154,6 +156,7 @@ def _make_heat(session, event, run_number=1, competitors=None, status='pending')
     )
     session.add(h)
     session.flush()
+    seat_roster(session, h, competitors or [])
     return h
 
 

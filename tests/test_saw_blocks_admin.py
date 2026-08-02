@@ -179,6 +179,8 @@ def _seed_heat(db, event, heat_number, competitors, stand_assignments):
     )
     db.session.add(h)
     db.session.flush()
+    h.set_roster(event.event_type, competitors, stand_assignments)
+    db.session.flush()
     return h
 
 

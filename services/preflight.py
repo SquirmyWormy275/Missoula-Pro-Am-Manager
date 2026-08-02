@@ -119,7 +119,14 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                 assignments_by_heat[a.heat_id].add(a.competitor_id)
         mismatched_by_event: dict[int, int] = defaultdict(int)
         for heat in all_heats:
-            json_ids = set(heat.get_competitors())
+            # D12-C commit E: `json_competitors` and not `get_competitors`.
+            # The accessor reads the rows as of this commit, so comparing it
+            # against the rows would compare the rows to themselves and this
+            # check could never fire again. It has to keep reading the raw
+            # `heats.competitors` column to mean anything, and it means
+            # something right up until commit F drops that column and deletes
+            # this block along with it.
+            json_ids = set(heat.json_competitors())
             table_ids = assignments_by_heat.get(heat.id, set())
             if json_ids != table_ids:
                 mismatched_by_event[heat.event_id] += 1

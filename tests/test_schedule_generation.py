@@ -1,4 +1,5 @@
 """Tests for schedule-generation application services."""
+import json
 import os
 
 import pytest
@@ -54,6 +55,17 @@ def _make_event(db_session, tournament, name, event_type='pro'):
 
 
 def _make_heat(db_session, event, competitor_ids=None):
+    """A heat carrying competitor JSON and no assignment rows.
+
+    Column-only on purpose: the one caller that passes ids is the autofix
+    test, and what it measures is `run_preflight_autofix` noticing that the
+    rows are missing and building them. A helper that seated the rows itself
+    would leave that call with nothing to fix and the test asserting on a
+    number it produced. The ids are still materialised first, because an
+    autofix that finds an invented id refuses rather than repairs.
+    """
+    import json
+
     from models import Heat
 
     heat = Heat(event_id=event.id, heat_number=1, run_number=1)
@@ -67,7 +79,7 @@ def _make_heat(db_session, event, competitor_ids=None):
             db_session, Tournament.query.get(event.tournament_id),
             competitor_ids, event.event_type,
         )
-        heat.set_competitors(competitor_ids)
+        heat.competitors = json.dumps(list(competitor_ids))
     db_session.add(heat)
     db_session.flush()
     return heat
@@ -80,8 +92,9 @@ def test_run_preflight_autofix_syncs_heat_assignments(db_session, monkeypatch):
     tournament = _make_tournament(db_session)
     event = _make_event(db_session, tournament, 'Underhand')
     heat = _make_heat(db_session, event, competitor_ids=[101, 202])
-    heat.set_stand_assignment(101, 1)
-    heat.set_stand_assignment(202, 2)
+    # Stands go in the column too. `set_roster` here would write the rows this
+    # test exists to watch the autofix write.
+    heat.stand_assignments = json.dumps({'101': 1, '202': 2})
     db_session.flush()
 
     monkeypatch.setattr(

@@ -183,8 +183,11 @@ def _seed_scoring_heat(app, competitor_count: int = 1):
             comp.set_events_entered([str(event.id)])
             db.session.add(comp)
             db.session.flush()
-            heat.add_competitor(comp.id)
-            heat.set_stand_assignment(comp.id, idx)
+            heat.set_roster(
+                event.event_type,
+                heat.get_competitors() + [comp.id],
+                {**heat.get_stand_assignments(), str(comp.id): idx},
+            )
             db.session.add(
                 EventResult(
                     event_id=event.id,
@@ -353,8 +356,11 @@ def test_unassigned_competitor_and_all_scratched_heat_render_cleanly(qa_env):
             comp.set_events_entered([str(event.id)])
             db.session.add(comp)
             db.session.flush()
-            heat.add_competitor(comp.id)
-            heat.set_stand_assignment(comp.id, idx)
+            heat.set_roster(
+                event.event_type,
+                heat.get_competitors() + [comp.id],
+                {**heat.get_stand_assignments(), str(comp.id): idx},
+            )
             db.session.add(
                 EventResult(
                     event_id=event.id,

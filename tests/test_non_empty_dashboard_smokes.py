@@ -213,11 +213,8 @@ def _seed(app):
         flight_position=1,
         status="pending",
     )
-    heat1.set_competitors(pro_ids[:4])
-    heat1.set_stand_assignment(pro_ids[0], 1)
-    heat1.set_stand_assignment(pro_ids[1], 2)
-    heat1.set_stand_assignment(pro_ids[2], 3)
-    heat1.set_stand_assignment(pro_ids[3], 4)
+    heat1.set_roster(springboard.event_type, pro_ids[:4],
+                     {cid: n for n, cid in enumerate(pro_ids[:4], start=1)})
     _db.session.add(heat1)
 
     heat2 = Heat(
@@ -228,7 +225,7 @@ def _seed(app):
         flight_position=2,
         status="pending",
     )
-    heat2.set_competitors(pro_ids[:2])
+    heat2.set_roster(single_buck.event_type, pro_ids[:2])
     _db.session.add(heat2)
 
     # --- EventResult with payout_amount for payout_summary rendering ------

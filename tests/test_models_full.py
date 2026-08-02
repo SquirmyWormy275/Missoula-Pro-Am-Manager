@@ -852,8 +852,33 @@ class TestEventResultCalculateCumulativeScore:
 # Heat Tests
 # ===========================================================================
 
-class TestHeatCompetitors:
-    """get_competitors / set_competitors round-trip."""
+class TestHeatRoster:
+    """The roster accessors, reading the ``heat_assignments`` rows.
+
+    These three classes used to drive the four JSON mutators over invented
+    competitor ids, on the reasonable-at-the-time theory that
+    ``heats.competitors`` was a JSON column and a JSON column is a JSON
+    column. D12-C commit E moved the accessors onto the rows and deleted the
+    mutators, and the rows carry a NOT NULL uid with a foreign key onto the
+    identity spine, so an invented id is no longer something the database
+    will hold. Every roster below is therefore made of real competitors.
+
+    That is not a concession, it is the point: an id in a heat now has to be
+    somebody.
+    """
+
+    def _heat_with(self, count, event_type='pro'):
+        """Return (heat, [competitor ids]) for a heat of `count` real people."""
+        t = _make_tournament()
+        e = _make_event(t, event_type=event_type)
+        h = _make_heat(e)
+        if event_type == 'college':
+            team = _make_team(t)
+            comps = [_make_college_competitor(t, team, f'College {i}')
+                     for i in range(count)]
+        else:
+            comps = [_make_pro_competitor(t, f'Pro {i}') for i in range(count)]
+        return h, [c.id for c in comps]
 
     def test_default_is_empty_list(self, db_session):
         t = _make_tournament()
@@ -862,57 +887,98 @@ class TestHeatCompetitors:
         assert h.get_competitors() == []
 
     def test_set_and_get_roundtrip(self, db_session):
-        t = _make_tournament()
-        e = _make_event(t)
-        h = _make_heat(e)
-        h.set_competitors([10, 20, 30])
-        assert h.get_competitors() == [10, 20, 30]
+        h, ids = self._heat_with(3)
+        h.set_roster('pro', ids)
+        assert h.get_competitors() == ids
+
+    def test_running_order_is_preserved_not_sorted(self, db_session):
+        """The list is the order the judge sheet prints, so it is the order
+        it was written in and not the order the ids happen to sort in."""
+        h, ids = self._heat_with(3)
+        shuffled = [ids[2], ids[0], ids[1]]
+        h.set_roster('pro', shuffled)
+        assert h.get_competitors() == shuffled
+
+    def test_replacing_the_roster_replaces_it(self, db_session):
+        h, ids = self._heat_with(5)
+        h.set_roster('pro', ids[:3])
+        assert h.get_competitors() == ids[:3]
+        h.set_roster('pro', ids[3:])
+        assert h.get_competitors() == ids[3:]
+
+    def test_a_competitor_named_twice_is_refused(self, db_session):
+        """`uq_heat_assignments_heat_uid` in the model rather than in the
+        driver: the old `add_competitor` silently swallowed a duplicate, which
+        is how a heat could end up describing five starters and seating four.
+        """
+        from models.heat import BadHeatAssignment
+        h, ids = self._heat_with(2)
+        with pytest.raises(BadHeatAssignment):
+            h.set_roster('pro', [ids[0], ids[1], ids[0]])
+
+    def test_a_competitor_who_does_not_exist_is_refused(self, db_session):
+        from models.heat import BadHeatAssignment
+        h, ids = self._heat_with(1)
+        with pytest.raises(BadHeatAssignment):
+            h.set_roster('pro', ids + [987654])
+
+    def test_the_json_column_is_rendered_from_the_rows(self, db_session):
+        """Until commit F drops it, the column still has to say what the rows
+        say, because most readers in the tree are still on it."""
+        h, ids = self._heat_with(3)
+        h.set_roster('pro', ids)
+        assert json.loads(h.competitors) == ids
+        assert h.json_competitors() == ids
+
+
+class TestHeatLegacyJsonAccessors:
+    """``json_competitors`` / ``json_stand_assignments``: the raw columns.
+
+    The old bodies of the two accessors, kept under names that say what they
+    read. Only the two drift checks and ``sync_assignments`` call them, and
+    all three die with the columns in commit F. Their corrupt-input tolerance
+    is still live coverage until then: a race-day request that cannot parse a
+    heat renders it as unknown rather than 500.
+    """
 
     def test_corrupt_json_returns_empty_list(self, db_session):
         t = _make_tournament()
         e = _make_event(t)
         h = _make_heat(e)
         h.competitors = '{bad'
-        assert h.get_competitors() == []
+        assert h.json_competitors() == []
 
-
-class TestHeatAddRemoveCompetitor:
-    """add_competitor / remove_competitor."""
-
-    def test_add_competitor(self, db_session):
+    def test_corrupt_json_returns_empty_dict(self, db_session):
         t = _make_tournament()
         e = _make_event(t)
         h = _make_heat(e)
-        h.add_competitor(42)
-        assert 42 in h.get_competitors()
+        h.stand_assignments = '!!'
+        assert h.json_stand_assignments() == {}
 
-    def test_add_duplicate_is_noop(self, db_session):
+    def test_a_corrupt_column_does_not_reach_the_row_accessors(self, db_session):
+        """The rows are a different storage location, so a column somebody
+        corrupted by hand cannot take the roster down with it."""
         t = _make_tournament()
         e = _make_event(t)
         h = _make_heat(e)
-        h.add_competitor(42)
-        h.add_competitor(42)
-        assert h.get_competitors().count(42) == 1
-
-    def test_remove_competitor(self, db_session):
-        t = _make_tournament()
-        e = _make_event(t)
-        h = _make_heat(e)
-        h.set_competitors([1, 2, 3])
-        h.remove_competitor(2)
-        assert h.get_competitors() == [1, 3]
-
-    def test_remove_nonexistent_is_noop(self, db_session):
-        t = _make_tournament()
-        e = _make_event(t)
-        h = _make_heat(e)
-        h.set_competitors([1, 2])
-        h.remove_competitor(99)
-        assert h.get_competitors() == [1, 2]
+        comps = [_make_pro_competitor(t, f'Pro {i}') for i in range(2)]
+        ids = [c.id for c in comps]
+        h.set_roster('pro', ids)
+        h.competitors = '{bad'
+        h.stand_assignments = '!!'
+        assert h.get_competitors() == ids
+        assert h.get_stand_assignments() == {}
 
 
 class TestHeatStandAssignments:
-    """get_stand_assignments / set_stand_assignment round-trip."""
+    """get_stand_assignments, read off the rows."""
+
+    def _heat_with(self, count):
+        t = _make_tournament()
+        e = _make_event(t)
+        h = _make_heat(e)
+        comps = [_make_pro_competitor(t, f'Pro {i}') for i in range(count)]
+        return h, [c.id for c in comps]
 
     def test_default_is_empty_dict(self, db_session):
         t = _make_tournament()
@@ -921,29 +987,35 @@ class TestHeatStandAssignments:
         assert h.get_stand_assignments() == {}
 
     def test_set_and_get_roundtrip(self, db_session):
-        t = _make_tournament()
-        e = _make_event(t)
-        h = _make_heat(e)
-        h.set_stand_assignment(10, 1)
-        h.set_stand_assignment(20, 2)
+        h, ids = self._heat_with(2)
+        h.set_roster('pro', ids, {ids[0]: 1, ids[1]: 2})
         assignments = h.get_stand_assignments()
-        assert assignments['10'] == 1
-        assert assignments['20'] == 2
+        assert assignments[str(ids[0])] == 1
+        assert assignments[str(ids[1])] == 2
+
+    def test_keys_are_strings_whatever_the_caller_passed(self, db_session):
+        """Every reader in this tree looks up `str(comp_id)`, and callers pass
+        both shapes. The dict has to be keyed one way regardless."""
+        h, ids = self._heat_with(1)
+        h.set_roster('pro', ids, {str(ids[0]): 4})
+        assert h.get_stand_assignments() == {str(ids[0]): 4}
+
+    def test_a_competitor_with_no_stand_contributes_no_key(self, db_session):
+        """The column never carried an explicit null and neither does this."""
+        h, ids = self._heat_with(2)
+        h.set_roster('pro', ids, {ids[0]: 1})
+        assert h.get_stand_assignments() == {str(ids[0]): 1}
+
+    def test_a_stand_for_somebody_not_in_the_heat_is_dropped(self, db_session):
+        h, ids = self._heat_with(2)
+        h.set_roster('pro', ids[:1], {ids[0]: 1, ids[1]: 2})
+        assert h.get_stand_assignments() == {str(ids[0]): 1}
 
     def test_get_stand_for_competitor(self, db_session):
-        t = _make_tournament()
-        e = _make_event(t)
-        h = _make_heat(e)
-        h.set_stand_assignment(10, 3)
-        assert h.get_stand_for_competitor(10) == 3
-        assert h.get_stand_for_competitor(99) is None
-
-    def test_corrupt_json_returns_empty_dict(self, db_session):
-        t = _make_tournament()
-        e = _make_event(t)
-        h = _make_heat(e)
-        h.stand_assignments = '!!'
-        assert h.get_stand_assignments() == {}
+        h, ids = self._heat_with(1)
+        h.set_roster('pro', ids, {ids[0]: 3})
+        assert h.get_stand_for_competitor(ids[0]) == 3
+        assert h.get_stand_for_competitor(999999) is None
 
 
 class TestHeatCompetitorCount:
@@ -959,7 +1031,8 @@ class TestHeatCompetitorCount:
         t = _make_tournament()
         e = _make_event(t)
         h = _make_heat(e)
-        h.set_competitors([1, 2, 3, 4, 5])
+        comps = [_make_pro_competitor(t, f'Pro {i}') for i in range(5)]
+        h.set_roster('pro', [c.id for c in comps])
         assert h.competitor_count == 5
 
 

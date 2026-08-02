@@ -172,7 +172,11 @@ class TestJSONFieldRoundTrips:
     def test_heat_stand_assignments_roundtrip(self, db_session, tournament):
         e = make_event(db_session, tournament, 'JSON Stands')
         assigns = {'10': 1, '20': 2, '30': 3}
-        h = make_heat(db_session, e, stand_assignments=assigns)
+        # D12-C commit E: a stand hangs off an assignment row, so a heat with
+        # stands and nobody in it is not a thing that can be stored any more.
+        # The roster has to be named for the stands to have anywhere to live.
+        h = make_heat(db_session, e, competitors=[10, 20, 30],
+                      stand_assignments=assigns)
         db_session.flush()
 
         loaded = h.get_stand_assignments()

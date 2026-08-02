@@ -19,6 +19,11 @@ import pytest
 
 from database import db as _db
 
+# D12-C commit E: the roster is `heat_assignments` rows now, so a heat
+# built here has to be seated for real. `seat_roster` materialises the
+# invented competitor ids this module uses before writing the rows.
+from tests.conftest import seat_roster
+
 
 @pytest.fixture(scope="module")
 def app():
@@ -110,9 +115,12 @@ def _make_heat(session, event, heat_number, competitor_ids):
     from models import Heat
 
     h = Heat(event_id=event.id, heat_number=heat_number, run_number=1)
-    h.set_competitors(competitor_ids)
     session.add(h)
     session.flush()
+    # Seat after the flush, not before: an assignment row's uid resolves
+    # against a real competitor row, so the ids have to exist first and the
+    # heat has to be in the session for the resolve to see them.
+    seat_roster(session, h, competitor_ids)
     return h
 
 
@@ -379,8 +387,10 @@ class TestBuildFnfSchedule:
         from models import Heat
 
         h = Heat.query.filter_by(event_id=data["p1b"].id, heat_number=1).first()
-        h.set_stand_assignment(data["comps"][0].id, 1)
-        h.set_stand_assignment(data["comps"][1].id, 2)
+        stands = h.get_stand_assignments()
+        stands[str(data["comps"][0].id)] = 1
+        stands[str(data["comps"][1].id)] = 2
+        h.set_roster(data["p1b"].event_type, h.get_competitors(), stands)
         db_session.flush()
 
         result = _build_fnf_schedule(

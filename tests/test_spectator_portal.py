@@ -198,6 +198,9 @@ def _seed_spectator_data(app):
             status='in_progress',
         )
         _db.session.add(ip_heat)
+        _db.session.flush()
+        ip_heat.set_roster('pro', [pro.id, pro2.id],
+                           {str(pro.id): 1, str(pro2.id): 2})
 
     _db.session.commit()
 

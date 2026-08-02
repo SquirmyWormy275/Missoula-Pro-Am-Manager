@@ -22,6 +22,11 @@ import pytest
 
 from database import db as _db
 
+# D12-C commit E: the roster is `heat_assignments` rows now, so a heat
+# built here has to be seated for real. `seat_roster` materialises the
+# invented competitor ids this module uses before writing the rows.
+from tests.conftest import seat_roster
+
 # ---------------------------------------------------------------------------
 # Fixtures (same pattern as test_woodboss.py)
 # ---------------------------------------------------------------------------
@@ -107,9 +112,12 @@ def _make_heat(session, event, heat_number, competitor_ids, run_number=1):
         heat_number=heat_number,
         run_number=run_number,
     )
-    h.set_competitors(competitor_ids)
     session.add(h)
     session.flush()
+    # Seat after the flush, not before: an assignment row's uid resolves
+    # against a real competitor row, so the ids have to exist first and the
+    # heat has to be in the session for the resolve to see them.
+    seat_roster(session, h, competitor_ids)
     return h
 
 
@@ -195,7 +203,10 @@ def _seed_standard_show(session):
     events['stock_saw'] = ev_ss
     heats['stock_saw'] = []
     for h_num in range(1, 3):
-        comp_ids = [competitors[h_num + 14].id for j in range(2)]
+        # `j` was missing from the index, so both seats of every stock saw
+        # heat named the same competitor. Nothing caught it because nothing
+        # validated the JSON column; `set_roster` refuses a duplicate outright.
+        comp_ids = [competitors[h_num + 14 + j].id for j in range(2)]
         heats['stock_saw'].append(_make_heat(session, ev_ss, h_num, comp_ids))
 
     return {
