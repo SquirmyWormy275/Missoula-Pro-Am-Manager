@@ -106,3 +106,34 @@ values themselves; keep it that way.
 
 Template build and rebuild procedures: see the C32 recovery doc and the
 docstrings in `stage_multitournament.py` and `test_o3_ordering.py`.
+
+## Rebuilding after a container swap (c56, third occurrence)
+
+C32 recorded a missing template as a hard blocker requiring the operator,
+because `rig_bootstrap.sh` needs the pristine dump and the dump is deliberately
+not in this public repo. **Look for `/tmp/proam_dump.sql` first.** It has
+survived every swap so far, and the whole rig is rebuildable in-container from
+it. Identify it before trusting it, by measuring it against the load-bearing
+constants in `test_college_id_reseed.py`: 64 college competitors at ids 29..92,
+49 pros, 21 pro/college collisions, 20 bracket ghosts, 11 relay ghosts, 173
+heats, 379 heat_assignments, 44 events, tournament id 2. Escalate only if the
+file is absent or the numbers disagree.
+
+Three things that each cost time in c56:
+
+  - **A surviving template is not necessarily the right template.** The
+    `proam_prod_mirror_p0` that came through the swap measured as pre-reseed
+    (college ids 29..92, 21 collisions), i.e. a pre-c39-cutover artifact. Measure
+    every template you did not build yourself in this container.
+  - **`pg_restore` of the dump fails on PG 16** with `unrecognized configuration
+    parameter "transaction_timeout"`, because the dump was produced by pg_dump
+    18.1. Strip it alongside the `\restrict` / `\unrestrict` lines:
+    `sed -e '/^\\restrict/d' -e '/^\\unrestrict/d' -e '/^SET transaction_timeout/d'
+    -e 's/OWNER TO postgres;/OWNER TO proam;/'`.
+  - **Export `PGPASSWORD`** before `dropdb` / `createdb` / `psql`, or the call
+    hangs on a password prompt until the tool times out.
+
+`stage_multitournament.py` disarms the write-time reference gate for the
+duration of the staging run. That is deliberate, it is documented in the script,
+and it is open question 17. Do not "fix" it by remapping the payouts without
+remeasuring the oracle numbers above in the same commit.
