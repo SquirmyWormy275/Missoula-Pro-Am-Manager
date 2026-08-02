@@ -1474,10 +1474,9 @@ def scratch_pro_competitor(tournament_id, competitor_id):
 def _remove_college_competitor_from_unfinished_heats(competitor_id: int, tournament_id: int):
     """Remove a competitor from uncompleted college heats and stand assignments.
 
-    Calls heat.sync_assignments after each mutation so HeatAssignment rows stay
-    aligned with the authoritative Heat.competitors JSON. Without the sync,
-    validation reports false positives and judge sheets keep showing the
-    scratched competitor.
+    Writes the roster once per heat via heat.set_roster, which is what puts the
+    removal in the HeatAssignment rows. Without that write, validation reports
+    false positives and judge sheets keep showing the scratched competitor.
     """
     heats = Heat.query.join(Event).filter(
         Event.tournament_id == tournament_id,

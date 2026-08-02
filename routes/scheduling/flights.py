@@ -709,20 +709,25 @@ def drag_move_competitor(tournament_id, source_heat_id):
         next_free += 1
         return stand
 
+    # Membership and stands accumulate in plain lists and dicts and go to each
+    # heat in one roster write at the bottom. The per-competitor version was
+    # four writes per mover plus a raw json.dumps and two sync_assignments to
+    # copy the result into the rows; a five-competitor move rebuilt the target
+    # heat's assignment rows five times to reach one final layout.
+    source_ids = source.get_competitors()
+    target_ids = target.get_competitors()
     for cid in competitor_ids:
-        source.remove_competitor(cid)
+        if cid in source_ids:
+            source_ids.remove(cid)
         source_assignments.pop(str(cid), None)
-        target.add_competitor(cid)
-        target.set_stand_assignment(cid, _next_stand())
-
-    source.stand_assignments = (
-        __import__('json').dumps(source_assignments) if source_assignments else '{}'
-    )
-    db.session.flush()
+        if cid not in target_ids:
+            target_ids.append(cid)
+        target_assignments[str(cid)] = _next_stand()
 
     competitor_type = 'pro' if event.event_type == 'pro' else 'college'
-    source.sync_assignments(competitor_type)
-    target.sync_assignments(competitor_type)
+    source.set_roster(competitor_type, source_ids, source_assignments)
+    target.set_roster(competitor_type, target_ids, target_assignments)
+    db.session.flush()
 
     # Stock Saw: a move can leave the source/target with a solo on the same
     # stand as a neighbour — re-alternate 7/8 before committing so the state

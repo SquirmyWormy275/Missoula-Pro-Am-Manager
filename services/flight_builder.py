@@ -1476,7 +1476,11 @@ def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool
         flight_position=_next_flight_position(last_flight.id),
         status='pending',
     )
-    heat.set_competitors([])
+    # An empty roster, written the same way every other roster in this module
+    # is written. Nothing to resolve, so the type argument never reaches a
+    # query; it is passed because set_roster's signature asks for it and
+    # guessing would be worse than reading it off the event.
+    heat.set_roster(relay_event.event_type, [], {})
     db.session.add(heat)
 
     if commit:

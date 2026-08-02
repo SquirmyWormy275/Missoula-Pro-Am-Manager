@@ -2,7 +2,6 @@
 Heat management routes: event_heats, generate_heats, generate_college_heats,
 move_competitor_between_heats, scratch_competitor, heat_sync_check, heat_sync_fix.
 """
-import json
 
 from flask import abort, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user
@@ -361,19 +360,25 @@ def move_competitor_between_heats(tournament_id, event_id):
         target_ids = target.get_competitors()
         if competitor_id in target_ids:
             continue
-        source.remove_competitor(competitor_id)
-        target.add_competitor(competitor_id)
-
+        # One roster write per heat, membership and stands together. This was
+        # a mutator call, a hand-rolled edit of the stand dict written straight
+        # to the column, and a sync_assignments to copy the pair into the rows,
+        # per side: six writes to move one competitor between two heats.
+        #
+        # `target_ids` is deliberately still the roster from BEFORE the move,
+        # which is what `_next_open_stand` was given when an `add_competitor`
+        # sat above this. The mover is appended only in the set_roster call.
+        source_ids.remove(competitor_id)
         source_assignments = source.get_stand_assignments()
         source_assignments.pop(str(competitor_id), None)
-        source.stand_assignments = json.dumps(source_assignments)
 
         target_assignments = target.get_stand_assignments()
-        target_assignments[str(competitor_id)] = _next_open_stand(target_ids, target_assignments, event)
-        target.stand_assignments = json.dumps(target_assignments)
+        target_assignments[str(competitor_id)] = _next_open_stand(
+            target_ids, target_assignments, event)
 
-        source.sync_assignments(comp_type)
-        target.sync_assignments(comp_type)
+        source.set_roster(comp_type, source_ids, source_assignments)
+        target.set_roster(comp_type, target_ids + [competitor_id],
+                          target_assignments)
 
     # Stock Saw: a move can leave a solo on the same stand as its neighbour —
     # re-alternate 7/8 across all solo heats in this event.
@@ -505,17 +510,17 @@ def scratch_competitor(tournament_id, event_id):
             if competitor_id not in target.get_competitors():
                 continue
 
-            target.remove_competitor(competitor_id)
-
-            # Free stand assignment
+            # One roster write, membership and the freed stand together. The
+            # guard above has already established the competitor is in this
+            # heat, so the remove cannot miss.
+            comp_ids = target.get_competitors()
+            comp_ids.remove(competitor_id)
             assignments = target.get_stand_assignments()
             assignments.pop(str(competitor_id), None)
-            target.stand_assignments = json.dumps(assignments)
-
-            target.sync_assignments(comp_type)
+            target.set_roster(comp_type, comp_ids, assignments)
 
             # Auto-complete empty heats to prevent finalization block (Codex #7)
-            if len(target.get_competitors()) == 0:
+            if not comp_ids:
                 target.status = 'completed'
 
         # Set EventResult.status = 'scratched' (do NOT delete the row)
@@ -714,12 +719,15 @@ def add_to_heat(tournament_id, event_id):
             if competitor_id in target.get_competitors():
                 continue
 
-            target.add_competitor(competitor_id)
-            target_ids = target.get_competitors()
+            # One roster write. Unlike the move above, `_next_open_stand` here
+            # is given the roster that ALREADY includes the returning
+            # competitor, because the `add_competitor` this replaced ran before
+            # the roster was re-read. Same input, same stand.
+            target_ids = target.get_competitors() + [competitor_id]
             assignments = target.get_stand_assignments()
-            assignments[str(competitor_id)] = _next_open_stand(target_ids, assignments, event)
-            target.stand_assignments = json.dumps(assignments)
-            target.sync_assignments(comp_type)
+            assignments[str(competitor_id)] = _next_open_stand(
+                target_ids, assignments, event)
+            target.set_roster(comp_type, target_ids, assignments)
 
         # Gear-sharing conflict check (warn, don't block)
         if event.event_type == 'pro':
