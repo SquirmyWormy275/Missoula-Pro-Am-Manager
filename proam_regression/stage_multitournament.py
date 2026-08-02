@@ -27,11 +27,27 @@ os.environ.setdefault("SECRET_KEY", "stage-" + "x" * 58)
 
 from app import create_app
 from database import db
+from services import reference_gate
 
 SRC_T = 2
 
 app = create_app()
 with app.app_context():
+    # c56: the write-time reference gate (c51) postdates this script (c37) and
+    # the two have never run together. The gate refuses the Event clones below:
+    # events.payouts is copied verbatim at a point where T3 has no competitors
+    # yet, so every bracket reference in it resolves against the T2 pool and
+    # reads as cross_kind. 16 findings on the first flush.
+    #
+    # Remapping the payouts would be the wrong repair. This template's entire
+    # value is that it carries the real 2026 damage bit-for-bit; rewriting the
+    # blobs would move the standing oracle numbers in
+    # proam_regression/RUNBOOK.md and stop the oracle lane from being a
+    # faithful copy. So stage with the gate disarmed, the same license
+    # tests/conftest.py::reference_gate_disarmed grants the repair and audit
+    # suites. This is a staging fixture, not a production path. Open question 17.
+    reference_gate.uninstall(db.session)
+
     from models import Tournament
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.competitor_identity import Competitor
