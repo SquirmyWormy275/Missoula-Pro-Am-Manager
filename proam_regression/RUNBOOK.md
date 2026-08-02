@@ -137,3 +137,23 @@ Three things that each cost time in c56:
 duration of the staging run. That is deliberate, it is documented in the script,
 and it is open question 17. Do not "fix" it by remapping the payouts without
 remeasuring the oracle numbers above in the same commit.
+
+## What a staged tournament has to carry (c57)
+
+The oracle template is only worth its runtime if T3 is a complete copy. Until
+c57 the staging script cloned the two heat JSON columns and skipped
+`heat_assignments` entirely: T2 had 379 rows, T3 had 0, and nothing read them
+yet so no lane complained. After D12-C commit E moves the roster accessors onto
+the rows, that hole reads as 173 empty heats.
+
+The rule this leaves behind: **when a table joins the roster path, clone it
+here in the same commit that starts reading it.** After restaging, check the
+template before trusting a green lane:
+
+    SELECT e.tournament_id, count(DISTINCT h.id), count(a.id)
+    FROM heats h JOIN events e ON e.id = h.event_id
+    LEFT JOIN heat_assignments a ON a.heat_id = h.id
+    GROUP BY e.tournament_id;
+
+Both tournaments must report the same two numbers (173 heats, 379 rows), and
+the two uid sets must not intersect.

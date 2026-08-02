@@ -3,7 +3,8 @@
 Clones tournament 2 into a staged 2027 tournament inside
 proam_prod_mirror_mt: new ids everywhere, FKs and JSON remapped
 (heat rosters, stand keys, events_entered with its c22 mixed shapes,
-partners, gear_sharing), competitor names IDENTICAL on purpose, because
+partners, gear_sharing), heat_assignments rows cloned alongside the JSON
+they mirror (c57), competitor names IDENTICAL on purpose, because
 returning competitors are the name-collision hazard the oracle exists to
 expose.
 
@@ -52,7 +53,7 @@ with app.app_context():
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.competitor_identity import Competitor
     from models.event import Event
-    from models.heat import Flight, Heat
+    from models.heat import Flight, Heat, HeatAssignment
     from models.team import Team
     from models.wood_config import WoodConfig
 
@@ -132,6 +133,7 @@ with app.app_context():
 
     # Competitors, both kinds, identical names, new uids
     pro_map, col_map = {}, {}
+    pro_uid, col_uid = {}, {}
     for comp in ProCompetitor.query.filter_by(tournament_id=SRC_T).all():
         ident = Competitor(kind="pro", tournament_id=T3)
         # Contact is no longer in ProCompetitor.__table__.columns, so the `data`
@@ -153,6 +155,7 @@ with app.app_context():
         db.session.add(clone)
         db.session.flush()
         pro_map[comp.id] = clone.id
+        pro_uid[comp.id] = ident.uid
     for comp in CollegeCompetitor.query.filter_by(tournament_id=SRC_T).all():
         ident = Competitor(kind="college", tournament_id=T3)
         ident.address = comp.address
@@ -171,6 +174,7 @@ with app.app_context():
         db.session.add(clone)
         db.session.flush()
         col_map[comp.id] = clone.id
+        col_uid[comp.id] = ident.uid
 
     # Wood configs
     for wc in WoodConfig.query.filter_by(tournament_id=SRC_T).all():
@@ -193,6 +197,7 @@ with app.app_context():
         return col_map if etype == "college" else pro_map
 
     heat_count = 0
+    assign_count = 0
     for ev in Event.query.filter_by(tournament_id=SRC_T).all():
         m = comp_map_for(ev.event_type)
         for h in Heat.query.filter_by(event_id=ev.id).all():
@@ -210,14 +215,53 @@ with app.app_context():
                 stands = {}
             data["stand_assignments"] = json.dumps(
                 {str(m.get(int(k), int(k))): v for k, v in stands.items()})
-            db.session.add(Heat(event_id=event_map[ev.id],
-                                flight_id=flight_map.get(h.flight_id),
-                                **data))
+            clone_h = Heat(event_id=event_map[ev.id],
+                           flight_id=flight_map.get(h.flight_id),
+                           **data)
+            db.session.add(clone_h)
+            db.session.flush()
             heat_count += 1
+
+            # c57: clone the heat_assignments rows as well.
+            #
+            # This script predates D12-C. It cloned the two JSON columns and
+            # nothing else, so every staged heat arrived with a roster in JSON
+            # and zero assignment rows: 173 heats, 379 rows on T2, 0 on T3.
+            # Nothing read the rows yet, so the oracle lane never noticed, and
+            # it would have gone on not noticing right up until D12-C commit E
+            # moved the accessors onto the rows and every T3 heat read as
+            # empty. The oracle template's job is to be a faithful copy of the
+            # 2026 damage; a table it silently drops is not damage, it is a
+            # staging bug wearing damage's clothes.
+            #
+            # A missing map entry is fatal rather than skipped. Measured on
+            # proam_prod_mirror_p0: 379 rows, every one resolving to a live
+            # competitor of its own kind, 0 off-spine uids, 0 rows whose
+            # competitor_type disagrees with its event. There is no legitimate
+            # unmappable row, so an unmappable row means the clone is wrong.
+            for a in HeatAssignment.query.filter_by(heat_id=h.id).all():
+                cmap = col_map if a.competitor_type == "college" else pro_map
+                umap = col_uid if a.competitor_type == "college" else pro_uid
+                new_cid = cmap.get(a.competitor_id)
+                new_uid = umap.get(a.competitor_id)
+                if new_cid is None or new_uid is None:
+                    raise SystemExit(
+                        f"heat_assignments row {a.id} (heat {h.id}, "
+                        f"{a.competitor_type} {a.competitor_id}) has no clone "
+                        f"in T3; refusing to stage a partial roster")
+                db.session.add(HeatAssignment(
+                    heat_id=clone_h.id,
+                    uid=new_uid,
+                    competitor_id=new_cid,
+                    competitor_type=a.competitor_type,
+                    stand_number=a.stand_number,
+                ))
+                assign_count += 1
 
     db.session.commit()
     print(f"staged: teams={len(team_map)} events={len(event_map)} "
           f"pros={len(pro_map)} colleges={len(col_map)} "
-          f"flights={len(flight_map)} heats={heat_count}")
+          f"flights={len(flight_map)} heats={heat_count} "
+          f"assignments={assign_count}")
     print("pro id range T3:", min(pro_map.values()), "-", max(pro_map.values()))
     print("college id range T3:", min(col_map.values()), "-", max(col_map.values()))
