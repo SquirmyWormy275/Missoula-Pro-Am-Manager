@@ -3,12 +3,15 @@ Birling double-elimination bracket service.
 Handles bracket generation and match progression for Birling events.
 """
 import json
+import logging
 import math
 from datetime import datetime, timezone
 
 from database import db
 from models import Event, EventResult
 from services import birling_rows
+
+logger = logging.getLogger(__name__)
 
 
 class BirlingBracket:
@@ -19,27 +22,67 @@ class BirlingBracket:
         self.bracket_data = self._load_bracket_data()
 
     def _load_bracket_data(self) -> dict:
-        """Load bracket data from event or create new."""
-        # Store bracket in event's payouts field (repurposed for bracket events)
+        """The bracket document, from the row tables wherever they hold it.
+
+        D13-C commit A3b. The five birling tables are the truth for any event
+        that has rows. The JSON document in ``events.payouts`` is the fallback,
+        and stays the fallback until A4 takes it away.
+
+        Falling back rather than refusing is what lets this commit land on its
+        own. A reader with something else to consult cannot blank a bracket, so
+        a save that ``project`` declined shows the judge the document it
+        declined instead of an empty page, and the reader flip stops depending
+        on the write path changing in the same commit.
+
+        Both fallback paths log, and the log line is the instrument A4 needs.
+        If it never fires across a real event then dropping the JSON is safe.
+        If it fires, it is not, and we learn that from a race rather than from
+        an argument.
+        """
+        if birling_rows.is_projected(self.event.id):
+            try:
+                return birling_rows.load_document(self.event)
+            except birling_rows.UnloadableBracket as exc:
+                reason = 'its rows will not load (%s)' % exc
+        else:
+            reason = 'it has no projected rows'
+
+        stored = self._stored_document()
+        if stored is None:
+            return birling_rows.empty_document()
+
+        logger.warning(
+            'birling bracket: event %s fell back to its JSON document because '
+            '%s. The JSON is what this page is showing, and it is still what '
+            'every save writes. D13-C A4 removes this fallback, so this line '
+            'firing is a reason not to ship A4 yet.',
+            self.event.id, reason)
+        return stored
+
+    def _stored_document(self):
+        """The JSON document in ``events.payouts``, or None if there is none.
+
+        Behaviour preserved exactly from the pre-A3b ``_load_bracket_data``,
+        including two things that are wrong and are not this commit's to fix:
+
+        The payload is discarded whole when it carries no ``bracket`` key
+        rather than being merged, which is the c63 defect that destroys
+        ``pre_seedings`` the first time a bracket is generated over them. That
+        fix needs its own approval and its own commit; doing it here would put
+        two changes under one commit message.
+
+        The bare ``except`` is open question 6, likewise pending. It is
+        reproduced rather than narrowed because narrowing it is the fix being
+        asked about, and making that call quietly inside an unrelated commit is
+        how a decision gets lost.
+        """
         try:
             data = json.loads(self.event.payouts or '{}')
             if 'bracket' in data:
                 return data
-        except:
+        except:  # noqa: E722  open question 6
             pass
-
-        return {
-            'bracket': {
-                'winners': [],  # Winners bracket matches
-                'losers': [],   # Losers bracket matches
-                'finals': None,  # Grand finals
-                'true_finals': None  # True finals if needed
-            },
-            'competitors': [],
-            'seeding': [],
-            'current_round': 'winners_1',
-            'placements': {}  # competitor_id -> final_position
-        }
+        return None
 
     def _save_bracket_data(self):
         """Save bracket data to event, and project it onto the row tables.

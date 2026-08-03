@@ -23,6 +23,8 @@ SAFEGUARD: Three layers prevent test data from touching the production DB:
 import json
 import os
 import pathlib
+from contextlib import contextmanager
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import text as sa_text
@@ -508,3 +510,54 @@ def make_flight(session, tournament, flight_number=1, name=None,
     session.add(f)
     session.flush()
     return f
+
+
+# ---------------------------------------------------------------------------
+# The mock-suite bracket harness
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def patched_bracket_deps():
+    """Run ``BirlingBracket`` with no database, the way the mock suite does.
+
+    Forty call sites used to spell this as two bare patches::
+
+        with patch('services.birling_bracket.db'), \
+             patch('services.birling_bracket.birling_rows'):
+
+    That was correct while ``birling_rows`` was write-only. D13-C commit A3b
+    made ``_load_bracket_data`` a reader of it, and a bare ``MagicMock``
+    answers a reader wrongly in a way that looks like success:
+    ``is_projected(...)`` returns a truthy ``MagicMock``, so the loader takes
+    the rows path and hands the test a ``MagicMock`` where it expects a dict.
+
+    So this pins the two answers the reader needs and leaves the rest a mock:
+
+    ``is_projected`` returns False, which routes every one of those tests down
+    the JSON fallback, which is the behaviour they were written against and
+    still the behaviour under test for them. State that plainly: with this
+    helper in force those forty tests prove nothing about the rows path. The
+    rows path is proved by ``tests/test_birling_reader_flip.py``, which uses a
+    real database because there is no way to prove a reader reads a table by
+    mocking the table away.
+
+    ``empty_document`` and ``UnloadableBracket`` are routed to the real
+    module. The first because the fallback returns it whenever an event has no
+    stored document, and a ``MagicMock`` skeleton is not a bracket. The second
+    because ``_load_bracket_data`` names it in an ``except`` clause, and
+    catching a ``MagicMock`` attribute is a ``TypeError``. That clause is
+    unreachable while ``is_projected`` is False, which is exactly why it would
+    go unnoticed until something moved.
+
+    Yields ``(mock_db, mock_rows)`` for the handful of callers that assert on
+    the writer.
+    """
+    from services import birling_rows as _real_rows
+
+    with patch('services.birling_bracket.db') as mock_db, \
+            patch('services.birling_bracket.birling_rows') as mock_rows:
+        mock_rows.is_projected.return_value = False
+        mock_rows.empty_document = _real_rows.empty_document
+        mock_rows.UnloadableBracket = _real_rows.UnloadableBracket
+        yield mock_db, mock_rows

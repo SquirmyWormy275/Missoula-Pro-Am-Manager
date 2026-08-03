@@ -20,9 +20,11 @@ Run:  pytest tests/test_birling_bracket_9.py -v
 from __future__ import annotations
 
 import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
+
+from tests.conftest import patched_bracket_deps
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from services.birling_bracket import BirlingBracket
@@ -46,7 +48,7 @@ def _mock_event(payouts="{}", event_type="college"):
 def _bracket_n(n: int):
     """Create an N-competitor bracket with mocked DB."""
     comps = [{"id": i + 1, "name": f"Seed{i + 1}"} for i in range(n)]
-    with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
+    with patched_bracket_deps():
         ev = _mock_event()
         b = BirlingBracket(ev)
         b.generate_bracket(comps)
@@ -251,19 +253,25 @@ class TestPrintRender9:
         # Build bracket (generator) + scrubbed print context (same path as
         # the real /birling/print-blank route).
         comps = [{"id": i + 1, "name": f"Seed{i + 1}"} for i in range(n)]
-        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
+        # The print-context build stays inside the patch. D13-C commit A3b
+        # made BirlingBracket.__init__ ask the database whether the event has
+        # projected rows, and build_birling_print_context constructs one, so
+        # calling it outside the patch now wants a Flask app context this test
+        # has no reason to own.
+        with patched_bracket_deps():
             ev = _mock_event()
             b = BirlingBracket(ev)
             b.generate_bracket(comps)
-        # Round-trip event.payouts through JSON so build_birling_print_context
-        # picks up the just-generated state (mock assigns the string).
-        ev.payouts = b.event.payouts  # MagicMock captured the commit
-        # Actually: generator called _save_bracket_data which set
-        # event.payouts = json.dumps(...).  MagicMock records that as a
-        # normal attribute write, so ev.payouts is now a string.  Confirm:
-        assert isinstance(ev.payouts, str)
+            # Round-trip event.payouts through JSON so
+            # build_birling_print_context picks up the just-generated state
+            # (mock assigns the string).
+            ev.payouts = b.event.payouts  # MagicMock captured the commit
+            # Actually: generator called _save_bracket_data which set
+            # event.payouts = json.dumps(...).  MagicMock records that as a
+            # normal attribute write, so ev.payouts is now a string.  Confirm:
+            assert isinstance(ev.payouts, str)
 
-        ctx = build_birling_print_context(ev)
+            ctx = build_birling_print_context(ev)
         assert ctx is not None
 
         # Render via Jinja pointed at the project's templates/ dir.

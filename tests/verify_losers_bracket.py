@@ -28,7 +28,9 @@ import sys
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
+from tests.conftest import patched_bracket_deps
 
 
 def mock_event(payouts="{}", event_type="college"):
@@ -129,7 +131,7 @@ def run_verification():
         num_winners_rounds = int(math.log2(bracket_size))
 
         # Generate bracket using the actual service
-        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
+        with patched_bracket_deps():
             ev = mock_event()
             b = BirlingBracket(ev)
             comps = [{"id": i, "name": f"Comp{i}"} for i in range(1, n + 1)]

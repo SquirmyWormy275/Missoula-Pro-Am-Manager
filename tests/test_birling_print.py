@@ -18,6 +18,30 @@ from types import SimpleNamespace
 import pytest
 
 from services.birling_print import build_birling_print_context
+from tests.conftest import patched_bracket_deps
+
+
+@pytest.fixture(autouse=True)
+def no_database():
+    """Every test in this module runs with BirlingBracket's database cut off.
+
+    D13-C commit A3b made ``BirlingBracket.__init__`` a reader: it asks
+    ``birling_rows.is_projected`` whether the event has rows before it decides
+    where to load the bracket from. That is a database query, and this module
+    is by its own docstring a no-database module. Its events are
+    ``SimpleNamespace`` fakes with a ``payouts`` string and nothing behind
+    them, and there is no application context, so construction raises.
+
+    The fixture is honest about what it costs. These tests prove
+    ``build_birling_print_context`` scrubs a document correctly, and they
+    always did that against a document handed straight to it in
+    ``payouts``. Forcing the fallback path keeps that exactly as it was. What
+    they do not prove, and never did, is anything about where the document
+    came from. The rows path is proved by
+    ``tests/test_birling_reader_flip.py``.
+    """
+    with patched_bracket_deps():
+        yield
 
 
 def _event_with_bracket(bracket_payload: dict):

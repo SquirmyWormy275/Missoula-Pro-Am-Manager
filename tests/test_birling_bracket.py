@@ -8,9 +8,11 @@ needed.
 Run:  pytest tests/test_birling_bracket.py -v
 """
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
+
+from tests.conftest import patched_bracket_deps
 
 from services.birling_bracket import BirlingBracket
 
@@ -29,7 +31,7 @@ def _mock_event(payouts='{}', event_type='college'):
 
 def _bracket(num_competitors=4, seeding=None, event_type='college'):
     """Convenience: create and generate a bracket with mock DB."""
-    with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+    with patched_bracket_deps():
         ev = _mock_event(event_type=event_type)
         b = BirlingBracket(ev)
         comps = [{'id': i, 'name': f'Comp{i}'} for i in range(1, num_competitors + 1)]
@@ -43,7 +45,7 @@ def _bracket(num_competitors=4, seeding=None, event_type='college'):
 
 class TestGenerateBracket:
     def test_requires_at_least_two_competitors(self):
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             ev = _mock_event()
             b = BirlingBracket(ev)
             with pytest.raises(ValueError):
@@ -172,7 +174,7 @@ class TestRecordMatchResult:
         match = b.bracket_data['bracket']['winners'][0][0]
         comp1 = match['competitor1']
         comp2 = match['competitor2']
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             b.record_match_result(match['match_id'], comp1)
         assert match['winner'] == comp1
         assert match['loser'] == comp2
@@ -180,7 +182,7 @@ class TestRecordMatchResult:
     def test_invalid_winner_raises(self):
         b = _bracket(4)
         match = b.bracket_data['bracket']['winners'][0][0]
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             with pytest.raises(ValueError):
                 b.record_match_result(match['match_id'], 9999)
 
@@ -191,7 +193,7 @@ class TestRecordMatchResult:
         for match in first_round:
             comp1, comp2 = match['competitor1'], match['competitor2']
             if comp1 is not None and comp2 is not None:
-                with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+                with patched_bracket_deps():
                     b.record_match_result(match['match_id'], comp1)
 
         # At least one slot in winners round 2 should be filled
@@ -210,7 +212,7 @@ class TestRecordMatchResult:
         comp2 = match['competitor2']
         if comp1 is None or comp2 is None:
             pytest.skip("bye match — not applicable")
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             b.record_match_result(match['match_id'], comp1)
         # The loser (comp2) should appear in the losers bracket
         loser_id = comp2
@@ -257,7 +259,7 @@ class TestGrandFinals:
         finals = b.bracket_data['bracket']['finals']
         finals['competitor1'] = 10  # winners champ
         finals['competitor2'] = 20  # losers champ
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             b.record_match_result('F1', 10)
         assert b.bracket_data['placements']['10'] == 1
         assert b.bracket_data['placements']['20'] == 2
@@ -268,7 +270,7 @@ class TestGrandFinals:
         finals = b.bracket_data['bracket']['finals']
         finals['competitor1'] = 10  # winners champ (competitor1)
         finals['competitor2'] = 20  # losers champ (competitor2)
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             b.record_match_result('F1', 20)  # losers champ wins
         assert b.bracket_data['bracket']['true_finals']['needed'] is True
         tf = b.bracket_data['bracket']['true_finals']
@@ -281,7 +283,7 @@ class TestGrandFinals:
         tf['competitor1'] = 10
         tf['competitor2'] = 20
         tf['needed'] = True
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             b.record_match_result('F2', 20)
         assert b.bracket_data['placements']['20'] == 1
         assert b.bracket_data['placements']['10'] == 2
@@ -298,12 +300,12 @@ class TestFallRecording:
         match = b.bracket_data['bracket']['winners'][0][0]
         comp1 = match['competitor1']
 
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             result1 = b.record_fall(match['match_id'], comp1)
         assert not result1['match_decided']
         assert len(result1['falls']) == 1
 
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             result2 = b.record_fall(match['match_id'], comp1)
         assert result2['match_decided']
         assert result2['winner'] == comp1
@@ -316,15 +318,15 @@ class TestFallRecording:
         comp1 = match['competitor1']
         comp2 = match['competitor2']
 
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             r1 = b.record_fall(match['match_id'], comp1)
         assert not r1['match_decided']
 
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             r2 = b.record_fall(match['match_id'], comp2)
         assert not r2['match_decided']
 
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             r3 = b.record_fall(match['match_id'], comp1)
         assert r3['match_decided']
         assert r3['winner'] == comp1
@@ -334,7 +336,7 @@ class TestFallRecording:
         """Attempt to record fall for non-playable match raises ValueError."""
         b = _bracket(4)
         # W2_1 is not playable yet (no competitors filled)
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             with pytest.raises(ValueError, match="not currently playable"):
                 b.record_fall('W2_1', 1)
 
@@ -344,7 +346,7 @@ class TestFallRecording:
         match = b.bracket_data['bracket']['winners'][0][0]
         comp1 = match['competitor1']
 
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             b.record_match_result(match['match_id'], comp1)
         falls = match.get('falls', [])
         assert len(falls) == 2
@@ -363,12 +365,12 @@ class TestUndoMatchResult:
         comp1 = match['competitor1']
         comp2 = match['competitor2']
 
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             b.record_match_result(match['match_id'], comp1)
         assert match['winner'] == comp1
         assert match['loser'] == comp2
 
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             result = b.undo_match_result(match['match_id'])
         assert result['undone'] is True
         assert match['winner'] is None
@@ -385,18 +387,18 @@ class TestUndoMatchResult:
         # Play both first-round matches
         for m in first_round:
             if m['competitor1'] is not None and m['competitor2'] is not None:
-                with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+                with patched_bracket_deps():
                     b.record_match_result(m['match_id'], m['competitor1'])
 
         # Play the second-round match (uses winners from first round)
         second_round = b.bracket_data['bracket']['winners'][1]
         for m in second_round:
             if m['competitor1'] is not None and m['competitor2'] is not None:
-                with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+                with patched_bracket_deps():
                     b.record_match_result(m['match_id'], m['competitor1'])
 
         # Try to undo the first-round match — should fail (downstream played)
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             with pytest.raises(ValueError, match="downstream match"):
                 b.undo_match_result(first_round[0]['match_id'])
 
@@ -404,6 +406,6 @@ class TestUndoMatchResult:
         """Try to undo a match with no winner. Expect ValueError."""
         b = _bracket(4)
         match = b.bracket_data['bracket']['winners'][0][0]
-        with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
+        with patched_bracket_deps():
             with pytest.raises(ValueError, match="no result to undo"):
                 b.undo_match_result(match['match_id'])

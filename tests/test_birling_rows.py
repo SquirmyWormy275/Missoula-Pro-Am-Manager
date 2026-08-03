@@ -708,38 +708,46 @@ class TestPreSeedsComeFromTheRankingsPage:
         rowed = {p.uid: p.seed_number for p in _rows_for(event.id)["pre_seeds"]}
         assert rowed == {by_id[people[0].id]: 1, by_id[people[1].id]: 2}
 
-    def test_the_first_generate_destroys_the_pre_seedings_and_the_rows_follow(
+    def test_the_first_generate_keeps_the_pre_seedings_once_rows_exist(
             self, db_session):
-        """A pre-existing defect, pinned here rather than fixed.
+        """The c63 defect, and the one arrangement in which it stops firing.
 
-        ``BirlingBracket._load_bracket_data`` returns the stored document only
-        if it carries a ``bracket`` key, and otherwise throws the whole thing
-        away and starts from a fresh skeleton. The production order of
-        operations is exactly the losing one: the ability rankings page writes
-        ``pre_seedings`` onto an event that has no bracket yet, and the first
-        generate then silently drops it. The seed order that generate produces
-        is still right, because the birling route reads ``pre_seedings`` to
-        build it before calling in. What is lost is the record of what each
-        school actually asked for, which is what a later regenerate would need.
+        Written in an earlier session to pin the defect. It now records the
+        opposite outcome, and the change of outcome is the point.
 
-        A2 does not change this. The rows are a projection of the document and
-        the document lost the data, so the rows lose it too, which is the
-        correct behaviour for a projection and is exactly the argument for
-        moving truth into the rows in A4. The defect is filed, not fixed:
-        changing the loader is a modification nobody has approved.
+        ``BirlingBracket._stored_document`` returns the stored document only if
+        it carries a ``bracket`` key, and otherwise throws the whole thing away
+        and starts from a fresh skeleton. The production order of operations is
+        exactly the losing one: the ability rankings page writes
+        ``pre_seedings`` onto an event that has no bracket yet, and before A3b
+        the first generate then silently dropped it. What was lost is the
+        record of what each school actually asked for, which is what a later
+        regenerate would need.
+
+        A3b flipped the reader onto the row tables, and the rows do not have
+        that hole: the pre-seed rows load whether or not a bracket sits beside
+        them. So on any event the ability rankings page has touched, and that
+        page has projected rows alongside the JSON since A2, the pre-seedings
+        now survive the first generate.
+
+        This is behaviour A3b happens to change, not the c63 fix. c63 stays
+        open. ``_stored_document`` is untouched and still discards a
+        bracket-less payload whole, so an event whose rows were never projected
+        still loses its pre-seedings through the fallback path. Fixing that is
+        a modification nobody has approved.
         """
         _tour, event, people = _world(db_session, "Clobbered")
-        event.payouts = json.dumps(
-            {"pre_seedings": {str(people[0].id): 1, str(people[1].id): 2}})
+        pre = {str(people[0].id): 1, str(people[1].id): 2}
+        event.payouts = json.dumps({"pre_seedings": pre})
         rows.project(event)
         db.session.flush()
         assert _counts(event.id)["pre_seeds"] == 2
 
         BirlingBracket(event).generate_bracket(_entrants(people[:4]))
 
-        assert "pre_seedings" not in json.loads(event.payouts)
+        assert json.loads(event.payouts)["pre_seedings"] == pre
         counts = _counts(event.id)
-        assert counts["pre_seeds"] == 0
+        assert counts["pre_seeds"] == 2
         assert counts["seeds"] == 4
 
     def test_a_pre_seeding_added_after_a_bracket_exists_does_survive(

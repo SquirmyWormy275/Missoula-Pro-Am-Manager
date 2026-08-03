@@ -45,6 +45,15 @@ Read the ``--check`` report before running ``--apply``. This is a name-matched
 rewrite of recorded competition results. It is not a schema change and it is
 not idempotent housekeeping.
 
+There is a second step
+======================
+Since D13-C commit A3b the bracket pages read the projected rows in the five
+birling tables, not the document this script rewrites. This script runs on a
+bare session with no Flask app context and so cannot project. ``--apply``
+prints the exact ``scripts/reproject_birling.py`` command that rebuilds the
+rows for every event it touched. Run it. Until it runs, the rows still hold
+the ghost references this script just removed.
+
 Why a script and not a migration
 ================================
 It is a one-time repair of one database's data. As a migration it would be a
@@ -362,6 +371,50 @@ def post_check(session, plan, applied, before_findings):
     return defects
 
 
+#: Printed by --check so the operator learns about the second step before
+#: they run the first one, not after.
+_REPROJECT_NOTICE = (
+    'NOTE: repairing events.payouts leaves the projected birling rows holding\n'
+    '      the references this repair removes. --apply prints the exact\n'
+    '      scripts/reproject_birling.py command to run afterwards.')
+
+
+def _print_reproject_followup(applied, url):
+    """Name the events whose birling rows are now stale, and how to rebuild.
+
+    D13-C commit A3b. The birling bracket document lives in
+    ``events.payouts``, and since A3b the projected rows in the five birling
+    tables are what the manage page and the index page read. This script
+    rewrites the document through raw SQL on a session with no Flask app
+    context, so it cannot call ``services.birling_rows.project`` itself. Every
+    payouts row it touched therefore has rows that still hold the ghost
+    references it just removed.
+
+    Every payouts row is named, not just the ones that look like brackets.
+    Reprojecting an event that holds payout amounts rather than a bracket
+    clears rows it never had and writes none, so the wide net costs nothing
+    and a narrow one could miss a bracket this script does not recognise.
+    """
+    event_ids = sorted({row_id for store, row_id in applied
+                        if store == 'events.payouts'})
+    if not event_ids:
+        return
+    ids = ' '.join(str(event_id) for event_id in event_ids)
+    print('')
+    print('NOT DONE YET. The projected birling rows for these events still '
+          'hold the')
+    print('references this repair removed, and since D13-C A3b the rows are '
+          'what the')
+    print('bracket pages read. Rebuild them from the repaired documents:')
+    print('')
+    print(f'    python -m scripts.reproject_birling '
+          f'--database-url {url} {ids}')
+    print('')
+    print('That script is idempotent, so running it twice is harmless and '
+          'running it')
+    print('once is mandatory.')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -396,6 +449,8 @@ def main(argv=None):
         print_plan(plan, refusals, details, events, by_id)
 
         if args.check:
+            if plan:
+                print(_REPROJECT_NOTICE)
             return 1 if refusals else 0
 
         if refusals:
@@ -419,6 +474,7 @@ def main(argv=None):
         repaired = sum(len(changes) for _blob, changes in applied.values())
         print(f'repaired {repaired} references across {len(applied)} blobs; '
               f'all post-checks passed')
+        _print_reproject_followup(applied, url)
         return 0
 
 

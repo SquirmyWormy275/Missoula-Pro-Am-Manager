@@ -289,12 +289,10 @@ def ability_rankings(tournament_id):
         if not signed_up:
             continue
 
-        # Load existing pre-seedings.
-        try:
-            bev_data = json.loads(bev.payouts or '{}')
-        except (json.JSONDecodeError, TypeError):
-            bev_data = {}
-        pre_seedings = bev_data.get('pre_seedings', {})
+        # Load existing pre-seedings. D13-C commit A3b: off the rows rather
+        # than out of the JSON document. This page is the only writer of them
+        # and has projected the rows alongside the JSON since A2.
+        pre_seedings = birling_rows.load_pre_seedings(bev)
         # pre_seedings is {comp_id_str: seed_number}
         seed_map = {int(k): v for k, v in pre_seedings.items()}
 

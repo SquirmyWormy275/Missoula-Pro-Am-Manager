@@ -12,6 +12,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from database import db
 from models import Event, EventResult, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
+from services import birling_rows
 from services.audit import log_action
 from services.birling_print import build_birling_print_context
 from services.cache_invalidation import invalidate_tournament_caches
@@ -131,7 +132,6 @@ def birling_generate(tournament_id, event_id):
 
     # Parse seed order from form: seed_{comp_id} = rank number.
     # If no manual seeds given, fall back to pre_seedings from ability rankings page.
-    import json
     seed_entries = []
     has_manual_seeds = any(
         request.form.get(f'seed_{comp.id}', '').strip()
@@ -154,12 +154,11 @@ def birling_generate(tournament_id, event_id):
             else:
                 seed_entries.append((comp, None))
     else:
-        # Use pre_seedings from ability rankings if available.
-        try:
-            bev_data = json.loads(event.payouts or '{}')
-        except (json.JSONDecodeError, TypeError):
-            bev_data = {}
-        pre_seedings = bev_data.get('pre_seedings', {})
+        # Use pre_seedings from ability rankings if available. D13-C commit
+        # A3b: these come off birling_pre_seeds rather than out of the JSON
+        # document. The ability rankings page is the only writer and it has
+        # projected the rows alongside the JSON since A2.
+        pre_seedings = birling_rows.load_pre_seedings(event)
         for comp in competitors:
             seed_val = pre_seedings.get(str(comp.id))
             if seed_val is not None:
@@ -386,6 +385,11 @@ def birling_reset(tournament_id, event_id):
         abort(404)
 
     event.payouts = '{}'
+    # D13-C commit A3b. The rows are what the manage page reads now, so a reset
+    # that only blanked the JSON would put the whole bracket back on the next
+    # page load. That failure is race-day shaped: resetting a bracket is what
+    # an operator does when something has already gone wrong.
+    birling_rows.clear_event(event.id)
     db.session.commit()
 
     log_action('birling_bracket_reset', 'event', event_id, {
@@ -446,7 +450,6 @@ def birling_finalize(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/birling', methods=['GET'])
 def birling_index(tournament_id):
     """Landing page listing every college birling event in the tournament."""
-    import json as _json
     tournament = Tournament.query.get_or_404(tournament_id)
     events = (
         Event.query
@@ -456,12 +459,16 @@ def birling_index(tournament_id):
         .all()
     )
 
+    # D13-C commit A3b. This page used to parse the JSON document itself,
+    # which made it a second reader that could drift from the manage page's.
+    # It goes through BirlingBracket now, so both pages answer "is there a
+    # bracket" from the same place and neither can disagree with the other
+    # about an event's state.
+    from services.birling_bracket import BirlingBracket
+
     rows = []
     for event in events:
-        try:
-            payload = _json.loads(event.payouts or '{}')
-        except (ValueError, TypeError):
-            payload = {}
+        payload = BirlingBracket(event).bracket_data
         bracket = payload.get('bracket') or {}
         has_bracket = bool(bracket.get('winners'))
         placements = payload.get('placements') or {}

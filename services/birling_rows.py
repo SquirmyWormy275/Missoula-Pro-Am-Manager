@@ -821,6 +821,30 @@ def referenced_uids(seeds, pre_seeds, matches, placements):
     return uids
 
 
+def load_pre_seedings(event):
+    """``{str(bare id): seed number}`` from ``birling_pre_seeds`` alone.
+
+    Narrow on purpose. Both callers want the ability-rankings seed map and
+    nothing else, and routing them through ``load_document`` would make a page
+    that only needs pre-seeds fail on a bracket it was never going to render.
+
+    A pre-seed naming a competitor the roster no longer holds drops out of the
+    map rather than raising, which is faithful to what the document did: the
+    callers look the map up by the id of a competitor who is standing in front
+    of them, so an entry for somebody who left was already unreachable.
+    """
+    rows = (BirlingPreSeed.query
+            .filter_by(event_id=event.id)
+            .order_by(BirlingPreSeed.seed_number).all())
+    if not rows:
+        return {}
+    reverse = reverse_pool_for(event.event_type, [row.uid for row in rows])
+    if not reverse:
+        return {}
+    return {str(reverse[row.uid][0]): row.seed_number
+            for row in rows if row.uid in reverse}
+
+
 def load_document(event):
     """The five tables back into the document shape the service works in.
 
