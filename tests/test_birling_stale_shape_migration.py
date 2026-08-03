@@ -90,13 +90,13 @@ def _mock_event(payouts: dict):
 
 class TestStaleShapeDetection:
     def test_detects_pre_v2_14_14_power_of_two_shape(self):
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event(_stale_9_entrant_payload()))
             assert bb.is_stale_power_of_two_shape() is True
 
     def test_fresh_v2_14_14_bracket_is_not_stale(self):
         comps = [{"id": i + 1, "name": f"Seed{i + 1}"} for i in range(9)]
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             ev = _mock_event({})
             bb = BirlingBracket(ev)
             bb.generate_bracket(comps)
@@ -106,14 +106,14 @@ class TestStaleShapeDetection:
             assert bb2.is_stale_power_of_two_shape() is False
 
     def test_no_bracket_generated_is_not_stale(self):
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event({}))
             assert bb.is_stale_power_of_two_shape() is False
 
 
 class TestRebuildIfStaleShape:
     def test_rebuilds_9_entrant_stale_bracket_to_compact_shape(self):
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event(_stale_9_entrant_payload()))
             rebuilt = bb.rebuild_if_stale_shape()
 
@@ -145,7 +145,7 @@ class TestRebuildIfStaleShape:
         # played match before the operator hit the page post-deploy).
         payload["bracket"]["winners"][0][1]["winner"] = 2
 
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event(payload))
             rebuilt = bb.rebuild_if_stale_shape()
 
@@ -158,14 +158,14 @@ class TestRebuildIfStaleShape:
         """Completed bracket with final placements — also no silent rebuild."""
         payload = _stale_9_entrant_payload()
         payload["placements"] = {"1": 1, "2": 2}
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event(payload))
             assert bb.rebuild_if_stale_shape() is False
 
     def test_noop_on_already_compact_bracket(self):
         """Rebuild must be idempotent — fresh brackets stay untouched."""
         comps = [{"id": i + 1, "name": f"S{i + 1}"} for i in range(9)]
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             ev = _mock_event({})
             bb = BirlingBracket(ev)
             bb.generate_bracket(comps)
@@ -180,21 +180,21 @@ class TestRebuildIfStaleShape:
 class TestHasAnyResultsRecorded:
     def test_false_on_fresh_bracket(self):
         payload = _stale_9_entrant_payload()
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event(payload))
             assert bb.has_any_results_recorded() is False
 
     def test_true_when_winners_round_match_recorded(self):
         payload = _stale_9_entrant_payload()
         payload["bracket"]["winners"][0][0]["winner"] = 1
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event(payload))
             assert bb.has_any_results_recorded() is True
 
     def test_true_when_placements_populated(self):
         payload = _stale_9_entrant_payload()
         payload["placements"] = {"3": 1}
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event(payload))
             assert bb.has_any_results_recorded() is True
 
@@ -207,7 +207,7 @@ class TestHasAnyResultsRecorded:
         # Operator entered ONE fall in the W1_2 match against seed 2.
         # No winner yet (best-of-3 not decided).
         payload["bracket"]["winners"][0][1]["falls"] = [{"winner": 2, "fall_number": 1}]
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event(payload))
             assert bb.has_any_results_recorded() is True, (
                 "Recorded falls must count as in-progress state — without this "
@@ -225,6 +225,6 @@ class TestHasAnyResultsRecorded:
         payload = _stale_9_entrant_payload()
         payload["bracket"]["winners"][0][0]["is_bye"] = True
         payload["bracket"]["winners"][0][0]["winner"] = 1
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             bb = BirlingBracket(_mock_event(payload))
             assert bb.has_any_results_recorded() is False

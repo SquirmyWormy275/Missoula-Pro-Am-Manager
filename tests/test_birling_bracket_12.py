@@ -36,7 +36,7 @@ def _bracket_12(names=None, event_type='college'):
     if names is None:
         names = BIRLING_MEN_BRACKET
     comps = [{'id': i + 1, 'name': name} for i, name in enumerate(names)]
-    with patch('services.birling_bracket.db'):
+    with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
         ev = _mock_event(event_type=event_type)
         b = BirlingBracket(ev)
         b.generate_bracket(comps)
@@ -50,7 +50,7 @@ def _find_match(bracket, match_id):
 
 def _play_match(bracket, match_id, winner_id):
     """Record a match result with DB mocked."""
-    with patch('services.birling_bracket.db'):
+    with patch('services.birling_bracket.db'), patch('services.birling_bracket.birling_rows'):
         bracket.record_match_result(match_id, winner_id)
 
 

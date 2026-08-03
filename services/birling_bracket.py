@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from database import db
 from models import Event, EventResult
+from services import birling_rows
 
 
 class BirlingBracket:
@@ -41,8 +42,21 @@ class BirlingBracket:
         }
 
     def _save_bracket_data(self):
-        """Save bracket data to event."""
+        """Save bracket data to event, and project it onto the row tables.
+
+        D13-C commit A2. The JSON is still the truth; the rows are a
+        projection of it, rebuilt on every save and committed in the same
+        transaction so the two cannot be observed disagreeing. Nothing reads
+        the rows yet, which is what makes this safe to land before A3.
+
+        ``project`` does not raise on a document it cannot resolve. It clears
+        the event's rows, logs why, and lets the save proceed, because the JSON
+        is what the app reads and refusing here would take a bracket away from
+        a judge on race day to protect a table nobody is reading. The refusal
+        arrives in A3, with the readers.
+        """
         self.event.payouts = json.dumps(self.bracket_data)
+        birling_rows.project(self.event)
         db.session.commit()
 
     def _expected_round_1_match_count(self, n: int) -> int:

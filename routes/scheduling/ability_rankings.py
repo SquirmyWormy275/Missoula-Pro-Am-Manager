@@ -10,6 +10,7 @@ from config import event_rank_category as _event_rank_category
 from database import db
 from models import Event, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
+from services import birling_rows
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
 
@@ -186,6 +187,12 @@ def ability_rankings(tournament_id):
                 existing_data = {}
             existing_data['pre_seedings'] = pre_seedings
             bev.payouts = json.dumps(existing_data)
+            # D13-C commit A2. ``pre_seedings`` is the one part of a birling
+            # document that BirlingBracket never writes, so this is the only
+            # place birling_pre_seeds can be kept current. The JSON above is
+            # still the truth; the rows are a projection of it and commit with
+            # it below.
+            birling_rows.project(bev)
             birling_saved += len(pre_seedings)
 
         if birling_saved:

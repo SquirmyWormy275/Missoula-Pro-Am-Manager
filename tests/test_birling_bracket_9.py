@@ -46,7 +46,7 @@ def _mock_event(payouts="{}", event_type="college"):
 def _bracket_n(n: int):
     """Create an N-competitor bracket with mocked DB."""
     comps = [{"id": i + 1, "name": f"Seed{i + 1}"} for i in range(n)]
-    with patch("services.birling_bracket.db"):
+    with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
         ev = _mock_event()
         b = BirlingBracket(ev)
         b.generate_bracket(comps)
@@ -251,7 +251,7 @@ class TestPrintRender9:
         # Build bracket (generator) + scrubbed print context (same path as
         # the real /birling/print-blank route).
         comps = [{"id": i + 1, "name": f"Seed{i + 1}"} for i in range(n)]
-        with patch("services.birling_bracket.db"):
+        with patch("services.birling_bracket.db"), patch("services.birling_bracket.birling_rows"):
             ev = _mock_event()
             b = BirlingBracket(ev)
             b.generate_bracket(comps)
