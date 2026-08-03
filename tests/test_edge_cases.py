@@ -200,7 +200,6 @@ def _seed_scoring_heat(app, competitor_count: int = 1):
             comp_ids.append(comp.id)
 
         db.session.flush()
-        heat.sync_assignments("pro")
         db.session.commit()
         return tournament.id, event.id, heat.id, comp_ids
 
@@ -373,7 +372,6 @@ def test_unassigned_competitor_and_all_scratched_heat_render_cleanly(qa_env):
             competitors.append(comp.id)
 
         db.session.flush()
-        heat.sync_assignments("pro")
         db.session.commit()
         tournament_id = tournament.id
         event_id = event.id

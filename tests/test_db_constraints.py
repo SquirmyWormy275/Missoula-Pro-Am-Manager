@@ -259,17 +259,24 @@ class TestDataIntegrity:
         db_session.add_all([r1, r2])
         db_session.flush()  # Should not raise — different competitor_type
 
-    def test_heat_sync_assignments(self, db_session):
-        """Heat.sync_assignments rebuilds HeatAssignment rows from JSON."""
+    def test_seating_a_heat_writes_one_row_per_competitor(self, db_session):
+        """A seated heat has a `heat_assignments` row for each starter.
+
+        This was `test_heat_sync_assignments`, and it called
+        `Heat.sync_assignments` to rebuild the rows from the JSON column.
+        D12-C commit F2 deleted that method: the roster is written to the
+        rows and rendered into the column, so there is no direction left for
+        a rebuild to run in. The seating the conftest helper already does is
+        what produces the rows now, and the count and the ids are still the
+        claim worth pinning here, in the module that pins the constraints
+        those rows live under.
+        """
         from models.heat import HeatAssignment
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Sync Event', event_type='pro')
         ensure_competitors(db_session, t, [10, 20, 30], 'pro')
         h = make_heat(db_session, e, competitors=[10, 20, 30],
                       stand_assignments={'10': 1, '20': 2, '30': 3})
-        db_session.flush()
-
-        h.sync_assignments('pro')
         db_session.flush()
 
         rows = HeatAssignment.query.filter_by(heat_id=h.id).all()

@@ -406,9 +406,8 @@ PayoutTemplate  (tournament-independent, standalone)
 - Event configuration from `config.py` event lists, with OPEN/CLOSED designation choice
 - Heat generation: snake-draft distribution, stand capacity, springboard left-hand grouping, dual-run heat creation
 - Heat swap/edit: move competitors between heats (`/scheduling/<tid>/heats/swap`)
-- Heat sync check (GET JSON) + sync fix (POST reconcile) to keep `Heat.competitors` and `HeatAssignment` rows consistent
 - Heat sheets print page (`/scheduling/<tid>/heat-sheets`)
-- `Heat.sync_assignments(competitor_type)` method: syncs `HeatAssignment` rows from the authoritative `Heat.competitors` JSON; called after heat generation, flight rebuild, and competitor moves
+- `Heat.set_roster(competitor_type, comp_ids, stands=None)` method: writes a heat's roster to `heat_assignments` and renders the JSON columns from it. This is the single write target for heat composition. It raises `BadHeatAssignment` before touching anything when the roster names a competitor with no row or names one twice.
 - Flight builder: greedy competitor-spacing (min 4 heats between appearances, target 5); per-event sequential queue (heats within any event appear in ascending heat_number order); Cookie Stack / Standing Block mutual exclusion enforced via `_CONFLICTING_STANDS` in `flight_builder.py`; springboard flight opener (`_promote_springboard_to_flight_start`) places a springboard heat at position 0 of each flight block
 - Unified Events & Schedule page (`/scheduling/<tid>/events`): single-page heat generation, flight build, and spillover integration; stand count override inputs; session-stored schedule options; schedule preview; one-click "Generate All College Heats" bulk action
 - Collapsible tournament sidebar (`templates/_sidebar.html`): sticky 220px/44px sidebar with 5 sections (Show Entries, Show Configuration, Scoring, Results, Admin); localStorage state; unscored-heats badge
@@ -669,7 +668,9 @@ status = db.Column(db.String(20), default='pending')  # same problem
 3. **Foreign key columns** may be `nullable=True` (optional relationships) — but declare it explicitly.
 4. **The `TestModelColumnDeclarations` test** in `test_migration_integrity.py` flags columns that have a default but are still nullable. When adding new models, run this test to verify your declarations are correct.
 
-HeatAssignment vs Heat.competitors: `Heat.competitors` (JSON field) is the authoritative source for heat composition and is what the heat generator reads and writes. `HeatAssignment` rows are used only by the validation service. All new code reading or writing heat composition must use `Heat.competitors`. After modifying `Heat.competitors`, call `heat.sync_assignments(event.event_type)` (after `db.session.flush()` so `heat.id` is assigned) to keep the two representations consistent.
+HeatAssignment vs Heat.competitors: `heat_assignments` rows are the authoritative source for heat composition. There is one write target, `heat.set_roster(event.event_type, comp_ids, stands)`, and one set of readers, `heat.get_competitors()` / `heat.get_stand_assignments()`. Never write `heats.competitors` or `heats.stand_assignments` directly and never read them. `set_roster` does not require `heat.id`, so it can be called before the heat is flushed.
+
+This reverses what this file said through D12-C phase 1. `Heat.competitors` was the authoritative JSON and `heat.sync_assignments(event.event_type)` copied it into the rows. D12-C phase 2 inverted that: commit E moved every writer and reader onto the rows, commit F2 deleted `sync_assignments`, `json_competitors`, `json_stand_assignments`, the preflight drift check, the `/heats/sync-check` and `/heats/sync-fix` routes and the autofix sweep, and F3 drops both columns. Until F3 lands, `_project_json` still renders the columns on every roster write, so a stale reader looks correct rather than failing loudly. That is exactly why the rule above is worded as a prohibition.
 
 Input conversion: All `int()` and `float()` calls on POST form data must be wrapped in `try/except (TypeError, ValueError)`. Flash a descriptive error message and redirect rather than raising an unhandled exception that produces a 500 response.
 

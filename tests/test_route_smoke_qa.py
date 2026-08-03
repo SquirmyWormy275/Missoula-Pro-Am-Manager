@@ -531,13 +531,12 @@ class TestSchedulingRoutes:
             )
         )
 
-    def test_smoke_scheduling_heat_sync_check(self, auth_client, seed):
-        """GET /scheduling/<tid>/event/<eid>/heats/sync-check returns JSON."""
-        _ok(
-            auth_client.get(
-                f'/scheduling/{seed["tid"]}/event/{seed["pro_event_id"]}/heats/sync-check'
-            )
-        )
+    # `test_smoke_scheduling_heat_sync_check` stood here, a GET against
+    # /scheduling/<tid>/event/<eid>/heats/sync-check. D12-C commit F2 deleted
+    # that route along with /heats/sync-fix: both existed to reconcile the
+    # heats JSON columns against heat_assignments, and as of commit E there
+    # is one roster store to reconcile against nothing. A smoke test for a
+    # route that no longer exists asserts a 404 is not a 404.
 
     def test_smoke_scheduling_birling_manage(self, auth_client, seed):
         """GET /scheduling/<tid>/event/<eid>/birling returns birling page."""

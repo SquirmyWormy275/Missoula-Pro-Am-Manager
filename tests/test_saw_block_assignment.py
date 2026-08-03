@@ -10,7 +10,6 @@ Run:
     pytest tests/test_saw_block_assignment.py -v
 """
 
-import json
 import os
 
 import pytest
@@ -97,11 +96,11 @@ def _make_heat(
     flight=None,
     flight_position=None,
 ):
-    """Create a Heat with pre-populated competitors + stand_assignments JSON."""
+    """Create a Heat seated with the given competitors and stands."""
     # Materialise the competitors this heat names. These fixtures invent ids,
     # which was harmless until s8a0b2c3d4e5 gave heat_assignments a NOT NULL uid
-    # with a foreign key onto the identity spine. sync_assignments now refuses a
-    # heat that names nobody, so the heat has to name somebody.
+    # with a foreign key onto the identity spine. `set_roster` refuses a heat
+    # that names nobody, so the heat has to name somebody.
     from models import Heat
     from models.tournament import Tournament
     from tests.conftest import ensure_competitors
@@ -113,12 +112,14 @@ def _make_heat(
         event.event_type,
     )
 
+    # The constructor used to seed `competitors` and `stand_assignments` JSON
+    # here as well. D12-C commit F2: `set_roster` below writes the rows and
+    # renders the columns off them, so seeding the columns first was writing
+    # a value that the next statement overwrote with the same value.
     h = Heat(
         event_id=event.id,
         heat_number=heat_number,
         run_number=run_number,
-        competitors=json.dumps(competitors),
-        stand_assignments=json.dumps(stand_assignments),
     )
     if flight is not None:
         h.flight_id = flight.id
@@ -539,8 +540,17 @@ def test_stock_saw_unaffected(db_session, tournament):
 # ---------------------------------------------------------------------------
 
 
-def test_sync_assignments_called(db_session, tournament):
-    """After assign_saw_blocks, HeatAssignment rows match the JSON."""
+def test_the_rows_carry_the_stands_after_assignment(db_session, tournament):
+    """After assign_saw_blocks, every starter still has a seated row.
+
+    This was `test_sync_assignments_called`, and it checked that the
+    `heat_assignments` rows matched the `stand_assignments` JSON after the
+    service ran. D12-C commit F2 deleted `sync_assignments` and left one
+    store, so that comparison now reads the rows on both sides of the
+    equals sign and cannot fail. What is still worth asserting is that the
+    service wrote through to the rows at all: the same starters, each with a
+    stand, rather than a roster the service quietly emptied.
+    """
     from models import HeatAssignment
     from services.saw_block_assignment import assign_saw_blocks
 
@@ -560,18 +570,10 @@ def test_sync_assignments_called(db_session, tournament):
         stand_assignments={"5": 1, "6": 2, "7": 3, "8": 4},
     )
 
-    # Seed HeatAssignment rows that reflect the pre-remap state so we can
-    # verify they get rewritten.
-    h1.sync_assignments("college")
-    h2.sync_assignments("college")
-    db_session.flush()
-
     assign_saw_blocks(tournament)
 
-    # For each heat, HeatAssignment rows must match stand_assignments JSON
-    for heat in (h1, h2):
-        json_map = heat.get_stand_assignments()
+    for heat, seated in ((h1, [1, 2, 3, 4]), (h2, [5, 6, 7, 8])):
         rows = HeatAssignment.query.filter_by(heat_id=heat.id).all()
-        assert len(rows) == len(json_map)
+        assert {r.competitor_id for r in rows} == set(seated)
         for row in rows:
-            assert row.stand_number == json_map.get(str(row.competitor_id))
+            assert row.stand_number is not None

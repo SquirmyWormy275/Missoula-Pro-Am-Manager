@@ -128,37 +128,19 @@ class TestEventJsonSafety:
         assert e.get_payouts() == {}
 
 
-class TestHeatJsonSafety:
-    """Heat legacy-column readers survive corruption.
-
-    These used to be aimed at ``get_competitors`` / ``get_stand_assignments``.
-    As of D12-C commit E those two read ``heat_assignments`` rows and never
-    touch the columns, so pointing corruption tests at them would assert
-    nothing: an empty heat returns empty whether or not the column is
-    garbage. The corruption tolerance still has to live somewhere until the
-    columns are dropped in commit F, and it lives on the raw readers.
-    """
-
-    def test_corrupt_competitors_json(self, db_session, tournament):
-        e = make_event(db_session, tournament, 'Heat JSON Test')
-        h = make_heat(db_session, e)
-        h.competitors = '{bad json}'
-        db_session.flush()
-        assert h.json_competitors() == []
-
-    def test_corrupt_stand_assignments(self, db_session, tournament):
-        e = make_event(db_session, tournament, 'Stand JSON Test')
-        h = make_heat(db_session, e)
-        h.stand_assignments = 'not valid'
-        db_session.flush()
-        assert h.json_stand_assignments() == {}
-
-    def test_none_competitors(self, db_session, tournament):
-        e = make_event(db_session, tournament, 'None Comps')
-        h = make_heat(db_session, e)
-        # In-memory only — DB column is NOT NULL. Getter must tolerate None.
-        h.competitors = None
-        assert h.json_competitors() == []
+# `class TestHeatJsonSafety` stood here: three tests that wrote garbage into
+# `heats.competitors` and `heats.stand_assignments` and asserted the raw
+# readers `json_competitors` / `json_stand_assignments` returned empty rather
+# than raising. D12-C commit F2 deleted both readers. Their last two callers,
+# the preflight drift check and `sync_assignments`, went in the same commit,
+# and a reader with no caller is a second way to trust a store nothing is
+# allowed to trust.
+#
+# The claim these tests protected is not lost. `get_competitors` and
+# `get_stand_assignments` read the rows and have not touched the columns
+# since commit E, so a corrupt column cannot take a roster read down with it;
+# `TestHeatRawColumnsCannotHurtTheRows` in `tests/test_models_full.py` states
+# exactly that and is the surviving coverage. It dies in F3 with the columns.
 
 
 class TestTournamentScheduleConfigSafety:

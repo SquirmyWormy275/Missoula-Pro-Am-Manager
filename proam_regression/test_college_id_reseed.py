@@ -89,13 +89,13 @@ def test_the_reseed_kills_every_collision_and_breaks_nothing(dburl, sql):
     assert sql("SELECT count(*) FROM heat_assignments a WHERE "
                "a.competitor_type = 'college' AND a.competitor_id NOT IN "
                "(SELECT id FROM college_competitors)")[0][0] == 0
-    orphan_heat = sql("""
-        SELECT count(*) FROM (
-            SELECT jsonb_array_elements_text(h.competitors::jsonb)::int AS cid
-            FROM heats h JOIN events e ON e.id = h.event_id
-            WHERE e.event_type = 'college') x
-        WHERE cid NOT IN (SELECT id FROM college_competitors)""")[0][0]
-    assert orphan_heat == 0
+    # `heats.competitors` used to be checked here the same way, by unnesting
+    # the JSON array and looking for ids the reseed left behind. D12-C commit
+    # F2 stopped the script rewriting that column, deliberately: nothing reads
+    # it any more and F3 drops it, so remapping it was rewriting a projection.
+    # The column therefore DOES hold pre-reseed ids after an --apply run, and
+    # a check for that would now fail by design. The assertion above measures
+    # the same population on the store that is actually authoritative.
 
     valid = {r[0] for r in sql("SELECT id FROM college_competitors")}
     ghosts = 0

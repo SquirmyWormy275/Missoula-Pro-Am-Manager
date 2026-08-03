@@ -1,15 +1,15 @@
 """
 Heat management routes: event_heats, generate_heats, generate_college_heats,
-move_competitor_between_heats, scratch_competitor, heat_sync_check, heat_sync_fix.
+move_competitor_between_heats, scratch_competitor.
 """
 
-from flask import abort, flash, jsonify, redirect, render_template, request, url_for
+from flask import abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
 import config
 import strings as text
 from database import db
-from models import Event, EventResult, Heat, HeatAssignment, Tournament
+from models import Event, EventResult, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
@@ -461,9 +461,11 @@ def _current_user_id() -> int | None:
 def scratch_competitor(tournament_id, event_id):
     """Scratch a competitor from a heat (day-of no-show operation).
 
-    Removes the competitor from the Heat.competitors JSON and stand assignments,
-    sets their EventResult.status to 'scratched', cleans gear-sharing references,
-    and recalculates positions if the event has scored results.
+    Removes the competitor from the heat's roster and stand map, which as of
+    D12-C commit E means rewriting the ``heat_assignments`` rows through
+    ``Heat.set_roster``; it used to mean editing the ``Heat.competitors`` JSON.
+    Sets their EventResult.status to 'scratched', cleans gear-sharing
+    references, and recalculates positions if the event has scored results.
     For dual-run events, mirrors the scratch across both run heats.
     """
     event = Event.query.get_or_404(event_id)
@@ -873,67 +875,6 @@ def delete_heat(tournament_id, event_id, heat_id):
         db.session.rollback()
         flash(f'Error deleting heat: {e}', 'error')
 
-    return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
-
-
-# ---------------------------------------------------------------------------
-# #19 — HeatAssignment sync check / fix
-# ---------------------------------------------------------------------------
-
-@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/heats/sync-check')
-def heat_sync_check(tournament_id, event_id):
-    """Return JSON showing mismatches between Heat.competitors JSON and HeatAssignment rows."""
-    event = Event.query.get_or_404(event_id)
-    if event.tournament_id != tournament_id:
-        abort(404)
-
-    mismatches = []
-    for heat in event.heats.order_by(Heat.heat_number, Heat.run_number).all():
-        # D12-C commit E: the raw column, not the accessor. `get_competitors`
-        # reads `heat_assignments` now, so asking it here would compare the
-        # rows against themselves and this route would report ok forever.
-        # Same fate as the preflight twin: dies with the column in commit F.
-        json_ids = set(heat.json_competitors())
-        table_ids = set(
-            a.competitor_id
-            for a in HeatAssignment.query.filter_by(heat_id=heat.id).all()
-        )
-        if json_ids != table_ids:
-            mismatches.append({
-                'heat_id': heat.id,
-                'heat_number': heat.heat_number,
-                'run_number': heat.run_number,
-                'json_only': sorted(json_ids - table_ids),
-                'table_only': sorted(table_ids - json_ids),
-            })
-
-    return jsonify({'event_id': event_id, 'mismatches': mismatches, 'ok': len(mismatches) == 0})
-
-
-@scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/heats/sync-fix', methods=['POST'])
-def heat_sync_fix(tournament_id, event_id):
-    """Reconcile HeatAssignment rows to match authoritative Heat.competitors JSON."""
-    event = Event.query.get_or_404(event_id)
-    if event.tournament_id != tournament_id:
-        abort(404)
-
-    # heat.sync_assignments is the canonical rebuild and reports whether it
-    # changed anything. This loop used to inline a copy of it and increment
-    # `fixed` once per heat WALKED, so the flash reported every heat in the
-    # event as repaired even when the table already matched the JSON, and
-    # every row was deleted and reinserted to produce that number. The
-    # predicate was already sitting one function above, in heat_sync_check.
-    fixed = 0
-    checked = 0
-    for heat in event.heats.all():
-        checked += 1
-        if heat.sync_assignments(event.event_type):
-            fixed += 1
-
-    db.session.commit()
-    log_action('heat_assignments_synced', 'event', event_id,
-               {'heats_fixed': fixed, 'heats_checked': checked})
-    flash(f'HeatAssignment sync checked {checked} heats: {fixed} repaired.', 'success')
     return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
 

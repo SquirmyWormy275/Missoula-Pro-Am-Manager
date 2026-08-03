@@ -693,42 +693,24 @@ class TestBlueprintPermissionCoverage:
         for bp, attr in BLUEPRINT_PERMISSIONS.items():
             assert hasattr(User, attr)
 
-class TestHeatJSONRoundTrip:
-    """The legacy JSON columns, read off a Heat that has no session.
+class TestHeatRosterWithoutASession:
+    """A detached Heat has no roster, whatever its columns say.
 
     This class used to build a sessionless Heat and drive the four JSON
     mutators through it. D12-C commit E deleted them: writing a roster now
     means writing ``heat_assignments`` rows, and a row carries a uid that
     only a database can resolve, so there is no sessionless write left to
-    test. What survives without a session is the read side, so that is what
-    this covers now: the raw column readers parse what is handed to them,
-    and the row accessors on a detached Heat come back empty rather than
-    falling through to the columns.
+    test. Commit E left the read side, and this class covered both halves of
+    it: the raw column readers, and the row accessors on a detached Heat.
+
+    D12-C commit F2 deleted ``json_competitors``, ``json_stand_assignments``
+    and ``sync_assignments``, so the three tests aimed at the raw readers
+    went with them. The half that survives is the one worth keeping. A Heat
+    with columns full of ids and no rows behind it reports an empty roster,
+    which is the whole shape of the migration in one assertion: the columns
+    are not a fallback, and nothing silently reads them when the rows are
+    missing.
     """
-
-    def test_json_competitors_reads_the_column(self):
-        import json
-
-        from models.heat import Heat
-        h = Heat(event_id=1, heat_number=1)
-        h.competitors = json.dumps([10, 20])
-        assert h.json_competitors() == [10, 20]
-
-    def test_json_stand_assignments_reads_the_column(self):
-        import json
-
-        from models.heat import Heat
-        h = Heat(event_id=1, heat_number=1)
-        h.stand_assignments = json.dumps({'10': 3})
-        assert h.json_stand_assignments() == {'10': 3}
-
-    def test_corrupt_columns_do_not_raise(self):
-        from models.heat import Heat
-        h = Heat(event_id=1, heat_number=1)
-        h.competitors = '{bad'
-        h.stand_assignments = 'not json'
-        assert h.json_competitors() == []
-        assert h.json_stand_assignments() == {}
 
     def test_the_row_accessors_ignore_the_columns(self):
         import json

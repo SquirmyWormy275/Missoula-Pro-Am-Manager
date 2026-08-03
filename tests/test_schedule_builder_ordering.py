@@ -346,13 +346,19 @@ def test_saturday_and_friday_helpers_are_pure_reads(db_session, tournament):
     )
     h = _make_heat(db_session, sb, 1)
     # capture pre-state
-    stands_before = h.stand_assignments
+    #
+    # D12-C commit F2: this read `h.stand_assignments`, the raw column. The
+    # claim is that the two ordering functions are pure, so it has to be read
+    # off whatever the stands actually live in, which as of commit E is the
+    # rows. F3 drops the column and this would have started comparing None
+    # to None forever.
+    stands_before = h.get_stand_assignments()
     config_before = tournament.schedule_config
 
     get_friday_ordered_heats(tournament)
     get_saturday_ordered_heats(tournament)
 
-    assert h.stand_assignments == stands_before
+    assert h.get_stand_assignments() == stands_before
     assert tournament.schedule_config == config_before
 
 

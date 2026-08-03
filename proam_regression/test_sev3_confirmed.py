@@ -2690,22 +2690,28 @@ def test_every_wood_config_column_carries_not_just_the_ones_2026_uses(client, sq
 
 
 # ---------------------------------------------------------------------------
-# c26. The two bulk heat-assignment sweepers count every heat they WALK as a
-#      heat they REPAIRED, and rewrite every row to do it.
-#      services/schedule_generation.py:17-36 (preflight autofix)
-#      routes/scheduling/heats.py:898-915   (per-event sync-fix)
+# c26. The two bulk heat-assignment sweepers counted every heat they WALKED as
+#      a heat they REPAIRED, and rewrote every row to do it.
 #
-# Neither one compares anything. Both delete every HeatAssignment row for
-# every heat and reinsert it from the Heat.competitors JSON, then report the
-# walk count as a repair count. On the real 2026 data zero heats are out of
-# sync, so the operator is told 172 heats were synced while 379 rows are
-# destroyed and recreated for no effect.
+# Twelve of the fourteen tests that stood here are gone as of D12-C commit F2,
+# and so are both sweepers. `run_preflight_autofix`'s heat sweep and the
+# `/heats/sync-fix` route existed to rebuild `heat_assignments` rows from the
+# `heats.competitors` JSON whenever the two disagreed, and reported the walk
+# count as a repair count while doing it. Commit E made the rows the only
+# place a roster is written, so there is nothing left to rebuild them FROM and
+# nothing they can drift AGAINST. Deleting the sweepers deletes the defect,
+# and the tests that measured its false repair counts have nothing left to
+# measure. `_desynced_heats`, the helper the whole block turned on, read
+# `heats.competitors` and `heats.stand_assignments` directly; commit F3 drops
+# both columns, so it could not have survived in any form.
 #
-# The predicate they need already exists one function above the second site:
-# heat_sync_check at routes/scheduling/heats.py:880 computes the mismatch set
-# and does not act on it. And run_preflight_autofix already carries a comment
-# saying no-op HeatAssignment writes "churn the DB for no effect", which is
-# why it skips Pro-Am Relay, and only Pro-Am Relay.
+# Two tests survive, for reasons that have nothing to do with the JSON:
+#
+#   - the duplicate-row refusal, which is the s8a0b2c3d4e5 unique constraint
+#     on (heat_id, uid) doing its job. It would matter identically if the
+#     sweepers had never existed.
+#   - the autofix summary control, which is precisely the test that proves F2
+#     shortened the flash sentence without breaking the rest of it.
 # ---------------------------------------------------------------------------
 
 BULK_SYNC_TARGET_EVENT = 43        # Cookie Stack, the event with the most rows
@@ -2730,159 +2736,12 @@ def _heat_content(sql, tournament_id=TID):
     return {hid: sorted(v) for hid, v in out.items()}
 
 
-def _desynced_heats(sql, tournament_id=TID, event_id=None):
-    """Heats whose HeatAssignment rows do not match the authoritative JSON.
-
-    Pro-Am Relay is excluded because its heats are synthesized and the
-    preflight sweeper deliberately skips them.
-    """
-    heats = sql(
-        "SELECT h.id, h.competitors, h.stand_assignments, e.event_type, e.name "
-        "  FROM heats h JOIN events e ON e.id = h.event_id "
-        " WHERE e.tournament_id = :t", t=tournament_id)
-    have = _heat_content(sql, tournament_id)
-    out = []
-    for hid, comps, stands, etype, ename in heats:
-        if ename == 'Pro-Am Relay':
-            continue
-        if event_id is not None and hid not in _event_heat_ids(sql, event_id):
-            continue
-        sa = json.loads(stands or "{}")
-        want = sorted((c, etype, sa.get(str(c))) for c in json.loads(comps or "[]"))
-        if have.get(hid, []) != want:
-            out.append((hid, ename))
-    return out
-
-
 def _event_heat_ids(sql, event_id):
     return {r[0] for r in sql("SELECT id FROM heats WHERE event_id = :e", e=event_id)}
 
 
-def _autofix(client, flashes):
-    r = client.post(f"/scheduling/{TID}/preflight", data={"action": "autofix"},
-                    follow_redirects=False)
-    assert r.status_code == 302, r.status_code
-    msgs = [m for _cat, m in flashes()]
-    assert msgs, "autofix flashed nothing"
-    return msgs[0]
-
-
-def _autofix_audit(sql):
-    rows = sql("SELECT details_json FROM audit_logs "
-               " WHERE action = 'preflight_autofix_applied' ORDER BY id DESC LIMIT 1")
-    assert rows, "autofix wrote no audit row"
-    raw = rows[0][0]
-    return json.loads(raw) if isinstance(raw, str) else (raw or {})
-
-
 @pytest.mark.sev3
-def test_the_real_2026_heat_assignments_are_already_in_sync(sql):
-    """CONTROL. Stated as data, not prose.
-
-    Everything below turns on this: the operator's tournament is NOT desynced,
-    so every heat the sweepers touch is a heat that needed nothing. If this
-    ever goes non-empty the rest of this block is measuring the wrong thing.
-    """
-    total_heats = sql("SELECT count(*) FROM heats h JOIN events e ON e.id = h.event_id "
-                      " WHERE e.tournament_id = :t", t=TID)[0][0]
-    rows = _ha_rows(sql)
-    assert total_heats > 100, total_heats
-    assert len(rows) > 300, len(rows)
-    assert _desynced_heats(sql) == [], _desynced_heats(sql)[:10]
-
-
-@pytest.mark.sev3
-def test_preflight_autofix_does_not_claim_to_have_repaired_correct_heats(client, sql, flashes):
-    """DEFECT. Zero heats are out of sync. The flash says 172 were synced.
-
-    The number is not merely wrong, it is a constant: it reads 172 whether the
-    table is perfect or catastrophically broken, so it cannot tell the operator
-    the one thing they are clicking the button to learn.
-    """
-    assert _desynced_heats(sql) == []
-    msg = _autofix(client, flashes)
-    assert "synced 172 heats" not in msg, msg
-    assert re.search(r"repaired 0 of 17\d heat assignment sets", msg), msg
-
-
-@pytest.mark.sev3
-def test_preflight_autofix_leaves_already_correct_rows_untouched(client, sql, flashes):
-    """DEFECT. 379 rows deleted and reinserted to change nothing.
-
-    Row identity is the measurement: same count, same content, brand new ids.
-    Race-day this is a full-table rewrite under the write lock, fired by a
-    button the preflight page invites the operator to press.
-    """
-    before = _ha_rows(sql)
-    assert len(before) > 300
-    _autofix(client, flashes)
-    after = _ha_rows(sql)
-    survived = set(before) & set(after)
-    assert len(survived) == len(before), (
-        f"{len(before) - len(survived)} of {len(before)} rows were destroyed and "
-        f"recreated by an autofix that changed nothing")
-    assert after == before
-
-
-@pytest.mark.sev3
-def test_the_autofix_audit_row_does_not_record_repairs_that_did_not_happen(client, sql, flashes):
-    """DEFECT. The false count is durable, not just a flash.
-
-    log_action stores it, so the audit trail claims 172 repairs on a run that
-    made none.
-    """
-    _autofix(client, flashes)
-    details = _autofix_audit(sql)
-    assert details.get("heats_fixed") == 0, details
-    assert details.get("heats_checked", 0) > 100, details
-
-
-@pytest.mark.sev3
-def test_preflight_autofix_still_repairs_a_heat_whose_rows_were_deleted(client, sql, flashes):
-    """CONTROL, staged. The sweeper must still do its job.
-
-    A fix that reports honest numbers by never repairing anything would pass
-    every test above this one.
-    """
-    from database import db
-
-    hid = sorted(_event_heat_ids(sql, BULK_SYNC_TARGET_EVENT))[0]
-    want = _heat_content(sql)[hid]
-    assert want, hid
-    db.session.execute(db.text("DELETE FROM heat_assignments WHERE heat_id = :h"), {"h": hid})
-    db.session.commit()
-    assert [h for h, _n in _desynced_heats(sql)] == [hid]
-
-    msg = _autofix(client, flashes)
-    assert _heat_content(sql).get(hid) == want, "the deleted rows were not rebuilt"
-    assert re.search(r"repaired 1 of 17\d heat assignment sets", msg), msg
-    assert _autofix_audit(sql).get("heats_fixed") == 1
-
-
-@pytest.mark.sev3
-def test_a_drifted_stand_number_counts_as_a_repair(client, sql, flashes):
-    """CONTROL, staged. Stand number is half of what the sync writes.
-
-    A comparison on competitor ids alone would call this heat in sync and walk
-    away from a competitor standing at the wrong block.
-    """
-    from database import db
-
-    hid = sorted(_event_heat_ids(sql, BULK_SYNC_TARGET_EVENT))[0]
-    want = _heat_content(sql)[hid]
-    db.session.execute(db.text(
-        "UPDATE heat_assignments SET stand_number = 99 WHERE heat_id = :h"), {"h": hid})
-    db.session.commit()
-    assert [h for h, _n in _desynced_heats(sql)] == [hid]
-
-    msg = _autofix(client, flashes)
-    assert _heat_content(sql).get(hid) == want, _heat_content(sql).get(hid)
-    assert re.search(r"repaired 1 of 17\d heat assignment sets", msg), msg
-
-
-@pytest.mark.sev3
-def test_a_duplicate_assignment_row_cannot_be_staged_any_more(client, sql,
-                                                              flashes):
+def test_a_duplicate_assignment_row_cannot_be_staged_any_more(sql):
     """CONTROL, staged. Zero duplicate rows exist on the real 2026 data.
 
     Same shape as c25's M-e: a condition that never occurs in production
@@ -2892,12 +2751,14 @@ def test_a_duplicate_assignment_row_cannot_be_staged_any_more(client, sql,
 
     s8a0b2c3d4e5 put a unique constraint on (heat_id, uid), so that state can
     no longer reach the table. The property being protected has not gone
-    away, it moved: the comparison still runs on lists, but the database now
-    refuses the row before the comparison ever sees it. Asserting the refusal
-    is the honest version of this test. Keeping the old body would assert a
-    repair of damage that cannot be created, which passes for the wrong
-    reason on any engine that quietly drops the insert and fails loudly on
-    every engine that does not.
+    away, it moved: the database now refuses the row outright. Asserting the
+    refusal is the honest version of this test.
+
+    The sweeper it was written against is gone as of commit F2 and the
+    before/after comparison against the heat's JSON went with it. What is
+    left is the part that never depended on either: a constraint that refuses
+    a bad row is only worth having if it refuses it without costing the heat
+    the rows it already had.
     """
     from sqlalchemy.exc import IntegrityError
 
@@ -2905,7 +2766,7 @@ def test_a_duplicate_assignment_row_cannot_be_staged_any_more(client, sql,
 
     hid = sorted(_event_heat_ids(sql, BULK_SYNC_TARGET_EVENT))[0]
     want = _heat_content(sql)[hid]
-    before = _desynced_heats(sql)
+    assert want, hid
 
     with pytest.raises(IntegrityError):
         db.session.execute(db.text(
@@ -2920,140 +2781,27 @@ def test_a_duplicate_assignment_row_cannot_be_staged_any_more(client, sql,
     # that protects the table by emptying it would also pass a test that only
     # checked for the raise.
     assert _heat_content(sql).get(hid) == want, _heat_content(sql).get(hid)
-    assert _desynced_heats(sql) == before
-
-
-@pytest.mark.sev3
-def test_a_wrong_competitor_type_counts_as_a_repair(client, sql, flashes):
-    """CONTROL, staged. Every row on the real data already matches its event.
-
-    competitor_type is the third column the sync writes, and it is what tells
-    the reader whether competitor 42 is pro 42 or college 42. Those id spaces
-    overlap, so a comparison that ignores this column leaves a row pointing at
-    the wrong person and calls it clean.
-    """
-    from database import db
-
-    hid = sorted(_event_heat_ids(sql, BULK_SYNC_TARGET_EVENT))[0]
-    want = _heat_content(sql)[hid]
-    assert {t for _c, t, _s in want} == {"pro"}, want
-    db.session.execute(db.text(
-        "UPDATE heat_assignments SET competitor_type = 'college' WHERE heat_id = :h"), {"h": hid})
-    db.session.commit()
-    assert [h for h, _n in _desynced_heats(sql)] == [hid]
-
-    msg = _autofix(client, flashes)
-    assert _heat_content(sql).get(hid) == want, _heat_content(sql).get(hid)
-    assert re.search(r"repaired 1 of 17\d heat assignment sets", msg), msg
-
-
-@pytest.mark.sev3
-def test_the_empty_heats_are_not_counted_as_repairs(client, sql, flashes):
-    """CONTROL. 19 heats ship with no competitors and no assignment rows.
-
-    They are already consistent: nothing wanted, nothing stored. A sweeper
-    that counted them would report repairs on heats it is not allowed to fix
-    and would hide the c21 empty-heat finding behind a success message.
-    """
-    empty = sql(
-        "SELECT h.id FROM heats h JOIN events e ON e.id = h.event_id "
-        " WHERE e.tournament_id = :t AND NOT EXISTS "
-        "   (SELECT 1 FROM heat_assignments ha WHERE ha.heat_id = h.id)", t=TID)
-    assert len(empty) >= 19, len(empty)
-    _autofix(client, flashes)
-    assert _autofix_audit(sql).get("heats_fixed") == 0
 
 
 @pytest.mark.sev3
 def test_the_autofix_still_reports_its_other_summary_numbers(client, sql, flashes):
-    """CONTROL. Only the heat clause is wrong. The rest of the sentence stays."""
-    msg = _autofix(client, flashes)
+    """CONTROL. F2 removed the heat clause. The rest of the sentence stays.
+
+    This is the test that keeps commit F2 honest. Deleting a sweeper is easy
+    to do by deleting one line too many, and the flash it fed is assembled
+    from three independent summaries. Two of them are untouched by D12-C and
+    have to still be there.
+    """
+    r = client.post(f"/scheduling/{TID}/preflight", data={"action": "autofix"},
+                    follow_redirects=False)
+    assert r.status_code == 302, r.status_code
+    msgs = [m for _cat, m in flashes()]
+    assert msgs, "autofix flashed nothing"
+    msg = msgs[0]
     assert msg.startswith("Auto-fix complete:"), msg
     assert re.search(r"assigned \d+ pairs", msg), msg
     assert re.search(r"integrated \d+ spillover heats", msg), msg
-
-
-@pytest.mark.sev3
-def test_heat_sync_fix_does_not_claim_to_have_repaired_correct_heats(client, sql, flashes):
-    """DEFECT. The per-event route has the same defect as the tournament sweep.
-
-    Same inlined copy of the rebuild, same walk count reported as a repair
-    count, sitting directly below a checker that already computes the answer.
-    """
-    ev = BULK_SYNC_TARGET_EVENT
-    assert _desynced_heats(sql, event_id=ev) == []
-    n = len(_event_heat_ids(sql, ev))
-    r = client.post(f"/scheduling/{TID}/event/{ev}/heats/sync-fix", follow_redirects=False)
-    assert r.status_code == 302, r.status_code
-    msg = [m for _c, m in flashes()][0]
-    assert f"synced for {n} heats" not in msg, msg
-    assert re.search(rf"checked {n} heats: 0 repaired", msg), msg
-
-
-@pytest.mark.sev3
-def test_heat_sync_fix_leaves_already_correct_rows_untouched(client, sql, flashes):
-    """DEFECT. Same full rewrite, scoped to one event."""
-    ev = BULK_SYNC_TARGET_EVENT
-    heat_ids = _event_heat_ids(sql, ev)
-    before = {rid: v for rid, v in _ha_rows(sql).items() if v[0] in heat_ids}
-    assert len(before) > 20, len(before)
-    client.post(f"/scheduling/{TID}/event/{ev}/heats/sync-fix", follow_redirects=False)
-    after = {rid: v for rid, v in _ha_rows(sql).items() if v[0] in heat_ids}
-    assert set(before) & set(after) == set(before), (
-        f"{len(set(before) - set(after))} of {len(before)} rows recreated for nothing")
-    assert after == before
-
-
-@pytest.mark.sev3
-def test_heat_sync_fix_still_repairs_a_genuinely_broken_event(client, sql, flashes):
-    """CONTROL, staged. The per-event route must still repair."""
-    from database import db
-
-    ev = BULK_SYNC_TARGET_EVENT
-    hid = sorted(_event_heat_ids(sql, ev))[0]
-    want = _heat_content(sql)[hid]
-    db.session.execute(db.text("DELETE FROM heat_assignments WHERE heat_id = :h"), {"h": hid})
-    db.session.commit()
-
-    n = len(_event_heat_ids(sql, ev))
-    client.post(f"/scheduling/{TID}/event/{ev}/heats/sync-fix", follow_redirects=False)
-    msg = [m for _c, m in flashes()][0]
-    assert _heat_content(sql).get(hid) == want, "the deleted rows were not rebuilt"
-    assert re.search(rf"checked {n} heats: 1 repaired", msg), msg
-
-
-@pytest.mark.sev3
-def test_a_rebuilt_heat_keeps_its_rows_in_running_order(client, sql, flashes):
-    """CONTROL, staged. The rebuild must insert in JSON order, not sorted order.
-
-    The compare-first guard sorts, because sorting is how you compare two
-    unordered row sets. Rebuilding FROM that sorted list is the easy mistake:
-    it is right there, it is already computed, and on the real data it is
-    usually identical because most heats are entered in ascending id order.
-    It would silently reorder HeatAssignment rows and their autoincrement ids
-    relative to the heat's running order, which nothing asked for. This heat
-    is staged into descending order so sorted and JSON order cannot coincide.
-    """
-    from database import db
-
-    ev = BULK_SYNC_TARGET_EVENT
-    hid = sorted(_event_heat_ids(sql, ev))[0]
-    comps = json.loads(sql("SELECT competitors FROM heats WHERE id = :h", h=hid)[0][0])
-    assert len(comps) >= 2, comps
-    reversed_order = sorted(comps, reverse=True)
-    assert reversed_order != sorted(comps), "heat too small to distinguish the orders"
-
-    db.session.execute(db.text("UPDATE heats SET competitors = :c WHERE id = :h"),
-                       {"c": json.dumps(reversed_order), "h": hid})
-    db.session.execute(db.text("DELETE FROM heat_assignments WHERE heat_id = :h"), {"h": hid})
-    db.session.commit()
-
-    client.post(f"/scheduling/{TID}/event/{ev}/heats/sync-fix", follow_redirects=False)
-
-    rebuilt = [r[0] for r in sql(
-        "SELECT competitor_id FROM heat_assignments WHERE heat_id = :h ORDER BY id", h=hid)]
-    assert rebuilt == reversed_order, (
-        f"rows were reinserted in {rebuilt}, JSON running order is {reversed_order}")
+    assert "heat assignment sets" not in msg, msg
 
 
 # ---------------------------------------------------------------------------

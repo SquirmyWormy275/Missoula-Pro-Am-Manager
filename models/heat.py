@@ -163,10 +163,11 @@ class Heat(db.Model):
         commit C: a list of ints in the order the rows were written, which is
         the order the judge sheet prints.
 
-        The rows are the roster now. Where the two disagree the rows win, and
-        after commit F drops the columns there is nothing left to disagree
-        with. Read the column itself with :meth:`json_competitors`, which is
-        what the drift checks want and what nothing else should.
+        The rows are the roster. As of commit F2 nothing in this tree reads
+        the ``competitors`` column at all: the drift checks that compared it
+        against the rows are gone, and so are the two accessors that existed
+        to serve them. :meth:`_project_json` still writes the column, and F3
+        deletes both it and the column.
         """
         return [a.competitor_id for a in self.assignments]
 
@@ -180,33 +181,13 @@ class Heat(db.Model):
         return {str(a.competitor_id): a.stand_number
                 for a in self.assignments if a.stand_number is not None}
 
-    def json_competitors(self):
-        """Return the roster the legacy ``competitors`` column describes.
-
-        The old body of :meth:`get_competitors` under a name that says what it
-        reads. It exists for the two checks that compare the column against
-        the rows to detect drift, and for :meth:`sync_assignments`, which
-        adopts the column on purpose. It is deleted with the column in commit
-        F.
-
-        Tolerates a corrupt column by returning empty, because a race-day
-        request that cannot parse a heat should render it as unknown rather
-        than 500.
-        """
-        try:
-            return json.loads(self.competitors or '[]')
-        except json.JSONDecodeError:
-            return []
-
-    def json_stand_assignments(self):
-        """Return the stands the legacy ``stand_assignments`` column describes.
-
-        The old body of :meth:`get_stand_assignments`. Same reason, same fate.
-        """
-        try:
-            return json.loads(self.stand_assignments or '{}')
-        except json.JSONDecodeError:
-            return {}
+    # D12-C commit F2: `json_competitors` and `json_stand_assignments` stood
+    # here. They were the old bodies of the two accessors above, kept under
+    # names that said which store they read, and they existed for exactly two
+    # consumers: the preflight drift check and `sync_assignments`. Both are
+    # gone, so a reader of the JSON columns has no caller left. Keeping them
+    # would have meant keeping the only remaining way to read a store nothing
+    # is allowed to trust, which is how a cache becomes a second truth again.
 
     def get_stand_for_competitor(self, competitor_id):
         """Get the stand number assigned to a competitor."""
@@ -236,15 +217,13 @@ class Heat(db.Model):
         could not have served.
 
         Returns True if anything was rewritten, rows or JSON, and False if the
-        heat already said exactly this. The two bulk sweepers,
-        ``run_preflight_autofix`` and ``heat_sync_fix``, walk every heat in a
-        tournament or an event and use the return value to tell a heat they
-        repaired from a heat they merely visited; without it they reported the
-        walk count as a repair count and rewrote every row in the table to
-        produce it. The JSON half is inside that answer on purpose: until phase
-        2 lands, most readers are still reading the JSON, so a heat whose rows
-        are right and whose JSON disagrees is exactly as broken to a reader as
-        the reverse, and a sweeper that fixed it should say so.
+        heat already said exactly this. Two bulk sweepers used to consume that
+        answer, ``run_preflight_autofix`` and the ``/heats/sync-fix`` route,
+        walking every heat in a tournament or an event to tell a heat they
+        repaired from a heat they merely visited. D12-C commit F2 deleted both,
+        because there is one roster store now and nothing left for them to
+        reconcile it against. The return value is kept for callers that want to
+        know whether a write actually moved anything.
 
         Raises :class:`BadHeatAssignment`, before touching anything, when the
         roster names a competitor that does not exist or names one twice. Both
@@ -338,25 +317,11 @@ class Heat(db.Model):
             db.session.flush()
         self.assignments = new_rows
 
-    def sync_assignments(self, competitor_type: str) -> bool:
-        """Write the roster the JSON columns currently describe.
-
-        The compatibility shim for the call sites that still express a roster
-        change by mutating ``competitors`` or ``stand_assignments`` and then
-        asking the rows to catch up. Each of those becomes a :meth:`set_roster`
-        call as it is converted, and this method is what keeps them working in
-        the meantime. It is what gets deleted when the last one moves.
-
-        Reading the JSON and projecting it straight back is not a no-op. What
-        lands in the column afterwards is what the rows say, normalised, not
-        what the caller wrote: a stand assignment naming somebody who is not in
-        the heat is dropped, `"5"` and `5` collapse to one competitor, and a
-        heat whose rows disagree with its JSON is rendered from the rows.
-
-        Same return value and same refusals as :meth:`set_roster`.
-        """
-        return self.set_roster(competitor_type, self.json_competitors(),
-                               self.json_stand_assignments())
+    # D12-C commit F2: `sync_assignments` stood here. It was the shim for
+    # call sites that expressed a roster change by mutating the JSON and then
+    # asking the rows to catch up, and it was written to be deleted when the
+    # last one moved. Commit E moved the last one. Every reference left in
+    # this tree is a comment explaining what a piece of code no longer does.
 
     def _project_json(self, projection):
         """Render ``competitors`` and ``stand_assignments`` from the rows.

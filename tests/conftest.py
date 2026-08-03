@@ -275,11 +275,12 @@ def ensure_competitors(session, tournament, ids, competitor_type='pro',
     """Create a real competitor row for each id in `ids`, if it is missing.
 
     ``heat_assignments.uid`` is NOT NULL with a foreign key onto the identity
-    spine as of s8a0b2c3d4e5, so ``Heat.sync_assignments`` refuses a heat whose
-    competitors JSON names an id that is in no competitor row. A number of
-    fixtures in this suite predate that and build heats out of invented ids
-    like [1, 2, 3, 4] because nothing ever checked. This materialises exactly
-    those ids so those fixtures keep meaning what they meant.
+    spine as of s8a0b2c3d4e5, so ``Heat.set_roster`` raises
+    ``BadHeatAssignment`` for a roster naming an id that is in no competitor
+    row. A number of fixtures in this suite predate that and build heats out
+    of invented ids like [1, 2, 3, 4] because nothing ever checked. This
+    materialises exactly those ids so those fixtures keep meaning what they
+    meant.
 
     The ids are set explicitly. That is normally the wrong thing to do here,
     because the pro and college id sequences are shared with rows a test did
@@ -414,14 +415,20 @@ def make_heat(session, event, heat_number=1, run_number=1,
               flight_id=None, flight_position=None, seat=True):
     """Build a heat, seating `competitors` as real assignment rows by default.
 
-    Pass ``seat=False`` to get the pre-D12-C behaviour: the two JSON columns
-    are written and no ``heat_assignments`` row is. That is what a fixture
-    wants when the thing under test IS the row write (``sync_assignments``,
-    the preflight drift check) or when it needs the columns to name a
-    competitor that deliberately does not exist (the reference audit's
-    dangling-reference cases). Everywhere else the default is what you want:
-    every roster reader in the app goes through the rows now, so an unseated
-    heat reads as empty no matter what the columns say.
+    ``seat=False`` gets the pre-D12-C behaviour: the two JSON columns are
+    written and no ``heat_assignments`` row is. It existed for fixtures whose
+    subject WAS the row write, or the preflight drift check, or a column that
+    deliberately named a competitor who does not exist so the reference audit
+    would report it dangling. D12-C commit F2 deleted all three of those
+    subjects, and with them the last caller: nothing in this suite passes
+    ``seat=False`` any more. The parameter and the two JSON constructor
+    writes below go in F3, alongside ``_project_json`` and the columns
+    themselves, because removing them is not revertible once the DDL lands
+    and F2 is meant to be.
+
+    The default is what you want regardless: every roster reader in the app
+    goes through the rows now, so an unseated heat reads as empty no matter
+    what the columns say.
     """
     from models.heat import Heat
     h = Heat(

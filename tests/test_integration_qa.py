@@ -217,8 +217,10 @@ def _seed_heat_with_results(
             )
             competitor_ids.append(comp.id)
 
+        # `heat.sync_assignments("pro")` stood here. The roster above was
+        # already written through `set_roster`, which writes the rows, so
+        # D12-C commit F2 deleted the shim and this call with it.
         db.session.flush()
-        heat.sync_assignments("pro")
         db.session.commit()
 
         return {
@@ -315,9 +317,7 @@ def _seed_day_of_operations_state(app):
             )
         )
 
-        for heat in (heat_a, heat_b, heat_empty):
-            db.session.flush()
-            heat.sync_assignments("pro")
+        db.session.flush()
 
         db.session.commit()
         return {

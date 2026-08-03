@@ -3,10 +3,10 @@
 What this is for
 ================
 ``heat_assignments.competitor_id``, ``event_results.competitor_id``, and every
-integer inside ``Heat.competitors``, ``Heat.stand_assignments``,
-``Event.payouts`` and ``Event.event_state`` is a bare int with no foreign key.
-A sibling ``competitor_type`` string, or the shape of the JSON path, is the
-only thing that says which of the two competitor tables the integer addresses.
+integer inside ``Event.payouts`` and ``Event.event_state`` is a bare int with
+no foreign key. A sibling ``competitor_type`` string, or the shape of the JSON
+path, is the only thing that says which of the two competitor tables the
+integer addresses.
 
 Measured on the 2026 production dump: 55 references do not resolve in the pool
 their context implies, and **all 55 of them resolve to a live competitor in the
@@ -97,14 +97,14 @@ two-tournament one, but the check cannot catch one by construction. This is the
 cross-kind failure shape rotated one axis: a pool wider than the context
 implies.
 
-``heats.competitors`` and ``heats.stand_assignments`` get their kind from
-:func:`kind_for_path` with an **empty path**, so ``event_type`` decides alone
-and :data:`_PATH_RULES` cannot fire. For the one event type known to lie, the
-Pro-Am Relay, this is unreachable rather than fixed: the relay's only Heat is a
-rendering placeholder that ``flight_builder`` creates with
-``set_competitors([])``, and heat moves are intra-event. Give the relay real
-heat contents and this store starts reading college members against the pro
-pool.
+Two stores used to live here and no longer do. ``heats.competitors`` and
+``heats.stand_assignments`` were walked with an **empty path**, so
+``event_type`` decided their kind alone and :data:`_PATH_RULES` could not fire.
+D12-C commit F2 deleted them, because as of commit E every roster in the
+database is ``heat_assignments`` rows and those rows are already walked above,
+with a stored ``competitor_type`` rather than an inferred one. Keeping both
+would have counted the same reference twice and disagreed with itself about the
+kind whenever an event type lied about its pool.
 """
 import json
 from dataclasses import dataclass
@@ -535,13 +535,13 @@ class _Pools:
 
 
 def collect_sites(session):
-    """Every competitor reference in the database, from all six stores.
+    """Every competitor reference in the database, from all four stores.
 
-    ``heat_assignments``, ``event_results``, ``heats.competitors``,
-    ``heats.stand_assignments``, ``events.payouts``, ``events.event_state``.
-    Four tables, six stores, because ``heats`` and ``events`` each carry two
-    independent reference columns. The module docstring lists the stores that
-    exist and are NOT walked here, and why.
+    ``heat_assignments``, ``event_results``, ``events.payouts``,
+    ``events.event_state``. Three tables, four stores, because ``events``
+    carries two independent reference columns. The module docstring lists the
+    stores that exist and are NOT walked here, and why, including the two heat
+    JSON stores that D12-C commit F2 removed.
 
     The two column-discriminated stores come first because their ``kind`` is
     stored rather than inferred, which makes them the trustworthy half of any
@@ -565,29 +565,12 @@ def collect_sites(session):
             raw_id=competitor_id, kind=competitor_type, kind_source='column',
             name_in_blob=name))
 
-    heats = session.execute(sa.text(
-        'SELECT h.id, h.competitors, h.stand_assignments, e.event_type '
-        'FROM heats h JOIN events e ON e.id = h.event_id')).all()
-    for row_id, competitors, stands, event_type in heats:
-        kind, source = kind_for_path('', event_type)
-        for index, value in enumerate(_loads(competitors, [])):
-            if _is_int(value):
-                sites.append(ReferenceSite(
-                    store='heats.competitors', row_id=row_id,
-                    path=f'heats[{row_id}].competitors[{index}]',
-                    raw_id=value, kind=kind, kind_source=source))
-        # stand_assignments is {competitor_id: stand_number}, so the reference
-        # is the KEY and JSON keys are strings. A non-numeric key is not a
-        # competitor reference and is skipped rather than guessed at.
-        for key in _loads(stands, {}):
-            try:
-                value = int(key)
-            except (TypeError, ValueError):
-                continue
-            sites.append(ReferenceSite(
-                store='heats.stand_assignments', row_id=row_id,
-                path=f'heats[{row_id}].stand_assignments[{key!r}]',
-                raw_id=value, kind=kind, kind_source=source))
+    # D12-C commit F2: `heats.competitors` and `heats.stand_assignments` were
+    # walked here. They are not any more. Every id they held is a
+    # `heat_assignments` row as of commit E, and those rows are collected at
+    # the top of this function with a kind read off a column instead of
+    # inferred from an event type. Walking both would have double-counted
+    # every roster reference in the database.
 
     events = session.execute(sa.text(
         'SELECT id, event_type, payouts, event_state FROM events')).all()

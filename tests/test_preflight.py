@@ -19,10 +19,9 @@ import pytest
 
 from database import db as _db
 
-# D12-C commit E: the roster is `heat_assignments` rows now, so a heat
-# built here has to be seated for real. `seat_roster` materialises the
-# invented competitor ids this module uses before writing the rows.
-from tests.conftest import seat_roster
+# D12-C commit F2: `seat_roster` was imported here for commit E. Every heat
+# this module builds is now rosterless on purpose, so the import went with
+# the roster argument. See `_make_heat`.
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -84,20 +83,22 @@ def _make_event(db_session, tournament, name, event_type='pro', gender=None,
     return e
 
 
-def _make_heat(db_session, event, heat_number=1, run_number=1,
-               competitor_ids=None, flight_id=None):
-    """Create and return a Heat carrying competitor JSON and no rows.
+def _make_heat(db_session, event, heat_number=1, run_number=1, flight_id=None):
+    """Create and return an empty Heat.
 
-    Deliberately column-only, and it stays that way through D12-C commit E.
-    The thing this module tests is `heat_sync_mismatch`, which fires when
-    `heats.competitors` and `heat_assignments` disagree, so a helper that
-    wrote both could never build the disagreement. Rows are added explicitly
-    by `_make_heat_assignment` below, and which heats get them is the whole
-    point of each test. Both this helper and that one die in commit F along
-    with the column and the check.
+    It used to take a `competitor_ids` list and write it straight into the
+    `heats.competitors` column, bypassing the rows, because the thing this
+    module tested was `heat_sync_mismatch`: a helper that wrote both stores
+    could never build the disagreement the check looked for. D12-C commit F2
+    deleted that check, and with it the only reason this helper had to write
+    a roster nothing would read.
+
+    Nothing left in `build_preflight_report` reads a heat roster. The
+    spillover and stand-conflict checks count heats per event; the pool
+    checks read entries off the competitors themselves. So the heats built
+    here are empty, which is what they were already worth. The tests that
+    genuinely need seated heats add rows through `_make_heat_assignment`.
     """
-    import json
-
     from models.heat import Heat
     h = Heat(
         event_id=event.id,
@@ -105,8 +106,6 @@ def _make_heat(db_session, event, heat_number=1, run_number=1,
         run_number=run_number,
         flight_id=flight_id,
     )
-    if competitor_ids is not None:
-        h.competitors = json.dumps(list(competitor_ids))
     db_session.add(h)
     db_session.flush()
     return h
@@ -199,77 +198,22 @@ class TestEmptyTournament:
 
 
 # ---------------------------------------------------------------------------
-# Heat/table sync mismatch detection
-# ---------------------------------------------------------------------------
-
-class TestHeatSyncMismatch:
-    """Detect divergence between Heat.competitors JSON and HeatAssignment rows."""
-
-    def test_matching_json_and_table_no_issue(self, db_session, tournament):
-        """When JSON and table agree, no heat_sync_mismatch issue."""
-        event = _make_event(db_session, tournament, 'Underhand', stand_type='underhand')
-        comp = _make_pro(db_session, tournament, 'John Doe', event_ids=[event.id])
-        heat = _make_heat(db_session, event, competitor_ids=[comp.id])
-        _make_heat_assignment(db_session, heat.id, comp.id)
-
-        from services.preflight import build_preflight_report
-        report = build_preflight_report(tournament)
-
-        codes = [i['code'] for i in report['issues']]
-        assert 'heat_sync_mismatch' not in codes
-
-    def test_extra_in_json_triggers_mismatch(self, db_session, tournament):
-        """JSON has a competitor ID that HeatAssignment does not."""
-        event = _make_event(db_session, tournament, 'Underhand', stand_type='underhand')
-        comp1 = _make_pro(db_session, tournament, 'John Doe', event_ids=[event.id])
-        comp2 = _make_pro(db_session, tournament, 'Jane Doe', 'F', event_ids=[event.id])
-        # JSON lists both, but table only has comp1
-        heat = _make_heat(db_session, event, competitor_ids=[comp1.id, comp2.id])
-        _make_heat_assignment(db_session, heat.id, comp1.id)
-
-        from services.preflight import build_preflight_report
-        report = build_preflight_report(tournament)
-
-        codes = [i['code'] for i in report['issues']]
-        assert 'heat_sync_mismatch' in codes
-        mismatch = [i for i in report['issues'] if i['code'] == 'heat_sync_mismatch'][0]
-        assert mismatch['severity'] == 'high'
-        assert mismatch['autofix'] is True
-
-    def test_extra_in_table_triggers_mismatch(self, db_session, tournament):
-        """HeatAssignment has a row that JSON does not list."""
-        event = _make_event(db_session, tournament, 'Underhand', stand_type='underhand')
-        comp1 = _make_pro(db_session, tournament, 'John Doe', event_ids=[event.id])
-        comp2 = _make_pro(db_session, tournament, 'Jane Doe', 'F', event_ids=[event.id])
-        # JSON lists only comp1, but table has both
-        heat = _make_heat(db_session, event, competitor_ids=[comp1.id])
-        _make_heat_assignment(db_session, heat.id, comp1.id)
-        _make_heat_assignment(db_session, heat.id, comp2.id)
-
-        from services.preflight import build_preflight_report
-        report = build_preflight_report(tournament)
-
-        codes = [i['code'] for i in report['issues']]
-        assert 'heat_sync_mismatch' in codes
-
-    def test_multiple_heats_counts_correctly(self, db_session, tournament):
-        """Multiple mismatched heats under one event are reported as one issue."""
-        event = _make_event(db_session, tournament, 'Standing Block', stand_type='standing_block')
-        comp = _make_pro(db_session, tournament, 'Bob', event_ids=[event.id])
-
-        # Heat 1: mismatch (JSON has comp, table empty)
-        _make_heat(db_session, event, heat_number=1, competitor_ids=[comp.id])
-        # Heat 2: mismatch (JSON has comp, table empty)
-        _make_heat(db_session, event, heat_number=2, competitor_ids=[comp.id])
-
-        from services.preflight import build_preflight_report
-        report = build_preflight_report(tournament)
-
-        mismatches = [i for i in report['issues'] if i['code'] == 'heat_sync_mismatch']
-        assert len(mismatches) == 1
-        assert '2 heat(s)' in mismatches[0]['detail']
-
-
+# Heat/table sync mismatch detection stood here.
+#
+# D12-C commit F2. Four tests, and they were the reason `_make_heat` wrote a
+# column-only roster. They drove `heat_sync_mismatch`, which compared
+# `heats.competitors` against `heat_assignments` and reported the two stores
+# disagreeing as a high-severity autofixable issue.
+#
+# Commit E made `heat_assignments` the only store a roster is written to or
+# read from, so the JSON column cannot disagree with the rows any more than a
+# printed copy can disagree with the file it was printed from. A check for
+# divergence between one store and a rendering of it has nothing left to find,
+# and a preflight blocker that can never fire is a blocker the operator learns
+# to ignore. The check, its `heat_sync_mismatch` code, its place in
+# `BLOCKING_CODES`, the sync-check and sync-fix routes it fed, and these four
+# tests all went in the same commit.
+#
 # ---------------------------------------------------------------------------
 # Odd partner pool detection
 # ---------------------------------------------------------------------------
@@ -344,7 +288,7 @@ class TestSaturdayOverflow:
         event = _make_event(db_session, tournament, 'Standing Block Speed',
                             event_type='college', gender='M',
                             stand_type='standing_block')
-        _make_heat(db_session, event, competitor_ids=[1, 2])
+        _make_heat(db_session, event)
         # Need at least one flight to enter the spillover check branch
         _make_flight(db_session, tournament)
 
@@ -364,7 +308,7 @@ class TestSaturdayOverflow:
                             event_type='college', gender='M',
                             stand_type='standing_block')
         flight = _make_flight(db_session, tournament)
-        _make_heat(db_session, event, competitor_ids=[1, 2], flight_id=flight.id)
+        _make_heat(db_session, event, flight_id=flight.id)
 
         from services.preflight import build_preflight_report
         report = build_preflight_report(tournament,
@@ -393,7 +337,7 @@ class TestSaturdayOverflow:
         event = _make_event(db_session, tournament, 'Standing Block Speed',
                             event_type='college', gender='M',
                             stand_type='standing_block')
-        _make_heat(db_session, event, competitor_ids=[1, 2])
+        _make_heat(db_session, event)
         _make_flight(db_session, tournament)
 
         from services.preflight import build_preflight_report
@@ -408,7 +352,7 @@ class TestSaturdayOverflow:
         event = _make_event(db_session, tournament, 'Standing Block Speed',
                             event_type='college', gender='M',
                             stand_type='standing_block')
-        _make_heat(db_session, event, competitor_ids=[1, 2])
+        _make_heat(db_session, event)
 
         from services.preflight import build_preflight_report
         report = build_preflight_report(tournament,
@@ -431,8 +375,8 @@ class TestStandConflict:
                                stand_type='cookie_stack')
         sb_event = _make_event(db_session, tournament, 'Standing Block',
                                stand_type='standing_block')
-        _make_heat(db_session, cs_event, competitor_ids=[1])
-        _make_heat(db_session, sb_event, competitor_ids=[2])
+        _make_heat(db_session, cs_event)
+        _make_heat(db_session, sb_event)
 
         from services.preflight import build_preflight_report
         report = build_preflight_report(tournament)
@@ -446,8 +390,8 @@ class TestStandConflict:
         sb_event = _make_event(db_session, tournament, 'Standing Block',
                                stand_type='standing_block')
         flight = _make_flight(db_session, tournament)
-        _make_heat(db_session, cs_event, competitor_ids=[1], flight_id=flight.id)
-        _make_heat(db_session, sb_event, competitor_ids=[2], flight_id=flight.id)
+        _make_heat(db_session, cs_event, flight_id=flight.id)
+        _make_heat(db_session, sb_event, flight_id=flight.id)
 
         from services.preflight import build_preflight_report
         report = build_preflight_report(tournament)
@@ -459,7 +403,7 @@ class TestStandConflict:
         _make_event(db_session, tournament, 'Cookie Stack', stand_type='cookie_stack')
         sb_event = _make_event(db_session, tournament, 'Standing Block',
                                stand_type='standing_block')
-        _make_heat(db_session, sb_event, competitor_ids=[1])
+        _make_heat(db_session, sb_event)
 
         from services.preflight import build_preflight_report
         report = build_preflight_report(tournament)
@@ -482,7 +426,7 @@ class TestFullyValidTournament:
                             stand_type='underhand')
         comp1 = _make_pro(db_session, tournament, 'Alice', event_ids=[event.id])
         comp2 = _make_pro(db_session, tournament, 'Bob', event_ids=[event.id])
-        heat = _make_heat(db_session, event, competitor_ids=[comp1.id, comp2.id])
+        heat = _make_heat(db_session, event)
         _make_heat_assignment(db_session, heat.id, comp1.id)
         _make_heat_assignment(db_session, heat.id, comp2.id)
 
@@ -491,7 +435,7 @@ class TestFullyValidTournament:
                                 stand_type='saw_hand', is_partnered=True)
         p1 = _make_pro(db_session, tournament, 'Pro A', event_ids=[partnered.id])
         p2 = _make_pro(db_session, tournament, 'Pro B', event_ids=[partnered.id])
-        heat2 = _make_heat(db_session, partnered, competitor_ids=[p1.id, p2.id])
+        heat2 = _make_heat(db_session, partnered)
         _make_heat_assignment(db_session, heat2.id, p1.id)
         _make_heat_assignment(db_session, heat2.id, p2.id)
 
@@ -683,10 +627,14 @@ class TestCleanupNonEnrolledGearEntries:
 class TestBlockingCodes:
     """V2.14.16: hard-blocker codes are surfaced in report['blocking'].
 
-    DOMAIN_CONTRACT (2026-04-27): unresolved partners, self-references,
-    non-reciprocal pairs, and heat sync mismatches are not allowed to slip
-    into the schedule. Generation enforces this; the preflight dashboard
-    surfaces the same set as a red banner with click-path fixes.
+    DOMAIN_CONTRACT (2026-04-27): unresolved partners, self-references, and
+    non-reciprocal pairs are not allowed to slip into the schedule.
+    Generation enforces this; the preflight dashboard surfaces the same set
+    as a red banner with click-path fixes.
+
+    The contract also named heat sync mismatches. D12-C commit F2 removed
+    that member: with one roster store there is nothing for it to be out of
+    sync with. The other three are untouched.
     """
 
     def test_blocking_codes_constant_includes_partner_invariants(self):
@@ -695,7 +643,7 @@ class TestBlockingCodes:
         assert 'unresolved_partner_name' in BLOCKING_CODES
         assert 'self_reference_partner' in BLOCKING_CODES
         assert 'non_reciprocal_partnership' in BLOCKING_CODES
-        assert 'heat_sync_mismatch' in BLOCKING_CODES
+        assert 'heat_sync_mismatch' not in BLOCKING_CODES
 
     def test_get_blocking_issues_filters_advisory(self):
         from services.preflight import get_blocking_issues

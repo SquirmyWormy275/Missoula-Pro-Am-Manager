@@ -310,7 +310,6 @@ class TestScratchCompetitor:
             competitors=[c1.id, c2.id],
             stand_assignments={str(c1.id): 1, str(c2.id): 2},
         )
-        h.sync_assignments("pro")
         db_session.commit()
 
         auth_client.post(

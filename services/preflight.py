@@ -9,7 +9,7 @@ click-path fix rather than as advisory warnings.
 """
 from __future__ import annotations
 
-from models import Event, Flight, Heat, HeatAssignment, Tournament
+from models import Event, Flight, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.gear_sharing import (
     event_matches_gear_key,
@@ -25,7 +25,6 @@ BLOCKING_CODES = frozenset({
     'unresolved_partner_name',
     'self_reference_partner',
     'non_reciprocal_partnership',
-    'heat_sync_mismatch',
 })
 
 
@@ -97,50 +96,13 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
     issues: list[dict] = []
     saturday_ids = set(int(v) for v in (saturday_college_event_ids or []))
 
-    # 1) Heat JSON vs HeatAssignment divergence.
-    # Previously: events × heats per-event lazy `event.heats.all()` plus
-    # one HeatAssignment query per heat — N+M queries on the longest
-    # user-visible request on race day. Replaced with two batch queries
-    # (Heat + HeatAssignment scoped to tournament) and an in-memory join.
-    all_events_ordered = tournament.events.order_by(
-        Event.event_type, Event.name, Event.gender,
-    ).all()
-    event_by_id = {e.id: e for e in all_events_ordered}
-    event_ids = list(event_by_id.keys())
-    if event_ids:
-        from collections import defaultdict
-        all_heats = (
-            Heat.query.filter(Heat.event_id.in_(event_ids)).all()
-        )
-        heat_ids = [h.id for h in all_heats]
-        assignments_by_heat: dict[int, set[int]] = defaultdict(set)
-        if heat_ids:
-            for a in HeatAssignment.query.filter(HeatAssignment.heat_id.in_(heat_ids)).all():
-                assignments_by_heat[a.heat_id].add(a.competitor_id)
-        mismatched_by_event: dict[int, int] = defaultdict(int)
-        for heat in all_heats:
-            # D12-C commit E: `json_competitors` and not `get_competitors`.
-            # The accessor reads the rows as of this commit, so comparing it
-            # against the rows would compare the rows to themselves and this
-            # check could never fire again. It has to keep reading the raw
-            # `heats.competitors` column to mean anything, and it means
-            # something right up until commit F drops that column and deletes
-            # this block along with it.
-            json_ids = set(heat.json_competitors())
-            table_ids = assignments_by_heat.get(heat.id, set())
-            if json_ids != table_ids:
-                mismatched_by_event[heat.event_id] += 1
-        # Emit issues in the same order the original loop produced.
-        for event in all_events_ordered:
-            count = mismatched_by_event.get(event.id, 0)
-            if count:
-                issues.append({
-                    'severity': 'high',
-                    'code': 'heat_sync_mismatch',
-                    'title': 'Heat assignment mismatch',
-                    'detail': f'{event.display_name}: {count} heat(s) have JSON/table mismatch.',
-                    'autofix': True,
-                })
+    # 1) Heat JSON vs HeatAssignment divergence used to be checked here, and
+    # emitted `heat_sync_mismatch`. D12-C commit F2 deleted it. The check
+    # existed because two stores held the same roster and could disagree; as
+    # of commit E there is one store, `heat_assignments`, and the JSON column
+    # is a projection of it that nothing reads. Two things that cannot
+    # disagree do not need a check that they agree, and keeping one would
+    # have meant keeping the column alive to be the thing compared against.
 
     # 2) Partner completeness for ALL partnered events (college + pro).
     # Previously pro-only — Jack & Jill / Double Buck / Pulp Toss / Peavey on

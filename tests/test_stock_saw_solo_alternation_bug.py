@@ -327,11 +327,9 @@ class TestStockSawSoloAlternationOnGeneration:
         This test seeds a stock saw event where heats 1-3 are completed
         (with intentionally "wrong" stand 8 assignments — what the race-day
         bug would have produced) and heats 4-6 are pending. After rebalance,
-        completed heats must be byte-for-byte unchanged; only pending heats
-        get re-alternated.
+        completed heats must be unchanged; only pending heats get
+        re-alternated.
         """
-        import json
-
         from models import Heat
         from services.heat_generator import (
             generate_event_heats,
@@ -353,14 +351,22 @@ class TestStockSawSoloAlternationOnGeneration:
         )
         # Force the first 3 heats to look like the race-day bug: all on
         # stand 8, status='completed'. Capture the snapshot for comparison.
+        #
+        # D12-C commit F2: this used to write `h.stand_assignments` directly,
+        # a raw json.dumps into the column, back when the column was what
+        # rebalance read. Commit E moved rebalance onto the rows, so writing
+        # the column would have seeded a bug the code under test could no
+        # longer see, and this test would have passed for the wrong reason.
+        # `set_roster` writes the rows with the same roster and the same
+        # one-entry stand map the column write produced.
         completed_snapshots = {}
         for h in run1_heats[:3]:
             comp_ids = h.get_competitors()
             if not comp_ids:
                 continue
-            h.stand_assignments = json.dumps({str(comp_ids[0]): 8})
+            h.set_roster(ev.event_type, comp_ids, {str(comp_ids[0]): 8})
             h.status = "completed"
-            completed_snapshots[h.id] = (h.stand_assignments, h.status)
+            completed_snapshots[h.id] = (h.get_stand_assignments(), h.status)
         db_session.flush()
 
         # Run rebalance — this is the path that scratch_cascade triggers.
@@ -369,10 +375,10 @@ class TestStockSawSoloAlternationOnGeneration:
 
         # Every completed heat must be unchanged.
         for h in Heat.query.filter(Heat.id.in_(completed_snapshots)).all():
-            assert (h.stand_assignments, h.status) == completed_snapshots[h.id], (
+            assert (h.get_stand_assignments(), h.status) == completed_snapshots[h.id], (
                 f"completed heat {h.id} mutated by rebalance — historical "
                 f"stand record corrupted. Before: {completed_snapshots[h.id]}, "
-                f"after: ({h.stand_assignments}, {h.status})"
+                f"after: ({h.get_stand_assignments()}, {h.status})"
             )
 
         # Pending heats CAN be touched; alternation should still be correct

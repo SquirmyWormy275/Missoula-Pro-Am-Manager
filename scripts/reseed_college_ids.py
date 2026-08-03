@@ -22,8 +22,6 @@ Reference surfaces, measured on the production mirror (c38), not assumed:
     event_results.competitor_id       WHERE competitor_type = 'college'
     heat_assignments.competitor_id    WHERE competitor_type = 'college'
     users.competitor_id               WHERE competitor_type = 'college'
-    heats.competitors                 JSON id lists, college-event heats
-    heats.stand_assignments           JSON {id: stand}, college-event heats
     events.payouts                    college bracket events: competitors[].id,
                                       seeding[], pre_seedings{}, placements{},
                                       every bracket match's competitor1/
@@ -31,6 +29,13 @@ Reference surfaces, measured on the production mirror (c38), not assumed:
     events.event_state                Pro-Am Relay: eligible_college[].id,
                                       drawn_college[].id,
                                       teams[].college_members[].id
+
+Two more surfaces used to be listed here, `heats.competitors` and
+`heats.stand_assignments`. D12-C commit F2 removed them: the roster they held
+is `heat_assignments` rows now, that table is already remapped above, and
+commit F3 drops the columns. A script that still rewrote them would be
+rewriting a projection nothing reads, and would crash outright once the
+columns are gone.
 
 Deliberately NOT remapped: audit_logs and print/email logs. They are
 append-only history; rewriting their entity ids would falsify the record.
@@ -57,17 +62,6 @@ def _engine():
 # ---------------------------------------------------------------------------
 # JSON remappers, pure functions so they are unit-testable
 # ---------------------------------------------------------------------------
-
-def remap_heat_competitors(raw, mapping):
-    ids = json.loads(raw or "[]")
-    return json.dumps([mapping.get(int(c), int(c)) for c in ids])
-
-
-def remap_stand_assignments(raw, mapping):
-    stands = json.loads(raw or "{}")
-    return json.dumps(
-        {str(mapping.get(int(k), int(k))): v for k, v in stands.items()})
-
 
 def remap_bracket_payouts(raw, mapping):
     d = json.loads(raw or "{}")
@@ -130,21 +124,11 @@ def check(conn) -> dict:
         "SELECT count(*) FROM college_competitors c "
         "JOIN pro_competitors p ON p.id = c.id")).scalar()
 
-    out["orphan_heat_ids"] = conn.execute(text("""
-        SELECT count(*) FROM (
-            SELECT jsonb_array_elements_text(h.competitors::jsonb)::int AS cid
-            FROM heats h JOIN events e ON e.id = h.event_id
-            WHERE e.event_type = 'college'
-        ) x WHERE cid NOT IN (SELECT id FROM college_competitors)""")).scalar()
-
-    out["orphan_stand_keys"] = conn.execute(text("""
-        SELECT count(*) FROM (
-            SELECT jsonb_object_keys(h.stand_assignments::jsonb)::int AS cid
-            FROM heats h JOIN events e ON e.id = h.event_id
-            WHERE e.event_type = 'college'
-              AND h.stand_assignments IS NOT NULL
-              AND h.stand_assignments != '{}'
-        ) x WHERE cid NOT IN (SELECT id FROM college_competitors)""")).scalar()
+    # D12-C commit F2: `orphan_heat_ids` and `orphan_stand_keys` counted
+    # unresolvable ids inside the two heat JSON columns. `orphan_assignments`
+    # below counts the same population off `heat_assignments`, which is where
+    # the roster lives as of commit E, so the two JSON counts measured a copy
+    # rather than the thing.
 
     out["orphan_results"] = conn.execute(text(
         "SELECT count(*) FROM event_results r WHERE r.competitor_type = "
@@ -223,16 +207,12 @@ def apply_reseed(conn):
         f"UPDATE users SET competitor_id = competitor_id + {OFFSET} "
         f"WHERE competitor_type = 'college' AND competitor_id IS NOT NULL"))
 
-    heats = conn.execute(text(
-        "SELECT h.id, h.competitors, h.stand_assignments FROM heats h "
-        "JOIN events e ON e.id = h.event_id "
-        "WHERE e.event_type = 'college'")).fetchall()
-    for hid, comps, stands in heats:
-        conn.execute(
-            text("UPDATE heats SET competitors = :c, stand_assignments = :s "
-                 "WHERE id = :i"),
-            {"c": remap_heat_competitors(comps, mapping),
-             "s": remap_stand_assignments(stands, mapping), "i": hid})
+    # D12-C commit F2: the college heats' two JSON columns were rewritten
+    # here. They are not any more. `heat_assignments` above carries the same
+    # ids and is the only roster store a reader touches as of commit E, so
+    # this loop was remapping a projection. It leaves those columns holding
+    # pre-reseed ids on any database this script is run against, which is
+    # correct and deliberate: nothing reads them and commit F3 drops them.
 
     brackets = conn.execute(text(
         "SELECT id, payouts FROM events WHERE event_type = 'college' "
@@ -284,9 +264,8 @@ def main():
         # the relay state. Those are O6 cleanup material, measured and
         # reported by --check; this migration preserves them bit-for-bit
         # rather than silently "fixing" history it cannot verify.
-        for k in ("orphan_heat_ids", "orphan_stand_keys", "orphan_results",
-                  "orphan_assignments", "orphan_users", "orphan_bracket_ids",
-                  "orphan_relay_ids"):
+        for k in ("orphan_results", "orphan_assignments", "orphan_users",
+                  "orphan_bracket_ids", "orphan_relay_ids"):
             if after[k] != before[k]:
                 defects.append(
                     f"{k} changed {before[k]} -> {after[k]}; the reseed "

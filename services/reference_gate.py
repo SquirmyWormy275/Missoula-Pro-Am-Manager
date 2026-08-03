@@ -72,12 +72,14 @@ pending on the object and the next flush, including the autoflush in front of
 the next query, raises the same error somewhere that has nothing to do with it.
 A caller that catches :class:`BadReferenceWrite` must roll back.
 
-It does not cover the other four reference stores. The two ``heats`` JSON
-columns are D12-C's territory and will stop being writable truth.
-``heat_assignments`` gained a real foreign key onto ``competitors.uid`` in
-D12-C commit A, and ``Heat.sync_assignments`` refuses a bad reference in Python
-before the constraint can, so that store is now defended by the database rather
-than by anything here. ``event_results.competitor_id`` is still a bare integer
+It does not cover the other reference stores. The two ``heats`` JSON columns
+were D12-C's territory and have stopped being writable truth: as of commit E
+the roster is ``heat_assignments`` and the columns are a rendering of it, as of
+commit F2 nothing reads them, and F3 drops them.  ``heat_assignments`` gained a
+real foreign key onto ``competitors.uid`` in D12-C commit A, and
+``Heat.set_roster`` refuses a bad reference in Python before the constraint
+can, so that store is now defended by the database rather than by anything
+here. ``event_results.competitor_id`` is still a bare integer
 with a CHECK on its discipline column and no foreign key of its own; it is
 covered by ``services/reference_audit.py`` and by nothing at write time. This
 gate is scoped to the two stores where the damage happened.

@@ -1,5 +1,4 @@
 """Tests for schedule-generation application services."""
-import json
 import os
 
 import pytest
@@ -54,47 +53,33 @@ def _make_event(db_session, tournament, name, event_type='pro'):
     return event
 
 
-def _make_heat(db_session, event, competitor_ids=None):
-    """A heat carrying competitor JSON and no assignment rows.
+# `_make_heat` stood here, building a heat with competitor JSON and no
+# assignment rows. Column-only on purpose: its one caller was the autofix
+# test below, and what that test measured was `run_preflight_autofix` walking
+# every heat, noticing the rows were missing, and building them. A helper
+# that seated the rows itself would have left the call with nothing to fix.
+#
+# D12-C commit F2 deleted that sweep. `set_roster` writes the rows, every
+# caller goes through it, and a heat whose rows are missing is now a heat
+# with no roster rather than a heat awaiting repair, so a sweep that rebuilt
+# rows from the JSON column would be reading a store nothing writes to.
 
-    Column-only on purpose: the one caller that passes ids is the autofix
-    test, and what it measures is `run_preflight_autofix` noticing that the
-    rows are missing and building them. A helper that seated the rows itself
-    would leave that call with nothing to fix and the test asserting on a
-    number it produced. The ids are still materialised first, because an
-    autofix that finds an invented id refuses rather than repairs.
+
+def test_run_preflight_autofix_reports_its_summary_numbers(db_session, monkeypatch):
+    """The autofix still reports what each of its steps did.
+
+    This was `test_run_preflight_autofix_syncs_heat_assignments`, and its
+    first claim was that the function rebuilt `heat_assignments` rows from
+    the JSON column and reported the count as `heats_fixed`. D12-C commit F2
+    deleted that sweep and both counters. The four steps that remain, gear
+    parsing, one-sided pair completion, partner auto-assignment and spillover
+    integration, are still summarised the same way, and that is what is
+    asserted below.
     """
-    import json
-
-    from models import Heat
-
-    heat = Heat(event_id=event.id, heat_number=1, run_number=1)
-    if competitor_ids is not None:
-        # See tests/conftest.py::ensure_competitors. heat_assignments carries a
-        # NOT NULL uid as of s8a0b2c3d4e5, so an invented id is no longer a
-        # heat the database will store.
-        from models.tournament import Tournament
-        from tests.conftest import ensure_competitors
-        ensure_competitors(
-            db_session, Tournament.query.get(event.tournament_id),
-            competitor_ids, event.event_type,
-        )
-        heat.competitors = json.dumps(list(competitor_ids))
-    db_session.add(heat)
-    db_session.flush()
-    return heat
-
-
-def test_run_preflight_autofix_syncs_heat_assignments(db_session, monkeypatch):
-    from models.heat import HeatAssignment
     from services.schedule_generation import run_preflight_autofix
 
     tournament = _make_tournament(db_session)
-    event = _make_event(db_session, tournament, 'Underhand')
-    heat = _make_heat(db_session, event, competitor_ids=[101, 202])
-    # Stands go in the column too. `set_roster` here would write the rows this
-    # test exists to watch the autofix write.
-    heat.stand_assignments = json.dumps({'101': 1, '202': 2})
+    _make_event(db_session, tournament, 'Underhand')
     db_session.flush()
 
     monkeypatch.setattr(
@@ -125,10 +110,8 @@ def test_run_preflight_autofix_syncs_heat_assignments(db_session, monkeypatch):
     result = run_preflight_autofix(tournament, saturday_ids=[999])
     db_session.flush()
 
-    rows = HeatAssignment.query.filter_by(heat_id=heat.id).order_by(HeatAssignment.competitor_id).all()
-    assert [row.competitor_id for row in rows] == [101, 202]
-    assert [row.stand_number for row in rows] == [1, 2]
-    assert result['heats_fixed'] == 1
+    assert 'heats_fixed' not in result
+    assert 'heats_checked' not in result
     assert result['gear_parsed']['parsed'] == 2
     assert result['gear_pairs_completed'] == 1
     assert result['partner_summary']['assigned_pairs'] == 3

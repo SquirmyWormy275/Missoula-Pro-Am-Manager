@@ -22,9 +22,14 @@ is the bridge between the two.
 
 Who imports this
 ================
-``models/heat.py``, as of D12-C commit A.  ``Heat.sync_assignments`` builds one
-``EntityKey`` per id in a heat's competitors JSON and calls ``resolve_uids`` to
+``models/heat.py``, as of D12-C commit A.  ``Heat.set_roster`` builds one
+``EntityKey`` per id in the roster it was handed and calls ``resolve_uids`` to
 turn them into the ``heat_assignments.uid`` values the table now requires.
+
+The first importer was ``Heat.sync_assignments``, which read the roster out of
+the ``competitors`` JSON column instead.  D12-C commit E made ``set_roster``
+the write target and commit F2 deleted the shim; the ``EntityKey`` work is
+unchanged, only the thing it reads from moved.
 
 It landed a cycle earlier than that with no importer at all, deliberately, so
 its semantics could be reviewed on their own rather than in the middle of a

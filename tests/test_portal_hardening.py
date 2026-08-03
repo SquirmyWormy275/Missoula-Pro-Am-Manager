@@ -13,7 +13,6 @@ These tests verify security invariants that go beyond basic route access:
 Run:
     pytest tests/test_portal_hardening.py -v
 """
-import json
 import os
 
 import pytest
@@ -144,10 +143,12 @@ def _seed_hardening_data(app):
     # Heat for event
     heat = Heat.query.filter_by(event_id=evt.id).first()
     if not heat:
+        # D12-C commit F2: the constructor used to seed `competitors` and
+        # `stand_assignments` as raw JSON as well. The `set_roster` call two
+        # lines down already writes the rows and renders the same columns, so
+        # the kwargs were writing a value that was immediately overwritten.
         heat = Heat(
             event_id=evt.id, heat_number=1, run_number=1,
-            competitors=json.dumps([pro_a.id]),
-            stand_assignments=json.dumps({str(pro_a.id): '1'}),
             status='completed',
         )
         _db.session.add(heat)

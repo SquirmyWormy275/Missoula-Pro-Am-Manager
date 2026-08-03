@@ -923,37 +923,37 @@ class TestHeatRoster:
             h.set_roster('pro', ids + [987654])
 
     def test_the_json_column_is_rendered_from_the_rows(self, db_session):
-        """Until commit F drops it, the column still has to say what the rows
-        say, because most readers in the tree are still on it."""
+        """The column is still written, and this is the test that says so.
+
+        D12-C commit F2 removed every reader of `heats.competitors`, but not
+        the writer: `_project_json` still renders the rows into the column on
+        every roster write, and the column is still in the schema. That is
+        deliberate, and it is what makes F2 revertible. F3 drops the writer
+        and the column together, and this test goes with them.
+
+        It used to assert `h.json_competitors() == ids` alongside. That
+        accessor was one of the three readers F2 deleted.
+        """
         h, ids = self._heat_with(3)
         h.set_roster('pro', ids)
         assert json.loads(h.competitors) == ids
-        assert h.json_competitors() == ids
 
 
-class TestHeatLegacyJsonAccessors:
-    """``json_competitors`` / ``json_stand_assignments``: the raw columns.
+class TestHeatRawColumnsCannotHurtTheRows:
+    """A hand-corrupted JSON column is inert.
 
-    The old bodies of the two accessors, kept under names that say what they
-    read. Only the two drift checks and ``sync_assignments`` call them, and
-    all three die with the columns in commit F. Their corrupt-input tolerance
-    is still live coverage until then: a race-day request that cannot parse a
-    heat renders it as unknown rather than 500.
+    This class used to be `TestHeatLegacyJsonAccessors` and covered
+    ``json_competitors`` / ``json_stand_assignments``, the two accessors that
+    read the raw columns. D12-C commit F2 deleted both, along with
+    ``sync_assignments``, because their only callers were the preflight drift
+    check and the sync route, and those went first. Two of the three tests
+    here measured what those accessors did with unparseable input and died
+    with them.
+
+    The third survives, and it is the one that still means something: garbage
+    written straight into the columns must not reach a roster read. Until F3
+    drops the columns, somebody can still put garbage there.
     """
-
-    def test_corrupt_json_returns_empty_list(self, db_session):
-        t = _make_tournament()
-        e = _make_event(t)
-        h = _make_heat(e)
-        h.competitors = '{bad'
-        assert h.json_competitors() == []
-
-    def test_corrupt_json_returns_empty_dict(self, db_session):
-        t = _make_tournament()
-        e = _make_event(t)
-        h = _make_heat(e)
-        h.stand_assignments = '!!'
-        assert h.json_stand_assignments() == {}
 
     def test_a_corrupt_column_does_not_reach_the_row_accessors(self, db_session):
         """The rows are a different storage location, so a column somebody

@@ -192,29 +192,23 @@ with app.app_context():
         db.session.flush()
         flight_map[fl.id] = clone.id
 
-    # Heats: remap event, flight, competitor JSON, stand keys
-    def comp_map_for(etype):
-        return col_map if etype == "college" else pro_map
-
+    # Heats: remap event and flight, then clone the assignment rows. The
+    # per-event competitor map that used to be chosen here went with the JSON
+    # remap in commit F2; the row clone below picks its map off each row's
+    # own `competitor_type`, which is a stored fact rather than an inference
+    # from the event's type.
     heat_count = 0
     assign_count = 0
     for ev in Event.query.filter_by(tournament_id=SRC_T).all():
-        m = comp_map_for(ev.event_type)
         for h in Heat.query.filter_by(event_id=ev.id).all():
             data = {c.name: getattr(h, c.name) for c in Heat.__table__.columns
                     if c.name not in ("id", "event_id", "flight_id")}
-            try:
-                ids = json.loads(data.get("competitors") or "[]")
-            except (TypeError, ValueError):
-                ids = []
-            data["competitors"] = json.dumps(
-                [m.get(int(c), int(c)) for c in ids])
-            try:
-                stands = json.loads(data.get("stand_assignments") or "{}")
-            except (TypeError, ValueError):
-                stands = {}
-            data["stand_assignments"] = json.dumps(
-                {str(m.get(int(k), int(k))): v for k, v in stands.items()})
+            # D12-C commit F2: the two JSON columns were remapped here, since
+            # they were the only roster this script cloned before c57. They
+            # are copied verbatim with the rest of `data` now and nothing
+            # reads them, so remapping them would have been rewriting a
+            # projection of the assignment rows cloned below. Commit F3 drops
+            # the columns and `data` stops carrying them at all.
             clone_h = Heat(event_id=event_map[ev.id],
                            flight_id=flight_map.get(h.flight_id),
                            **data)

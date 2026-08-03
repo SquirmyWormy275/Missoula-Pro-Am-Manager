@@ -14,26 +14,14 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
     from services.gear_sharing import complete_one_sided_pairs, parse_all_gear_details
     from services.partner_matching import auto_assign_pro_partners
 
-    heats_fixed = 0
-    heats_checked = 0
-    for event in tournament.events.all():
-        # Skip Pro-Am Relay: its pseudo-heats are synthesized by
-        # integrate_proam_relay_into_final_flight and have no HeatAssignment
-        # rows to sync. Walking them here creates empty no-op HeatAssignment
-        # writes that churn the DB for no effect.
-        if event.name == 'Pro-Am Relay':
-            continue
-        for heat in event.heats.all():
-            # heat.sync_assignments is the canonical rebuild, and it now reports
-            # whether it changed anything. This loop used to inline a copy of it
-            # and count every heat it WALKED, so heats_fixed read 172 on a
-            # tournament with zero desynced heats while 379 rows were deleted
-            # and reinserted to produce that number. The comment directly above
-            # already names no-op writes here as churn for no effect; it was
-            # only acted on for Pro-Am Relay because nothing else was checked.
-            heats_checked += 1
-            if heat.sync_assignments(event.event_type):
-                heats_fixed += 1
+    # D12-C commit F2: the heat-sync sweep is gone, and with it the
+    # `heats_fixed` / `heats_checked` counters this function used to return.
+    # It walked every heat calling `sync_assignments`, which rebuilt the
+    # `heat_assignments` rows from the `heats.competitors` JSON. That was a
+    # repair for a divergence that can no longer happen: commit E made the
+    # rows the only place a roster is written, so there is nothing to sync
+    # them FROM and nothing they can drift AGAINST. Sweeping anyway would
+    # rewrite every roster in the tournament from a column no writer touches.
 
     gear_parse_result = parse_all_gear_details(tournament)
     pairs_result = complete_one_sided_pairs(tournament)
@@ -43,8 +31,6 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
     integration = integrate_college_spillover_into_flights(tournament, saturday_ids or [])
 
     return {
-        'heats_fixed': heats_fixed,
-        'heats_checked': heats_checked,
         'gear_parsed': gear_parse_result,
         'gear_pairs_completed': pairs_result['completed'],
         'partner_summary': partner_summary,

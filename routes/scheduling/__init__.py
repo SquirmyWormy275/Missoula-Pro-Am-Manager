@@ -6,8 +6,7 @@ each contain a logical slice of the original monolithic scheduling.py file.
 
 Sub-module layout:
   events.py          — event_list, setup_events, day_schedule, apply_saturday_priority
-  heats.py           — event_heats, generate_heats, generate_college_heats, move_competitor_between_heats,
-                       heat_sync_check, heat_sync_fix
+  heats.py           — event_heats, generate_heats, generate_college_heats, move_competitor_between_heats
   flights.py         — flight_list, build_flights, start_flight, complete_flight, reorder_flight_heats
   heat_sheets.py     — heat_sheets, day_schedule_print
   friday_feature.py  — friday_feature

@@ -442,22 +442,29 @@ class TestClassification:
 
 
 class TestStoreCoverage:
-    """All six stores are walked, not just the two that are currently dirty.
+    """All four stores are walked, not just the two that are currently dirty.
 
     On the production dump every finding sits in events.payouts and
-    events.event_state, and heat_assignments, event_results and the heat JSON
-    are clean. That is a fact about the reseed's coverage, not a guarantee
-    about those stores, so they stay in scope.
+    events.event_state, and heat_assignments and event_results are clean.
+    That is a fact about the reseed's coverage, not a guarantee about those
+    stores, so they stay in scope.
+
+    There were six. `heats.competitors` and `heats.stand_assignments` were
+    walked until D12-C commit F2, and in every run against every mirror they
+    reported nothing, because a reference the audit could find in them was
+    also in `heat_assignments` and got reported there. F2 stopped the reseed
+    script rewriting those columns, which by design leaves them holding
+    pre-reseed ids after an --apply run: walking them would have turned a
+    clean audit into a hundred dangling findings about a store nothing reads
+    and F3 drops. So they came out of scope in the same commit.
     """
 
-    # Four tables, six stores: heats and events each carry two independent
-    # reference columns. Named here rather than derived, so that adding a store
-    # to collect_sites is a deliberate act with a docstring edit attached.
+    # Three tables, four stores: events carries two independent reference
+    # columns. Named here rather than derived, so that adding a store to
+    # collect_sites is a deliberate act with a docstring edit attached.
     DOCUMENTED_STORES = {
         'heat_assignments',
         'event_results',
-        'heats.competitors',
-        'heats.stand_assignments',
         'events.payouts',
         'events.event_state',
     }
@@ -479,11 +486,12 @@ class TestStoreCoverage:
         tournament = make_tournament(db_session)
         event = make_event(db_session, tournament, 'Underhand',
                            event_type='pro')
-        # seat=False: 901 and 902 are ghosts on purpose. Seating them would
-        # materialise the very competitors this audit is supposed to report as
-        # missing, and the assertion below would then be true of an empty set.
-        heat = make_heat(db_session, event, competitors=[901],
-                         stand_assignments={'902': 1}, seat=False)
+        # The heat carries no roster of its own. It used to be built with
+        # `competitors=[901], stand_assignments={'902': 1}, seat=False`, ghost
+        # ids planted so the two heat JSON stores would each report a finding.
+        # D12-C commit F2 took those stores out of scope, so the heat is here
+        # only to hang the `heat_assignments` row below off.
+        heat = make_heat(db_session, event)
         # The uid is real and the legacy pair is a ghost, because that is the
         # only shape a bad heat_assignments reference can still take: as of
         # s8a0b2c3d4e5 uid is NOT NULL with a foreign key onto the spine, while
@@ -509,30 +517,17 @@ class TestStoreCoverage:
         stores = {f.site.store for f in audit(db_session)}
         assert stores == self.DOCUMENTED_STORES
 
-    def test_heat_json_references_are_audited(self, db_session):
-        tournament = make_tournament(db_session)
-        make_pro_competitor(db_session, tournament, 'Pro One')
-        event = make_event(db_session, tournament, 'Underhand', event_type='pro')
-        # seat=False: 999 is the dangling reference under test.
-        make_heat(db_session, event, competitors=[999],
-                  stand_assignments={'999': 1}, seat=False)
-        db_session.flush()
-
-        findings = audit(db_session)
-        stores = {f.site.store for f in findings}
-        assert 'heats.competitors' in stores
-        assert 'heats.stand_assignments' in stores
-        assert all(f.verdict == DANGLING for f in findings)
-
-    def test_stand_assignment_keys_that_are_not_numbers_are_skipped(self, db_session):
-        tournament = make_tournament(db_session)
-        event = make_event(db_session, tournament, 'Underhand', event_type='pro')
-        make_heat(db_session, event, competitors=[],
-                  stand_assignments={'not-an-id': 1})
-        db_session.flush()
-
-        assert [f for f in audit(db_session)
-                if f.site.store == 'heats.stand_assignments'] == []
+    # `test_heat_json_references_are_audited` and
+    # `test_stand_assignment_keys_that_are_not_numbers_are_skipped` stood
+    # here. The first planted id 999 in both heat JSON columns and asserted
+    # the audit reported it dangling in each; the second planted a
+    # non-numeric stand key and asserted the walk skipped it rather than
+    # crashing. Both described a walk D12-C commit F2 deleted, and neither
+    # claim has anywhere left to live: the stores are out of scope and the
+    # columns come out of the schema in F3.
+    #
+    # The `_is_int` guard the second test exercised is still reached, by the
+    # `heat_assignments` and `event_results` walks, and still covered.
 
     def test_unparseable_blob_reports_nothing_rather_than_guessing(self, db_session):
         """Deliberate narrowing, documented at _loads().

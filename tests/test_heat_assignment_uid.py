@@ -8,12 +8,18 @@ says which heat instead of arriving as a driver IntegrityError from wherever
 the next autoflush happens to be.
 
 Why this file exists separately from test_db_constraints.py: the constraint is
-the boring half. The interesting half is ``Heat.sync_assignments`` refusing in
-Python first, and refusing BEFORE it deletes anything, which is the only
-version of this that is safe to hit during a live show.
-"""
-import json
+the boring half. The interesting half is ``Heat.set_roster`` refusing in Python
+first, and refusing BEFORE it deletes anything, which is the only version of
+this that is safe to hit during a live show.
 
+D12-C commit F2: every test below used to reach the refusal through
+``sync_assignments``, seeding the roster into the ``competitors`` column with
+``make_heat(..., seat=False)`` and letting the shim read it back out. The shim
+is deleted and the column has no readers, so each one now passes the same
+roster straight to ``set_roster``. The refusals are the same refusals; they
+were always raised by ``_resolve_assignment_uids``, one call below where the
+shim stopped.
+"""
 import pytest
 
 from models.heat import BadHeatAssignment, HeatAssignment
@@ -41,11 +47,10 @@ class TestUidIsWritten:
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
         b = make_pro_competitor(db_session, t, 'Pro B')
-        heat = make_heat(db_session, e, competitors=[a.id, b.id],
-                         stand_assignments={str(a.id): 1, str(b.id): 2},
-                         seat=False)
+        heat = make_heat(db_session, e)
 
-        assert heat.sync_assignments('pro') is True
+        assert heat.set_roster('pro', [a.id, b.id],
+                               {str(a.id): 1, str(b.id): 2}) is True
         db_session.flush()
 
         assert {r.uid for r in _rows(heat)} == {a.uid, b.uid}
@@ -56,10 +61,9 @@ class TestUidIsWritten:
         team = make_team(db_session, t)
         e = make_event(db_session, t, 'Single Buck', event_type='college')
         a = make_college_competitor(db_session, t, team, 'College A')
-        heat = make_heat(db_session, e, competitors=[a.id],
-                         stand_assignments={str(a.id): 1}, seat=False)
+        heat = make_heat(db_session, e)
 
-        assert heat.sync_assignments('college') is True
+        assert heat.set_roster('college', [a.id], {str(a.id): 1}) is True
         db_session.flush()
 
         assert [r.uid for r in _rows(heat)] == [a.uid]
@@ -82,12 +86,10 @@ class TestUidIsWritten:
         ensure_competitors(db_session, t, [shared_id], 'pro')
         ensure_competitors(db_session, t, [shared_id], 'college', team=team)
 
-        pro_heat = make_heat(db_session, pro_event, heat_number=1,
-                             competitors=[shared_id], seat=False)
-        col_heat = make_heat(db_session, col_event, heat_number=2,
-                             competitors=[shared_id], seat=False)
-        pro_heat.sync_assignments('pro')
-        col_heat.sync_assignments('college')
+        pro_heat = make_heat(db_session, pro_event, heat_number=1)
+        col_heat = make_heat(db_session, col_event, heat_number=2)
+        pro_heat.set_roster('pro', [shared_id])
+        col_heat.set_roster('college', [shared_id])
         db_session.flush()
 
         pro_uid = _rows(pro_heat)[0].uid
@@ -100,15 +102,15 @@ class TestUidIsWritten:
 
 
 class TestRefusals:
-    """The three ways the JSON can describe a heat the database will not hold."""
+    """The five ways a caller can describe a heat the database will not hold."""
 
     def test_a_competitor_that_does_not_exist(self, db_session):
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
-        heat = make_heat(db_session, e, competitors=[999001], seat=False)
+        heat = make_heat(db_session, e)
 
         with pytest.raises(BadHeatAssignment) as exc:
-            heat.sync_assignments('pro')
+            heat.set_roster('pro', [999001])
 
         assert '999001' in str(exc.value)
         assert f'heat {heat.id}' in str(exc.value)
@@ -117,29 +119,29 @@ class TestRefusals:
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
-        heat = make_heat(db_session, e, competitors=[a.id, a.id], seat=False)
+        heat = make_heat(db_session, e)
 
         with pytest.raises(BadHeatAssignment) as exc:
-            heat.sync_assignments('pro')
+            heat.set_roster('pro', [a.id, a.id])
 
         assert 'more than once' in str(exc.value)
 
-    def test_the_same_competitor_twice_under_two_json_spellings(self, db_session):
-        """`5` and `"5"` are two JSON entries naming one competitor.
+    def test_the_same_competitor_twice_under_two_spellings(self, db_session):
+        """`5` and `"5"` are two entries naming one competitor.
 
         Checking the raw values would let this pair through to the unique
         constraint as an IntegrityError from the driver. The check is made on
         the resolved EntityKey instead, which is what makes this a named error.
+        Callers hand `set_roster` both spellings: a form post arrives as
+        strings and the generators pass ints.
         """
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
         heat = make_heat(db_session, e)
-        heat.competitors = json.dumps([a.id, str(a.id)])
-        db_session.flush()
 
         with pytest.raises(BadHeatAssignment) as exc:
-            heat.sync_assignments('pro')
+            heat.set_roster('pro', [a.id, str(a.id)])
 
         assert 'more than once' in str(exc.value)
 
@@ -147,11 +149,9 @@ class TestRefusals:
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         heat = make_heat(db_session, e)
-        heat.competitors = json.dumps(['not-a-number'])
-        db_session.flush()
 
         with pytest.raises(BadHeatAssignment) as exc:
-            heat.sync_assignments('pro')
+            heat.set_roster('pro', ['not-a-number'])
 
         assert 'not usable' in str(exc.value)
 
@@ -159,11 +159,9 @@ class TestRefusals:
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         heat = make_heat(db_session, e)
-        heat.competitors = json.dumps([None])
-        db_session.flush()
 
         with pytest.raises(BadHeatAssignment) as exc:
-            heat.sync_assignments('pro')
+            heat.set_roster('pro', [None])
 
         assert 'null competitor id' in str(exc.value)
 
@@ -173,7 +171,7 @@ class TestFailClosed:
 
     This is the property that matters at 7am on show day. The rows a heat
     already has are the rows the stand crew is reading off a printout, and a
-    sync that deleted them before discovering it could not replace them would
+    write that deleted them before discovering it could not replace them would
     be worse than one that never ran.
     """
 
@@ -181,28 +179,25 @@ class TestFailClosed:
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
-        heat = make_heat(db_session, e, competitors=[a.id],
-                         stand_assignments={str(a.id): 1}, seat=False)
-        heat.sync_assignments('pro')
+        heat = make_heat(db_session, e)
+        heat.set_roster('pro', [a.id], {str(a.id): 1})
         db_session.flush()
         before = [(r.uid, r.competitor_id, r.stand_number) for r in _rows(heat)]
         assert before
 
-        heat.competitors = json.dumps([a.id, 999002])
-        db_session.flush()
         with pytest.raises(BadHeatAssignment):
-            heat.sync_assignments('pro')
+            heat.set_roster('pro', [a.id, 999002])
 
         after = [(r.uid, r.competitor_id, r.stand_number) for r in _rows(heat)]
         assert after == before
 
     def test_an_empty_heat_is_not_a_refusal(self, db_session):
-        """19 of the 173 heats on the production mirror carry empty JSON."""
+        """19 of the 173 heats on the production mirror are empty."""
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         heat = make_heat(db_session, e, competitors=[])
 
-        assert heat.sync_assignments('pro') is False
+        assert heat.set_roster('pro', []) is False
         assert _rows(heat) == []
 
 
@@ -211,8 +206,10 @@ class TestDriftDetection:
 
     Before this column there was nothing for the pair to disagree with, so the
     sorted-list comparison could not see this state at all. It can now, and
-    that matters for the two bulk sweepers, which use the return value to tell
-    a heat they repaired from a heat they merely visited.
+    that matters because the return value is what a caller uses to tell a heat
+    it changed from a heat it re-seated identically: a heat whose uid is wrong
+    points at the wrong human, and a re-seat that reported no change would
+    leave it pointing there.
     """
 
     def test_a_wrong_uid_is_rewritten(self, db_session):
@@ -220,15 +217,15 @@ class TestDriftDetection:
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
         b = make_pro_competitor(db_session, t, 'Pro B')
-        heat = make_heat(db_session, e, competitors=[a.id], seat=False)
-        heat.sync_assignments('pro')
+        heat = make_heat(db_session, e)
+        heat.set_roster('pro', [a.id])
         db_session.flush()
 
         row = _rows(heat)[0]
         row.uid = b.uid
         db_session.flush()
 
-        assert heat.sync_assignments('pro') is True
+        assert heat.set_roster('pro', [a.id]) is True
         db_session.flush()
         assert [r.uid for r in _rows(heat)] == [a.uid]
 
@@ -236,12 +233,11 @@ class TestDriftDetection:
         t = make_tournament(db_session)
         e = make_event(db_session, t, 'Underhand', event_type='pro')
         a = make_pro_competitor(db_session, t, 'Pro A')
-        heat = make_heat(db_session, e, competitors=[a.id],
-                         stand_assignments={str(a.id): 3}, seat=False)
-        assert heat.sync_assignments('pro') is True
+        heat = make_heat(db_session, e)
+        assert heat.set_roster('pro', [a.id], {str(a.id): 3}) is True
         db_session.flush()
 
-        assert heat.sync_assignments('pro') is False
+        assert heat.set_roster('pro', [a.id], {str(a.id): 3}) is False
 
 
 class TestSchema:

@@ -566,11 +566,12 @@ def test_a_competitor_pulled_from_every_heat_is_counted_and_named(app):
         current = h.get_competitors()
         ids = [c for c in current if int(c) != victim_id]
         if len(ids) != len(current):
-            # D12-C commit E: the roster is `heat_assignments` rows now.
-            # Rewriting `h.competitors` alone leaves the victim standing in
-            # every heat as far as every reader in the app is concerned, so
-            # the panel under test would never see anyone go missing and the
-            # test would assert against a number it never moved.
+            # D12-C commit E: the roster is `heat_assignments` rows, and
+            # `set_roster` is the only way to move one. Rewriting a heat's
+            # JSON column left the victim standing in every heat as far as
+            # every reader in the app was concerned, so the panel under test
+            # never saw anyone go missing and the test asserted against a
+            # number it had not moved.
             h.set_roster("college", ids, h.get_stand_assignments())
             removed_from += 1
     assert removed_from > 0, "victim was not standing in any heat"
@@ -615,57 +616,13 @@ def test_a_scratched_competitor_left_in_heats_does_not_inflate_placed(app):
 # the real data is not a sufficient oracle, so the missing cases are built.
 
 
-@pytest.mark.sev1
-def test_a_corrupt_json_cache_does_not_unplace_its_competitors(app):
-    """A cache that disagrees with the rows must not move a single number.
-
-    This test used to be about id shape. `heats.competitors` was free-form
-    JSON, nothing enforced whether an id arrived as 100035 or "100035",
-    events_entered already mixes both on this very database (c22), and a
-    reader that stopped coercing would have silently unplaced every
-    competitor in any heat written with string ids.
-
-    That reader is gone. As of D12-C commit E `get_competitors` returns
-    integers read off `heat_assignments`, so a string in the column is
-    structurally unable to reach any placement count, and the original
-    assertion would have passed forever without measuring anything. A green
-    that cannot go red is worse than no test at all, so this measures the
-    property that is actually load-bearing in the window between commit E
-    and commit F: the columns are a cache, the cache can say anything, and
-    every number the operator reads stays put. Dies with the column in F.
-    """
-    import json as _json
-
-    from database import db
-    from models.event import Event
-    from models.heat import Heat
-
-    heats = (
-        Heat.query.join(Event)
-        .filter(Event.tournament_id == TID, Event.event_type == "college")
-        .all()
-    )
-    # Every heat, not a sample: a competitor standing in six events survives
-    # a partial rewrite through their other heats.
-    rewritten = 0
-    for h in heats:
-        ids = h.get_competitors()
-        if ids:
-            h.competitors = _json.dumps([str(i) for i in ids])
-            rewritten += 1
-    assert rewritten > 0
-    db.session.commit()
-
-    for h in heats:
-        assert all(isinstance(c, int) for c in h.get_competitors()), (
-            f"heat {h.id} read its roster out of the JSON cache, not the rows"
-        )
-
-    f = _status()["friday"]
-    assert f["competitors_placed"] == EXPECTED_FRIDAY_PLACED, (
-        "a corrupt JSON cache unplaced competitors who are standing in heats"
-    )
-    assert f["competitors_missing_from_heats"] == EXPECTED_FRIDAY_MISSING
+# D12-C commit F2: `test_a_corrupt_json_cache_does_not_unplace_its_competitors`
+# stood here. It wrote string ids into `heats.competitors` and asserted the
+# placement counts did not move, which proved the readers had come off the
+# column. Its own docstring said it dies with the column. It does: with every
+# reader gone there is no cache to corrupt, the write it performed is
+# unobservable, and a test whose staged damage cannot reach any assertion is
+# a green that cannot go red.
 
 
 @pytest.mark.sev1
@@ -939,8 +896,6 @@ def test_run_two_alternation_starts_fresh_at_stand_7(app, client):
     carries alternation across the run boundary passes every single-run
     test and still hands the crew a back-to-back on race day.
     """
-    import json as _json
-
     from database import db
     from models.heat import Heat
 
@@ -950,16 +905,16 @@ def test_run_two_alternation_starts_fresh_at_stand_7(app, client):
             event_id=STOCK_SAW_M,
             heat_number=hn,
             run_number=2,
-            competitors=_json.dumps([comp_id]),
-            stand_assignments=_json.dumps({str(comp_id): 8}),
             status=template.status,
         )
         db.session.add(h)
         db.session.flush()
-        # D12-C commit E: the two columns above are a cache the rebalance
-        # never reads. Seat the solo for real, after the flush so the uid can
-        # resolve, or the staged run 2 is two empty heats and the alternation
-        # this test exists to watch has nothing to restart on.
+        # Seat the solo after the flush so the uid can resolve, or the staged
+        # run 2 is two empty heats and the alternation this test exists to
+        # watch has nothing to restart on. D12-C commit F2 removed the
+        # `competitors` / `stand_assignments` kwargs this constructor used to
+        # carry: no reader has looked at those columns since commit E, so
+        # setting them staged nothing, and commit F3 deletes them.
         h.set_roster("college", [comp_id], {str(comp_id): 8})
     db.session.commit()
 

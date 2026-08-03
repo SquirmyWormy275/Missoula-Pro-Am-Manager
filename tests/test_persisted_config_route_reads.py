@@ -163,12 +163,11 @@ class TestPreflightAutofixHonoursPersistedSpillover:
         def _spy(tournament, saturday_ids=None):
             captured["saturday_ids"] = list(saturday_ids or [])
             return {
-                "heats_fixed": 0,
-                # MOCK FIDELITY: run_preflight_autofix now also returns
-                # heats_checked, the number of heats the sweep WALKED, which
-                # the preflight flash prints alongside the repair count.
-                # Without this key the route raises KeyError.
-                "heats_checked": 0,
+                # MOCK FIDELITY: `heats_fixed` and `heats_checked` stood here,
+                # the repair and walk counts of the heat-sync sweep, because
+                # the preflight flash printed both and the route raised
+                # KeyError without them. D12-C commit F2 deleted the sweep,
+                # the two keys and the half of the flash that printed them.
                 "gear_parsed": {"parsed": 0},
                 "gear_pairs_completed": 0,
                 "partner_summary": {"assigned_pairs": 0},

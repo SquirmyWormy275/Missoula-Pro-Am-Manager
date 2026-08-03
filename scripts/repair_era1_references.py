@@ -61,11 +61,11 @@ Exit codes
 Scope
 =====
 Only the two JSON event stores, ``events.payouts`` and ``events.event_state``,
-which is where all 55 live. A finding in ``heat_assignments``,
-``event_results``, ``heats.competitors`` or ``heats.stand_assignments`` is
-reported and refused rather than repaired: those are plain columns needing a
-different UPDATE, there are none in any mirror, and an untested repair path is
-worse than an honest refusal.
+which is where all 55 live. A finding in ``heat_assignments`` or
+``event_results`` is reported and refused rather than repaired: those are plain
+columns needing a different UPDATE, there are none in any mirror, and an
+untested repair path is worse than an honest refusal. Two heat JSON stores used
+to be named here too; D12-C commit F2 removed them from the audit entirely.
 """
 import argparse
 import copy

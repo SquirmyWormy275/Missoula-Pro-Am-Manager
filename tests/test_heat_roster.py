@@ -1,22 +1,18 @@
-"""The rows are the write target and the JSON is what they render to (D12-C).
+"""``Heat.set_roster`` is the only way a roster is written (D12-C).
 
-Commit A gave ``heat_assignments`` a real reference. This is the commit that
-turns the direction around: ``Heat.set_roster`` writes the rows and then renders
-``competitors`` and ``stand_assignments`` from them, so the two JSON columns
-stop being a record anything is copied FROM and become a view of the table.
+Commit A gave ``heat_assignments`` a real reference. Commit C turned the
+direction around, so ``set_roster`` wrote the rows and rendered the two JSON
+columns from them. Commit E moved every reader onto the rows and F2 deleted
+the last things that read the columns, including ``sync_assignments``, the
+shim this file was half about.
 
-``sync_assignments`` survives as the shim for the call sites that still express
-a roster change by mutating the JSON. It reads what they wrote, writes the rows,
-and renders the JSON back. That round trip is not a no-op, and most of this file
-is about the ways it is not.
-
-What is deliberately NOT asserted here: that a reader gets its answer from the
-rows. Every reader in this tree still parses the JSON, and moving them is phase
-2. The property this file protects is narrower and has to land first, which is
-that the JSON cannot say anything the rows do not.
+So the file lost the assertions that compared the two stores against each
+other, and the class that pinned the shim's behaviour against ``set_roster``'s.
+What is left is the write path itself: what it normalises, what it refuses,
+and what the ``assignments`` collection looks like afterwards. Those never
+depended on there being a second copy, which is why they survive the second
+copy being deleted.
 """
-import json
-
 import pytest
 
 from models.heat import BadHeatAssignment, HeatAssignment
@@ -45,8 +41,15 @@ def heat_of_three(db_session):
     return heat, comps
 
 
-class TestTheJsonIsRenderedFromTheRows:
-    """What lands in the columns is what the table says, not what was written."""
+class TestTheRosterIsNormalisedOnWrite:
+    """A heat ends up holding what the table says, not what the caller passed.
+
+    These were written against ``sync_assignments``, which read a roster out
+    of the JSON columns and wrote it to the rows. F2 deleted it, so each one
+    now passes the same malformed roster to ``set_roster`` directly. The
+    normalisation being measured is the same normalisation; it always lived
+    in ``set_roster`` and the shim only ever fed it.
+    """
 
     def test_a_stand_for_somebody_not_in_the_heat_is_dropped(self, heat_of_three):
         """The stalest thing this schema has ever carried.
@@ -57,10 +60,9 @@ class TestTheJsonIsRenderedFromTheRows:
         not in the column either.
         """
         heat, (a, b, _c) = heat_of_three
-        heat.competitors = json.dumps([a.id])
-        heat.stand_assignments = json.dumps({str(a.id): 1, str(b.id): 4})
 
-        assert heat.sync_assignments('pro') is True
+        assert heat.set_roster('pro', [a.id],
+                               {str(a.id): 1, str(b.id): 4}) is True
 
         assert heat.get_stand_assignments() == {str(a.id): 1}
         assert [r.competitor_id for r in _rows(heat)] == [a.id]
@@ -74,34 +76,17 @@ class TestTheJsonIsRenderedFromTheRows:
         the integer, because the integer is what the column holds.
         """
         heat, (a, _b, _c) = heat_of_three
-        heat.competitors = json.dumps([str(a.id)])
-        heat.stand_assignments = json.dumps({str(a.id): 2})
 
-        assert heat.sync_assignments('pro') is True
+        assert heat.set_roster('pro', [str(a.id)], {str(a.id): 2}) is True
 
         assert heat.get_competitors() == [a.id]
-        assert heat.competitors == json.dumps([a.id])
         assert [r.competitor_id for r in _rows(heat)] == [a.id]
 
-    def test_the_json_takes_the_row_order_when_they_disagree(self, heat_of_three):
-        """The tiebreak that decides which of the two stores is the truth.
-
-        Same competitors, same stands, different running order. Nothing about
-        the rows needs rewriting, so the only question is which order survives.
-        Before this commit the answer was the JSON's, because the JSON was the
-        source. It is the rows' now, and this is the assertion that says so.
-        """
-        heat, (a, b, _c) = heat_of_three
-        heat.competitors = json.dumps([a.id, b.id])
-        heat.sync_assignments('pro')
-        db_rows = [r.competitor_id for r in _rows(heat)]
-        assert db_rows == [a.id, b.id]
-
-        heat.competitors = json.dumps([b.id, a.id])
-        assert heat.sync_assignments('pro') is True
-
-        assert heat.get_competitors() == [a.id, b.id]
-        assert [r.competitor_id for r in _rows(heat)] == [a.id, b.id]
+    # D12-C commit F2: `test_the_json_takes_the_row_order_when_they_disagree`
+    # stood here. It gave a heat one running order in the rows and the reverse
+    # in the JSON and asserted the rows won, which was the assertion that named
+    # which of the two stores was the truth. There is one store, so there is no
+    # disagreement to adjudicate and nothing for the test to say.
 
     def test_a_competitor_with_no_stand_contributes_no_key(self, heat_of_three):
         """`stand_assignments` has never carried an explicit null.
@@ -111,13 +96,11 @@ class TestTheJsonIsRenderedFromTheRows:
         because ``None`` and absent would stop meaning the same thing.
         """
         heat, (a, b, _c) = heat_of_three
-        heat.competitors = json.dumps([a.id, b.id])
-        heat.stand_assignments = json.dumps({str(a.id): 1})
 
-        heat.sync_assignments('pro')
+        heat.set_roster('pro', [a.id, b.id], {str(a.id): 1})
 
         assert heat.get_stand_assignments() == {str(a.id): 1}
-        assert str(b.id) not in heat.stand_assignments
+        assert str(b.id) not in heat.get_stand_assignments()
 
     def test_a_heat_that_already_agrees_is_not_dirtied(self, heat_of_three,
                                                        db_session):
@@ -125,18 +108,17 @@ class TestTheJsonIsRenderedFromTheRows:
 
         ``Heat`` carries a ``version_id_col``, so writing the same value back
         still bumps the version and still emits an UPDATE. The two bulk sweepers
-        walk every heat in a tournament; if a clean visit dirtied the row, a
-        sweep would hand a StaleDataError to every other request holding a heat
-        it passed.
+        that made this urgent are gone as of F2, but the hazard is not theirs
+        alone: a drag that lands a competitor back where he started, or any
+        route that re-seats a heat it did not actually change, would hand a
+        StaleDataError to every other request holding that heat.
         """
         heat, (a, _b, _c) = heat_of_three
-        heat.competitors = json.dumps([a.id])
-        heat.stand_assignments = json.dumps({str(a.id): 1})
-        heat.sync_assignments('pro')
+        heat.set_roster('pro', [a.id], {str(a.id): 1})
         db_session.flush()
         version = heat.version_id
 
-        assert heat.sync_assignments('pro') is False
+        assert heat.set_roster('pro', [a.id], {str(a.id): 1}) is False
         db_session.flush()
 
         assert heat.version_id == version
@@ -145,7 +127,7 @@ class TestTheJsonIsRenderedFromTheRows:
 class TestSetRoster:
     """The write target itself, called the way phase 2 callers will call it."""
 
-    def test_it_writes_the_rows_and_renders_both_columns(self, heat_of_three):
+    def test_it_writes_the_rows(self, heat_of_three):
         heat, (a, b, _c) = heat_of_three
 
         assert heat.set_roster('pro', [a.id, b.id],
@@ -166,23 +148,16 @@ class TestSetRoster:
 
         assert heat.set_roster('pro', [a.id], {a.id: 7}) is False
 
-    def test_a_json_only_repair_still_reports_a_repair(self, heat_of_three):
-        """The return value answers "did I change this heat", not "did I
-        change the table".
+    # D12-C commit F2: `test_a_json_only_repair_still_reports_a_repair` stood
+    # here. It corrupted `stand_assignments` behind the model's back and
+    # asserted `set_roster` returned True on the next call, because a heat
+    # whose JSON disagreed with its rows was broken to the readers that were
+    # still parsing the JSON. Commit E moved the last of those readers, so a
+    # column that disagrees with the rows is invisible and F3 deletes it. The
+    # return value's real contract, "did this call change anything", is
+    # asserted by the not-dirtied test above and the empty-roster test below.
 
-        A heat whose rows are right and whose JSON disagrees is exactly as
-        broken to a reader as the reverse, and until phase 2 lands most readers
-        are still reading the JSON. A sweeper that fixed one should say it did.
-        """
-        heat, (a, _b, _c) = heat_of_three
-        heat.set_roster('pro', [a.id], {a.id: 1})
-        heat.stand_assignments = json.dumps({str(a.id): 9})
-
-        assert heat.set_roster('pro', [a.id], {a.id: 1}) is True
-
-        assert heat.get_stand_assignments() == {str(a.id): 1}
-
-    def test_an_empty_roster_clears_both_stores(self, heat_of_three):
+    def test_an_empty_roster_clears_the_heat(self, heat_of_three):
         heat, (a, _b, _c) = heat_of_three
         heat.set_roster('pro', [a.id], {a.id: 1})
 
@@ -192,23 +167,22 @@ class TestSetRoster:
         assert heat.get_competitors() == []
         assert heat.get_stand_assignments() == {}
 
-    def test_a_refusal_leaves_the_json_alone_too(self, heat_of_three):
-        """Fail-closed has to cover both stores now that one renders the other.
+    def test_a_refusal_leaves_the_rows_alone(self, heat_of_three):
+        """Fail-closed. A partially applied roster is worse than a refused one.
 
-        A refusal that had already rewritten the JSON would leave the heat
-        describing a roster its rows never accepted, which is the exact
-        divergence this commit exists to make impossible.
+        ``set_roster`` resolves every id before it writes anything, so one bad
+        reference in a list of eight has to abort the whole call. A refusal
+        that had already deleted the old rows would leave the heat empty and
+        the operator staring at a heat he did not empty.
         """
         heat, (a, _b, _c) = heat_of_three
         heat.set_roster('pro', [a.id], {a.id: 1})
-        before_json = (heat.competitors, heat.stand_assignments)
         before_rows = [(r.competitor_id, r.uid, r.stand_number)
                        for r in _rows(heat)]
 
         with pytest.raises(BadHeatAssignment):
             heat.set_roster('pro', [a.id, 999003])
 
-        assert (heat.competitors, heat.stand_assignments) == before_json
         assert [(r.competitor_id, r.uid, r.stand_number)
                 for r in _rows(heat)] == before_rows
 
@@ -363,42 +337,11 @@ class TestTheAssignmentsRelationship:
         assert [r.competitor_id for r in heat.assignments] == [a.id]
 
 
-class TestSyncAssignmentsIsNowAShim:
-    """The ~19 legacy call sites keep working, through one code path."""
-
-    def test_it_writes_what_the_json_currently_says(self, heat_of_three):
-        heat, (a, b, _c) = heat_of_three
-        heat.competitors = json.dumps([a.id, b.id])
-        heat.stand_assignments = json.dumps({str(a.id): 3, str(b.id): 4})
-
-        assert heat.sync_assignments('pro') is True
-
-        assert [(r.competitor_id, r.stand_number) for r in _rows(heat)] == [
-            (a.id, 3), (b.id, 4)]
-
-    def test_it_lands_a_heat_exactly_where_set_roster_lands_one(self, db_session,
-                                                                heat_of_three):
-        """Not a reimplementation. If these two ever diverge, the shim has grown
-        a behaviour of its own and the conversion of the remaining call sites
-        stops being mechanical.
-
-        Two heats in the same event, given the same roster by the two different
-        routes, have to end up indistinguishable.
-        """
-        from models.event import Event
-
-        heat, (a, b, _c) = heat_of_three
-        twin = make_heat(db_session, db_session.get(Event, heat.event_id),
-                         heat_number=2)
-
-        heat.competitors = json.dumps([a.id, b.id])
-        heat.stand_assignments = json.dumps({str(b.id): 5})
-        assert heat.sync_assignments('pro') is True
-
-        assert twin.set_roster('pro', [a.id, b.id], {b.id: 5}) is True
-
-        assert (twin.competitors, twin.stand_assignments) == (
-            heat.competitors, heat.stand_assignments)
-        assert ([(r.competitor_id, r.uid, r.stand_number) for r in _rows(twin)]
-                == [(r.competitor_id, r.uid, r.stand_number)
-                    for r in _rows(heat)])
+# D12-C commit F2: `TestSyncAssignmentsIsNowAShim` stood here, two tests deep.
+# One asserted the shim wrote what the JSON currently said; the other asserted
+# a heat put through the shim was byte-for-byte indistinguishable from a heat
+# put through `set_roster`, which was the guard that kept the conversion of
+# the ~19 legacy call sites mechanical. Commit E converted the last of them
+# and F2 deleted the shim, so both tests are asserting things about a method
+# that is not there. The behaviour they pinned did not move anywhere: it was
+# always `set_roster`'s, and `set_roster` is what the rest of this file tests.
