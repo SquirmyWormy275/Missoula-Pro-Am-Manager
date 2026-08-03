@@ -30,6 +30,40 @@ _STALE_DATA_FLASH = (
 )
 
 
+def _flash_projection_refusal(bb):
+    """Tell the judge when a save could not be projected onto the row tables.
+
+    D13-C commit A3c. ``birling_rows.project`` raises ``ProjectionRefused``
+    when it cannot resolve a bracket document, and
+    ``BirlingBracket._save_bracket_data`` catches it and commits the JSON
+    anyway so that no scored result is ever traded for a table. That is the
+    right call and it is also how a refusal becomes invisible, because the
+    page still renders off the A3b fallback and nothing on it looks wrong.
+
+    This is the visible half. Every route that calls a write method calls this
+    straight afterwards, so the refusal reaches the person running the show on
+    the request that caused it rather than being found later in a log.
+
+    The wording says the work was saved first, on purpose. The judge is mid
+    event and the only question they actually have is whether they need to do
+    it again. They do not.
+
+    Returns True when a refusal was flashed, so callers can decide whether to
+    also flash their own success message.
+    """
+    exc = bb.projection_refused
+    if exc is None:
+        return False
+    flash(
+        'Saved, but this event could not be written to the bracket tables: '
+        + '; '.join(exc.reasons)
+        + '. Nothing was lost and the bracket on screen is correct. Send this '
+          'message to whoever maintains the system before the next event.',
+        'warning',
+    )
+    return True
+
+
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling', methods=['GET'])
 def birling_manage(tournament_id, event_id):
     """Birling bracket management page — seeding, generation, and match recording."""
@@ -47,6 +81,7 @@ def birling_manage(tournament_id, event_id):
     # in-progress bracket is never silently torn down. See
     # services/birling_bracket.py::rebuild_if_stale_shape.
     if bb.rebuild_if_stale_shape():
+        _flash_projection_refusal(bb)
         flash(
             'Bracket was generated with the pre-V2.14.14 layout and has been '
             'rebuilt in the compact shape (no more stacked slots).',
@@ -189,6 +224,7 @@ def birling_generate(tournament_id, event_id):
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
 
+    _flash_projection_refusal(bb)
     log_action('birling_bracket_generated', 'event', event_id, {
         'competitors': len(comp_dicts),
         'event_name': event.display_name,
@@ -236,6 +272,8 @@ def birling_record_match(tournament_id, event_id):
         flash(str(exc), 'error')
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
+
+    _flash_projection_refusal(bb)
 
     # Get competitor name for the flash message
     comp_lookup = {c['id']: c['name'] for c in bb.bracket_data.get('competitors', [])}
@@ -289,6 +327,8 @@ def birling_record_fall(tournament_id, event_id):
         flash(str(exc), 'error')
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
+
+    _flash_projection_refusal(bb)
 
     comp_lookup = {c['id']: c['name'] for c in bb.bracket_data.get('competitors', [])}
     fall_winner_name = comp_lookup.get(fall_winner_id, f'#{fall_winner_id}')
@@ -360,6 +400,8 @@ def birling_undo_match(tournament_id, event_id):
         flash(str(exc), 'error')
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
+
+    _flash_projection_refusal(bb)
 
     comp_lookup = {c['id']: c['name'] for c in bb.bracket_data.get('competitors', [])}
 

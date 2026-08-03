@@ -592,18 +592,32 @@ class TestADocumentThatWillNotProject:
         event.payouts = json.dumps(doc)
 
         with caplog.at_level(logging.WARNING, logger="services.birling_rows"):
-            plan = rows.project(event)
+            with pytest.raises(rows.ProjectionRefused) as caught:
+                rows.project(event)
         db.session.flush()
 
-        assert plan.reasons
+        assert caught.value.reasons
+        assert caught.value.event_id == event.id
         assert _counts(event.id) == {"seeds": 0, "pre_seeds": 0, "matches": 0,
                                      "falls": 0, "placements": 0}
         assert "was not projected" in caplog.text
 
-    def test_it_does_not_raise_and_does_not_touch_the_json(
+    def test_it_raises_and_still_does_not_touch_the_json(
             self, db_session, reference_gate_disarmed):
-        """Race-day rule. A bracket a judge is running is not taken away to
-        protect a table nobody is reading yet. The refusal arrives in A3."""
+        """Race-day rule, unchanged by A3c making the refusal loud.
+
+        Through A2 this test was named for the silence: ``project`` returned a
+        plan carrying reasons and the caller was free to ignore it. A3c makes
+        it raise, because by A3b the rows are what the pages read and a
+        refusal that only reaches a log is a bracket quietly running on its
+        fallback with nobody told.
+
+        What did not change is the half that matters on race day. The
+        exception is raised after the JSON has been left exactly as the writer
+        set it, so the document a judge is running off is still there for the
+        fallback to read. Raising decides who hears about it, not what
+        survives.
+        """
         _tour, event, people = _world(db_session, "Untouched")
         BirlingBracket(event).generate_bracket(_entrants(people[:4]))
 
@@ -612,7 +626,8 @@ class TestADocumentThatWillNotProject:
         blob = json.dumps(doc)
         event.payouts = blob
 
-        rows.project(event)
+        with pytest.raises(rows.ProjectionRefused):
+            rows.project(event)
         assert event.payouts == blob
 
     def test_an_event_that_stops_being_a_bracket_loses_its_rows(self, db_session):
@@ -642,9 +657,10 @@ class TestADocumentThatWillNotProject:
             event_type = "relay"
             payouts = json.dumps({"seeding": [1, 2]})
 
-        plan = rows.project(_Unpooled())
-        assert plan.reasons == {rows.NO_POOL}
-        assert plan.seeds == []
+        with pytest.raises(rows.ProjectionRefused) as caught:
+            rows.project(_Unpooled())
+        assert caught.value.reasons == [rows.NO_POOL]
+        assert caught.value.event_id is None
 
 
 class TestPreSeedsComeFromTheRankingsPage:

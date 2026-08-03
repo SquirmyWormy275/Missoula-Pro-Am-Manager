@@ -56,11 +56,20 @@ Exit codes
     1   an event refused projection, an id named nothing, or the run aborted
     2   usage
 
-Note for D13-C A4
-=================
-This reads refusals off ``Plan.reasons``. A3c makes ``project`` raise on a
-refusal instead, at which point the ``refused`` branch below stops firing and
-the abort path starts catching what it used to report. Revisit both together.
+A refusal is not an abort
+========================
+D13-C commit A3c made ``project`` raise ``ProjectionRefused`` rather than
+return a plan carrying reasons. That exception is caught per event and
+reported, and the run carries on to the next id, because a refusal is an
+answer about that event and not a failure of the run. Any other exception
+still aborts the whole transaction, because any other exception means the
+session is no longer trustworthy and the remaining events would be projected
+on top of a broken flush.
+
+A refusal still leaves that event with no rows, and the dry run still rolls
+everything back, so a refused event in a live run is committed as cleared.
+That is deliberate: rows that could not be rebuilt are worse than no rows,
+because the A3b fallback only consults the JSON when the rows are absent.
 """
 
 from __future__ import annotations
@@ -74,9 +83,11 @@ def reproject(event_ids, dry_run: bool = False) -> dict:
     """Rebuild rows for each event id. Requires an app context.
 
     Returns a summary dict. The whole run is one transaction: an id that
-    resolves to nothing or a projection that raises aborts it, because a
-    projection that raises is not a refusal, it is a defect, and continuing
-    over a session that has already failed a flush reports noise.
+    resolves to nothing, or a projection that raises anything other than
+    ``ProjectionRefused``, aborts it, because that is a defect rather than an
+    answer and continuing over a session that has already failed a flush
+    reports noise. A ``ProjectionRefused`` is an answer, so it is recorded
+    against that event and the run moves on.
     """
     from database import db
     from models import Event
@@ -97,25 +108,25 @@ def reproject(event_ids, dry_run: bool = False) -> dict:
             return summary
         try:
             plan = birling_rows.project(event)
+        except birling_rows.ProjectionRefused as exc:
+            summary['refused'].append({
+                'event_id': event_id,
+                'reasons': list(exc.reasons),
+            })
+            continue
         except Exception as exc:  # noqa: BLE001  reported, not swallowed
             db.session.rollback()
             summary['aborted'] = 'event %s raised %s: %s' % (
                 event_id, type(exc).__name__, exc)
             return summary
 
-        if plan.reasons:
-            summary['refused'].append({
-                'event_id': event_id,
-                'reasons': sorted(plan.reasons),
-            })
-        else:
-            summary['projected'].append({
-                'event_id': event_id,
-                'seeds': len(plan.seeds),
-                'pre_seeds': len(plan.pre_seeds),
-                'matches': len(plan.matches),
-                'placements': len(plan.placements),
-            })
+        summary['projected'].append({
+            'event_id': event_id,
+            'seeds': len(plan.seeds),
+            'pre_seeds': len(plan.pre_seeds),
+            'matches': len(plan.matches),
+            'placements': len(plan.placements),
+        })
 
     if dry_run:
         db.session.rollback()

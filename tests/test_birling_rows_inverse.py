@@ -565,10 +565,11 @@ class TestTheInverseRefuses:
         doc["seeding"][0] = max(p.id for p in people) + 5000
         doc["competitors"][0]["id"] = doc["seeding"][0]
         event.payouts = json.dumps(doc)
-        plan = rows.project(event)
+        with pytest.raises(rows.ProjectionRefused) as caught:
+            rows.project(event)
         db.session.flush()
 
-        assert plan.reasons
+        assert caught.value.reasons
         assert rows.load_document(event) == rows.empty_document()
         assert rows.is_projected(event.id) is False
 

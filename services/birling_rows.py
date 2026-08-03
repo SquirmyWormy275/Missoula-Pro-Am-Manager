@@ -536,16 +536,48 @@ def write_plan(plan):
                                         position=placement['position']))
 
 
+class ProjectionRefused(Exception):
+    """A document could not be turned into rows, and the caller must know.
+
+    D13-C commit A3c. Through A3b a refusal was a log line and an empty
+    ``Plan``, which was right while nothing read the rows. A3b made the rows
+    what the bracket pages read, so a refusal now means the event has quietly
+    fallen back to its JSON, and the only record of that is a warning in a log
+    nobody watches during a show. A4 removes the fallback. Between here and
+    there the refusal has to reach a human.
+
+    Raising rather than returning is the whole point: a return value can be
+    ignored by a caller that never thought about it, and every caller of
+    ``project`` is a write path where being ignored is the failure mode.
+
+    What raising must never mean is that the judge loses the write.
+    ``BirlingBracket._save_bracket_data`` catches this and commits the JSON
+    anyway, because the JSON is still what the fallback reads and a scored
+    result is not something to trade for a table. See its docstring.
+    """
+
+    def __init__(self, event_id, reasons):
+        self.event_id = event_id
+        self.reasons = sorted(reasons)
+        super().__init__('event %s was not projected: %s'
+                         % (event_id, '; '.join(self.reasons)))
+
+
 def project(event):
     """Rebuild one event's projected rows from its current document.
 
     Call this after assigning to ``event.payouts`` and before committing, so
     the rows and the document that produced them land in one transaction.
 
-    Returns the ``Plan``, whose ``reasons`` is empty on a projection that was
-    written. A document that is not a bracket at all also returns an empty
-    plan with no reasons, having cleared any rows the event used to have,
-    because an event that stopped being a bracket has no bracket.
+    Returns the ``Plan`` on a projection that was written. A document that is
+    not a bracket at all also returns an empty plan, having cleared any rows
+    the event used to have, because an event that stopped being a bracket has
+    no bracket.
+
+    Raises ``ProjectionRefused`` when the document cannot be resolved. The
+    event's rows have already been cleared and flushed by the time it raises,
+    so a caller that commits anyway leaves the event with no rows, which is the
+    honest state and is the state the A3b fallback is built to survive.
     """
     doc = parse_document(event.payouts)
     is_bracket = any(key in doc for key in BRACKET_KEYS)
@@ -569,10 +601,11 @@ def project(event):
     if plan.reasons:
         logger.warning(
             'birling rows: event %s was not projected and now has no rows. '
-            'Its JSON is untouched and is still what the app reads. '
-            'Reasons: %s. Run scripts/repair_era1_references.py --check.',
+            'Its JSON is untouched and is what the bracket pages will fall '
+            'back to. Reasons: %s. Run scripts/repair_era1_references.py '
+            '--check.',
             event.id, '; '.join(sorted(plan.reasons)))
-        return plan
+        raise ProjectionRefused(event.id, plan.reasons)
 
     write_plan(plan)
     return plan

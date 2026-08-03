@@ -19,6 +19,7 @@ class BirlingBracket:
 
     def __init__(self, event: Event):
         self.event = event
+        self.projection_refused = None
         self.bracket_data = self._load_bracket_data()
 
     def _load_bracket_data(self) -> dict:
@@ -87,19 +88,35 @@ class BirlingBracket:
     def _save_bracket_data(self):
         """Save bracket data to event, and project it onto the row tables.
 
-        D13-C commit A2. The JSON is still the truth; the rows are a
-        projection of it, rebuilt on every save and committed in the same
-        transaction so the two cannot be observed disagreeing. Nothing reads
-        the rows yet, which is what makes this safe to land before A3.
+        D13-C commit A3c. ``project`` now raises ``ProjectionRefused`` on a
+        document it cannot resolve, and this is the one place that raise is
+        swallowed on purpose.
 
-        ``project`` does not raise on a document it cannot resolve. It clears
-        the event's rows, logs why, and lets the save proceed, because the JSON
-        is what the app reads and refusing here would take a bracket away from
-        a judge on race day to protect a table nobody is reading. The refusal
-        arrives in A3, with the readers.
+        The judge never loses a write to a projection failure. A refusal means
+        the event has no rows, and an event with no rows is exactly the case
+        the A3b reader falls back to the JSON for, so committing the JSON
+        anyway leaves the bracket readable and the show running. Rolling back
+        instead would take a scored result away from a judge on race day to
+        protect a table that the page is not even reading in that state. That
+        trade is never worth making.
+
+        What the refusal must not do is vanish. It is recorded on the instance
+        as ``projection_refused`` and every route that calls a write method
+        reads it afterwards and flashes it, so the operator learns during the
+        show rather than at A4 when the fallback is gone. ``project`` has
+        already logged the reasons by the time this catches.
+
+        The commit is unconditional and deliberate: ``project`` clears the
+        event's rows and flushes before it decides it cannot resolve the
+        document, so the state being committed is the JSON plus no rows. That
+        is the honest state, and it is the state the fallback is built for.
         """
         self.event.payouts = json.dumps(self.bracket_data)
-        birling_rows.project(self.event)
+        try:
+            birling_rows.project(self.event)
+            self.projection_refused = None
+        except birling_rows.ProjectionRefused as exc:
+            self.projection_refused = exc
         db.session.commit()
 
     def _expected_round_1_match_count(self, n: int) -> int:

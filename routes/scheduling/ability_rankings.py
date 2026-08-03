@@ -154,6 +154,7 @@ def ability_rankings(tournament_id):
 
         # ── College birling seedings ────────────────────────────────────
         birling_saved = 0
+        birling_refused = []
         birling_events = tournament.events.filter_by(
             event_type='college', scoring_type='bracket'
         ).all()
@@ -192,7 +193,19 @@ def ability_rankings(tournament_id):
             # place birling_pre_seeds can be kept current. The JSON above is
             # still the truth; the rows are a projection of it and commit with
             # it below.
-            birling_rows.project(bev)
+            #
+            # D13-C commit A3c. ``project`` raises now, and this call sits
+            # inside a loop over every birling event in the tournament. Letting
+            # it propagate would abandon the loop partway and roll back the
+            # events that projected cleanly along with the one that did not,
+            # so one unresolvable bracket would silently cost the judge the
+            # seedings they entered for every other bracket on the page. The
+            # refusal is collected instead and flashed once below, naming the
+            # events, and the commit proceeds for everything that worked.
+            try:
+                birling_rows.project(bev)
+            except birling_rows.ProjectionRefused as exc:
+                birling_refused.append((bev, exc))
             birling_saved += len(pre_seedings)
 
         if birling_saved:
@@ -201,6 +214,18 @@ def ability_rankings(tournament_id):
 
         total_saved = saved_count + birling_saved
         flash(f'Rankings saved ({total_saved} set, {deleted_count} cleared).', 'success')
+        if birling_refused:
+            flash(
+                'Saved, but these brackets could not be written to the bracket '
+                'tables: '
+                + '; '.join(
+                    '%s (%s)' % (bev.display_name, ', '.join(exc.reasons))
+                    for bev, exc in birling_refused
+                )
+                + '. Your seedings were kept. Send this message to whoever '
+                  'maintains the system before the next event.',
+                'warning',
+            )
         return redirect(url_for('scheduling.ability_rankings', tournament_id=tournament_id))
 
     # GET — build display data.
