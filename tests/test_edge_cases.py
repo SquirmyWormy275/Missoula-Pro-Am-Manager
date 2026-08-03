@@ -43,6 +43,24 @@ def qa_env(monkeypatch):
             f"SOURCE_DB ({SOURCE_DB}) is absent; "
             "test relies on local prod-data copy, see deprecation in module docstring"
         )
+    # D12-C commit F3: existing is not enough any more, the copy also has to
+    # be migratable. Revision t9b3c4d5e6f7 refuses a database holding a heat
+    # whose roster exists only in heats.competitors, and a database stamped
+    # before D12-C commit E can be exactly that. Unlike
+    # tests/test_route_smoke.py this file has no synthetic seed path to fall
+    # back to, so the honest outcome is a skip that says what is wrong rather
+    # than a setup error that does not.
+    from tests.db_test_utils import source_db_reaches_head
+    stale = source_db_reaches_head(SOURCE_DB)
+    if stale:
+        pytest.skip(
+            f"SOURCE_DB ({SOURCE_DB}) cannot be migrated to chain head, so a "
+            f"copy of it cannot back this test. {stale} Seat the heats named "
+            "in that message through Heat.set_roster, or rebuild the file. "
+            "This module has no synthetic seed path, see the deprecation in "
+            "the module docstring; tests/test_route_smoke.py falls back to "
+            "one."
+        )
     TMP_ROOT.mkdir(exist_ok=True)
     temp_dir = TMP_ROOT / f"edge-qa-{uuid.uuid4().hex}"
     temp_dir.mkdir()
@@ -585,7 +603,7 @@ def test_pro_scratch_removes_competitor_from_generated_heat(qa_env):
     assert generate.status_code == 302
 
     with app.app_context():
-        from models import Heat
+        from models import Heat, HeatAssignment
         from models.competitor import ProCompetitor
 
         competitor = (
@@ -594,9 +612,20 @@ def test_pro_scratch_removes_competitor_from_generated_heat(qa_env):
             .first()
         )
         assert competitor is not None
+        # D12-C commit F3: this was `Heat.competitors.like("%<id>%")`, a SQL
+        # substring match against the JSON column. It matched on digits, so
+        # competitor 3 matched heats holding 13, 30 or 23, and it could not
+        # tell a pro from a college competitor at all because the column held
+        # bare integers. The column is gone; the join says what the LIKE was
+        # trying to.
         heat = (
-            Heat.query.filter_by(event_id=event_id, run_number=1)
-            .filter(Heat.competitors.like(f"%{competitor.id}%"))
+            Heat.query.join(HeatAssignment, HeatAssignment.heat_id == Heat.id)
+            .filter(
+                Heat.event_id == event_id,
+                Heat.run_number == 1,
+                HeatAssignment.competitor_id == competitor.id,
+                HeatAssignment.competitor_type == "pro",
+            )
             .first()
         )
         assert heat is not None
@@ -626,15 +655,24 @@ def test_pro_scratch_removes_competitor_from_generated_heat(qa_env):
     assert confirm.status_code == 302
 
     with app.app_context():
-        from models import EventResult, Heat
+        from models import EventResult, Heat, HeatAssignment
         from models.competitor import ProCompetitor
 
         comp = ProCompetitor.query.get(competitor_id)
         assert comp is not None and comp.status == "scratched"
 
+        # Same conversion as above, and here the join changes what the
+        # assertion below is worth. A row for this competitor is exactly what
+        # the cascade was supposed to delete, so `heat is None` is now the
+        # clean pass rather than a substring that happened not to match.
         heat = (
-            Heat.query.filter_by(event_id=event_id, run_number=1)
-            .filter(Heat.competitors.like(f"%{competitor_id}%"))
+            Heat.query.join(HeatAssignment, HeatAssignment.heat_id == Heat.id)
+            .filter(
+                Heat.event_id == event_id,
+                Heat.run_number == 1,
+                HeatAssignment.competitor_id == competitor_id,
+                HeatAssignment.competitor_type == "pro",
+            )
             .first()
         )
         result = EventResult.query.filter_by(

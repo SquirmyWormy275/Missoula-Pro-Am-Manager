@@ -78,10 +78,13 @@ every template above has to be upgraded by hand before its lane will run:
       SECRET_KEY=<any 64 chars> python -m flask db upgrade
     done
 
-`tests/db_test_utils.py::_ensure_pg_template` has the same hole for the unit
-suite's `proam_unit_template`: it builds the template only when it is absent and
-never compares its `alembic_version` against head, so after a new revision the
-template must be dropped by hand to force a rebuild. That is open question 7.
+`tests/db_test_utils.py::_ensure_pg_template` does NOT have this hole, contrary
+to what this file said through D12-C commit F2. It calls `_chain_head()` and
+`_template_is_stale()` and drops and rebuilds `proam_unit_template` itself when
+the stamped revision is not head, so the PG unit lane self-heals across a new
+revision and needs no manual step. Verified at revision `t9b3c4d5e6f7`: the
+four parity templates above were stale and had to be upgraded by hand, and the
+unit template rebuilt on its own.
 
 ## Where the evidence lands
 

@@ -914,7 +914,7 @@ def test_run_two_alternation_starts_fresh_at_stand_7(app, client):
         # watch has nothing to restart on. D12-C commit F2 removed the
         # `competitors` / `stand_assignments` kwargs this constructor used to
         # carry: no reader has looked at those columns since commit E, so
-        # setting them staged nothing, and commit F3 deletes them.
+        # setting them staged nothing, and commit F3 deleted them.
         h.set_roster("college", [comp_id], {str(comp_id): 8})
     db.session.commit()
 

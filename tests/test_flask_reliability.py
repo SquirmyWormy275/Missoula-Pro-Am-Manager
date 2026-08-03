@@ -408,13 +408,14 @@ class TestDatabaseIntegrity:
 # ===========================================================================
 
 class TestJSONFieldResilience:
-    def test_heat_corrupt_competitors(self):
-        from models.heat import Heat
-        assert Heat(event_id=1, heat_number=1, competitors='{BAD').get_competitors() == []
-
-    def test_heat_corrupt_stands(self):
-        from models.heat import Heat
-        assert Heat(event_id=1, heat_number=1, stand_assignments='{X').get_stand_assignments() == {}
+    # `test_heat_corrupt_competitors` and `test_heat_corrupt_stands` stood
+    # here. Each built a Heat with an unparseable string in one of the two
+    # JSON roster columns and asserted the accessor returned empty rather
+    # than raising. D12-C commit F3 dropped both columns, so there is no
+    # longer a place to put a corrupt roster: the accessors read
+    # `heat_assignments` rows, and a row is four typed columns the database
+    # will not accept garbage into. The claim did not weaken, it stopped
+    # being expressible, which is the outcome the migration was for.
 
     def test_event_corrupt_payouts(self):
         from models.event import Event
@@ -439,7 +440,10 @@ class TestJSONFieldResilience:
     def test_null_fields(self):
         from models.event import Event
         from models.heat import Heat
-        assert Heat(event_id=1, heat_number=1, competitors=None).get_competitors() == []
+        # The Heat half of this used to pass `competitors=None` and assert an
+        # empty roster came back. F3 dropped the column; a Heat with no rows
+        # is the same assertion and is the only way left to make it.
+        assert Heat(event_id=1, heat_number=1).get_competitors() == []
         assert Event(tournament_id=1, name='T', event_type='pro', scoring_type='time', payouts=None).get_payouts() == {}
 
 
@@ -694,7 +698,7 @@ class TestBlueprintPermissionCoverage:
             assert hasattr(User, attr)
 
 class TestHeatRosterWithoutASession:
-    """A detached Heat has no roster, whatever its columns say.
+    """A detached Heat has no roster, and says so instead of raising.
 
     This class used to build a sessionless Heat and drive the four JSON
     mutators through it. D12-C commit E deleted them: writing a roster now
@@ -705,21 +709,16 @@ class TestHeatRosterWithoutASession:
 
     D12-C commit F2 deleted ``json_competitors``, ``json_stand_assignments``
     and ``sync_assignments``, so the three tests aimed at the raw readers
-    went with them. The half that survives is the one worth keeping. A Heat
-    with columns full of ids and no rows behind it reports an empty roster,
-    which is the whole shape of the migration in one assertion: the columns
-    are not a fallback, and nothing silently reads them when the rows are
-    missing.
+    went with them, and F3 dropped the columns those readers read. What is
+    left is the half that was never about the columns: the three accessors
+    have to answer on a Heat that has never been near a session, because
+    ``services/heat_generator.py`` builds one and asks it questions before it
+    is added.
     """
 
-    def test_the_row_accessors_ignore_the_columns(self):
-        import json
-
+    def test_the_accessors_answer_on_a_heat_with_no_rows(self):
         from models.heat import Heat
         h = Heat(event_id=1, heat_number=1)
-        h.competitors = json.dumps([10, 20])
-        h.stand_assignments = json.dumps({'10': 3})
-        # No rows on this Heat, so no roster, whatever the columns claim.
         assert h.get_competitors() == []
         assert h.get_stand_assignments() == {}
         assert h.get_stand_for_competitor(10) is None

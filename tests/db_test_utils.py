@@ -305,6 +305,100 @@ def skip_unless_sqlite(app, subject):
         )
 
 
+_source_db_verdict = {}
+
+
+def _probe_reason(exc):
+    """Pull one readable line out of whatever flask_migrate raised.
+
+    flask_migrate turns an alembic failure into ``sys.exit(1)``, so the
+    exception a caller actually catches is ``SystemExit: 1`` and says
+    nothing at all. The real error is hanging off ``__context__``, which is
+    where a migration guard's own message lives.
+    """
+    detail = exc
+    hops = 0
+    while (isinstance(detail, SystemExit)
+           and detail.__context__ is not None
+           and hops < 10):
+        detail = detail.__context__
+        hops += 1
+    lines = str(detail).strip().splitlines()
+    first = lines[0] if lines else repr(detail)
+    return f"{type(detail).__name__}: {first}"
+
+
+def source_db_reaches_head(source_db):
+    """Can a copy of this developer database be migrated to chain head?
+
+    Returns ``None`` when it can, or a one-line reason when it cannot.
+
+    Three test files seed themselves by copying ``instance/proam.db`` into a
+    tempfile and replaying the alembic chain over the copy:
+    ``test_route_smoke.py``, ``test_edge_cases.py`` and
+    ``test_integration_qa.py``. That worked for as long as every revision in
+    the chain was willing to run against whatever a developer machine
+    happened to be holding. D12-C commit F3 ended it. Revision
+    ``t9b3c4d5e6f7`` refuses to drop ``heats.competitors`` when a heat names
+    a roster in that column and has no ``heat_assignments`` rows, because the
+    column is then the only copy of that roster. Any database stamped before
+    D12-C commit E can be in exactly that state, and when it is, every
+    fixture built on it errors at setup: 255 of them on this tree, not one of
+    them about anything the tests were written to check.
+
+    The guard is not softened here and must not be. Auto-seating the orphan
+    is not available to it either: the JSON column holds bare integers with
+    no kind, so turning one into a competitor means guessing pro or college
+    from ``event.event_type``, which is the unsound inference
+    ``services/reference_audit.py`` documents and the whole reason D12-C
+    phase 1 put a ``uid`` on ``heat_assignments``. The container this was
+    found on proves the point: its ``instance/proam.db`` holds a heat whose
+    roster is ``[1]``, and it has both a pro competitor 1 and a college
+    competitor 1. There is no sound answer. Refusing is correct.
+
+    So the fixtures ask this once instead of finding out per test. A caller
+    with a synthetic seed path takes it. A caller without one skips and
+    prints this reason, which carries the guard's own words, so a developer
+    sees what to seat or that the file wants rebuilding.
+
+    Cached per interpreter: the answer is a property of a file that does not
+    change during a run, and the probe costs a full chain replay.
+    """
+    key = str(source_db)
+    if key in _source_db_verdict:
+        return _source_db_verdict[key]
+
+    import shutil
+
+    probe_dir = tempfile.mkdtemp(prefix="proam-source-probe-")
+    probe_db = os.path.join(probe_dir, "probe.db")
+    shutil.copy2(str(source_db), probe_db)
+    old = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = f"sqlite:///{probe_db}"
+    reason = None
+    try:
+        from flask_migrate import upgrade
+
+        from app import create_app
+        _papp = create_app()
+        with _papp.app_context():
+            try:
+                upgrade(directory=_MIGRATIONS_DIR)
+            except (SystemExit, Exception) as exc:  # noqa: BLE001
+                reason = _probe_reason(exc)
+            finally:
+                _db.engine.dispose()
+    finally:
+        if old is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = old
+        shutil.rmtree(probe_dir, ignore_errors=True)
+
+    _source_db_verdict[key] = reason
+    return reason
+
+
 def skip_unless_migrated(session, subject):
     """Skip a test that asserts on schema only Alembic produces.
 

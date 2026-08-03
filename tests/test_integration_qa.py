@@ -33,6 +33,24 @@ def qa_env(monkeypatch):
             f"SOURCE_DB ({SOURCE_DB}) is absent; "
             "test relies on local prod-data copy, see deprecation in module docstring"
         )
+    # D12-C commit F3: existing is not enough any more, the copy also has to
+    # be migratable. Revision t9b3c4d5e6f7 refuses a database holding a heat
+    # whose roster exists only in heats.competitors, and a database stamped
+    # before D12-C commit E can be exactly that. Unlike
+    # tests/test_route_smoke.py this file has no synthetic seed path to fall
+    # back to, so the honest outcome is a skip that says what is wrong rather
+    # than a setup error that does not.
+    from tests.db_test_utils import source_db_reaches_head
+    stale = source_db_reaches_head(SOURCE_DB)
+    if stale:
+        pytest.skip(
+            f"SOURCE_DB ({SOURCE_DB}) cannot be migrated to chain head, so a "
+            f"copy of it cannot back this test. {stale} Seat the heats named "
+            "in that message through Heat.set_roster, or rebuild the file. "
+            "This module has no synthetic seed path, see the deprecation in "
+            "the module docstring; tests/test_route_smoke.py falls back to "
+            "one."
+        )
     TMP_ROOT.mkdir(exist_ok=True)
     temp_dir = TMP_ROOT / f"integration-qa-{uuid.uuid4().hex}"
     temp_dir.mkdir()

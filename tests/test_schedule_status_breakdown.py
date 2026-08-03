@@ -109,8 +109,6 @@ def _make_heat(session, ev, competitor_ids):
         event_id=ev.id,
         heat_number=1,
         run_number=1,
-        competitors=json.dumps([int(c) for c in competitor_ids]),
-        stand_assignments=json.dumps({}),
         status="pending",
     )
     session.add(h)

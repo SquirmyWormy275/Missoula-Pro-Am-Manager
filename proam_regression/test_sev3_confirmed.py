@@ -2702,8 +2702,8 @@ def test_every_wood_config_column_carries_not_just_the_ones_2026_uses(client, sq
 # nothing they can drift AGAINST. Deleting the sweepers deletes the defect,
 # and the tests that measured its false repair counts have nothing left to
 # measure. `_desynced_heats`, the helper the whole block turned on, read
-# `heats.competitors` and `heats.stand_assignments` directly; commit F3 drops
-# both columns, so it could not have survived in any form.
+# `heats.competitors` and `heats.stand_assignments` directly; commit F3
+# dropped both columns, so it could not have survived in any form.
 #
 # Two tests survive, for reasons that have nothing to do with the JSON:
 #

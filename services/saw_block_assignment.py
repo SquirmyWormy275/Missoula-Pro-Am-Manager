@@ -105,11 +105,14 @@ def assign_saw_blocks(tournament: Tournament) -> dict:
 
 
 def remap_heat_to_block(heat: Heat, target_block: list[int]) -> bool:
-    """Remap the heat's stand_assignments to use target_block's 4 stand
+    """Remap the heat's stand assignments to use target_block's 4 stand
     numbers, preserving pair-sharing structure for partnered events.
 
     Algorithm:
-      1. Load current stand_assignments JSON.
+      1. Load the current stand map off the `heat_assignments` rows. Through
+         D12-C commit F2 this step read a `heats.stand_assignments` JSON
+         column; revision t9b3c4d5e6f7 dropped it and `get_stand_assignments`
+         has read the rows since commit E either way.
       2. Collect the unique stand numbers actually in use, sorted ascending.
       3. Build a slot map: unique[i] -> target_block[i].
       4. If the mapping is an identity (heat already on target block),
@@ -123,7 +126,7 @@ def remap_heat_to_block(heat: Heat, target_block: list[int]) -> bool:
     """
     assignments = heat.get_stand_assignments()
     if not assignments:
-        logger.debug("saw_block: heat %s has no stand_assignments, skipping", heat.id)
+        logger.debug("saw_block: heat %s has no stand assignments, skipping", heat.id)
         return False
 
     # Collect unique stand numbers in use; drop None/0 (unassigned)
@@ -186,7 +189,7 @@ def remap_heat_to_block(heat: Heat, target_block: list[int]) -> bool:
         # stand reader in this tree goes through `get_stand_assignments`,
         # which reads the rows, so a column-only write is invisible to all of
         # them: the remap is lost either way and returning True says it landed.
-        # Commit F drops the column outright.
+        # Commit F3 dropped the column outright.
         #
         # Reachability, measured rather than assumed: `models/event.py` carries
         # `ck_events_event_type_valid` (event_type IN ('college','pro')), live

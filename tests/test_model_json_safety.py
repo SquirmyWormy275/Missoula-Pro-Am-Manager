@@ -136,11 +136,11 @@ class TestEventJsonSafety:
 # and a reader with no caller is a second way to trust a store nothing is
 # allowed to trust.
 #
-# The claim these tests protected is not lost. `get_competitors` and
-# `get_stand_assignments` read the rows and have not touched the columns
-# since commit E, so a corrupt column cannot take a roster read down with it;
-# `TestHeatRawColumnsCannotHurtTheRows` in `tests/test_models_full.py` states
-# exactly that and is the surviving coverage. It dies in F3 with the columns.
+# The claim these tests protected is not lost, but it stopped being a claim
+# and became a fact about the schema. `TestHeatRawColumnsCannotHurtTheRows`
+# in `tests/test_models_full.py` carried it from F2 to F3 and went out with
+# the columns in F3: revision t9b3c4d5e6f7 dropped both, so there is no
+# longer a place to put a corrupt roster and nothing that could read one.
 
 
 class TestTournamentScheduleConfigSafety:

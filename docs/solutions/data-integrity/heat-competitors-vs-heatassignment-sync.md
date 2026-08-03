@@ -44,13 +44,18 @@ D12-C removed the second store rather than continuing to reconcile it:
   `heat_sync_mismatch` check, both sync routes and their template form, the
   autofix sweep and its `heats_fixed` / `heats_checked` counters, and the
   reseed script's heats UPDATE block.
-- F3 drops `heats.competitors` and `heats.stand_assignments`.
+- Commit F3 deleted `_project_json`, the last writer, and dropped
+  `heats.competitors` and `heats.stand_assignments` in Alembic revision
+  `t9b3c4d5e6f7`. That revision is the point where D12-C stops being
+  revertible: a downgrade re-adds both columns and refills them from
+  `heat_assignments`, so downgrade-then-upgrade is lossless, but
+  upgrade-then-downgrade gives back only what the rows hold.
 
 ## Current rule
 
 Write with `heat.set_roster(event.event_type, comp_ids, stands)`. Read with
-`heat.get_competitors()` and `heat.get_stand_assignments()`. Do not touch
-either JSON column. `set_roster` does not need `heat.id`, so it works on a heat
+`heat.get_competitors()` and `heat.get_stand_assignments()`. There is no
+JSON column left to touch. `set_roster` does not need `heat.id`, so it works on a heat
 that has not been flushed, and it raises `BadHeatAssignment` before writing
 anything if the roster names a competitor that does not exist or names one
 twice.

@@ -880,8 +880,6 @@ class TestStockSawRebalanceAfterCascadeScratch:
                 event_id=ev.id,
                 heat_number=heat_num,
                 run_number=1,
-                competitors=_json.dumps([c7.id, c8.id]),
-                stand_assignments=_json.dumps({str(c7.id): 7, str(c8.id): 8}),
             )
             db.session.add(h)
             db.session.flush()
@@ -1043,8 +1041,6 @@ class TestStockSawRebalanceAfterCascadeScratch:
             ])
             uh_heat = Heat(
                 event_id=underhand.id, heat_number=1, run_number=1,
-                competitors=_json.dumps([uh1.id, uh2.id]),
-                stand_assignments=_json.dumps({str(uh1.id): 1, str(uh2.id): 2}),
             )
             db.session.add(uh_heat)
             db.session.flush()
@@ -1082,8 +1078,6 @@ class TestStockSawRebalanceAfterCascadeScratch:
             # which is what seating the roster needs anyway.
             ss_heat = Heat(
                 event_id=stock_saw.id, heat_number=1, run_number=1,
-                competitors=_json.dumps([ss1.id, ss2.id]),
-                stand_assignments=_json.dumps({str(ss1.id): 7, str(ss2.id): 8}),
             )
             db.session.add(ss_heat)
             db.session.flush()

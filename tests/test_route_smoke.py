@@ -114,6 +114,27 @@ def smoke_env(monkeypatch):
 
     use_real_db = SOURCE_DB.exists()
     if use_real_db:
+        # D12-C commit F3: a copy of the developer database is only useful if
+        # the chain will run over it. Revision t9b3c4d5e6f7 refuses one that
+        # holds a heat whose roster exists only in heats.competitors, which
+        # any database stamped before D12-C commit E can be. Asking first
+        # costs one chain replay per session; not asking cost 243 setup
+        # errors, none of them about a route.
+        #
+        # The fresh-DB branch below is the one CI has always taken, so
+        # falling back to it loses no coverage, and it replays the whole
+        # chain itself, so a genuinely broken migration still fails loudly
+        # there instead of hiding here. The only thing this can mask is a
+        # bad source database, which is the thing it is reporting.
+        from tests.db_test_utils import source_db_reaches_head
+        stale = source_db_reaches_head(SOURCE_DB)
+        if stale:
+            print(
+                f"route smoke: {SOURCE_DB} cannot reach chain head, seeding a "
+                f"fresh database instead. {stale}"
+            )
+            use_real_db = False
+    if use_real_db:
         shutil.copy2(SOURCE_DB, db_copy)
 
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_copy}")

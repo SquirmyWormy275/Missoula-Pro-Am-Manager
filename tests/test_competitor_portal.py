@@ -13,7 +13,6 @@ Tests the full competitor self-service lifecycle:
 Run:
     pytest tests/test_competitor_portal.py -v
 """
-import json
 import os
 
 import pytest
@@ -125,8 +124,6 @@ def _seed_competitor_data(app):
     if not heat:
         heat = Heat(
             event_id=evt.id, heat_number=1, run_number=1,
-            competitors=json.dumps([pc.id]),
-            stand_assignments=json.dumps({str(pc.id): '1'}),
             status='completed',
         )
         _db.session.add(heat)

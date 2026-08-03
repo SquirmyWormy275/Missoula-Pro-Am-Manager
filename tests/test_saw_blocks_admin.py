@@ -16,7 +16,6 @@ Run:  pytest tests/test_saw_blocks_admin.py -v
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 
@@ -175,8 +174,6 @@ def _seed_heat(db, event, heat_number, competitors, stand_assignments):
         event_id=event.id,
         heat_number=heat_number,
         run_number=1,
-        competitors=json.dumps(competitors),
-        stand_assignments=json.dumps(stand_assignments),
     )
     db.session.add(h)
     db.session.flush()

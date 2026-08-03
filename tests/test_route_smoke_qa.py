@@ -147,15 +147,16 @@ def _seed_rich_db(app):
         event_id=pro_event.id,
         heat_number=1,
         run_number=1,
-        competitors=json.dumps([{"id": pro.id, "type": "pro", "name": pro.name}]),
-        stand_assignments=json.dumps({}),
         status="pending",
     )
     _db.session.add(heat)
     _db.session.flush()
-    # The JSON above is the malformed dict-shaped roster this smoke fixture has
-    # always carried; it stays so the raw-column readers still see it. The rows
-    # are what the app reads as of D12-C commit E, so seat the pro for real.
+    # This constructor used to seed `competitors` with a list of DICTS, not
+    # ids: [{"id": ..., "type": "pro", "name": ...}]. No production reader in
+    # the history of this app has handled that shape, and the JSON column hid
+    # it for years because nothing that ran against this fixture parsed it.
+    # D12-C commit F3 dropped the column and took the question with it. The
+    # roster is the rows and the rows are typed.
     heat.set_roster("pro", [pro.id])
     _db.session.flush()
 

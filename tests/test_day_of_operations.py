@@ -168,8 +168,6 @@ def _make_heat(
         event_id=event_id,
         heat_number=heat_number,
         run_number=run_number,
-        competitors=json.dumps(competitors or []),
-        stand_assignments=json.dumps(stand_assignments or {}),
         status=status,
     )
     session.add(h)

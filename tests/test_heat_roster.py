@@ -153,7 +153,7 @@ class TestSetRoster:
     # asserted `set_roster` returned True on the next call, because a heat
     # whose JSON disagreed with its rows was broken to the readers that were
     # still parsing the JSON. Commit E moved the last of those readers, so a
-    # column that disagrees with the rows is invisible and F3 deletes it. The
+    # column that disagrees with the rows was invisible, and F3 deleted it. The
     # return value's real contract, "did this call change anything", is
     # asserted by the not-dirtied test above and the empty-roster test below.
 

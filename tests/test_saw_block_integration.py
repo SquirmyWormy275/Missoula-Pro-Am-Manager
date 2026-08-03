@@ -224,8 +224,6 @@ def _seed_heat(
         event_id=event.id,
         heat_number=heat_number,
         run_number=run_number,
-        competitors=json.dumps(competitors),
-        stand_assignments=json.dumps(stand_assignments),
     )
     if flight is not None:
         h.flight_id = flight.id

@@ -412,31 +412,28 @@ def seat_roster(session, heat, comp_ids, stands=None):
 
 def make_heat(session, event, heat_number=1, run_number=1,
               competitors=None, stand_assignments=None, status='pending',
-              flight_id=None, flight_position=None, seat=True):
-    """Build a heat, seating `competitors` as real assignment rows by default.
+              flight_id=None, flight_position=None):
+    """Build a heat, seating `competitors` as real assignment rows.
 
-    ``seat=False`` gets the pre-D12-C behaviour: the two JSON columns are
-    written and no ``heat_assignments`` row is. It existed for fixtures whose
-    subject WAS the row write, or the preflight drift check, or a column that
-    deliberately named a competitor who does not exist so the reference audit
-    would report it dangling. D12-C commit F2 deleted all three of those
-    subjects, and with them the last caller: nothing in this suite passes
-    ``seat=False`` any more. The parameter and the two JSON constructor
-    writes below go in F3, alongside ``_project_json`` and the columns
-    themselves, because removing them is not revertible once the DDL lands
-    and F2 is meant to be.
+    ``competitors`` and ``stand_assignments`` are still the parameter names
+    because 312 call sites in this suite use them, and they still describe
+    what the caller means: a roster and a stand map. What changed under them
+    is where that lands. Until D12-C commit E they were written straight into
+    two JSON columns on ``heats``; since E they go through
+    ``Heat.set_roster`` into ``heat_assignments`` rows, and as of commit F3
+    the columns are gone from the table entirely.
 
-    The default is what you want regardless: every roster reader in the app
-    goes through the rows now, so an unseated heat reads as empty no matter
-    what the columns say.
+    A ``seat=False`` parameter stood here through F2, reproducing the old
+    columns-only write for fixtures whose subject was the drift between the
+    two stores. F2 deleted all of those subjects and F3 deleted the columns,
+    so there is no longer a way to build an unseated heat and nothing that
+    wanted one.
     """
     from models.heat import Heat
     h = Heat(
         event_id=event.id,
         heat_number=heat_number,
         run_number=run_number,
-        competitors=json.dumps(competitors or []),
-        stand_assignments=json.dumps(stand_assignments or {}),
         status=status,
         flight_id=flight_id,
         flight_position=flight_position,
@@ -444,19 +441,18 @@ def make_heat(session, event, heat_number=1, run_number=1,
     session.add(h)
     session.flush()
 
-    # D12-C commit E: the roster is `heat_assignments` rows now, and the two
-    # JSON columns above are a cache that `set_roster` rewrites. Writing the
-    # columns alone used to be the whole job; as of this commit it seeds a
-    # heat that every reader in the app sees as empty. 312 call sites in this
-    # suite pass `competitors=`, so the repair belongs here and not in each
-    # of them.
+    # D12-C commit E: the roster is `heat_assignments` rows now. Writing the
+    # JSON columns used to be the whole job; as of that commit it seeded a
+    # heat every reader in the app saw as empty, and as of F3 there are no
+    # columns to write. 312 call sites in this suite pass `competitors=`, so
+    # the seating belongs here and not in each of them.
     #
     # `ensure_competitors` runs first because most of those call sites invent
     # ids like [1, 2, 3, 4]. An assignment row carries a uid with a foreign
     # key onto the identity spine, so an invented id has to become a real
     # competitor before it can be seated. See that helper for why setting the
     # ids explicitly is safe in this one place.
-    if competitors and seat:
+    if competitors:
         from models import Tournament
         tournament = session.get(Tournament, event.tournament_id)
         ensure_competitors(session, tournament, competitors,

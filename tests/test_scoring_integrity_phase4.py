@@ -136,8 +136,6 @@ def _make_heat(session, event, run_number=1, competitors=None, status='pending')
     from models.heat import Heat
     h = Heat(
         event_id=event.id, heat_number=1, run_number=run_number,
-        competitors=json.dumps(competitors or []),
-        stand_assignments=json.dumps({}),
         status=status,
     )
     session.add(h)

@@ -15,7 +15,6 @@ Run:
     pytest tests/test_stock_saw_stand_rebalance.py -v
 """
 
-import json
 import os
 
 import pytest
@@ -107,8 +106,6 @@ def _make_heat(
         event_id=event.id,
         heat_number=heat_number,
         run_number=run_number,
-        competitors=json.dumps(competitors),
-        stand_assignments=json.dumps(stand_assignments),
     )
     db_session.add(h)
     db_session.flush()

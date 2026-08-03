@@ -848,9 +848,12 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
 
         # --- Restore heat membership -----------------------------------------
         # execute_cascade strips the competitor out of every non-completed heat
-        # (see "Remove competitor from unfinished heats" above), mutating three
-        # things: the competitors JSON, the stand_assignments JSON, and the
-        # HeatAssignment rows.  None of it was ever captured and none of it was
+        # (see "Remove competitor from unfinished heats" above), rewriting the
+        # heat's `heat_assignments` rows.  Through D12-C commit F2 it also
+        # mutated two JSON columns on `heats`, which revision t9b3c4d5e6f7
+        # dropped; the rows are the whole of it now.
+        #
+        # None of it was ever captured and none of it was
         # ever restored, so an undo handed back a competitor who was active,
         # scored and paid, and on no heat sheet anywhere.  On race day that is
         # a competitor who does not get called to the stand.

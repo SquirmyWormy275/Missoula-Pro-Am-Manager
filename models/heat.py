@@ -1,7 +1,6 @@
 """
 Heat and Flight models for scheduling competition runs.
 """
-import json
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
@@ -88,9 +87,11 @@ class Heat(db.Model):
     heat_number = db.Column(db.Integer, nullable=False)
     run_number = db.Column(db.Integer, nullable=False, default=1)  # For dual-run events (1 or 2)
 
-    # Competitors and stand assignments - stored as JSON
-    competitors = db.Column(db.Text, nullable=False, default='[]')  # List of competitor IDs
-    stand_assignments = db.Column(db.Text, nullable=False, default='{}')  # Dict: competitor_id -> stand_number
+    # D12-C commit F3: `competitors` and `stand_assignments` stood here, two
+    # Text columns holding a JSON list and a JSON dict. They were the roster
+    # from the first commit of this app until commit E, a cache from E until
+    # F2, and dead weight after F2 stopped anything reading them. Revision
+    # t9b3c4d5e6f7 drops them from the table.
 
     # Status
     status = db.Column(db.String(20), nullable=False, default='pending')  # pending, in_progress, completed
@@ -159,15 +160,12 @@ class Heat(db.Model):
         D12-C phase 2, commit E: this reads ``heat_assignments`` rather than
         the ``competitors`` column. All ninety-five call sites in this tree
         moved with it and not one of them changed, because the shape is the
-        shape :meth:`_project_json` has been rendering into that column since
-        commit C: a list of ints in the order the rows were written, which is
-        the order the judge sheet prints.
+        shape the column had carried since commit C: a list of ints in the
+        order the rows were written, which is the order the judge sheet
+        prints.
 
-        The rows are the roster. As of commit F2 nothing in this tree reads
-        the ``competitors`` column at all: the drift checks that compared it
-        against the rows are gone, and so are the two accessors that existed
-        to serve them. :meth:`_project_json` still writes the column, and F3
-        deletes both it and the column.
+        The rows are the roster, and as of commit F3 they are the only thing
+        there is. The column is gone from the table.
         """
         return [a.competitor_id for a in self.assignments]
 
@@ -175,8 +173,9 @@ class Heat(db.Model):
         """Return ``{str(competitor_id): stand_number}`` from the rows.
 
         Keyed by string and omitting rows with no stand, which is the shape
-        this has always had: ``stand_assignments`` never carried an explicit
-        null, and every reader in this tree looks up ``str(comp_id)``.
+        this has always had: the ``stand_assignments`` column never carried an
+        explicit null, and every reader in this tree looks up
+        ``str(comp_id)``.
         """
         return {str(a.competitor_id): a.stand_number
                 for a in self.assignments if a.stand_number is not None}
@@ -188,6 +187,8 @@ class Heat(db.Model):
     # gone, so a reader of the JSON columns has no caller left. Keeping them
     # would have meant keeping the only remaining way to read a store nothing
     # is allowed to trust, which is how a cache becomes a second truth again.
+    # Commit F3 dropped the columns they read, so they could not come back
+    # even if somebody wanted them.
 
     def get_stand_for_competitor(self, competitor_id):
         """Get the stand number assigned to a competitor."""
@@ -195,14 +196,13 @@ class Heat(db.Model):
         return assignments.get(str(competitor_id))
 
     def set_roster(self, competitor_type, comp_ids, stands=None) -> bool:
-        """Write this heat's roster to ``heat_assignments``, then render the JSON.
+        """Write this heat's roster to ``heat_assignments``.
 
-        This is the write target. D12-C commit A gave the rows a real reference;
-        this is where they become the thing being written TO, with
-        ``competitors`` and ``stand_assignments`` demoted to a rendering of what
-        the rows say rather than the record the rows are copied from. Phase 2
-        moves the readers across and drops the two columns, at which point
-        :meth:`_project_json` is the only thing that has to be deleted.
+        This is the write target, and as of D12-C commit F3 it is the only
+        place a roster is stored at all. Commit A gave the rows a real
+        reference, commit E made them the thing written TO and demoted the two
+        JSON columns to a rendering of what the rows say, F2 removed the last
+        reader of that rendering and F3 dropped the columns.
 
         ``competitor_type`` is 'pro' or 'college' and matches event.event_type.
         ``comp_ids`` is the running order: the order the judge sheet prints and
@@ -216,8 +216,8 @@ class Heat(db.Model):
         then adds it to the session, which the previous version of this method
         could not have served.
 
-        Returns True if anything was rewritten, rows or JSON, and False if the
-        heat already said exactly this. Two bulk sweepers used to consume that
+        Returns True if the rows were rewritten and False if the heat already
+        said exactly this. Two bulk sweepers used to consume that
         answer, ``run_preflight_autofix`` and the ``/heats/sync-fix`` route,
         walking every heat in a tournament or an event to tell a heat they
         repaired from a heat they merely visited. D12-C commit F2 deleted both,
@@ -268,16 +268,8 @@ class Heat(db.Model):
                 )
                 for cid, uid, stand in roster
             ], rows)
-            projection = [(cid, stand) for cid, _uid, stand in roster]
-        else:
-            # Render the rows that are actually there, in the order they are
-            # actually in. When the rows were not rewritten this can differ from
-            # `roster`, and the rows are the ones that win. That is the whole
-            # difference between a projection and an echo of the argument.
-            projection = [(r.competitor_id, r.stand_number) for r in rows]
 
-        json_changed = self._project_json(projection)
-        return rows_changed or json_changed
+        return rows_changed
 
     def _replace_assignments(self, new_rows, old_rows):
         """Swap this heat's roster rows out for ``new_rows``, in two steps.
@@ -323,34 +315,12 @@ class Heat(db.Model):
     # last one moved. Commit E moved the last one. Every reference left in
     # this tree is a comment explaining what a piece of code no longer does.
 
-    def _project_json(self, projection):
-        """Render ``competitors`` and ``stand_assignments`` from the rows.
-
-        ``projection`` is a list of ``(competitor_id, stand_number)`` in row
-        order. Returns True if either column changed.
-
-        Compares the serialised form rather than the parsed one, because the
-        stored column is what every reader in this tree parses, and a difference
-        that survives ``json.dumps`` is a difference a reader can see. It also
-        keeps this from dirtying the ``Heat`` row for a change that is not one:
-        ``Heat`` carries a ``version_id_col``, so a pointless assignment here
-        would bump the version and hand a StaleDataError to whichever other
-        request was holding the heat.
-
-        A row with no stand contributes no key, which is the shape this column
-        has always had: ``stand_assignments`` has never carried an explicit
-        null.
-        """
-        competitors = json.dumps([cid for cid, _stand in projection])
-        stand_assignments = json.dumps(
-            {str(cid): stand for cid, stand in projection if stand is not None})
-
-        if (competitors == self.competitors
-                and stand_assignments == self.stand_assignments):
-            return False
-        self.competitors = competitors
-        self.stand_assignments = stand_assignments
-        return True
+    # D12-C commit F3: `_project_json` stood here. It rendered the roster
+    # rows back into the two JSON columns on every write, which is what made
+    # commits C through F2 revertible: a reader that had not moved yet still
+    # saw a correct column. Nothing has read either column since F2, and
+    # revision t9b3c4d5e6f7 drops both, so the projection has nowhere to
+    # project to.
 
     def _resolve_assignment_uids(self, comp_ids, competitor_type):
         """Map every id in `comp_ids` to its canonical id and a competitors.uid.

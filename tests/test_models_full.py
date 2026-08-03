@@ -7,7 +7,6 @@ and SchoolCaptain.
 
 Run:  pytest tests/test_models_full.py -v
 """
-import json
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -922,52 +921,21 @@ class TestHeatRoster:
         with pytest.raises(BadHeatAssignment):
             h.set_roster('pro', ids + [987654])
 
-    def test_the_json_column_is_rendered_from_the_rows(self, db_session):
-        """The column is still written, and this is the test that says so.
-
-        D12-C commit F2 removed every reader of `heats.competitors`, but not
-        the writer: `_project_json` still renders the rows into the column on
-        every roster write, and the column is still in the schema. That is
-        deliberate, and it is what makes F2 revertible. F3 drops the writer
-        and the column together, and this test goes with them.
-
-        It used to assert `h.json_competitors() == ids` alongside. That
-        accessor was one of the three readers F2 deleted.
-        """
-        h, ids = self._heat_with(3)
-        h.set_roster('pro', ids)
-        assert json.loads(h.competitors) == ids
+    # `test_the_json_column_is_rendered_from_the_rows` stood here. It asserted
+    # `json.loads(h.competitors) == ids` after a `set_roster`, which was the
+    # test that said F2 was revertible: the readers had moved but the writer
+    # had not, so the column stayed correct for anything that had not caught
+    # up. D12-C commit F3 deleted `_project_json` and dropped the column, so
+    # there is no rendering left to assert.
 
 
-class TestHeatRawColumnsCannotHurtTheRows:
-    """A hand-corrupted JSON column is inert.
-
-    This class used to be `TestHeatLegacyJsonAccessors` and covered
-    ``json_competitors`` / ``json_stand_assignments``, the two accessors that
-    read the raw columns. D12-C commit F2 deleted both, along with
-    ``sync_assignments``, because their only callers were the preflight drift
-    check and the sync route, and those went first. Two of the three tests
-    here measured what those accessors did with unparseable input and died
-    with them.
-
-    The third survives, and it is the one that still means something: garbage
-    written straight into the columns must not reach a roster read. Until F3
-    drops the columns, somebody can still put garbage there.
-    """
-
-    def test_a_corrupt_column_does_not_reach_the_row_accessors(self, db_session):
-        """The rows are a different storage location, so a column somebody
-        corrupted by hand cannot take the roster down with it."""
-        t = _make_tournament()
-        e = _make_event(t)
-        h = _make_heat(e)
-        comps = [_make_pro_competitor(t, f'Pro {i}') for i in range(2)]
-        ids = [c.id for c in comps]
-        h.set_roster('pro', ids)
-        h.competitors = '{bad'
-        h.stand_assignments = '!!'
-        assert h.get_competitors() == ids
-        assert h.get_stand_assignments() == {}
+# `TestHeatRawColumnsCannotHurtTheRows` stood here, one test, and it was the
+# last thing in this suite that wrote `heats.competitors` on purpose. It
+# corrupted both columns by hand after a good `set_roster` and asserted the
+# roster read came back correct anyway, proving the columns were not a
+# fallback path. F3 dropped the columns. A storage location that does not
+# exist cannot be corrupted, and the claim retires having been made
+# structural rather than tested.
 
 
 class TestHeatStandAssignments:

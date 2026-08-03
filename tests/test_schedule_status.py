@@ -168,7 +168,7 @@ class TestBuildScheduleStatus:
             )
             db.session.add(ev)
             db.session.flush()
-            h = Heat(event_id=ev.id, heat_number=1, run_number=1, competitors="[]")
+            h = Heat(event_id=ev.id, heat_number=1, run_number=1)
             db.session.add(h)
             db.session.commit()
         with app.test_request_context("/"):
@@ -200,7 +200,6 @@ class TestBuildScheduleStatus:
                 event_id=ev.id,
                 heat_number=1,
                 run_number=1,
-                competitors="[1]",
                 flight_id=f.id,
                 flight_position=1,
             )
@@ -315,7 +314,7 @@ class TestWarningsCarrySubmitAction:
             )
             db.session.add(ev)
             db.session.flush()
-            h = Heat(event_id=ev.id, heat_number=1, run_number=1, competitors="[]")
+            h = Heat(event_id=ev.id, heat_number=1, run_number=1)
             db.session.add(h)
             db.session.commit()
         with app.test_request_context("/"):

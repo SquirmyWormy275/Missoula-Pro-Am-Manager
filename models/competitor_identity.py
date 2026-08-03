@@ -7,8 +7,9 @@ id structurally incapable of colliding.
 
 Why this exists
 ===============
-``EventResult.competitor_id`` and ``Heat.competitors`` carry bare integers with
-no foreign key.  A sibling ``competitor_type`` string is the only thing that
+``EventResult.competitor_id`` carries a bare integer with no foreign key, and
+so did every id inside the ``heats.competitors`` JSON column until D12-C commit
+F3 dropped it.  A sibling ``competitor_type`` string is the only thing that
 says which table the integer points at.  In the production mirror, college ids
 29 through 49 all also exist as pro ids: 21 live collisions.  Any code path
 that reads the integer and forgets the discriminator addresses the wrong

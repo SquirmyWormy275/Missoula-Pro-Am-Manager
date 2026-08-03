@@ -33,9 +33,9 @@ Reference surfaces, measured on the production mirror (c38), not assumed:
 Two more surfaces used to be listed here, `heats.competitors` and
 `heats.stand_assignments`. D12-C commit F2 removed them: the roster they held
 is `heat_assignments` rows now, that table is already remapped above, and
-commit F3 drops the columns. A script that still rewrote them would be
-rewriting a projection nothing reads, and would crash outright once the
-columns are gone.
+commit F3 dropped the columns in revision `t9b3c4d5e6f7`. A script that still
+rewrote them would be rewriting a projection nothing reads, and would now
+crash outright against a table that has no such columns.
 
 Deliberately NOT remapped: audit_logs and print/email logs. They are
 append-only history; rewriting their entity ids would falsify the record.

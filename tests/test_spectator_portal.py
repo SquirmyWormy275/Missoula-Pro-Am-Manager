@@ -18,7 +18,6 @@ Tests the full spectator experience:
 Run:
     pytest tests/test_spectator_portal.py -v
 """
-import json
 import os
 
 import pytest
@@ -193,8 +192,6 @@ def _seed_spectator_data(app):
     if not ip_heat:
         ip_heat = Heat(
             event_id=ip_evt.id, heat_number=1, run_number=1,
-            competitors=json.dumps([pro.id, pro2.id]),
-            stand_assignments=json.dumps({str(pro.id): '1', str(pro2.id): '2'}),
             status='in_progress',
         )
         _db.session.add(ip_heat)

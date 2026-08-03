@@ -105,8 +105,6 @@ def _seed(app):
     if not heat:
         heat = Heat(
             event_id=evt.id, heat_number=1, run_number=1,
-            competitors=json.dumps([pro.id]),
-            stand_assignments=json.dumps({str(pro.id): '3'}),
             status='completed',
         )
         _db.session.add(heat)

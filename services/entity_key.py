@@ -2,10 +2,10 @@
 
 The problem this exists for
 ===========================
-``EventResult.competitor_id`` and every integer inside the ``Heat.competitors``
-JSON blob is a bare int with no foreign key.  A sibling ``competitor_type``
-string is the only thing that says which of the two competitor tables the
-integer points at.  In the production mirror, college ids 29 through 49 all
+``EventResult.competitor_id`` is a bare int with no foreign key, and so was
+every integer inside the ``heats.competitors`` JSON blob until D12-C commit F3
+dropped that column.  A sibling ``competitor_type`` string is the only thing
+that says which of the two competitor tables the integer points at.  In the production mirror, college ids 29 through 49 all
 also exist as pro ids: 21 live collisions.  A code path that reads the integer
 and forgets the discriminator addresses the wrong person, and nothing in the
 type system or the database stops it.

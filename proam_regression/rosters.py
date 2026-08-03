@@ -7,9 +7,9 @@ a string and SQLite sometimes does not. That idiom appeared a dozen times and
 each copy had to be right about the same three things.
 
 As of D12-C commit E the roster is ``heat_assignments`` rows and the JSON
-column is a rendering of them; commit F drops the column. So the idiom had to
-move, and moving it once into shared helpers is cheaper and safer than moving
-twelve copies of it and hoping they agree.
+column was a rendering of them; commit F3 dropped the column. So the idiom had
+to move, and moving it once into shared helpers is cheaper and safer than
+moving twelve copies of it and hoping they agree.
 
 Two things these helpers guarantee that the JSON reads could not:
 
@@ -43,7 +43,7 @@ def heat_stands(sql, heat_id):
 
     Keyed by string and omitting a competitor with no stand, which is the
     shape ``Heat.get_stand_assignments`` returns and the shape the
-    ``stand_assignments`` column always had.
+    ``stand_assignments`` column had for as long as it existed.
     """
     return {str(cid): stand for cid, stand in sql(
         "SELECT a.competitor_id, a.stand_number FROM heat_assignments a "
