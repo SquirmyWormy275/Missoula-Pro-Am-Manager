@@ -3,6 +3,13 @@ SQLAlchemy models for the Missoula Pro Am Tournament Manager.
 """
 from .audit_log import AuditLog
 from .background_job import BackgroundJob
+from .birling import (
+    BirlingFall,
+    BirlingMatch,
+    BirlingPlacement,
+    BirlingPreSeed,
+    BirlingSeed,
+)
 from .competitor import CollegeCompetitor, ProCompetitor
 from .competitor_identity import Competitor
 from .event import Event, EventResult
@@ -39,4 +46,9 @@ __all__ = [
     'PrintEmailLog',
     'Competitor',
     'TournamentEvent',
+    'BirlingSeed',
+    'BirlingPreSeed',
+    'BirlingMatch',
+    'BirlingFall',
+    'BirlingPlacement',
 ]
