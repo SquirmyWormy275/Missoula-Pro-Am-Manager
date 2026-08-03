@@ -31,6 +31,7 @@ import json
 
 import pytest
 import rig
+from rosters import event_rosters
 
 TID = rig.TOURNAMENT_ID          # the real 2026 tournament
 STAGED_NAME = "staged oracle"    # unique needle in the staged tournament's name
@@ -126,10 +127,9 @@ def test_heat_generation_for_2026_ignores_the_2027_roster(mt, client, sql):
         r = client.post(f"/scheduling/{TID}/event/{event_id}/generate-heats",
                         data={"confirm": "true"}, follow_redirects=False)
         assert r.status_code in (302, 303), r.status_code
-        rows = sql("SELECT competitors FROM heats WHERE event_id = :e "
-                   "ORDER BY heat_number, run_number", e=event_id)
-        return [json.loads(c) if isinstance(c, str) else (c or [])
-                for (c,) in rows]
+        # D12-C commit F1: off `heat_assignments`. The pins below do not
+        # move: same heat ordering, same within-heat ordering.
+        return event_rosters(sql, event_id)
 
     # Event 33 exercises the PRO competitor scan, event 7 the COLLEGE one.
     # Both pins are the c35 deterministic rosters.

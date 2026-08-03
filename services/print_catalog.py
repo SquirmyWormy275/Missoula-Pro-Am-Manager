@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -154,8 +155,23 @@ def _fp_heat_sheets(tournament, entity=None):
         f"scratched={scratched}",
     ]
     for h in heats:
+        # D12-C commit F1: the accessors, not the raw columns. This is a
+        # cache key, so reading a column that commit F2 deletes would leave
+        # the heat sheets fingerprinting on an attribute that no longer
+        # exists and raising on every print-hub page load.
+        #
+        # Serialised here rather than interpolated, because `_sha1` needs a
+        # stable string and the accessors return live Python objects. The
+        # roster keeps list order: that is the running order and the judge
+        # sheet prints it, so two heats holding the same four people in a
+        # different order are two different sheets. The stands are sorted:
+        # that is a mapping, its iteration order is an artefact of how the
+        # rows came back, and letting it move would invalidate the cache on
+        # a reprint that changed nothing.
         parts.append(
-            f'{h.id}:{h.status}:{h.flight_id}:{h.competitors or ""}:{h.stand_assignments or ""}'
+            f"{h.id}:{h.status}:{h.flight_id}:"
+            f"{json.dumps(h.get_competitors())}:"
+            f"{json.dumps(h.get_stand_assignments(), sort_keys=True)}"
         )
     return _sha1(parts)
 
@@ -218,8 +234,11 @@ def _fp_fnf(tournament, entity=None):
         .all()
     )
     parts = [",".join(str(i) for i in fnf_ids)]
+    # D12-C commit F1: same move, same reasoning, as `_fp_heat_sheets`.
     parts += [
-        f'{h.id}:{h.heat_number}:{h.competitors or ""}:{h.stand_assignments or ""}'
+        f"{h.id}:{h.heat_number}:"
+        f"{json.dumps(h.get_competitors())}:"
+        f"{json.dumps(h.get_stand_assignments(), sort_keys=True)}"
         for h in heats
     ]
     return _sha1(parts)

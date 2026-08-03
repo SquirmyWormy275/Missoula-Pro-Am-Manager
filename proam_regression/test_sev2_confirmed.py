@@ -15,6 +15,7 @@ import re
 import pytest
 import rig
 from population import Claim, register
+from rosters import event_rosters, heat_roster
 
 TID = rig.TOURNAMENT_ID
 
@@ -38,12 +39,20 @@ PRO_DB_TIMES = {23: "9.10", 21: "9.10", 24: "10.20", 27: "10.20"}
 register(Claim(
     name="PRO_DB_HEAT 425 holds exactly the seven-man Double Buck roster",
     claimed=[23, 21, 24, 27, 45, 28, 48],
-    sql=("SELECT competitors FROM heats "
-         "WHERE id = :h AND event_id = :e"),
+    # D12-C commit F1: the claim is registered against the assignment rows.
+    # `event_id` stays in the WHERE clause even though `heat_id` alone is a
+    # primary key, because the claim being made is about heat 425 OF EVENT 38:
+    # if a future reseed moved that heat under another event the claim should
+    # go red rather than quietly pass on a heat that is no longer the one this
+    # module's times were read off. The join carries `competitor_type` for the
+    # same reason it does in test_sev1: an id alone was ambiguous across the
+    # pro and college sequences before the c39 reseed.
+    sql=("SELECT a.competitor_id FROM heat_assignments a "
+         "JOIN heats h ON h.id = a.heat_id "
+         "WHERE a.heat_id = :h AND h.event_id = :e "
+         "AND a.competitor_type = 'pro' ORDER BY a.id"),
     params={"h": PRO_DB_HEAT, "e": PRO_DB_EVENT},
-    shape=lambda rows: (json.loads(rows[0][0])
-                        if rows and isinstance(rows[0][0], str)
-                        else (rows[0][0] if rows else [])),
+    shape=lambda rows: [r[0] for r in rows],
 ))
 
 
@@ -240,8 +249,8 @@ def test_partial_timer_entry_does_not_auto_finalize_the_event(client, sql):
     """
     version = sql("SELECT version_id FROM heats WHERE id = :h",
                   h=PARTIAL_HEAT)[0][0]
-    comps = sql("SELECT competitors FROM heats WHERE id = :h", h=PARTIAL_HEAT)[0][0]
-    comps = json.loads(comps) if isinstance(comps, str) else comps
+    # D12-C commit F1: roster off the rows, in running order.
+    comps = heat_roster(sql, PARTIAL_HEAT)
     assert len(comps) >= 2, comps
     whole, partial = comps[0], comps[1]
 
@@ -294,8 +303,7 @@ def test_a_clean_dual_timer_heat_still_auto_finalizes(client, sql):
     finalize by itself, with real positions and real points, exactly as it does
     on v2026.final. It passes before the fix and it has to keep passing after.
     """
-    comps = _loads(sql("SELECT competitors FROM heats WHERE id = :h",
-                       h=PARTIAL_HEAT)[0][0])
+    comps = heat_roster(sql, PARTIAL_HEAT)   # D12-C commit F1
     assert len(comps) >= 2, comps
     fast, slow = comps[0], comps[1]
 
@@ -343,8 +351,7 @@ def test_supplying_the_missing_timer_finalizes_the_event(client, sql, flashes):
     read. The second half is the half that matters and it can only be observed
     after the fix.
     """
-    comps = _loads(sql("SELECT competitors FROM heats WHERE id = :h",
-                       h=PARTIAL_HEAT)[0][0])
+    comps = heat_roster(sql, PARTIAL_HEAT)   # D12-C commit F1
     assert len(comps) >= 2, comps
     whole, partial = comps[0], comps[1]
 
@@ -447,10 +454,8 @@ def test_a_partial_row_in_another_heat_still_blocks_finalize(client, sql):
     publishes the event with a competitor at position None, which is the
     original bug with an extra step.
     """
-    a = _loads(sql("SELECT competitors FROM heats WHERE id = :h",
-                   h=CROSS_HEAT_A)[0][0])
-    b = _loads(sql("SELECT competitors FROM heats WHERE id = :h",
-                   h=CROSS_HEAT_B)[0][0])
+    a = heat_roster(sql, CROSS_HEAT_A)   # D12-C commit F1
+    b = heat_roster(sql, CROSS_HEAT_B)
     assert len(a) >= 2 and len(b) >= 2, (a, b)
     short = a[0]
 
@@ -965,16 +970,40 @@ def test_springboard_lh_heat_gives_every_cutter_a_distinct_stand(app, sql):
     generate_event_heats(event)
     db.session.commit()
 
+    # D12-C commit F1: the stand map comes off `heat_assignments`, one row per
+    # seat, rather than out of the JSON column. LEFT JOIN and not JOIN, so a
+    # heat that generation left empty still appears: an empty heat cannot hold
+    # a collision, but it also cannot be allowed to vanish from the row set
+    # that `assert rows` is checking.
     rows = sql("""
-        SELECT id, heat_number, competitors, stand_assignments
-        FROM heats WHERE event_id = :e AND run_number = 1
-        ORDER BY heat_number
+        SELECT h.id, h.heat_number, a.competitor_id, a.stand_number
+        FROM heats h
+        LEFT JOIN heat_assignments a ON a.heat_id = h.id
+        WHERE h.event_id = :e AND h.run_number = 1
+        ORDER BY h.heat_number, a.id
     """, e=PRO_1BOARD_EVENT)
     assert rows, "heat generation produced no heats, so this test is vacuous"
 
+    # Keyed by str to match what the collision report has always printed.
+    stands_by_heat: dict[int, dict[str, int]] = {}
+    number_by_heat: dict[int, int] = {}
+    roster_size_by_heat: dict[int, int] = {}
+    for heat_id, heat_number, comp_id, stand in rows:
+        number_by_heat[heat_id] = heat_number
+        seats = stands_by_heat.setdefault(heat_id, {})
+        roster_size_by_heat.setdefault(heat_id, 0)
+        if comp_id is not None:
+            # Counted off the roster row, not off the stand map, because the
+            # whole point of the check below is a heat that holds five people
+            # and seats fewer than five of them. Counting seats would make the
+            # thing being measured disappear from the sample.
+            roster_size_by_heat[heat_id] += 1
+            if stand is not None:
+                seats[str(comp_id)] = stand
+
     collisions = []
-    for heat_id, heat_number, competitors, assignments in rows:
-        stands = _loads(assignments) or {}
+    for heat_id, stands in stands_by_heat.items():
+        heat_number = number_by_heat[heat_id]
         by_stand = {}
         for comp_id, stand in stands.items():
             by_stand.setdefault(stand, []).append(comp_id)
@@ -994,9 +1023,9 @@ def test_springboard_lh_heat_gives_every_cutter_a_distinct_stand(app, sql):
     # The collision is only half of it: a five-stand heat that never calls
     # stand 5 is running four people through a block sized for five.
     full_heats = [
-        (hid, hn, _loads(a))
-        for hid, hn, c, a in rows
-        if len(_loads(c) or []) >= 5
+        (hid, number_by_heat[hid], stands)
+        for hid, stands in stands_by_heat.items()
+        if roster_size_by_heat[hid] >= 5
     ]
     assert full_heats, "no heat of five was generated, so the stand-5 check is vacuous"
     for hid, hn, stands in full_heats:
@@ -2649,12 +2678,11 @@ def _add_dropdown_ids(html):
 
 
 def _placed_ids(sql, event_id):
-    out = []
-    for _num, comps in sql("SELECT heat_number, competitors FROM heats "
-                           "WHERE event_id = :e ORDER BY heat_number",
-                           e=event_id):
-        out.extend(_loads(comps) or [])
-    return [int(c) for c in out]
+    # D12-C commit F1: flattened out of the assignment rows. Both callers read
+    # this as a bag (a length, a set, a membership test), so the fact that
+    # `event_rosters` orders by heat_number then run_number where this used to
+    # order by heat_number alone cannot move an assertion.
+    return [int(c) for heat in event_rosters(sql, event_id) for c in heat]
 
 
 def _gen(client, flashes, event_id):

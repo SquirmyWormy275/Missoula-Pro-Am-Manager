@@ -25,6 +25,7 @@ import sys
 
 import pytest
 import rig
+from rosters import event_rosters
 
 TID = rig.TOURNAMENT_ID
 OFFSET = 100000
@@ -139,10 +140,12 @@ def test_the_app_still_works_on_reseeded_data(dburl, client, sql):
     r = client.post(f"/scheduling/{TID}/event/7/generate-heats",
                     data={"confirm": "true"}, follow_redirects=False)
     assert r.status_code in (302, 303)
-    rows = sql("SELECT competitors FROM heats WHERE event_id = 7 "
-               "ORDER BY heat_number, run_number")
-    rosters = [json.loads(c) if isinstance(c, str) else (c or [])
-               for (c,) in rows]
+    # D12-C commit F1: the regenerated rosters are read off `heat_assignments`.
+    # The pins below are unchanged and must stay unchanged: `event_rosters`
+    # orders heats the same way this query did and orders each roster by
+    # assignment id, which is the order `set_roster` writes, which is the order
+    # the JSON array carried. If a pin moves, the rewrite is wrong, not the pin.
+    rosters = event_rosters(sql, 7)
     c35_pins = [[32, 50, 51, 80, 85], [33, 43, 59, 79, 86],
                 [37, 42, 60, 78], [38, 39, 61, 74]]
     assert rosters == [[i + OFFSET for i in heat] for heat in c35_pins], rosters

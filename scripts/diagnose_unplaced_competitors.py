@@ -115,27 +115,34 @@ def main() -> int:
                         print(f"       ev{r[0]}  {r[1]}")
 
             # Competitors placed
+            #
+            # D12-C commit F1: read `heat_assignments`, not the JSON column.
+            # This script exists to tell an operator who is missing from the
+            # schedule, and as of commit E every screen the operator compares
+            # it against reads the rows. A diagnosis drawn from the column
+            # would answer a question nobody is asking, and commit F2 deletes
+            # the column outright.
+            #
+            # `competitor_type` is filtered on as well as joined through the
+            # event: the pro and college id sequences overlap, so a bare id
+            # match against a college event can name a pro who happens to
+            # carry the same number.
             placed = set()
             for row in c.execute(
                 text(
-                    "SELECT h.competitors FROM heats h JOIN events e ON e.id=h.event_id "
-                    "WHERE e.tournament_id=:t AND e.event_type=:et"
+                    "SELECT DISTINCT a.competitor_id "
+                    "FROM heat_assignments a "
+                    "JOIN heats h ON h.id = a.heat_id "
+                    "JOIN events e ON e.id = h.event_id "
+                    "WHERE e.tournament_id=:t AND e.event_type=:et "
+                    "AND a.competitor_type=:et"
                 ),
                 {"t": tid, "et": ctype},
             ).all():
                 try:
-                    cids = (
-                        json.loads(row[0])
-                        if isinstance(row[0], str)
-                        else (row[0] or [])
-                    )
-                except Exception:
-                    cids = []
-                for cid in cids:
-                    try:
-                        placed.add(int(cid))
-                    except (TypeError, ValueError):
-                        pass
+                    placed.add(int(row[0]))
+                except (TypeError, ValueError):
+                    pass
 
             rows = c.execute(
                 text(

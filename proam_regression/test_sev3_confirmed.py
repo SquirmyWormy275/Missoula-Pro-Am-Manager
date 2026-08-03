@@ -21,6 +21,7 @@ import re
 import pytest
 import rig
 from population import Claim, register
+from rosters import event_rosters, heat_roster
 
 TID = rig.TOURNAMENT_ID
 
@@ -374,8 +375,9 @@ def test_dropped_gear_partner_is_not_scheduled_into_the_same_heat(client, sql):
     names = dict(sql("SELECT id, name FROM pro_competitors WHERE id IN (:a, :b)",
                      a=a, b=b))
 
-    raw = sql("SELECT competitors FROM heats WHERE id = :h", h=SHARED_HEAT)[0][0]
-    members = json.loads(raw) if isinstance(raw, str) else raw
+    # D12-C commit F1: membership is an assignment row. Typed 'pro', because
+    # both ids named here are pro ids and SHARED_HEAT is a pro heat.
+    members = heat_roster(sql, SHARED_HEAT, kind="pro")
     both_in_heat = a in members and b in members
     assert both_in_heat, (
         f"heat {SHARED_HEAT} no longer holds both competitors: {members}. "
@@ -783,21 +785,31 @@ SMS_GHOST_PRO = (32, "Ian Wilson")
 # The two-name version of SMS_MASKED_PROS is exactly the defect class these
 # guards exist for; had this registration existed then, the sample would
 # have failed collection-side instead of surviving a battery run.
+# D12-C commit F1: the ids come out of `heat_assignments` rather than out of
+# `jsonb_array_elements_text` over the JSON column. The kind of each id is
+# still taken from the EVENT and not from `heat_assignments.competitor_type`,
+# deliberately: what these claims measure is whether a pro id and a college id
+# can collide, and deriving both sides from the same row's own type label would
+# make the two sets disjoint by construction and the collision claim vacuous.
+# The event is the independent witness of which pool an id belongs to, which is
+# exactly what the JSON form used, so the measurement is unchanged.
 _SMS_FLIGHT_HEAT_IDS = """
     WITH fh AS (
-        SELECT h.competitors, e.event_type
+        SELECT h.id AS heat_id, e.event_type
         FROM heats h
         JOIN events e ON e.id = h.event_id
         JOIN flights f ON f.id = h.flight_id
         WHERE f.tournament_id = :t AND f.flight_number = :fn
     ),
     pro_ids AS (
-        SELECT DISTINCT jsonb_array_elements_text(competitors::jsonb)::int AS cid
-        FROM fh WHERE event_type = 'pro'
+        SELECT DISTINCT a.competitor_id AS cid
+        FROM fh JOIN heat_assignments a ON a.heat_id = fh.heat_id
+        WHERE fh.event_type = 'pro'
     ),
     col_ids AS (
-        SELECT DISTINCT jsonb_array_elements_text(competitors::jsonb)::int AS cid
-        FROM fh WHERE event_type = 'college'
+        SELECT DISTINCT a.competitor_id AS cid
+        FROM fh JOIN heat_assignments a ON a.heat_id = fh.heat_id
+        WHERE fh.event_type = 'college'
     )
 """
 
@@ -1539,15 +1551,16 @@ _C21_LIVE_HEAT = 450        # [100041, 100049]
 _C21_SHIPPED_EMPTY = 392    # event 21, ships empty and pending on real data
 
 
-def _c21_loads(value):
-    return json.loads(value) if isinstance(value, str) else value
-
-
 def _c21_heat(sql, heat_id):
-    """(status, [competitor ids]) straight out of the heats row."""
-    row = sql("SELECT status, competitors FROM heats WHERE id = :h",
-              h=heat_id)[0]
-    return row[0], (_c21_loads(row[1]) or [])
+    """(status, [competitor ids]).
+
+    D12-C commit F1: the status is still a heats column, the roster is
+    ``heat_assignments`` rows. Two queries where there used to be one, which is
+    fine here: this helper is called a handful of times inside a test, not in a
+    loop over the schedule.
+    """
+    status = sql("SELECT status FROM heats WHERE id = :h", h=heat_id)[0][0]
+    return status, heat_roster(sql, heat_id)
 
 
 def _c21_scratch(client, competitor_id, competitor_type):
@@ -3071,11 +3084,13 @@ def _generate_heats(client, event_id):
 
 
 def _heat_rosters(sql, event_id):
-    """Stored heat rosters for an event, in running order."""
-    rows = sql(
-        "SELECT competitors FROM heats WHERE event_id = :e "
-        " ORDER BY heat_number, run_number", e=event_id)
-    return [json.loads(c) if isinstance(c, str) else (c or []) for (c,) in rows]
+    """Stored heat rosters for an event, in running order.
+
+    D12-C commit F1: delegated to the shared helper, which orders heats by
+    ``heat_number, run_number`` exactly as this did and orders each roster by
+    assignment id, which is the order ``set_roster`` wrote them in.
+    """
+    return event_rosters(sql, event_id)
 
 
 @pytest.mark.sev3

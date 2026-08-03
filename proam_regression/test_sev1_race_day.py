@@ -162,11 +162,21 @@ def test_scratch_preview_resolves_the_college_competitor_not_the_pro(client, sql
 # 3. Scratch-undo does not restore heat membership / stand assignments
 # ---------------------------------------------------------------------------
 
+# D12-C commit F1: membership is a `heat_assignments` row, not an element of
+# a JSON array. The join also carries `competitor_type`, which the JSON form
+# structurally could not: the column held bare integers and the pro and
+# college id sequences overlap, so the old query answered "some competitor
+# numbered :c" where this one answers "this competitor". On the post-reseed
+# mirror the college ids live at +100000 and the two forms select identically,
+# which is what makes this a safe swap to make here rather than a change of
+# what the test measures.
 HEATS_HOLDING = """
     SELECT h.id FROM heats h
     JOIN events e ON e.id = h.event_id
-    CROSS JOIN LATERAL json_array_elements_text(h.competitors::json) AS m(cid)
-    WHERE e.tournament_id = :t AND m.cid::int = :c
+    JOIN heat_assignments a ON a.heat_id = h.id
+    WHERE e.tournament_id = :t
+      AND a.competitor_id = :c
+      AND a.competitor_type = e.event_type
 """
 
 
@@ -174,9 +184,10 @@ HEATS_HOLDING = """
 def test_scratch_undo_restores_heat_membership(client, sql):
     """Undo must put the competitor back into the heats they were pulled from.
 
-    Membership is checked by exact JSON array element, never by substring:
-    competitors is stored as a JSON list, so LIKE '%1%' would match ids 1, 11,
-    21 and 31 alike and produce a test that reports whatever it likes.
+    Membership is checked by exact assignment row, never by substring. When
+    this roster lived in a JSON column the same rule applied for the same
+    reason: LIKE '%1%' would match ids 1, 11, 21 and 31 alike and produce a
+    test that reports whatever it likes.
     """
     pro = sql("""
         SELECT p.id, p.name FROM pro_competitors p
@@ -397,24 +408,35 @@ def test_college_competitor_can_be_added_to_a_heat_day_of(client, sql, flashes):
         JOIN heats h ON h.event_id = e.id
         WHERE c.tournament_id = :t
           AND c.status = 'active'
+          -- D12-C commit F1: not in this heat, and this heat has room. Both
+          -- were JSON array predicates; both are `heat_assignments` counts
+          -- now. `competitor_type` is carried on the membership test for the
+          -- same reason as HEATS_HOLDING; the occupancy count is not typed,
+          -- because a stand is occupied by whoever is standing on it.
           AND NOT EXISTS (
-              SELECT 1 FROM json_array_elements_text(h.competitors::json) AS m(cid)
-              WHERE m.cid::int = c.id)
+              SELECT 1 FROM heat_assignments a
+              WHERE a.heat_id = h.id
+                AND a.competitor_id = c.id
+                AND a.competitor_type = 'college')
           AND coalesce(e.max_stands, 5) >
-              coalesce(json_array_length(h.competitors::json), 0)
+              (SELECT count(*) FROM heat_assignments a WHERE a.heat_id = h.id)
         ORDER BY c.id, e.id, h.id
         LIMIT 1
     """, t=TID)
     assert row, "could not find a college competitor with room in an entered event"
     cid, cname, eid, ename, hid = row[0]
 
-    before = sql("SELECT competitors FROM heats WHERE id = :h", h=hid)[0][0]
+    # D12-C commit F1: the roster is the rows. Ordered, so the failure message
+    # prints a list the operator would recognise off a run sheet.
+    ROSTER = ("SELECT a.competitor_id FROM heat_assignments a "
+              "WHERE a.heat_id = :h ORDER BY a.id")
+    before = [r[0] for r in sql(ROSTER, h=hid)]
     r = client.post(
         f"/scheduling/{TID}/event/{eid}/add-to-heat",
         data={"competitor_id": str(cid), "heat_id": str(hid)},
     )
     msgs = flashes()
-    after = sql("SELECT competitors FROM heats WHERE id = :h", h=hid)[0][0]
+    after = [r[0] for r in sql(ROSTER, h=hid)]
 
     errors = [m for cat, m in msgs if cat == "error"]
     assert not errors, (
@@ -424,7 +446,7 @@ def test_college_competitor_can_be_added_to_a_heat_day_of(client, sql, flashes):
         f"college competitor. The error tells the operator to fix it on the "
         f"registration page, which writes the name again."
     )
-    assert str(cid) in str(after) and str(cid) not in str(before), (
+    assert cid in after and cid not in before, (
         f"no heat row written. before={before} after={after}"
     )
 
@@ -445,11 +467,14 @@ def test_pro_late_entry_still_works(client, sql, flashes):
         WHERE p.tournament_id = :t
           AND p.status = 'active'
           AND NOT e.is_partnered
+          -- D12-C commit F1: see the college twin above.
           AND NOT EXISTS (
-              SELECT 1 FROM json_array_elements_text(h.competitors::json) AS m(cid)
-              WHERE m.cid::int = p.id)
+              SELECT 1 FROM heat_assignments a
+              WHERE a.heat_id = h.id
+                AND a.competitor_id = p.id
+                AND a.competitor_type = 'pro')
           AND coalesce(e.max_stands, 5) >
-              coalesce(json_array_length(h.competitors::json), 0)
+              (SELECT count(*) FROM heat_assignments a WHERE a.heat_id = h.id)
         ORDER BY p.id, e.id, h.id
         LIMIT 1
     """, t=TID)
