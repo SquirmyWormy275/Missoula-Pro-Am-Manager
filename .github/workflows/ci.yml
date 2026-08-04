@@ -52,10 +52,7 @@ jobs:
           PROAM_ROUTE_SMOKE_SOURCE_DB: instance/ci_route_smoke.db
         run: |
           pytest -x -q --tb=short \
-            --ignore=tests/test_migration_integrity.py \
-            --ignore=tests/test_db_constraints.py \
-            --ignore=tests/test_model_json_safety.py \
-            --ignore=tests/test_postgres_compat.py
+            --ignore=tests/test_migration_integrity.py
 
   postgres-smoke:
     runs-on: ubuntu-latest
