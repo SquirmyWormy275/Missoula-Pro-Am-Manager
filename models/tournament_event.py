@@ -30,11 +30,10 @@ This model is inert.  The migration creates the table; nothing writes to it and
 nothing reads from it.  It exists so the reducer, projector, and dispatcher in
 later phases have a substrate already in production and already migrated.
 """
-from datetime import datetime
-
 import sqlalchemy as sa
 
 from database import db
+from services.time_utils import utc_now_naive
 
 from ._types import BIG_ID, JSON_PAYLOAD
 
@@ -71,7 +70,7 @@ class TournamentEvent(db.Model):
     )
 
     # Injected at the edge. NEVER read inside the reducer.
-    occurred_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    occurred_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
 
     # Fully self-describing intent. Must carry everything the reducer needs;
     # the reducer is not allowed to query other tables to interpret it.

@@ -1,12 +1,11 @@
 """
 Tournament model for managing overall tournament state.
 """
-from datetime import datetime
-
 import sqlalchemy as sa
 
 from config import TournamentStatus  # noqa: F401 — re-exported for convenience
 from database import db
+from services.time_utils import utc_now_naive
 
 
 class Tournament(db.Model):
@@ -35,8 +34,10 @@ class Tournament(db.Model):
     schedule_config = db.Column(db.Text, nullable=True)
 
     # Timestamps
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    updated_at = db.Column(
+        db.DateTime, nullable=False, default=utc_now_naive, onupdate=utc_now_naive
+    )
 
     # Relationships
     # O3: every dynamic relationship carries a deterministic default order.

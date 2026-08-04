@@ -4,9 +4,9 @@ One row per send attempt. Populated by services/email_delivery.py.
 """
 
 import json
-from datetime import datetime
 
 from database import db
+from services.time_utils import utc_now_naive
 
 EMAIL_LOG_STATUSES = ("queued", "sent", "failed")
 
@@ -31,7 +31,7 @@ class PrintEmailLog(db.Model):
     )
     subject = db.Column(db.String(300), nullable=False)
 
-    sent_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    sent_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
     sent_by_user_id = db.Column(
         db.Integer,
         db.ForeignKey("users.id", ondelete="SET NULL"),

@@ -494,7 +494,7 @@ def export_video_judge_workbook(tournament_id):
     tournaments use the /async variant to offload via background_jobs.
     """
     from services.video_judge_export import VideoJudgeWorkbookError
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     try:
         export = build_video_judge_export(tournament)
     except VideoJudgeWorkbookError as exc:

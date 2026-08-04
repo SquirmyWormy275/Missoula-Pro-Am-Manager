@@ -1,7 +1,6 @@
 """Audit log model for critical state changes."""
-from datetime import datetime
-
 from database import db
+from services.time_utils import utc_now_naive
 
 
 class AuditLog(db.Model):
@@ -22,5 +21,5 @@ class AuditLog(db.Model):
     ip_address = db.Column(db.String(64), nullable=True)
     user_agent = db.Column(db.String(255), nullable=True)
     details_json = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
 
