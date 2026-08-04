@@ -187,16 +187,17 @@ class TestMigrationIntegrity:
     as the ORM models declare."""
 
     @pytest.fixture(scope='class', autouse=True)
-    def schemas(self, request):
+    @classmethod
+    def schemas(cls):
         """Build both schemas once per class (they are expensive)."""
         mig_simple, mig_detail, mig_idx = _build_migration_schema()
         mod_simple, mod_detail, mod_idx = _build_model_schema()
-        request.cls.migration_schema = mig_simple
-        request.cls.model_schema = mod_simple
-        request.cls.migration_detail = mig_detail
-        request.cls.model_detail = mod_detail
-        request.cls.migration_indexes = mig_idx
-        request.cls.model_indexes = mod_idx
+        cls.migration_schema = mig_simple
+        cls.model_schema = mod_simple
+        cls.migration_detail = mig_detail
+        cls.model_detail = mod_detail
+        cls.migration_indexes = mig_idx
+        cls.model_indexes = mod_idx
 
     # -- Table and column existence (original tests) -----------------------
 
@@ -516,7 +517,8 @@ class TestMigrationChain:
     """Verify the migration chain is linear and has no broken links."""
 
     @pytest.fixture(scope='class', autouse=True)
-    def migration_graph(self, request):
+    @classmethod
+    def migration_graph(cls):
         """Parse all migration files to build the revision graph."""
         import glob
         import importlib.util
@@ -545,7 +547,7 @@ class TestMigrationChain:
                     'file': os.path.basename(path),
                     'is_merge': isinstance(down, tuple),
                 }
-        request.cls.graph = graph
+        cls.graph = graph
 
     def test_no_orphan_revisions(self):
         """Every down_revision must point to an existing revision (or None)."""
@@ -614,7 +616,8 @@ class TestModelColumnDeclarations:
     """
 
     @pytest.fixture(scope='class', autouse=True)
-    def model_metadata(self, request, tmp_path_factory):
+    @classmethod
+    def model_metadata(cls, tmp_path_factory):
         """Load model metadata using a temp DB (never touches production)."""
         tmp_db = tmp_path_factory.mktemp('nullable') / 'test.db'
         old_db_url = os.environ.get('DATABASE_URL')
@@ -624,8 +627,8 @@ class TestModelColumnDeclarations:
             app = create_app()
             from database import db
             with app.app_context():
-                request.cls.metadata = db.metadata
-                request.cls.app = app
+                cls.metadata = db.metadata
+                cls.app = app
         finally:
             if old_db_url is None:
                 os.environ.pop('DATABASE_URL', None)
@@ -684,7 +687,8 @@ class TestMigrationFileQuality:
     """
 
     @pytest.fixture(scope='class', autouse=True)
-    def migration_files(self, request):
+    @classmethod
+    def migration_files(cls):
         """Read all migration file contents."""
         import glob
 
@@ -697,7 +701,7 @@ class TestMigrationFileQuality:
             basename = os.path.basename(path)
             with open(path, 'r', encoding='utf-8') as f:
                 files[basename] = f.read()
-        request.cls.files = files
+        cls.files = files
 
     def test_no_idempotent_hacks(self):
         """Migration files should not use _add_column_if_missing() or similar.
