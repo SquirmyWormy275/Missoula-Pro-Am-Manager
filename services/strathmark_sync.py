@@ -22,6 +22,7 @@ import os
 from datetime import date
 from typing import Optional
 
+from database import db
 from services.time_utils import utc_now_naive
 
 logger = logging.getLogger(__name__)
@@ -519,7 +520,7 @@ def push_pro_event_results(event, tournament_year: int) -> None:
     for result in event.results.filter_by(status='completed').all():
         if result.result_value is None:
             continue
-        comp = ProCompetitor.query.get(result.competitor_id)
+        comp = db.session.get(ProCompetitor, result.competitor_id)
         if comp is None or not comp.strathmark_id:
             logger.info(
                 'STRATHMARK: pro competitor %s (id=%s) has no strathmark_id; '
@@ -590,7 +591,7 @@ def _record_prediction_residuals_for_pro_event(event, event_code: str) -> None:
             if result.result_value is None:
                 continue
 
-            comp = ProCompetitor.query.get(result.competitor_id)
+            comp = db.session.get(ProCompetitor, result.competitor_id)
             if comp is None or not comp.strathmark_id:
                 # strathmark_id absence already logged by push_pro_event_results().
                 continue
@@ -722,7 +723,7 @@ def push_college_event_results(event, tournament_year: int) -> None:
         if result.result_value is None:
             continue
 
-        comp = CollegeCompetitor.query.get(result.competitor_id)
+        comp = db.session.get(CollegeCompetitor, result.competitor_id)
         if comp is None:
             continue
 

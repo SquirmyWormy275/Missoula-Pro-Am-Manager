@@ -451,7 +451,7 @@ def remove_competitor_event(tournament_id, competitor_id):
 
     # Re-validate team
     errors_by_team = _validate_college_entry_constraints({competitor.team_id})
-    team = Team.query.get(competitor.team_id)
+    team = db.session.get(Team, competitor.team_id)
     if team:
         team_errors = errors_by_team.get(competitor.team_id, [])
         team.set_validation_errors(team_errors)
@@ -490,7 +490,7 @@ def add_competitor_event(tournament_id, competitor_id):
 
     # Re-validate team
     errors_by_team = _validate_college_entry_constraints({competitor.team_id})
-    team = Team.query.get(competitor.team_id)
+    team = db.session.get(Team, competitor.team_id)
     if team:
         team_errors = errors_by_team.get(competitor.team_id, [])
         team.set_validation_errors(team_errors)
@@ -522,7 +522,7 @@ def set_competitor_partner(tournament_id, competitor_id):
 
     # Re-validate team
     errors_by_team = _validate_college_entry_constraints({competitor.team_id})
-    team = Team.query.get(competitor.team_id)
+    team = db.session.get(Team, competitor.team_id)
     if team:
         team_errors = errors_by_team.get(competitor.team_id, [])
         team.set_validation_errors(team_errors)
@@ -1296,7 +1296,7 @@ def pro_gear_group_remove(tournament_id):
                 comp.gear_sharing = json.dumps(gear)
                 removed += 1
     elif competitor_id:
-        comp = ProCompetitor.query.get(competitor_id)
+        comp = db.session.get(ProCompetitor, competitor_id)
         if comp and comp.tournament_id == tournament_id:
             gear = comp.get_gear_sharing()
             if gear.get(event_key) == group_value:
@@ -1370,7 +1370,7 @@ def college_gear_update_ajax(tournament_id):
     except (TypeError, ValueError):
         return jsonify({'ok': False, 'error': 'Invalid competitor ID.'})
 
-    comp = CollegeCompetitor.query.get(competitor_id)
+    comp = db.session.get(CollegeCompetitor, competitor_id)
     if not comp or comp.tournament_id != tournament_id:
         return jsonify({'ok': False, 'error': 'Competitor not found.'})
 

@@ -196,7 +196,7 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
     invalid_count = 0
     valid_count = 0
     for team_id in touched_team_ids:
-        team = Team.query.get(team_id)
+        team = db.session.get(Team, team_id)
         if not team:
             continue
         team_errors = errors_by_team.get(team_id, [])
@@ -707,7 +707,7 @@ def _validate_college_entry_constraints(team_ids: set) -> dict:
     partner_gender_requirements = _partnered_event_gender_requirements()
 
     for team_id in team_ids:
-        team = Team.query.get(team_id)
+        team = db.session.get(Team, team_id)
         if not team:
             continue
 

@@ -10,6 +10,7 @@ Provides comprehensive validation for:
 from typing import Dict, List, Optional, Tuple
 
 import config
+from database import db
 from models import Event, Heat, HeatAssignment, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.team import Team
@@ -268,7 +269,7 @@ class HeatValidator:
     def validate_gear_sharing(cls, heat: Heat) -> ValidationResult:
         """Check for gear sharing conflicts within a heat."""
         result = ValidationResult()
-        event = Event.query.get(heat.event_id)
+        event = db.session.get(Event, heat.event_id)
         if not event:
             return result
 

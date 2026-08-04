@@ -92,7 +92,7 @@ def flight_list(tournament_id):
     for flight in flights:
         heat_rows = []
         for heat in flight.get_heats_ordered():
-            event = Event.query.get(heat.event_id)
+            event = db.session.get(Event, heat.event_id)
             if not event:
                 continue
             comp_ids = heat.get_competitors()
@@ -388,7 +388,7 @@ def build_flights(tournament_id):
                     integrate_college_spillover_into_flights,
                     integrate_proam_relay_into_final_flight,
                 )
-                target = Tournament.query.get(target_tournament_id)
+                target = db.session.get(Tournament, target_tournament_id)
                 if not target:
                     raise RuntimeError(f'Tournament {target_tournament_id} not found.')
                 try:
@@ -824,7 +824,7 @@ def _send_upcoming_heat_sms(tournament_id: int, current_flight_number: int) -> N
         return
 
     # Batch-load all events referenced by this flight's heats so the SMS
-    # notify path doesn't issue one Event.query.get() per heat. Was N+1.
+    # notify path doesn't issue one db.session.get(Event, ) per heat. Was N+1.
     heats = list(target_flight.heats.all())
     event_ids = {h.event_id for h in heats}
     events_by_id = {

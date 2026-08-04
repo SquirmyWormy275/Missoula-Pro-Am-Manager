@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 def _load_competitor(comp_id, comp_type):
     """Load a competitor by ID and type string ('pro' or 'college')."""
     Model = ProCompetitor if comp_type == "pro" else CollegeCompetitor
-    return Model.query.get(comp_id)
+    return db.session.get(Model, comp_id)
 
 
 def get_orphaned_competitors(event):

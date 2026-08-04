@@ -95,7 +95,7 @@ def _push_strathmark_results(event: Event, tournament_id: int) -> None:
     """
     try:
         from services import strathmark_sync
-        tournament = Tournament.query.get(tournament_id)
+        tournament = db.session.get(Tournament, tournament_id)
         year = tournament.year if tournament else 0
 
         if event.event_type == 'pro' and event.stand_type in ('standing_block', 'underhand'):
@@ -698,7 +698,7 @@ def enter_heat_results(tournament_id, heat_id):
         user_id = _current_user_id()
         if heat.is_locked() and heat.locked_by_user_id != (user_id or -1):
             from models.user import User
-            locker = User.query.get(heat.locked_by_user_id)
+            locker = db.session.get(User, heat.locked_by_user_id)
             owner = locker.username if locker else f'User #{heat.locked_by_user_id}'
             msg = f'Heat is currently being edited by {owner}. Your submission was not saved.'
             if _is_async():
@@ -727,7 +727,7 @@ def enter_heat_results(tournament_id, heat_id):
         if heat.is_locked() and heat.locked_by_user_id != user_id:
             lock_blocked = True
             from models.user import User
-            locker = User.query.get(heat.locked_by_user_id)
+            locker = db.session.get(User, heat.locked_by_user_id)
             lock_owner = locker.username if locker else f'User #{heat.locked_by_user_id}'
         else:
             heat.acquire_lock(user_id)
@@ -886,7 +886,7 @@ def undo_heat_save(tournament_id, heat_id):
                 )
                 touched_team_ids = {c.team_id for c in touched_comps if c.team_id}
                 for team_id in touched_team_ids:
-                    team = Team.query.get(team_id)
+                    team = db.session.get(Team, team_id)
                     if team:
                         team.recalculate_points()
 
@@ -1027,14 +1027,14 @@ def _load_competitor_for_tournament(tournament_id: int, competitor_id: int):
 
     comp_type = (request.values.get('competitor_type') or '').strip().lower()
     if comp_type == 'college':
-        comp = CollegeCompetitor.query.get(competitor_id)
+        comp = db.session.get(CollegeCompetitor, competitor_id)
     elif comp_type == 'pro':
-        comp = ProCompetitor.query.get(competitor_id)
+        comp = db.session.get(ProCompetitor, competitor_id)
     elif comp_type:
         abort(400, description='Invalid competitor_type.')
     else:
-        pro = ProCompetitor.query.get(competitor_id)
-        college = CollegeCompetitor.query.get(competitor_id)
+        pro = db.session.get(ProCompetitor, competitor_id)
+        college = db.session.get(CollegeCompetitor, competitor_id)
         in_tournament = [
             c for c in (pro, college)
             if c is not None and c.tournament_id == tournament_id
@@ -1412,7 +1412,7 @@ def tournament_payout_manager(tournament_id):
             if not event_ids:
                 flash('Select at least one event.', 'error')
                 return _payout_redirect()
-            template = PayoutTemplate.query.get(tpl_id)
+            template = db.session.get(PayoutTemplate, tpl_id)
             if not template:
                 flash('Template not found.', 'error')
                 return _payout_redirect()
@@ -1834,11 +1834,11 @@ def replay_offline_score():
     if not tournament_id or not heat_id:
         return jsonify({'ok': False, 'message': 'Missing tournament or heat ID.'}), 400
 
-    tournament = Tournament.query.get(tournament_id)
+    tournament = db.session.get(Tournament, tournament_id)
     if not tournament:
         return jsonify({'ok': False, 'message': 'Tournament not found.'}), 404
 
-    heat = Heat.query.get(heat_id)
+    heat = db.session.get(Heat, heat_id)
     if not heat or not heat.event or heat.event.tournament_id != tournament_id:
         return jsonify({'ok': False, 'message': 'Heat not found.'}), 404
 

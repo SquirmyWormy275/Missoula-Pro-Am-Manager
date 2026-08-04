@@ -561,7 +561,7 @@ def compute_team_health(team_data: dict, tournament) -> dict:
     inactive_names = []
 
     def _member_status(member, model_cls):
-        obj = model_cls.query.get(member['id'])
+        obj = db.session.get(model_cls, member['id'])
         if obj is None:
             return 'unknown'
         return obj.status

@@ -204,7 +204,7 @@ def generate_heats(tournament_id, event_id):
                 'warning'
             )
         # Recompute hand-saw stand block alternation after heat gen commits.
-        tournament = Tournament.query.get(tournament_id)
+        tournament = db.session.get(Tournament, tournament_id)
         if tournament is not None:
             trigger_saw_block_recompute(tournament)
     except Exception as e:
@@ -395,7 +395,7 @@ def move_competitor_between_heats(tournament_id, event_id):
         try:
             from models import Event as EventModel
             from services.gear_sharing import competitors_share_gear_for_event
-            mover = ProCompetitor.query.get(competitor_id)
+            mover = db.session.get(ProCompetitor, competitor_id)
             if mover:
                 mover_gear = mover.get_gear_sharing()
                 all_events = EventModel.query.filter_by(tournament_id=event.tournament_id).all()
@@ -495,9 +495,9 @@ def scratch_competitor(tournament_id, event_id):
 
     # Look up competitor name for flash message
     if event.event_type == 'college':
-        comp = CollegeCompetitor.query.get(competitor_id)
+        comp = db.session.get(CollegeCompetitor, competitor_id)
     else:
-        comp = ProCompetitor.query.get(competitor_id)
+        comp = db.session.get(ProCompetitor, competitor_id)
     comp_name = comp.display_name if comp else f'Competitor #{competitor_id}'
 
     try:
@@ -538,7 +538,7 @@ def scratch_competitor(tournament_id, event_id):
         if comp:
             try:
                 from services.gear_sharing import cleanup_scratched_gear_entries
-                tournament = Tournament.query.get(tournament_id)
+                tournament = db.session.get(Tournament, tournament_id)
                 cleanup_scratched_gear_entries(tournament, scratched_competitor=comp)
             except Exception:
                 pass  # Gear cleanup failure should not block the scratch

@@ -50,7 +50,7 @@ def _hydrate_schedule_entries(
 ) -> list:
     hydrated = []
     for item in entries:
-        event = Event.query.get(item.get("event_id")) if item.get("event_id") else None
+        event = db.session.get(Event, item.get("event_id")) if item.get("event_id") else None
         detail_heats = []
         is_bracket = False
         is_partnered = False
@@ -63,7 +63,7 @@ def _hydrate_schedule_entries(
             if is_bracket:
                 bracket_competitors = _get_bracket_competitors(event)
             elif item.get("heat_id"):
-                heat = Heat.query.get(item["heat_id"])
+                heat = db.session.get(Heat, item["heat_id"])
                 if heat:
                     detail_heats = [_serialize_heat_detail(tournament, event, heat)]
             else:
@@ -187,7 +187,7 @@ def heat_sheets(tournament_id):
         for heat in heats_in_flight:
             comp_ids = heat.get_competitors()
             assignments = heat.get_stand_assignments()
-            event = Event.query.get(heat.event_id)
+            event = db.session.get(Event, heat.event_id)
             if not event:
                 continue
             if event.event_type == "college":

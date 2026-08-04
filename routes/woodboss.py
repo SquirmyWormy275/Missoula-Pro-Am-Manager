@@ -216,7 +216,7 @@ def copy_from(tid):
         flash('Cannot copy from the same tournament.', 'warning')
         return redirect(url_for('woodboss.config_form', tid=tid))
 
-    source = Tournament.query.get(source_tid)
+    source = db.session.get(Tournament, source_tid)
     if not source:
         flash('Source tournament not found.', 'danger')
         return redirect(url_for('woodboss.config_form', tid=tid))

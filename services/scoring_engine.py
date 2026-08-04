@@ -488,7 +488,7 @@ def calculate_positions(event: Event) -> None:
         for r in all_results:
             awarded = float(r.payout_amount or 0)
             if awarded:
-                comp = ProCompetitor.query.get(r.competitor_id)
+                comp = db.session.get(ProCompetitor, r.competitor_id)
                 if comp:
                     comp.total_earnings = max(0.0, comp.total_earnings - awarded)
             r.payout_amount = 0.0
@@ -510,7 +510,7 @@ def calculate_positions(event: Event) -> None:
             )
             stripped_team_ids = {c.team_id for c in stripped_comps if c.team_id}
             for tid in stripped_team_ids:
-                team = Team.query.get(tid)
+                team = db.session.get(Team, tid)
                 if team:
                     team.recalculate_points()
         return
@@ -641,7 +641,7 @@ def calculate_positions(event: Event) -> None:
         )
         touched_team_ids = {c.team_id for c in all_touched_comps if c.team_id}
         for team_id in touched_team_ids:
-            team = Team.query.get(team_id)
+            team = db.session.get(Team, team_id)
             if team:
                 team.recalculate_points()
 
@@ -977,7 +977,7 @@ def record_throwoff_result(event: Event, position_map: dict[int, int]) -> None:
             new_pay = event.get_payout_for_position(position)
             diff = new_pay - old_pay
             result.payout_amount = new_pay
-            comp = ProCompetitor.query.get(result.competitor_id)
+            comp = db.session.get(ProCompetitor, result.competitor_id)
             if comp:
                 comp.total_earnings = max(0.0, comp.total_earnings + diff)
 
@@ -993,7 +993,7 @@ def record_throwoff_result(event: Event, position_map: dict[int, int]) -> None:
         )
         touched_team_ids = {c.team_id for c in comp_rows if getattr(c, 'team_id', None)}
         for team_id in touched_team_ids:
-            team = Team.query.get(team_id)
+            team = db.session.get(Team, team_id)
             if team:
                 team.recalculate_points()
 
@@ -1394,7 +1394,7 @@ def apply_payout_template(event: Event, template_id: int) -> bool:
     the new payout amounts propagate to EventResult.payout_amount and
     ProCompetitor.total_earnings immediately.  Returns True on success.
     """
-    template = PayoutTemplate.query.get(template_id)
+    template = db.session.get(PayoutTemplate, template_id)
     if template is None:
         return False
     event.set_payouts(template.get_payouts())
@@ -1407,7 +1407,7 @@ def apply_payout_template(event: Event, template_id: int) -> bool:
 
 def delete_payout_template(template_id: int) -> bool:
     """Delete a payout template. Returns True if deleted."""
-    template = PayoutTemplate.query.get(template_id)
+    template = db.session.get(PayoutTemplate, template_id)
     if template is None:
         return False
     db.session.delete(template)
