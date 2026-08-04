@@ -15,7 +15,7 @@ from . import scheduling_bp
 @scheduling_bp.route('/<int:tournament_id>/show-day')
 def show_day(tournament_id):
     """Live operations dashboard for show day."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     flights = Flight.query.filter_by(tournament_id=tournament_id).order_by(Flight.flight_number).all()
 
     flight_data = []

@@ -51,14 +51,14 @@ scoring_bp = Blueprint('scoring', __name__)
 # ---------------------------------------------------------------------------
 
 def _event_for_tournament_or_404(tournament_id: int, event_id: int) -> Event:
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
     return event
 
 
 def _heat_for_tournament_or_404(tournament_id: int, heat_id: int) -> Heat:
-    heat = Heat.query.get_or_404(heat_id)
+    heat = db.get_or_404(Heat, heat_id)
     if not heat.event or heat.event.tournament_id != tournament_id:
         abort(404)
     return heat
@@ -531,7 +531,7 @@ def next_unscored_heat(tournament_id, event_id):
 @scoring_bp.route('/<int:tournament_id>/next-incomplete-event')
 def next_incomplete_event(tournament_id):
     """Jump to the first event with pending heats in this tournament."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     # Find events that have at least one pending heat
     incomplete = (Event.query
                   .join(Heat, Heat.event_id == Event.id)
@@ -552,7 +552,7 @@ def next_incomplete_event(tournament_id):
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/results')
 def event_results(tournament_id, event_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
     heats = event.heats.order_by(Heat.heat_number, Heat.run_number).all()
     results = event.get_results_sorted()
@@ -687,7 +687,7 @@ def finalize_event(tournament_id, event_id):
 @login_required
 @write_limit('60 per minute')
 def enter_heat_results(tournament_id, heat_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     heat = _heat_for_tournament_or_404(tournament_id, heat_id)
     event = heat.event
 
@@ -967,7 +967,7 @@ def record_throwoff(tournament_id, event_id):
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/import-results', methods=['GET', 'POST'])
 def import_results(tournament_id, event_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
 
     if request.method == 'POST':
@@ -1023,7 +1023,7 @@ def _load_competitor_for_tournament(tournament_id: int, competitor_id: int):
     that path is only reachable from a hand-typed URL.
     Aborts 404 if not found, 403 if tournament mismatch (IDOR guard R6).
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     comp_type = (request.values.get('competitor_type') or '').strip().lower()
     if comp_type == 'college':
@@ -1271,7 +1271,7 @@ def scratch_undo(tournament_id, competitor_id):
 
 @scoring_bp.route('/<int:tournament_id>/offline-ops')
 def offline_ops(tournament_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     events = tournament.events.order_by(Event.name).all()
     event_directory = {e.id: {'name': e.display_name, 'type': e.event_type} for e in events}
     return render_template('scoring/offline_ops.html',
@@ -1284,7 +1284,7 @@ def offline_ops(tournament_id):
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/payouts', methods=['GET', 'POST'])
 def configure_payouts(tournament_id, event_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
 
     if event.event_type != 'pro':
@@ -1388,7 +1388,7 @@ def _parse_payout_form() -> dict | None:
 @scoring_bp.route('/<int:tournament_id>/pro/payout-manager', methods=['GET', 'POST'])
 def tournament_payout_manager(tournament_id):
     """Tournament-level payout configuration dashboard for all pro events."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     def _payout_redirect():
         """Return redirect to payout manager or setup page depending on return_to."""
@@ -1590,9 +1590,9 @@ def toggle_settlement(tid, rid):
     AJAX callers (X-Requested-With: XMLHttpRequest) receive JSON
     ``{"ok": true, "settled": <bool>}``.  Plain-form callers are redirected.
     """
-    result = EventResult.query.get_or_404(rid)
+    result = db.get_or_404(EventResult, rid)
     # Ownership check — result must belong to an event in this tournament.
-    event = Event.query.get_or_404(result.event_id)
+    event = db.get_or_404(Event, result.event_id)
     if event.tournament_id != tid:
         abort(404)
 
@@ -1627,7 +1627,7 @@ def heat_sheet_pdf(tournament_id, heat_id):
     Attempts to render a PDF via WeasyPrint if installed; falls back to a
     print-optimised HTML page that the browser can save as PDF.
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     heat = _heat_for_tournament_or_404(tournament_id, heat_id)
     event = heat.event
 
@@ -1715,7 +1715,7 @@ def judge_sheet_for_event(tournament_id: int, event_id: int):
     """Blank judge sheet PDF (or HTML fallback) for a single event."""
     from services.judge_sheet import get_event_heats_for_judging
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
     sheet = get_event_heats_for_judging(event.id)
     if sheet is None:
@@ -1735,7 +1735,7 @@ def judge_sheets_all(tournament_id: int):
     """
     from services.judge_sheet import get_event_heats_for_judging
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     events = (
         Event.query
         .filter_by(tournament_id=tournament.id)
@@ -1875,7 +1875,7 @@ def repair_points(tournament_id):
             and getattr(current_user, 'role', None) == 'admin'):
         return jsonify({'ok': False, 'message': 'Admin role required.'}), 403
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     from models.competitor import CollegeCompetitor
     from models.team import Team

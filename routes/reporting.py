@@ -146,7 +146,7 @@ def college_standings(tournament_id):
     fails to break the tie.  The plain ``bull`` / ``belle`` lists stay in
     the payload for backwards compat with any caller that expects them.
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     payload = _cached_payload(
         f'reports:{tournament_id}:college_standings',
@@ -196,7 +196,7 @@ def college_standings(tournament_id):
 @record_print('college_standings')
 def college_standings_print(tournament_id):
     """Printable version of college standings."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     bull = tournament.get_bull_of_woods(5)
     belle = tournament.get_belle_of_woods(5)
@@ -212,8 +212,8 @@ def college_standings_print(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/event/<int:event_id>/results')
 def event_results_report(tournament_id, event_id):
     """View detailed event results."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament.id:
         abort(404)
 
@@ -229,8 +229,8 @@ def event_results_report(tournament_id, event_id):
 @record_print('event_results', entity_id_kwarg='event_id')
 def event_results_print(tournament_id, event_id):
     """Printable version of event results."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament.id:
         abort(404)
 
@@ -245,7 +245,7 @@ def event_results_print(tournament_id, event_id):
 @reporting_bp.route('/<int:tournament_id>/pro/payouts', methods=['GET', 'POST'])
 def pro_payout_summary(tournament_id):
     """View pro competitor payout summary with settlement tracking."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from models.competitor import ProCompetitor
 
     if request.method == 'POST':
@@ -313,7 +313,7 @@ def pro_payout_summary(tournament_id):
 @record_print('pro_payouts')
 def pro_payout_summary_print(tournament_id):
     """Printable version of payout summary."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     competitors = tournament.pro_competitors.filter_by(status='active').all()
     competitors = sorted(competitors, key=lambda c: c.total_earnings, reverse=True)
@@ -329,7 +329,7 @@ def pro_payout_summary_print(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/all-results')
 def all_results(tournament_id):
     """View all event results for the tournament."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     college_events = tournament.events.filter_by(event_type='college', status='completed').all()
     pro_events = tournament.events.filter_by(event_type='pro', status='completed').all()
@@ -344,7 +344,7 @@ def all_results(tournament_id):
 @record_print('all_results')
 def all_results_print(tournament_id):
     """Printable version of all results."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     college_events = tournament.events.filter_by(event_type='college', status='completed').all()
     pro_events = tournament.events.filter_by(event_type='pro', status='completed').all()
@@ -358,7 +358,7 @@ def all_results_print(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/export-results')
 def export_results(tournament_id):
     """Export standings and event results to Excel."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     export = build_results_export(tournament)
     log_action('report_export_downloaded', 'tournament', tournament.id, {
         'tournament_id': tournament.id,
@@ -381,7 +381,7 @@ def export_results(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/export-chopping')
 def export_chopping_results(tournament_id):
     """Export only chopping event scores/results for external handicap tools."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     fmt = (request.args.get('format') or 'xlsx').strip().lower()
 
     if fmt == 'json':
@@ -416,7 +416,7 @@ def export_chopping_results(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/export-results/async', methods=['POST'])
 def export_results_async(tournament_id):
     """Start export generation as a background job for larger tournaments."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     job_id = submit_results_export_job(tournament_id)
     log_action('report_export_job_started', 'tournament', tournament.id, {'job_id': job_id})
     db.session.commit()
@@ -425,7 +425,7 @@ def export_results_async(tournament_id):
 
 @reporting_bp.route('/<int:tournament_id>/jobs/<job_id>')
 def export_results_job_status(tournament_id, job_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     job = resolve_completed_export_path(tournament_id, job_id, get_job)
     if not job:
         abort(404)
@@ -522,7 +522,7 @@ def export_video_judge_workbook(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/export-video-judge/async', methods=['POST'])
 def export_video_judge_workbook_async(tournament_id):
     """Start Video Judge workbook generation as a background job."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     job_id = submit_video_judge_export_job(tournament_id)
     log_action('report_export_job_started', 'tournament', tournament.id, {
         'job_id': job_id,
@@ -536,7 +536,7 @@ def export_video_judge_workbook_async(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/backup')
 def backup_database(tournament_id):
     """Download a raw sqlite backup file for disaster recovery."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     if not current_user.is_authenticated or not current_user.is_admin:
         abort(403)
 
@@ -556,7 +556,7 @@ def backup_database(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/restore', methods=['POST'])
 def restore_database(tournament_id):
     """Restore SQLite database from an uploaded backup file."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     if not current_user.is_authenticated or not current_user.is_admin:
         abort(403)
 
@@ -634,7 +634,7 @@ def payout_settlement(tournament_id):
 @reporting_bp.route('/<int:tournament_id>/pro/fee-tracker', methods=['GET', 'POST'])
 def fee_tracker(tournament_id):
     """Consolidated view for tracking entry fee collection from pro competitors."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from models.competitor import ProCompetitor
 
     if request.method == 'POST':
@@ -716,7 +716,7 @@ def pro_event_fees(tournament_id):
       fee_<event_id>   — fee amount for that event (float, blank to skip)
       overwrite        — if present, overwrite existing non-zero fees too
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from models.competitor import ProCompetitor
 
     pro_events = Event.query.filter_by(
@@ -805,7 +805,7 @@ def pro_event_fees(tournament_id):
 def cloud_backup(tournament_id):
     """Trigger an S3 cloud backup (or local fallback) and return JSON status."""
     from flask import jsonify
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     if not current_user.is_authenticated or not current_user.is_admin:
         abort(403)
 
@@ -834,7 +834,7 @@ def ala_membership_report(tournament_id):
     if not current_user.is_authenticated or not current_user.is_admin:
         abort(403)
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.ala_report import build_ala_report
 
     report = build_ala_report(tournament)
@@ -856,7 +856,7 @@ def ala_membership_report_pdf(tournament_id):
     if not current_user.is_authenticated or not current_user.is_admin:
         abort(403)
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.ala_report import build_ala_report, generate_ala_pdf
 
     report = build_ala_report(tournament)
@@ -899,7 +899,7 @@ def ala_email_report(tournament_id):
     if not current_user.is_authenticated or not current_user.is_admin:
         abort(403)
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.ala_report import build_ala_report, generate_ala_pdf
 
     report = build_ala_report(tournament)

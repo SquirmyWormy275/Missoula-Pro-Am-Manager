@@ -163,7 +163,7 @@ def heat_sheets(tournament_id):
     from services.flight_builder import _STAND_CONFLICT_GAP
     from services.time_utils import utc_now_naive
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     # Build {(event_id, competitor_id): status} for SCR/DNF indicators on heat sheets
     result_status = {
@@ -366,7 +366,7 @@ def relay_teams_sheet(tournament_id):
     from services.proam_relay import ProAmRelay
     from services.time_utils import utc_now_naive
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = ProAmRelay(tournament)
     state = relay.relay_data or {}
     teams = state.get("teams") or []
@@ -396,7 +396,7 @@ def day_schedule_print(tournament_id):
     """Printable day schedule with heat/stand assignments."""
     from services.schedule_builder import build_day_schedule
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     session_key = f"schedule_options_{tournament_id}"
     # DB-first read: Friday Showcase page + Run Show page both persist these
     # keys to schedule_config. Reading session-only meant a printout from a

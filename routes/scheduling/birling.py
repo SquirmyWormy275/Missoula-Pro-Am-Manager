@@ -67,8 +67,8 @@ def _flash_projection_refusal(bb):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling', methods=['GET'])
 def birling_manage(tournament_id, event_id):
     """Birling bracket management page — seeding, generation, and match recording."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
         abort(404)
 
@@ -154,8 +154,8 @@ def birling_manage(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/generate', methods=['POST'])
 def birling_generate(tournament_id, event_id):
     """Generate a new birling bracket using seeded order from form."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
         abort(404)
 
@@ -238,8 +238,8 @@ def birling_generate(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/record', methods=['POST'])
 def birling_record_match(tournament_id, event_id):
     """Record the result of a birling match."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
         abort(404)
 
@@ -293,8 +293,8 @@ def birling_record_match(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/fall', methods=['POST'])
 def birling_record_fall(tournament_id, event_id):
     """Record a single fall in a best-of-3 birling match."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
         abort(404)
 
@@ -370,8 +370,8 @@ def _fall_loser_count(result):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/undo', methods=['POST'])
 def birling_undo_match(tournament_id, event_id):
     """Undo a birling match result — return both competitors to the match."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
         abort(404)
 
@@ -421,8 +421,8 @@ def birling_undo_match(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/reset', methods=['POST'])
 def birling_reset(tournament_id, event_id):
     """Reset the birling bracket (clear all data)."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
         abort(404)
 
@@ -446,8 +446,8 @@ def birling_reset(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/finalize', methods=['POST'])
 def birling_finalize(tournament_id, event_id):
     """Finalize birling bracket — write placements to EventResult records."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
         abort(404)
 
@@ -492,7 +492,7 @@ def birling_finalize(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/birling', methods=['GET'])
 def birling_index(tournament_id):
     """Landing page listing every college birling event in the tournament."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     events = (
         Event.query
         .filter_by(tournament_id=tournament_id)
@@ -567,8 +567,8 @@ def birling_print_blank(tournament_id, event_id):
     matches play out.  If the bracket has not been generated yet, flash
     a redirect back to the seeding page.
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
         abort(404)
 
@@ -601,7 +601,7 @@ def birling_print_all(tournament_id):
     the ``judge_sheets_all`` idiom: one click, one document, show-prep
     ready.
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     events = (
         Event.query
         .filter_by(tournament_id=tournament_id)

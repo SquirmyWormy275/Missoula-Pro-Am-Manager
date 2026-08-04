@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from flask import render_template
 
+from database import db
 from models import Event, Tournament
 from services.print_catalog import record_print
 from services.print_response import weasyprint_or_html
@@ -68,7 +69,7 @@ def _build_checkout_rows(tournament: Tournament) -> list[dict]:
 @record_print("pro_checkout")
 def pro_checkout_roster_print(tournament_id):
     """HTML print view — judge loads in browser and Ctrl-P."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     rows = _build_checkout_rows(tournament)
     return render_template(
         "scheduling/pro_checkout_roster_print.html",
@@ -82,7 +83,7 @@ def pro_checkout_roster_print(tournament_id):
 @record_print("pro_checkout")
 def pro_checkout_roster_pdf(tournament_id):
     """PDF download (WeasyPrint if installed, HTML fallback on Railway)."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     rows = _build_checkout_rows(tournament)
     html = render_template(
         "scheduling/pro_checkout_roster_print.html",

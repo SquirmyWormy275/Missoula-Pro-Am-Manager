@@ -291,7 +291,7 @@ def new_tournament():
 @main_bp.route('/tournament/<int:tournament_id>')
 def tournament_detail(tournament_id):
     """Tournament detail and management page."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     from models.wood_config import WoodConfig
     # Get summary statistics
@@ -315,7 +315,7 @@ def tournament_detail(tournament_id):
 @main_bp.route('/tournament/<int:tournament_id>/setup', methods=['GET'])
 def tournament_setup(tournament_id):
     """Consolidated setup page: events, wood specs, and tournament dates."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     active_tab = request.args.get('tab', 'payouts')
 
     # Events tab data — helpers live in scheduling.py
@@ -395,7 +395,7 @@ def tournament_setup(tournament_id):
 def save_tournament_settings(tournament_id):
     """Save tournament name, year, and dates."""
     from datetime import date as date_type
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     name = request.form.get('name', '').strip()
     if name:
@@ -443,7 +443,7 @@ def save_tournament_settings(tournament_id):
 @main_bp.route('/tournament/<int:tournament_id>/activate/<competition_type>', methods=['POST'])
 def activate_competition(tournament_id, competition_type):
     """Activate college or pro competition for a tournament."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     if competition_type == 'college':
         tournament.status = TournamentStatus.COLLEGE_ACTIVE
@@ -476,7 +476,7 @@ def activate_competition(tournament_id, competition_type):
 @main_bp.route('/tournament/<int:tournament_id>/delete', methods=['POST'])
 def delete_tournament(tournament_id):
     """Delete a tournament from the dashboard list."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     tournament_name = f'{tournament.name} {tournament.year}'
     confirmation = request.form.get('confirm_delete', '').strip()
 
@@ -530,7 +530,7 @@ def delete_tournament(tournament_id):
 @main_bp.route('/tournament/<int:tournament_id>/college')
 def college_dashboard(tournament_id):
     """College competition dashboard."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     teams = tournament.teams.all()
     events = tournament.events.filter_by(event_type='college').all()
@@ -565,7 +565,7 @@ def college_dashboard(tournament_id):
 @main_bp.route('/tournament/<int:tournament_id>/pro')
 def pro_dashboard(tournament_id):
     """Professional competition dashboard."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     competitors = tournament.pro_competitors.all()
     events = tournament.events.filter_by(event_type='pro').all()
@@ -615,7 +615,7 @@ def pro_dashboard(tournament_id):
 @main_bp.route('/tournament/<int:tournament_id>/clone', methods=['POST'])
 def clone_tournament(tournament_id):
     """Clone a tournament: copy events (no heats/results) and all competitor/team records."""
-    source = Tournament.query.get_or_404(tournament_id)
+    source = db.get_or_404(Tournament, tournament_id)
 
     # Create new tournament
     new_tournament = Tournament(
@@ -819,7 +819,7 @@ def ops_dashboard(tid):
     Read-only.  Requires judge role (main is in MANAGEMENT_BLUEPRINTS).
     Auto-refreshes every 30 seconds via JS.
     """
-    tournament = Tournament.query.get_or_404(tid)
+    tournament = db.get_or_404(Tournament, tid)
 
     from models.audit_log import AuditLog
     from models.event import EventResult
@@ -1026,7 +1026,7 @@ def export_tournament_config(tournament_id):
     and schedule config. Seeds the modular platform — extract REAL config from a
     WORKING tournament instead of building abstract config from scratch.
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     events = Event.query.filter_by(tournament_id=tournament_id).order_by(Event.name).all()
 
     event_configs = []

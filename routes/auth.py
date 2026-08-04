@@ -252,7 +252,7 @@ def toggle_user_active(user_id):
     if denied:
         return denied
 
-    user = User.query.get_or_404(user_id)
+    user = db.get_or_404(User, user_id)
     if user.id == current_user.id:
         log_action('user_toggle_active_denied', 'user', user.id, {
             'reason': 'self_disable_attempt',

@@ -28,7 +28,7 @@ woodboss_public_bp = Blueprint('woodboss_public', __name__)
 
 @woodboss_bp.route('/<int:tid>')
 def dashboard(tid):
-    tournament = Tournament.query.get_or_404(tid)
+    tournament = db.get_or_404(Tournament, tid)
     report = woodboss_svc.get_wood_report(tid)
     share_token = woodboss_svc.generate_share_token(
         tid, current_app.config.get('SECRET_KEY', '')
@@ -47,7 +47,7 @@ def dashboard(tid):
 
 @woodboss_bp.route('/<int:tid>/config', methods=['GET'])
 def config_form(tid):
-    tournament = Tournament.query.get_or_404(tid)
+    tournament = db.get_or_404(Tournament, tid)
     configs = woodboss_svc._get_configs(tid)
     block_rows = woodboss_svc.calculate_blocks(tid, configs=configs)
     general_cfg = configs.get(woodboss_svc.LOG_GENERAL_KEY)
@@ -89,7 +89,7 @@ def config_form(tid):
 
 @woodboss_bp.route('/<int:tid>/config', methods=['POST'])
 def save_config(tid):
-    tournament = Tournament.query.get_or_404(tid)
+    tournament = db.get_or_404(Tournament, tid)
 
     # Gather all unique config_keys from the form
     all_keys = set()
@@ -205,7 +205,7 @@ def save_config(tid):
 @woodboss_bp.route('/<int:tid>/config/copy-from', methods=['POST'])
 def copy_from(tid):
     """Copy wood specs from another tournament into this one."""
-    tournament = Tournament.query.get_or_404(tid)
+    tournament = db.get_or_404(Tournament, tid)
     try:
         source_tid = int(request.form.get('source_tid', 0))
     except (ValueError, TypeError):
@@ -273,7 +273,7 @@ def copy_from(tid):
 @woodboss_bp.route('/<int:tid>/config/apply-preset', methods=['POST'])
 def apply_preset(tid):
     """Apply a named wood preset to this tournament's config."""
-    Tournament.query.get_or_404(tid)
+    db.get_or_404(Tournament, tid)
     preset_name = request.form.get('preset_name', '').strip()
     if not preset_name:
         flash('No preset selected.', 'warning')
@@ -297,7 +297,7 @@ def apply_preset(tid):
 @woodboss_bp.route('/<int:tid>/config/save-preset', methods=['POST'])
 def save_preset(tid):
     """Save current tournament config as a named preset."""
-    Tournament.query.get_or_404(tid)
+    db.get_or_404(Tournament, tid)
     preset_name = request.form.get('preset_name', '').strip()
     if not preset_name:
         flash('Preset name is required.', 'warning')
@@ -328,7 +328,7 @@ def save_preset(tid):
 @woodboss_bp.route('/<int:tid>/config/delete-preset', methods=['POST'])
 def delete_preset(tid):
     """Delete a custom preset."""
-    Tournament.query.get_or_404(tid)
+    db.get_or_404(Tournament, tid)
     preset_name = request.form.get('preset_name', '').strip()
     if not preset_name:
         flash('No preset specified.', 'warning')
@@ -351,7 +351,7 @@ def delete_preset(tid):
 
 @woodboss_bp.route('/<int:tid>/report')
 def report(tid):
-    tournament = Tournament.query.get_or_404(tid)
+    tournament = db.get_or_404(Tournament, tid)
     view = request.args.get('view', 'event')
     report_data = woodboss_svc.get_wood_report(tid)
     share_token = woodboss_svc.generate_share_token(
@@ -370,7 +370,7 @@ def report(tid):
 @woodboss_bp.route('/<int:tid>/report/print')
 @record_print('woodboss_report')
 def report_print(tid):
-    tournament = Tournament.query.get_or_404(tid)
+    tournament = db.get_or_404(Tournament, tid)
     report_data = woodboss_svc.get_wood_report(tid)
     return render_template(
         'woodboss/report_print.html',
@@ -385,7 +385,7 @@ def report_print(tid):
 
 @woodboss_bp.route('/<int:tid>/lottery')
 def lottery(tid):
-    tournament = Tournament.query.get_or_404(tid)
+    tournament = db.get_or_404(Tournament, tid)
     columns = woodboss_svc.get_lottery_view(tid)
     return render_template(
         'woodboss/lottery.html',
@@ -415,7 +415,7 @@ def share(tid):
         token, tid, current_app.config.get('SECRET_KEY', '')
     ):
         abort(403)
-    tournament = Tournament.query.get_or_404(tid)
+    tournament = db.get_or_404(Tournament, tid)
     report_data = woodboss_svc.get_wood_report(tid)
     return render_template(
         'woodboss/report_print.html',

@@ -162,7 +162,7 @@ def set_partner_bidirectional(orphan, new_partner, event):
 @scheduling_bp.route("/<int:tid>/events/<int:eid>/partner-queue")
 def partner_queue(tid, eid):
     """GET: Show orphaned partners needing reassignment."""
-    event = Event.query.get_or_404(eid)
+    event = db.get_or_404(Event, eid)
     if event.tournament_id != tid:
         abort(404)
     if not getattr(event, "is_partnered", False):
@@ -206,7 +206,7 @@ def partner_queue(tid, eid):
 @scheduling_bp.route("/<int:tid>/events/<int:eid>/reassign-partner", methods=["POST"])
 def reassign_partner(tid, eid):
     """POST: Assign a new partner to an orphaned competitor."""
-    event = Event.query.get_or_404(eid)
+    event = db.get_or_404(Event, eid)
     if event.tournament_id != tid:
         abort(404)
 

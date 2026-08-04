@@ -88,7 +88,7 @@ def _temp_path(filename: str) -> str:
 # ---------------------------------------------------------------------------
 @import_pro_bp.route('/<int:tournament_id>/pro-entries', methods=['GET', 'POST'])
 def upload_pro_entries(tournament_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     if request.method == 'GET':
         return render_template('pro/import_upload.html', tournament=tournament)
@@ -183,7 +183,7 @@ def upload_pro_entries(tournament_id):
 # ---------------------------------------------------------------------------
 @import_pro_bp.route('/<int:tournament_id>/pro-entries/review')
 def review_pro_entries(tournament_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     temp_name = session.get(_session_key(tournament_id))
     if not temp_name:
@@ -227,7 +227,7 @@ def review_pro_entries(tournament_id):
 # ---------------------------------------------------------------------------
 @import_pro_bp.route('/<int:tournament_id>/pro-entries/confirm', methods=['POST'])
 def confirm_pro_entries(tournament_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     temp_name = session.get(_session_key(tournament_id))
     if not temp_name:

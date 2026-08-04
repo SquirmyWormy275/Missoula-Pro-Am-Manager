@@ -82,7 +82,7 @@ def friday_feature(tournament_id):
     """Configure Friday Night Feature events and Saturday college spillover."""
     from services.schedule_builder import COLLEGE_SATURDAY_PRIORITY
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     # FNF: pro events eligible for Friday Night
     eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
@@ -236,7 +236,7 @@ def friday_feature(tournament_id):
 @record_print('fnf_print')
 def friday_feature_print(tournament_id):
     """Printable Friday Night Feature schedule — heat-by-heat order per event."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
     pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
     eligible_events = [e for e in pro_events if e.name in eligible_names]
@@ -266,7 +266,7 @@ def friday_feature_pdf(tournament_id):
     from services.print_response import weasyprint_or_html
     from services.time_utils import utc_now_naive
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
     pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
     eligible_events = [e for e in pro_events if e.name in eligible_names]

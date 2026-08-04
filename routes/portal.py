@@ -16,6 +16,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import func
 
 from config import TournamentStatus
+from database import db
 from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.school_captain import SchoolCaptain
@@ -65,7 +66,7 @@ def competitor_access():
             flash('Please enter the competitor full name.', 'error')
             return redirect(url_for('portal.competitor_access', view=view_mode))
 
-        tournament = Tournament.query.get_or_404(tournament_id)
+        tournament = db.get_or_404(Tournament, tournament_id)
         matches = _find_competitor_matches(tournament, full_name)
         if not matches:
             flash('No competitor found with that name in this tournament.', 'error')
@@ -105,7 +106,7 @@ def competitor_access():
 def spectator_dashboard(tournament_id):
     """Public spectator landing page with College vs Pro choice."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     return render_template(
         'portal/spectator_dashboard.html',
         tournament=tournament,
@@ -118,7 +119,7 @@ def spectator_dashboard(tournament_id):
 def spectator_college_standings(tournament_id):
     """College-focused spectator page."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     payload = _cached_public_payload(
         f'portal:college:{tournament_id}',
         lambda: _build_college_spectator_payload(tournament),
@@ -140,7 +141,7 @@ def spectator_college_standings(tournament_id):
 def spectator_pro_standings(tournament_id):
     """Pro-focused spectator page."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     payload = _cached_public_payload(
         f'portal:pro:{tournament_id}',
@@ -160,7 +161,7 @@ def spectator_pro_standings(tournament_id):
 def spectator_relay_results(tournament_id):
     """Public Pro-Am Relay results page."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.proam_relay import get_proam_relay
 
     relay = get_proam_relay(tournament)
@@ -179,8 +180,8 @@ def spectator_relay_results(tournament_id):
 def spectator_event_results(tournament_id, event_id):
     """Public event results page with heat/ranking sorting options."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
     if event.status != 'completed':
@@ -223,7 +224,7 @@ def competitor_public():
         flash('Invalid competitor portal link.', 'error')
         return redirect(url_for('portal.competitor_access', view=view_mode))
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     competitor = _load_competitor(tournament_id, competitor_type, competitor_id)
     if not competitor:
         flash('Competitor not found for this tournament.', 'error')
@@ -267,7 +268,7 @@ def competitor_claim():
         flash('Invalid competitor verification request.', 'error')
         return redirect(url_for('portal.competitor_access', view=view_mode))
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     competitor = _load_competitor(tournament_id, competitor_type, competitor_id)
     if not competitor:
         flash('Competitor not found for this tournament.', 'error')
@@ -335,7 +336,6 @@ def competitor_claim():
             ))
         competitor.set_portal_pin(pin)
         _mark_competitor_session_authorized(tournament_id, competitor_type, competitor_id)
-        from database import db
         db.session.commit()
         flash('PIN set. Your competitor portal is now protected.', 'success')
         return redirect(url_for(
@@ -380,7 +380,7 @@ def competitor_dashboard():
         flash('Competitor account is missing tournament/competitor link data.', 'error')
         return redirect(url_for('main.index'))
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     competitor = _load_competitor(tournament_id, competitor_type, competitor_id)
     if not competitor:
         flash('Linked competitor record was not found.', 'error')
@@ -696,7 +696,7 @@ def _build_pro_spectator_payload(tournament: Tournament) -> dict:
 @portal_bp.route('/kiosk/<int:tournament_id>')
 def kiosk(tournament_id):
     """Auto-rotating fullscreen kiosk display for TV/projector."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     # College team standings
     from models import Team
@@ -778,7 +778,6 @@ def sms_opt_in_toggle():
     new_state = not bool(competitor.phone_opted_in)
     competitor.phone_opted_in = new_state
 
-    from database import db
     from services.audit import log_action
     log_action('sms_opt_in_changed', 'competitor', competitor_id, {
         'competitor_type': competitor_type,
@@ -823,7 +822,7 @@ def school_access():
             flash('Please enter your school name.', 'error')
             return redirect(url_for('portal.school_access', view=view_mode))
 
-        tournament = Tournament.query.get_or_404(tournament_id)
+        tournament = db.get_or_404(Tournament, tournament_id)
         matched_schools = _find_schools(tournament, school_query)
 
         if not matched_schools:
@@ -872,7 +871,7 @@ def school_claim():
         flash('Invalid school portal link.', 'error')
         return redirect(url_for('portal.school_access', view=view_mode))
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     if not tournament.teams.filter_by(school_name=school_name, status='active').first():
         flash('School not found in this tournament.', 'error')
@@ -893,8 +892,6 @@ def school_claim():
     requires_pin = captain is not None and captain.has_pin
 
     if request.method == 'POST':
-        from database import db
-
         if requires_pin:
             pin = (request.form.get('pin') or '').strip()
             if not _is_valid_pin(pin):
@@ -975,7 +972,7 @@ def school_dashboard():
         flash('Invalid school portal link.', 'error')
         return redirect(url_for('portal.school_access', view=view_mode))
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     if not _can_access_school_page(tournament_id, school_name):
         return redirect(url_for(
@@ -1155,14 +1152,14 @@ def competitor_my_results(tournament_id, competitor_type, competitor_id):
     holds an authenticated claim for this competitor, PIN is not re-prompted.
     """
     view_mode = _resolve_view_mode(prefer_mobile=True)
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     if competitor_type == 'college':
-        competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+        competitor = db.get_or_404(CollegeCompetitor, competitor_id)
         if competitor.tournament_id != tournament_id:
             abort(404)
     elif competitor_type == 'pro':
-        competitor = ProCompetitor.query.get_or_404(competitor_id)
+        competitor = db.get_or_404(ProCompetitor, competitor_id)
         if competitor.tournament_id != tournament_id:
             abort(404)
     else:

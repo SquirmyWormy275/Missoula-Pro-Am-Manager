@@ -24,7 +24,7 @@ bp = Blueprint('proam_relay', __name__, url_prefix='/tournament/<int:tournament_
 @bp.route('/')
 def relay_dashboard(tournament_id):
     """Pro-Am Relay dashboard."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
 
     teams = relay.get_teams()
@@ -47,7 +47,7 @@ def relay_dashboard(tournament_id):
 @bp.route('/draw', methods=['POST'])
 def draw_lottery(tournament_id):
     """Run the Pro-Am Relay lottery."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
 
     try:
@@ -74,7 +74,7 @@ def draw_lottery(tournament_id):
 @bp.route('/redraw', methods=['POST'])
 def redraw_lottery(tournament_id):
     """Clear and redraw the lottery."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
 
     existing_team_count = len(relay.get_teams()) or 2
@@ -106,7 +106,7 @@ def redraw_lottery(tournament_id):
 @bp.route('/teams')
 def view_teams(tournament_id):
     """View the relay teams."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
     teams = relay.get_teams()
     team_health = {t['team_number']: compute_team_health(t, tournament) for t in teams}
@@ -122,7 +122,7 @@ def view_teams(tournament_id):
 @bp.route('/results', methods=['GET', 'POST'])
 def enter_results(tournament_id):
     """Enter relay total times per team."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
 
     if request.method == 'POST':
@@ -165,7 +165,7 @@ def enter_results(tournament_id):
 @bp.route('/standings')
 def standings(tournament_id):
     """View relay standings/results."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
 
     return render_template('proam_relay/standings.html',
@@ -179,7 +179,7 @@ def standings(tournament_id):
 @bp.route('/manual-teams', methods=['GET'])
 def manual_teams(tournament_id):
     """Manual team builder with drag-and-drop."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
 
     return render_template('proam_relay/manual_teams.html',
@@ -194,7 +194,7 @@ def manual_teams(tournament_id):
 @bp.route('/manual-teams/save', methods=['POST'])
 def save_manual_teams(tournament_id):
     """Save manually assigned teams."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
 
     try:
@@ -221,7 +221,7 @@ def save_manual_teams(tournament_id):
 @bp.route('/replace-competitor', methods=['POST'])
 def replace_competitor(tournament_id):
     """Replace a competitor on a team (e.g., due to injury)."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
 
     try:
@@ -255,7 +255,7 @@ def replace_competitor(tournament_id):
 @bp.route('/payouts', methods=['GET'])
 def relay_payouts(tournament_id):
     """Show relay payout configuration form."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay_event = Event.query.filter_by(
         tournament_id=tournament_id, name='Pro-Am Relay'
     ).first()
@@ -274,7 +274,7 @@ def relay_payouts(tournament_id):
 @bp.route('/payouts', methods=['POST'])
 def save_relay_payouts(tournament_id):
     """Save per-team lump sum payout amounts."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     relay_event = Event.query.filter_by(
         tournament_id=tournament_id, name='Pro-Am Relay'
     ).first()
@@ -304,7 +304,7 @@ def save_relay_payouts(tournament_id):
 @bp.route('/api/status')
 def api_status(tournament_id):
     """Get relay status as JSON."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     relay = get_proam_relay(tournament)
 
     return jsonify({

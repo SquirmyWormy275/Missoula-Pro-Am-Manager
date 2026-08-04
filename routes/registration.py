@@ -89,7 +89,7 @@ def allowed_file(filename):
 @registration_bp.route('/<int:tournament_id>/college')
 def college_registration(tournament_id):
     """College team registration page."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     all_teams = tournament.teams.all()
     valid_teams = [t for t in all_teams if t.status != 'invalid']
     invalid_teams = [t for t in all_teams if t.status == 'invalid']
@@ -105,7 +105,7 @@ def college_registration(tournament_id):
 @write_limit('10 per minute')  # Excel parsing is expensive; prevents accidental or malicious flood.
 def upload_college_entry(tournament_id):
     """Upload and process a college entry form Excel file."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     if 'file' not in request.files:
         flash(text.FLASH['no_file'], 'error')
@@ -171,8 +171,8 @@ def upload_college_entry(tournament_id):
 @registration_bp.route('/<int:tournament_id>/college/team/<int:team_id>')
 def team_detail(tournament_id, team_id):
     """View and edit team details."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    team = Team.query.get_or_404(team_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    team = db.get_or_404(Team, team_id)
     if team.tournament_id != tournament.id:
         flash('Team not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -239,7 +239,7 @@ def team_detail(tournament_id, team_id):
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/scratch', methods=['POST'])
 def scratch_college_competitor(tournament_id, competitor_id):
     """Scratch a college competitor via the cascade preview flow."""
-    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(CollegeCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -259,7 +259,7 @@ def scratch_college_competitor(tournament_id, competitor_id):
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/delete', methods=['POST'])
 def delete_college_competitor(tournament_id, competitor_id):
     """Delete a college competitor from registration and schedule."""
-    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(CollegeCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -287,7 +287,7 @@ def delete_college_competitor(tournament_id, competitor_id):
 @registration_bp.route('/<int:tournament_id>/college/team/<int:team_id>/delete', methods=['POST'])
 def delete_college_team(tournament_id, team_id):
     """Delete a college team and all its competitors."""
-    team = Team.query.get_or_404(team_id)
+    team = db.get_or_404(Team, team_id)
     if team.tournament_id != tournament_id:
         flash('Team not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -322,7 +322,7 @@ def delete_college_team(tournament_id, team_id):
 def revalidate_team(tournament_id, team_id):
     """Re-run constraint validation for a team and promote to active if clean."""
     from services.excel_io import _validate_college_entry_constraints
-    team = Team.query.get_or_404(team_id)
+    team = db.get_or_404(Team, team_id)
     if team.tournament_id != tournament_id:
         flash('Team not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -353,7 +353,7 @@ def revalidate_team(tournament_id, team_id):
 @registration_bp.route('/<int:tournament_id>/college/team/<int:team_id>/override-validation', methods=['POST'])
 def override_team_validation(tournament_id, team_id):
     """Admin override: force a team to valid status despite validation errors."""
-    team = Team.query.get_or_404(team_id)
+    team = db.get_or_404(Team, team_id)
     if team.tournament_id != tournament_id:
         flash('Team not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -395,7 +395,7 @@ def remove_team_override(tournament_id, team_id):
     re-apply the override.
     """
     from services.excel_io import _validate_college_entry_constraints
-    team = Team.query.get_or_404(team_id)
+    team = db.get_or_404(Team, team_id)
     if team.tournament_id != tournament_id:
         flash('Team not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -427,7 +427,7 @@ def remove_team_override(tournament_id, team_id):
 def remove_competitor_event(tournament_id, competitor_id):
     """Remove a single event from a competitor's entry and re-validate the team."""
     from services.excel_io import _validate_college_entry_constraints
-    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(CollegeCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -466,7 +466,7 @@ def remove_competitor_event(tournament_id, competitor_id):
 def add_competitor_event(tournament_id, competitor_id):
     """Add a single event to a competitor's entry and re-validate the team."""
     from services.excel_io import _validate_college_entry_constraints
-    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(CollegeCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -505,7 +505,7 @@ def add_competitor_event(tournament_id, competitor_id):
 def set_competitor_partner(tournament_id, competitor_id):
     """Set or clear a competitor's partner for a specific event, then re-validate the team."""
     from services.excel_io import _validate_college_entry_constraints
-    competitor = CollegeCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(CollegeCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
@@ -539,7 +539,7 @@ def set_competitor_partner(tournament_id, competitor_id):
 @registration_bp.route('/<int:tournament_id>/pro')
 def pro_registration(tournament_id):
     """Legacy pro registration route now merged into the Pro dashboard."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     return redirect(url_for('main.pro_dashboard', tournament_id=tournament_id))
 
 
@@ -547,7 +547,7 @@ def pro_registration(tournament_id):
 @write_limit('30 per minute')  # Rate-limit competitor creation to prevent runaway imports.
 def new_pro_competitor(tournament_id):
     """Add a new professional competitor."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     if request.method == 'POST':
         competitor = ProCompetitor(
@@ -619,8 +619,8 @@ def new_pro_competitor(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>')
 def pro_competitor_detail(tournament_id, competitor_id):
     """View and edit professional competitor details."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    competitor = db.get_or_404(ProCompetitor, competitor_id)
     if competitor.tournament_id != tournament.id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
@@ -685,8 +685,8 @@ def pro_competitor_detail(tournament_id, competitor_id):
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/update-events', methods=['POST'])
 def update_pro_events(tournament_id, competitor_id):
     """Update pro competitor event enrollment, fees, and gear sharing."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    competitor = db.get_or_404(ProCompetitor, competitor_id)
     if competitor.tournament_id != tournament.id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
@@ -785,7 +785,7 @@ def update_pro_events(tournament_id, competitor_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing')
 def pro_gear_manager(tournament_id):
     """Gear-sharing audit and management dashboard for pro competitors."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import build_gear_report, get_gear_groups
     report = build_gear_report(tournament)
     gear_groups = get_gear_groups(tournament)
@@ -817,7 +817,7 @@ def pro_gear_manager(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/parse', methods=['POST'])
 def pro_gear_parse(tournament_id):
     """Parse free-text gear_sharing_details fields into structured gear_sharing maps."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import parse_all_gear_details
     try:
         result = parse_all_gear_details(tournament)
@@ -839,7 +839,7 @@ def pro_gear_parse(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/sync-heats', methods=['POST'])
 def pro_gear_sync_heats(tournament_id):
     """Detect and auto-fix gear-sharing conflicts in existing pro heats."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import fix_heat_gear_conflicts
     try:
         result = fix_heat_gear_conflicts(tournament)
@@ -875,14 +875,14 @@ def pro_gear_sync_heats(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/update', methods=['POST'])
 def pro_gear_update(tournament_id):
     """Set or clear a single gear-sharing entry for a pro competitor."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     try:
         competitor_id = int(request.form.get('competitor_id', ''))
     except (TypeError, ValueError):
         flash('Invalid competitor ID.', 'error')
         return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
 
-    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(ProCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
@@ -952,13 +952,13 @@ def pro_gear_update(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/update-ajax', methods=['POST'])
 def pro_gear_update_ajax(tournament_id):
     """AJAX JSON endpoint for inline gear-sharing edits in the dashboard unresolved table."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     try:
         competitor_id = int(request.form.get('competitor_id', ''))
     except (TypeError, ValueError):
         return jsonify({'ok': False, 'error': 'Invalid competitor ID'}), 400
 
-    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(ProCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         return jsonify({'ok': False, 'error': 'Competitor not found in this tournament'}), 403
 
@@ -1010,14 +1010,14 @@ def pro_gear_update_ajax(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/remove', methods=['POST'])
 def pro_gear_remove(tournament_id):
     """Remove a gear-sharing entry from a pro competitor."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     try:
         competitor_id = int(request.form.get('competitor_id', ''))
     except (TypeError, ValueError):
         flash('Invalid competitor ID.', 'error')
         return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
 
-    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(ProCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found.', 'error')
         return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
@@ -1039,7 +1039,7 @@ def pro_gear_remove(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/auto-assign-partners', methods=['POST'])
 def auto_assign_pro_partners_route(tournament_id):
     """Auto assign partners for pro partnered events."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.partner_matching import auto_assign_pro_partners
 
     summary = auto_assign_pro_partners(tournament)
@@ -1074,7 +1074,7 @@ def auto_assign_pro_partners_route(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/complete-pairs', methods=['POST'])
 def pro_gear_complete_pairs(tournament_id):
     """Write reciprocal gear-sharing entries for all one-sided pairs."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import complete_one_sided_pairs
     try:
         result = complete_one_sided_pairs(tournament)
@@ -1091,7 +1091,7 @@ def pro_gear_complete_pairs(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/cleanup-scratched', methods=['POST'])
 def pro_gear_cleanup_scratched(tournament_id):
     """Remove gear-sharing entries referencing scratched competitors."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import cleanup_scratched_gear_entries
     try:
         result = cleanup_scratched_gear_entries(tournament)
@@ -1118,7 +1118,7 @@ def pro_gear_cleanup_scratched(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/cleanup-non-enrolled', methods=['POST'])
 def pro_gear_cleanup_non_enrolled(tournament_id):
     """Remove gear-sharing entries pointing at events the competitor is not enrolled in."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import cleanup_non_enrolled_gear_entries
     try:
         result = cleanup_non_enrolled_gear_entries(tournament)
@@ -1147,7 +1147,7 @@ def pro_gear_cleanup_non_enrolled(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/auto-partners', methods=['POST'])
 def pro_gear_auto_partners(tournament_id):
     """Copy gear_sharing entries into partners for partnered events."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import auto_populate_partners_from_gear
     try:
         result = auto_populate_partners_from_gear(tournament)
@@ -1167,7 +1167,7 @@ def pro_gear_auto_partners(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/parse-review')
 def pro_gear_parse_review(tournament_id):
     """Show proposed gear-sharing parse results for review before committing."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import build_parse_review
     rows = build_parse_review(tournament)
     return render_template(
@@ -1180,7 +1180,7 @@ def pro_gear_parse_review(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/parse-confirm', methods=['POST'])
 def pro_gear_parse_confirm(tournament_id):
     """Commit approved parse rows from the parse-review page."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import (
         build_parse_review,
         normalize_person_name,
@@ -1222,7 +1222,7 @@ def pro_gear_parse_confirm(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/group-create', methods=['POST'])
 def pro_gear_group_create(tournament_id):
     """Create or update a gear-sharing group (multiple pairs sharing one piece of equipment)."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     group_name = (request.form.get('group_name') or '').strip()
     event_key = (request.form.get('event_key') or '').strip()
     competitor_ids_raw = request.form.getlist('competitor_ids')
@@ -1273,7 +1273,7 @@ def pro_gear_group_create(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/group-remove', methods=['POST'])
 def pro_gear_group_remove(tournament_id):
     """Remove a gear-sharing group entry from one or all members."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     group_name = (request.form.get('group_name') or '').strip()
     event_key = (request.form.get('event_key') or '').strip()
     remove_all = request.form.get('remove_all') == 'on'
@@ -1322,7 +1322,7 @@ def pro_gear_group_remove(tournament_id):
 @registration_bp.route('/<int:tournament_id>/college/gear-sharing/update', methods=['POST'])
 def college_gear_update(tournament_id):
     """Set a gear-sharing entry for a college competitor."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     from models.competitor import CollegeCompetitor
     try:
         competitor_id = int(request.form.get('competitor_id', ''))
@@ -1330,7 +1330,7 @@ def college_gear_update(tournament_id):
         flash('Invalid competitor ID.', 'error')
         return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
 
-    comp = CollegeCompetitor.query.get_or_404(competitor_id)
+    comp = db.get_or_404(CollegeCompetitor, competitor_id)
     if comp.tournament_id != tournament_id:
         flash('Competitor not found.', 'error')
         return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
@@ -1363,7 +1363,7 @@ def college_gear_update(tournament_id):
 @registration_bp.route('/<int:tournament_id>/college/gear-sharing/update-ajax', methods=['POST'])
 def college_gear_update_ajax(tournament_id):
     """AJAX: Set a gear-sharing entry for a college competitor and return JSON."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     from models.competitor import CollegeCompetitor
     try:
         competitor_id = int(request.form.get('competitor_id', ''))
@@ -1399,7 +1399,7 @@ def college_gear_update_ajax(tournament_id):
 @registration_bp.route('/<int:tournament_id>/college/gear-sharing/remove', methods=['POST'])
 def college_gear_remove(tournament_id):
     """Remove a gear-sharing entry from a college competitor."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     from models.competitor import CollegeCompetitor
     try:
         competitor_id = int(request.form.get('competitor_id', ''))
@@ -1407,7 +1407,7 @@ def college_gear_remove(tournament_id):
         flash('Invalid competitor ID.', 'error')
         return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
 
-    comp = CollegeCompetitor.query.get_or_404(competitor_id)
+    comp = db.get_or_404(CollegeCompetitor, competitor_id)
     if comp.tournament_id != tournament_id:
         flash('Competitor not found.', 'error')
         return redirect(url_for('registration.pro_gear_manager', tournament_id=tournament_id))
@@ -1435,7 +1435,7 @@ def college_gear_remove(tournament_id):
 @record_print('gear_sharing_print')
 def pro_gear_print(tournament_id):
     """Printable gear-sharing report grouped by equipment category."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.gear_sharing import build_gear_report, get_gear_groups
     report = build_gear_report(tournament)
     gear_groups = get_gear_groups(tournament)
@@ -1454,7 +1454,7 @@ def pro_gear_print(tournament_id):
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/scratch', methods=['POST'])
 def scratch_pro_competitor(tournament_id, competitor_id):
     """Scratch a professional competitor via the cascade preview flow."""
-    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(ProCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))
@@ -1550,7 +1550,7 @@ def _validate_image(file_storage) -> bool:
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/upload-headshot', methods=['POST'])
 def upload_pro_headshot(tournament_id, competitor_id):
     """Upload a headshot image for a pro competitor."""
-    competitor = ProCompetitor.query.get_or_404(competitor_id)
+    competitor = db.get_or_404(ProCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.pro_registration', tournament_id=tournament_id))

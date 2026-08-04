@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from flask import Blueprint, Response, current_app, jsonify, stream_with_context
 
+from database import db
 from services.time_utils import utc_now_naive
 
 
@@ -117,7 +118,7 @@ except ImportError:
 @api_bp.route('/public/tournaments/<int:tournament_id>/standings')
 @_limit('120 per minute')
 def public_standings(tournament_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pro_earnings_rows = (
         ProCompetitor.query
         .filter_by(tournament_id=tournament.id, status='active')
@@ -142,7 +143,7 @@ def public_standings(tournament_id):
 
 @api_bp.route('/public/tournaments/<int:tournament_id>/schedule')
 def public_schedule(tournament_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     events = tournament.events.order_by(Event.event_type, Event.name, Event.gender).all()
     event_ids = [e.id for e in events]
 
@@ -182,7 +183,7 @@ def public_schedule(tournament_id):
 
 @api_bp.route('/public/tournaments/<int:tournament_id>/results')
 def public_results(tournament_id):
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     completed_events = tournament.events.filter_by(status='completed').order_by(Event.event_type, Event.name, Event.gender).all()
     event_ids = [e.id for e in completed_events]
 
@@ -231,7 +232,7 @@ def public_results(tournament_id):
 @_limit('120 per minute')
 def standings_poll(tournament_id):
     """Lightweight polling endpoint for live leaderboard auto-refresh."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     cache_key = f'api:standings-poll:{tournament_id}'
     ttl_seconds = max(1, int(current_app.config.get('PUBLIC_CACHE_TTL_SECONDS', 5)))
     cached = cache_get(cache_key)
@@ -370,7 +371,7 @@ def handicap_input(tournament_id):
     Public payload intended for handicap portal integrations.
     Includes chopping-only historical rows for model ingestion.
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     return jsonify({
         'tournament': {
             'id': tournament.id,
