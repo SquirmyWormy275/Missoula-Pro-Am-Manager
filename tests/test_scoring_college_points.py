@@ -8,6 +8,7 @@ and tied competitors receive identical positions and points.
 import pytest
 
 import config
+from database import db
 from tests.conftest import (
     make_college_competitor,
     make_event,
@@ -372,7 +373,7 @@ class TestCollegeTeamStandings:
                         r.points_awarded = exp_pts
                         # Award individual points to competitor
                         from models.competitor import CollegeCompetitor
-                        comp = CollegeCompetitor.query.get(r.competitor_id)
+                        comp = db.session.get(CollegeCompetitor, r.competitor_id)
                         if comp and exp_pts:
                             comp.individual_points += exp_pts
                 event.status = 'completed'
@@ -428,7 +429,7 @@ class TestCollegeTeamStandings:
                         r.final_position = exp_pos
                         r.points_awarded = exp_pts
                         from models.competitor import CollegeCompetitor
-                        comp = CollegeCompetitor.query.get(r.competitor_id)
+                        comp = db.session.get(CollegeCompetitor, r.competitor_id)
                         if comp and exp_pts:
                             comp.individual_points += exp_pts
                 event.status = 'completed'
@@ -488,7 +489,7 @@ class TestCollegeIndividualStandings:
                         r.final_position = exp_pos
                         r.points_awarded = exp_pts
                         from models.competitor import CollegeCompetitor
-                        comp = CollegeCompetitor.query.get(r.competitor_id)
+                        comp = db.session.get(CollegeCompetitor, r.competitor_id)
                         if comp and exp_pts:
                             comp.individual_points += exp_pts
 

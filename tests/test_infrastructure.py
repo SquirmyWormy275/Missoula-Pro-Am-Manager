@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from database import db
 from database import db as _db
 
 # ---------------------------------------------------------------------------

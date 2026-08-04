@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from database import db
 from database import db as _db
 
 
@@ -284,7 +285,7 @@ class TestBuildFlightsRouteModes:
 
         from models import Tournament
 
-        t_reloaded = Tournament.query.get(t.id)
+        t_reloaded = db.session.get(Tournament, t.id)
         cfg = _read_flight_sizing_config(t_reloaded)
         assert cfg["mode"] == "minutes"
         assert cfg["target_minutes_per_flight"] == 60
@@ -308,7 +309,7 @@ class TestBuildFlightsRouteModes:
 
         from models import Tournament
 
-        t_reloaded = Tournament.query.get(t.id)
+        t_reloaded = db.session.get(Tournament, t.id)
         cfg = _read_flight_sizing_config(t_reloaded)
         assert cfg["mode"] == "count"
         assert cfg["num_flights"] == 3
@@ -439,7 +440,7 @@ class TestSizingClamp:
         )
         from models import Tournament
 
-        t_reloaded = Tournament.query.get(t.id)
+        t_reloaded = db.session.get(Tournament, t.id)
         cfg = _read_flight_sizing_config(t_reloaded)
         assert 30 <= cfg["target_minutes_per_flight"] <= 180
         assert 1.0 <= cfg["minutes_per_heat"] <= 15.0

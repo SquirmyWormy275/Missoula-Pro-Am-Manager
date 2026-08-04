@@ -21,6 +21,7 @@ import json
 
 import pytest
 
+from database import db
 from database import db as _db
 from tests.conftest import make_event, make_tournament
 

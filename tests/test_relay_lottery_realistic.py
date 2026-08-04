@@ -12,6 +12,7 @@ import json
 
 import pytest
 
+from database import db
 from tests.conftest import (
     make_college_competitor,
     make_pro_competitor,
@@ -189,7 +190,7 @@ class TestRelayLotteryDraw:
                 drawn_pro_ids.add(m['id'])
 
         for pid in drawn_pro_ids:
-            comp = ProCompetitor.query.get(pid)
+            comp = db.session.get(ProCompetitor, pid)
             assert comp.pro_am_lottery_opt_in is True, (
                 f"Pro competitor {comp.name} was drawn but not opted in"
             )

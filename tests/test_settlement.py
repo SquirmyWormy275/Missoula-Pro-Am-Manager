@@ -14,6 +14,7 @@ import os
 
 import pytest
 
+from database import db
 from database import db as _db
 
 # ---------------------------------------------------------------------------
@@ -168,7 +169,7 @@ class TestToggleSettlementHappyPath:
         with app.app_context():
             from models.event import EventResult
 
-            fresh = EventResult.query.get(result.id)
+            fresh = db.session.get(EventResult, result.id)
             assert fresh.payout_settled is True
 
     def test_toggle_settled_to_unsettled(self, app, auth_client, db_session):
@@ -193,7 +194,7 @@ class TestToggleSettlementHappyPath:
         with app.app_context():
             from models.event import EventResult
 
-            fresh = EventResult.query.get(result.id)
+            fresh = db.session.get(EventResult, result.id)
             assert fresh.payout_settled is False
 
 

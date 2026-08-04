@@ -35,7 +35,7 @@ class TestStatusReasonPersistence:
         result.status_reason = "illegal axe"
         db_session.flush()
 
-        fresh = EventResult.query.get(result.id)
+        fresh = db.session.get(EventResult, result.id)
         assert fresh.status == "dq"
         assert fresh.status_reason == "illegal axe"
 
@@ -55,7 +55,7 @@ class TestStatusReasonPersistence:
         result.status_reason = "injury"
         db_session.flush()
 
-        fresh = EventResult.query.get(result.id)
+        fresh = db.session.get(EventResult, result.id)
         assert fresh.status == "dnf"
         assert fresh.status_reason == "injury"
 
@@ -75,7 +75,7 @@ class TestStatusReasonPersistence:
         )
         db_session.flush()
 
-        fresh = EventResult.query.get(result.id)
+        fresh = db.session.get(EventResult, result.id)
         assert fresh.status == "completed"
         assert fresh.status_reason is None
 
@@ -200,7 +200,7 @@ class TestScoringSubmissionAcceptsDq:
         # Re-fetch heat for current version_id after commit.
         from models.heat import Heat
 
-        heat = Heat.query.get(heat.id)
+        heat = db.session.get(Heat, heat.id)
 
         resp = c.post(
             f"/scoring/{t.id}/heat/{heat.id}/enter",

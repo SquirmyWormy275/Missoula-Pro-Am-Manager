@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+from database import db
 from models.event import Event, EventResult
 from tests.conftest import (
     make_college_competitor,
@@ -36,7 +37,7 @@ class TestEventModelAttributes:
         event = make_event(db_session, t, "Men's Underhand", event_type="pro")
         db_session.flush()
 
-        fresh = Event.query.get(event.id)
+        fresh = db.session.get(Event, event.id)
         assert hasattr(
             fresh, "event_state"
         ), "Event model must have event_state attribute"
@@ -46,7 +47,7 @@ class TestEventModelAttributes:
         event = make_event(db_session, t, "Stock Saw", event_type="pro")
         db_session.flush()
 
-        fresh = Event.query.get(event.id)
+        fresh = db.session.get(Event, event.id)
         assert fresh.event_state is None
 
     def test_event_state_accepts_json_string(self, db_session):
@@ -60,7 +61,7 @@ class TestEventModelAttributes:
         event.event_state = json.dumps(state)
         db_session.flush()
 
-        fresh = Event.query.get(event.id)
+        fresh = db.session.get(Event, event.id)
         assert json.loads(fresh.event_state) == state
 
 
@@ -75,7 +76,7 @@ class TestEventResultModelAttributes:
         result = make_event_result(db_session, event, comp, competitor_type="college")
         db_session.flush()
 
-        fresh = EventResult.query.get(result.id)
+        fresh = db.session.get(EventResult, result.id)
         assert hasattr(
             fresh, "payout_settled"
         ), "EventResult model must have payout_settled attribute"
@@ -88,7 +89,7 @@ class TestEventResultModelAttributes:
         result = make_event_result(db_session, event, comp, competitor_type="college")
         db_session.flush()
 
-        fresh = EventResult.query.get(result.id)
+        fresh = db.session.get(EventResult, result.id)
         assert fresh.payout_settled is False
 
     def test_payout_settled_can_be_toggled_to_true(self, db_session):
@@ -100,7 +101,7 @@ class TestEventResultModelAttributes:
         result.payout_settled = True
         db_session.flush()
 
-        fresh = EventResult.query.get(result.id)
+        fresh = db.session.get(EventResult, result.id)
         assert fresh.payout_settled is True
 
     def test_payout_settled_round_trips_false(self, db_session):
@@ -112,7 +113,7 @@ class TestEventResultModelAttributes:
         result.payout_settled = False
         db_session.flush()
 
-        fresh = EventResult.query.get(result.id)
+        fresh = db.session.get(EventResult, result.id)
         assert fresh.payout_settled is False
 
 
@@ -138,7 +139,7 @@ class TestEventStateMigrationLogic:
         relay.payouts = "{}"
         db_session.flush()
 
-        fresh = Event.query.get(relay.id)
+        fresh = db.session.get(Event, relay.id)
         assert json.loads(fresh.event_state) == relay_state
         assert fresh.payouts == "{}"
 
@@ -153,7 +154,7 @@ class TestEventStateMigrationLogic:
         birling.payouts = "{}"
         db_session.flush()
 
-        fresh = Event.query.get(birling.id)
+        fresh = db.session.get(Event, birling.id)
         assert json.loads(fresh.event_state) == bracket_state
 
     def test_non_state_event_event_state_stays_none(self, db_session):
@@ -162,7 +163,7 @@ class TestEventStateMigrationLogic:
         event = make_event(db_session, t, "Men's Underhand", event_type="pro")
         db_session.flush()
 
-        fresh = Event.query.get(event.id)
+        fresh = db.session.get(Event, event.id)
         assert fresh.event_state is None
 
     def test_event_state_accepts_null(self, db_session):
@@ -172,7 +173,7 @@ class TestEventStateMigrationLogic:
         event.event_state = None
         db_session.flush()
 
-        fresh = Event.query.get(event.id)
+        fresh = db.session.get(Event, event.id)
         assert fresh.event_state is None
 
     def test_multiple_events_independent_state(self, db_session):
@@ -188,9 +189,9 @@ class TestEventStateMigrationLogic:
         birling.event_state = json.dumps({"rounds": [{"match": 1}]})
         db_session.flush()
 
-        fresh_relay = Event.query.get(relay.id)
-        fresh_birling = Event.query.get(birling.id)
-        fresh_underhand = Event.query.get(underhand.id)
+        fresh_relay = db.session.get(Event, relay.id)
+        fresh_birling = db.session.get(Event, birling.id)
+        fresh_underhand = db.session.get(Event, underhand.id)
 
         assert json.loads(fresh_relay.event_state)["teams"] == [1, 2]
         assert json.loads(fresh_birling.event_state)["rounds"][0]["match"] == 1

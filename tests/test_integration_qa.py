@@ -16,6 +16,8 @@ import uuid
 
 import pytest
 
+from database import db
+
 
 @pytest.fixture()
 def qa_env():

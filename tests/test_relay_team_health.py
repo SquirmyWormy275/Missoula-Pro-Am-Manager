@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from database import db
 from services.proam_relay import ProAmRelay, compute_team_health
 
 # ---------------------------------------------------------------------------

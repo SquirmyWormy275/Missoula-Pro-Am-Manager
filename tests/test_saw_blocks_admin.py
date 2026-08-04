@@ -21,6 +21,8 @@ import tempfile
 
 import pytest
 
+from database import db
+
 os.environ.setdefault("SECRET_KEY", "test-saw-blocks-admin")
 os.environ.setdefault("WTF_CSRF_ENABLED", "False")
 
@@ -164,7 +166,7 @@ def _seed_heat(db, event, heat_number, competitors, stand_assignments):
     from tests.conftest import ensure_competitors
 
     ensure_competitors(
-        db.session, Tournament.query.get(event.tournament_id),
+        db.session, db.session.get(Tournament, event.tournament_id),
         competitors, event.event_type,
     )
 
@@ -225,8 +227,8 @@ def test_recompute_route_succeeds(app, auth_client):
     with app.app_context():
         from models import Heat
 
-        h1 = Heat.query.get(h1_id)
-        h2 = Heat.query.get(h2_id)
+        h1 = db.session.get(Heat, h1_id)
+        h2 = db.session.get(Heat, h2_id)
         # Alternation applied: heat 1 -> Block A, heat 2 -> Block B
         used_1 = sorted({int(v) for v in h1.get_stand_assignments().values()})
         used_2 = sorted({int(v) for v in h2.get_stand_assignments().values()})

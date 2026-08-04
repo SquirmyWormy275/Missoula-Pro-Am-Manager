@@ -19,6 +19,8 @@ import tempfile
 
 import pytest
 
+from database import db
+
 os.environ.setdefault("SECRET_KEY", "test-saw-block-integration")
 os.environ.setdefault("WTF_CSRF_ENABLED", "False")
 
@@ -214,7 +216,7 @@ def _seed_heat(
     from tests.conftest import ensure_competitors
 
     ensure_competitors(
-        db.session, Tournament.query.get(event.tournament_id),
+        db.session, db.session.get(Tournament, event.tournament_id),
         competitors, event.event_type,
     )
 
@@ -335,8 +337,8 @@ def test_build_flights_triggers_block_assignment(app, auth_client):
     with app.app_context():
         from models import Heat
 
-        h1 = Heat.query.get(h1_id)
-        h2 = Heat.query.get(h2_id)
+        h1 = db.session.get(Heat, h1_id)
+        h2 = db.session.get(Heat, h2_id)
         # After build_flights, both heats are in flight 1.
         # The first heat in flight_position order gets Block A, the second Block B.
         ordered_by_flight = sorted(
@@ -389,8 +391,8 @@ def test_reorder_flight_heats_triggers_recompute(app, auth_client):
     with app.app_context():
         from models import Heat
 
-        h_a = Heat.query.get(h_a_id)
-        h_b = Heat.query.get(h_b_id)
+        h_a = db.session.get(Heat, h_a_id)
+        h_b = db.session.get(Heat, h_b_id)
         # h_b is now first in flight -> Block A; h_a is second -> Block B
         assert _used_stands(h_b) == BLOCK_A
         assert _used_stands(h_a) == BLOCK_B
@@ -436,9 +438,9 @@ def test_bulk_reorder_moves_heat_between_flights(app, auth_client):
 
     with app.app_context():
         from models import Heat
-        h_a = Heat.query.get(h_a_id)
-        h_b = Heat.query.get(h_b_id)
-        h_c = Heat.query.get(h_c_id)
+        h_a = db.session.get(Heat, h_a_id)
+        h_b = db.session.get(Heat, h_b_id)
+        h_c = db.session.get(Heat, h_c_id)
         assert h_a.flight_id == f1_id and h_a.flight_position == 1
         assert h_b.flight_id == f2_id and h_b.flight_position == 1
         assert h_c.flight_id == f2_id and h_c.flight_position == 2
@@ -504,8 +506,8 @@ def test_move_competitor_happy_path(app, auth_client):
 
     with app.app_context():
         from models import Heat
-        h_a = Heat.query.get(h_a_id)
-        h_b = Heat.query.get(h_b_id)
+        h_a = db.session.get(Heat, h_a_id)
+        h_b = db.session.get(Heat, h_b_id)
         assert 2 not in h_a.get_competitors()
         assert 2 in h_b.get_competitors()
         # Target heat had stands 1 and 2 used; competitor 2 gets next free = 3
@@ -539,8 +541,8 @@ def test_move_competitor_rejects_full_target(app, auth_client):
     # State unchanged
     with app.app_context():
         from models import Heat
-        h_a = Heat.query.get(h_a_id)
-        h_b = Heat.query.get(h_b_id)
+        h_a = db.session.get(Heat, h_a_id)
+        h_b = db.session.get(Heat, h_b_id)
         assert 1 in h_a.get_competitors()
         assert 1 not in h_b.get_competitors()
 
@@ -597,8 +599,8 @@ def test_move_competitor_pair_moves_both(app, auth_client):
 
     with app.app_context():
         from models import Heat
-        h_a = Heat.query.get(h_a_id)
-        h_b = Heat.query.get(h_b_id)
+        h_a = db.session.get(Heat, h_a_id)
+        h_b = db.session.get(Heat, h_b_id)
         assert 10 not in h_a.get_competitors()
         assert 11 not in h_a.get_competitors()
         assert 10 in h_b.get_competitors()
@@ -655,8 +657,8 @@ def test_reorder_friday_events_triggers_recompute(app, auth_client):
     with app.app_context():
         from models import Heat
 
-        h_sb = Heat.query.get(h_sb_id)
-        h_db = Heat.query.get(h_db_id)
+        h_sb = db.session.get(Heat, h_sb_id)
+        h_db = db.session.get(Heat, h_db_id)
         # DB runs first -> Block A (stands 1 and 2 for the pairs)
         assert set(h_db.get_stand_assignments().values()).issubset(set(BLOCK_A))
         # SB runs second -> Block B

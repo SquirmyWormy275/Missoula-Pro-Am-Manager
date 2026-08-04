@@ -18,6 +18,8 @@ import os
 
 import pytest
 
+from database import db
+
 os.environ.setdefault('SECRET_KEY', 'test-secret-empty')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
@@ -230,7 +232,7 @@ class TestPortalLandingNoActive:
         # Restore
         with app.app_context():
             for tid, status in original_statuses.items():
-                t = Tournament.query.get(tid)
+                t = db.session.get(Tournament, tid)
                 if t:
                     t.status = status
             _db.session.commit()

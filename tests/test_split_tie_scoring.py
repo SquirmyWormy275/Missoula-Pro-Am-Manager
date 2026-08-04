@@ -23,6 +23,7 @@ from decimal import Decimal
 
 import pytest
 
+from database import db
 from database import db as _db
 
 # ---------------------------------------------------------------------------
@@ -214,9 +215,9 @@ class TestCalculatePositionsSplitTie:
 
         # individual_points reflects the SUM rebuild
         from models.competitor import CollegeCompetitor
-        c1_loaded = CollegeCompetitor.query.get(c1.id)
-        c2_loaded = CollegeCompetitor.query.get(c2.id)
-        c3_loaded = CollegeCompetitor.query.get(c3.id)
+        c1_loaded = db.session.get(CollegeCompetitor, c1.id)
+        c2_loaded = db.session.get(CollegeCompetitor, c2.id)
+        c3_loaded = db.session.get(CollegeCompetitor, c3.id)
         assert c1_loaded.individual_points == Decimal('8.50')
         assert c2_loaded.individual_points == Decimal('8.50')
         assert c3_loaded.individual_points == Decimal('5.00')
@@ -267,7 +268,7 @@ class TestCalculatePositionsSplitTie:
         calculate_positions(event)
         db_session.flush()
 
-        team_loaded = Team.query.get(team.id)
+        team_loaded = db.session.get(Team, team.id)
         # Two competitors tied for 1st: each gets 8.5, team gets 17.0
         assert team_loaded.total_points == Decimal('17.00')
 
@@ -293,14 +294,14 @@ class TestRebuildIdempotency:
 
         calculate_positions(event)
         db_session.flush()
-        c1_first = CollegeCompetitor.query.get(c1.id).individual_points
-        c2_first = CollegeCompetitor.query.get(c2.id).individual_points
+        c1_first = db.session.get(CollegeCompetitor, c1.id).individual_points
+        c2_first = db.session.get(CollegeCompetitor, c2.id).individual_points
 
         # Second run — should produce identical results.
         calculate_positions(event)
         db_session.flush()
-        c1_second = CollegeCompetitor.query.get(c1.id).individual_points
-        c2_second = CollegeCompetitor.query.get(c2.id).individual_points
+        c1_second = db.session.get(CollegeCompetitor, c1.id).individual_points
+        c2_second = db.session.get(CollegeCompetitor, c2.id).individual_points
 
         assert c1_second == c1_first
         assert c2_second == c2_first
@@ -344,15 +345,15 @@ class TestPartnerEventDualCredit:
         db_session.flush()
 
         # Both Pair A members get full 1st-place points (10 each).
-        assert CollegeCompetitor.query.get(mike.id).individual_points == Decimal('10.00')
-        assert CollegeCompetitor.query.get(mary.id).individual_points == Decimal('10.00')
+        assert db.session.get(CollegeCompetitor, mike.id).individual_points == Decimal('10.00')
+        assert db.session.get(CollegeCompetitor, mary.id).individual_points == Decimal('10.00')
         # Both Pair B members get full 2nd-place points (7 each).
-        assert CollegeCompetitor.query.get(bob.id).individual_points == Decimal('7.00')
-        assert CollegeCompetitor.query.get(beth.id).individual_points == Decimal('7.00')
+        assert db.session.get(CollegeCompetitor, bob.id).individual_points == Decimal('7.00')
+        assert db.session.get(CollegeCompetitor, beth.id).individual_points == Decimal('7.00')
 
         # The team total reflects ALL FOUR contributions: 10 + 10 + 7 + 7 = 34
         # (this is the AWFC "team gets points twice" rule from ProAM requirements).
-        assert Team.query.get(team.id).total_points == Decimal('34.00')
+        assert db.session.get(Team, team.id).total_points == Decimal('34.00')
 
     def test_partner_event_with_two_pairs_tied_for_first(self, db_session, tid):
         """Two pairs tie for 1st: all 4 competitors get the split value (8.5)."""
@@ -380,10 +381,10 @@ class TestPartnerEventDualCredit:
         db_session.flush()
 
         for c in (a1, a2, b1, b2):
-            assert CollegeCompetitor.query.get(c.id).individual_points == Decimal('8.50')
+            assert db.session.get(CollegeCompetitor, c.id).individual_points == Decimal('8.50')
 
         # Team total: 8.5 * 4 = 34.0
-        assert Team.query.get(team.id).total_points == Decimal('34.00')
+        assert db.session.get(Team, team.id).total_points == Decimal('34.00')
 
 
 # ===========================================================================
@@ -421,8 +422,8 @@ class TestRecordThrowoffResultRebuild:
         db_session.flush()
 
         # individual_points must equal each row's points_awarded after rebuild.
-        c1_loaded = CollegeCompetitor.query.get(c1.id)
-        c2_loaded = CollegeCompetitor.query.get(c2.id)
+        c1_loaded = db.session.get(CollegeCompetitor, c1.id)
+        c2_loaded = db.session.get(CollegeCompetitor, c2.id)
         assert c1_loaded.individual_points == r1.points_awarded
         assert c2_loaded.individual_points == r2.points_awarded
         assert c1_loaded.individual_points == Decimal('10.00')  # 1st place

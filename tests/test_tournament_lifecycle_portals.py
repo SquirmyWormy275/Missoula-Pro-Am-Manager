@@ -21,6 +21,8 @@ import os
 
 import pytest
 
+from database import db
+
 os.environ.setdefault('SECRET_KEY', 'test-secret-lifecycle')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
@@ -148,7 +150,7 @@ def _ok(r):
 def _set_status(app, tid, status):
     with app.app_context():
         from models import Tournament
-        t = Tournament.query.get(tid)
+        t = db.session.get(Tournament, tid)
         t.status = status
         _db.session.commit()
 

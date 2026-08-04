@@ -26,6 +26,8 @@ import uuid
 
 import pytest
 
+from database import db
+
 
 @pytest.fixture()
 def qa_env():
@@ -614,7 +616,7 @@ def test_pro_scratch_removes_competitor_from_generated_heat(qa_env):
         from models import EventResult, Heat, HeatAssignment
         from models.competitor import ProCompetitor
 
-        comp = ProCompetitor.query.get(competitor_id)
+        comp = db.session.get(ProCompetitor, competitor_id)
         assert comp is not None and comp.status == "scratched"
 
         # Same conversion as above, and here the join changes what the
