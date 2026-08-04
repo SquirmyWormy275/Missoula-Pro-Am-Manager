@@ -55,9 +55,7 @@ jobs:
             --ignore=tests/test_migration_integrity.py \
             --ignore=tests/test_db_constraints.py \
             --ignore=tests/test_model_json_safety.py \
-            --ignore=tests/test_postgres_compat.py \
-            --ignore=tests/test_edge_cases.py \
-            --ignore=tests/test_integration_qa.py
+            --ignore=tests/test_postgres_compat.py
 
   postgres-smoke:
     runs-on: ubuntu-latest

@@ -1,5 +1,9 @@
 """Phase 3 edge-case QA tests.
 
+CURRENT: The fixture below uses a disposable database built from migrations
+and synthetic test data. The retained text documents the retired production
+database-copy pattern only.
+
 DEPRECATED FIXTURE PATTERN: this file copies instance/proam.db (production
 data) into a tempfile to seed each test. The 4-layer test isolation defense
 (CLAUDE.md §6) blocks WRITES to the prod DB, but the copy still pulls real
@@ -18,86 +22,38 @@ The tests below now SKIP cleanly when ``instance/proam.db`` is absent
 """
 from __future__ import annotations
 
-import shutil
 import uuid
-from pathlib import Path
 
 import pytest
 
-from app import create_app
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DB = PROJECT_ROOT / "instance" / "proam.db"
-TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
-
 
 @pytest.fixture()
-def qa_env(monkeypatch):
-    """Return a fresh app/client pair backed by a copied real database.
+def qa_env():
+    """Return an authenticated client backed only by a disposable database."""
+    from database import db
+    from models import User
+    from tests.db_test_utils import create_test_app, drop_test_db
 
-    Skips cleanly when SOURCE_DB is absent so CI without prod data passes.
-    See module docstring for the deprecation context.
-    """
-    if not SOURCE_DB.exists():
-        pytest.skip(
-            f"SOURCE_DB ({SOURCE_DB}) is absent; "
-            "test relies on local prod-data copy, see deprecation in module docstring"
-        )
-    # D12-C commit F3: existing is not enough any more, the copy also has to
-    # be migratable. Revision t9b3c4d5e6f7 refuses a database holding a heat
-    # whose roster exists only in heats.competitors, and a database stamped
-    # before D12-C commit E can be exactly that. Unlike
-    # tests/test_route_smoke.py this file has no synthetic seed path to fall
-    # back to, so the honest outcome is a skip that says what is wrong rather
-    # than a setup error that does not.
-    from tests.db_test_utils import source_db_reaches_head
-    stale = source_db_reaches_head(SOURCE_DB)
-    if stale:
-        pytest.skip(
-            f"SOURCE_DB ({SOURCE_DB}) cannot be migrated to chain head, so a "
-            f"copy of it cannot back this test. {stale} Seat the heats named "
-            "in that message through Heat.set_roster, or rebuild the file. "
-            "This module has no synthetic seed path, see the deprecation in "
-            "the module docstring; tests/test_route_smoke.py falls back to "
-            "one."
-        )
-    TMP_ROOT.mkdir(exist_ok=True)
-    temp_dir = TMP_ROOT / f"edge-qa-{uuid.uuid4().hex}"
-    temp_dir.mkdir()
-    db_copy = temp_dir / "proam-copy.db"
-    shutil.copy2(SOURCE_DB, db_copy)
-
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_copy}")
-    monkeypatch.setenv("SECRET_KEY", "edge-qa-secret")
-    monkeypatch.setenv("FLASK_ENV", "testing")
-    monkeypatch.setenv("TESTING", "1")
-
-    app = create_app()
-    app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
-
-    # Migrate the copy.  instance/proam.db is stamped at whatever revision the
-    # developer's machine last ran, and a copy that skips the chain runs these
-    # tests against a schema no production database has.  See the same comment
-    # in tests/test_route_smoke.py for how this was found.
-    from flask_migrate import upgrade
+    app, db_handle = create_test_app()
     with app.app_context():
-        upgrade(directory=str(PROJECT_ROOT / "migrations"))
-
-    with app.app_context():
-        from models import User
-
-        admin_user = User.query.order_by(User.id).first()
-        assert admin_user is not None
+        admin_user = User(username="edge_qa_admin", role="admin")
+        admin_user.set_password("testpass")
+        db.session.add(admin_user)
+        db.session.commit()
+        admin_user_id = admin_user.id
 
     client = app.test_client()
     with client.session_transaction() as sess:
-        sess["_user_id"] = str(admin_user.id)
+        sess["_user_id"] = str(admin_user_id)
         sess["_fresh"] = True
 
     try:
         yield {"app": app, "client": client}
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        with app.app_context():
+            db.session.remove()
+            db.engine.dispose()
+        drop_test_db(db_handle)
 
 
 def _seed_boundary_event(app, competitor_count: int, max_stands: int):
