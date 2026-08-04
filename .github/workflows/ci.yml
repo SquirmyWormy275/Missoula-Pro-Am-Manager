@@ -39,6 +39,8 @@ jobs:
       # AttributeError on first_tournament.id for all 245 tests. Sets its own
       # DATABASE_URL/SECRET_KEY, so it needs no env block here.
       - name: Build seeded route-smoke database
+        env:
+          PROAM_ALLOW_CI_SMOKE_DB_BUILD: "1"
         run: python scripts/ci_build_smoke_db.py
 
       - name: Run tests
@@ -47,6 +49,7 @@ jobs:
           SECRET_KEY: ci-test-secret-key
           DATABASE_URL: sqlite:///test.db
           TEST_USE_CREATE_ALL: "1"
+          PROAM_ROUTE_SMOKE_SOURCE_DB: instance/ci_route_smoke.db
         run: |
           pytest -x -q --tb=short \
             --ignore=tests/test_migration_integrity.py \
@@ -152,6 +155,8 @@ jobs:
       # test_route_smoke.py replays the alembic chain once per parametrized
       # route and peaks near 5 GB.
       - name: Build seeded route-smoke database
+        env:
+          PROAM_ALLOW_CI_SMOKE_DB_BUILD: "1"
         run: python scripts/ci_build_smoke_db.py
 
       - name: Run the unit suite on PostgreSQL
@@ -162,6 +167,7 @@ jobs:
           PROAM_UNIT_PG_HOST: localhost
           PROAM_UNIT_PG_USER: postgres
           PROAM_UNIT_PG_PASSWORD: postgres
+          PROAM_ROUTE_SMOKE_SOURCE_DB: instance/ci_route_smoke.db
         run: pytest tests -q --tb=short -p no:randomly
 
   lint:

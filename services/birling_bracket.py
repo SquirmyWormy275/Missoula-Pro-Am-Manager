@@ -72,17 +72,16 @@ class BirlingBracket:
         fix needs its own approval and its own commit; doing it here would put
         two changes under one commit message.
 
-        The bare ``except`` is open question 6, likewise pending. It is
-        reproduced rather than narrowed because narrowing it is the fix being
-        asked about, and making that call quietly inside an unrelated commit is
-        how a decision gets lost.
+        Malformed or non-string JSON is treated as an absent fallback document.
+        Other failures are allowed to surface so a programming or persistence
+        error cannot silently turn into an empty bracket on race day.
         """
         try:
             data = json.loads(self.event.payouts or '{}')
             if 'bracket' in data:
                 return data
-        except:  # noqa: E722  open question 6
-            pass
+        except (json.JSONDecodeError, TypeError):
+            return None
         return None
 
     def _save_bracket_data(self):

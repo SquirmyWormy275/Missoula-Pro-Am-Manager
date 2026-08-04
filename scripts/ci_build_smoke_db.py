@@ -39,9 +39,9 @@ with no None guard. A migrated-but-unseeded file would AttributeError on all
 245 tests. So this script migrates AND seeds, reusing the test module's own
 seeding function rather than a second copy of it that could drift.
 
-Run from the repository root:
+Run in CI from the repository root:
 
-    python scripts/ci_build_smoke_db.py
+    PROAM_ALLOW_CI_SMOKE_DB_BUILD=1 python scripts/ci_build_smoke_db.py
 """
 from __future__ import annotations
 
@@ -53,17 +53,50 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-TARGET = PROJECT_ROOT / "instance" / "proam.db"
+DEFAULT_TARGET = PROJECT_ROOT / "instance" / "ci_route_smoke.db"
+BUILD_PERMISSION_ENV = "PROAM_ALLOW_CI_SMOKE_DB_BUILD"
+
+
+def _target_path() -> Path:
+    """Return the dedicated CI smoke database path inside ``instance/``."""
+    configured = os.environ.get("PROAM_CI_SMOKE_DB_PATH", str(DEFAULT_TARGET))
+    target = Path(configured)
+    if not target.is_absolute():
+        target = PROJECT_ROOT / target
+    target = target.resolve()
+    instance_dir = (PROJECT_ROOT / "instance").resolve()
+    if target.parent != instance_dir or target.name == "proam.db":
+        raise ValueError(
+            "PROAM_CI_SMOKE_DB_PATH must name a non-production database directly inside instance/"
+        )
+    return target
+
+
+def _replacement_is_authorized() -> bool:
+    """Require an explicit opt-in before replacing any local database file."""
+    return os.environ.get(BUILD_PERMISSION_ENV) == "1"
 
 
 def main() -> int:
-    TARGET.parent.mkdir(parents=True, exist_ok=True)
-    if TARGET.exists():
-        TARGET.unlink()
+    if not _replacement_is_authorized():
+        print(
+            f"REFUSED: set {BUILD_PERMISSION_ENV}=1 before building the disposable route-smoke database."
+        )
+        return 2
+
+    try:
+        target = _target_path()
+    except ValueError as exc:
+        print(f"REFUSED: {exc}")
+        return 2
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
 
     # Set before importing app/tests: create_app() reads these at call time,
     # but the test module runs _discover_routes() at import time.
-    os.environ["DATABASE_URL"] = f"sqlite:///{TARGET}"
+    os.environ["DATABASE_URL"] = f"sqlite:///{target}"
     os.environ["SECRET_KEY"] = "route-smoke-secret"
     os.environ["FLASK_ENV"] = "testing"
     os.environ["TESTING"] = "1"
@@ -104,7 +137,7 @@ def main() -> int:
             print(f"FAIL: seeded database is missing: {', '.join(missing)}")
             return 1
 
-    print(f"OK: built {TARGET} ({TARGET.stat().st_size} bytes)")
+    print(f"OK: built {target} ({target.stat().st_size} bytes)")
     return 0
 
 

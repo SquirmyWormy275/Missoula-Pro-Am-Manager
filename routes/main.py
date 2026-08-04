@@ -933,6 +933,21 @@ def ops_dashboard(tid):
     # ------------------------------------------------------------------
     # Section 4: Payout status — pro events only
     # ------------------------------------------------------------------
+    # Keep the operator's go/no-go signal on the race-day dashboard. The full
+    # report remains the source for details and any authorized autofix action.
+    try:
+        from services.preflight import build_preflight_report
+
+        preflight_report = build_preflight_report(tournament)
+        preflight_summary = {
+            'available': True,
+            'issue_count': preflight_report['issue_count'],
+            'has_blockers': preflight_report['has_blockers'],
+        }
+    except Exception:
+        logger.warning('ops_dashboard: scheduling preflight failed', exc_info=True)
+        preflight_summary = {'available': False, 'issue_count': 0, 'has_blockers': False}
+
     pro_event_ids = [ev.id for ev in all_events if ev.event_type == 'pro']
     total_purse = 0.0
     total_settled = 0.0
@@ -995,6 +1010,7 @@ def ops_dashboard(tid):
         team_health=team_health,
         relay_event=relay_event,
         integrity_warnings=integrity_warnings,
+        preflight_summary=preflight_summary,
         payout_summary=payout_summary,
         events=events,
         recent_jobs=recent_jobs,

@@ -571,6 +571,12 @@ class TestOpsDashboard:
         r = auth_client.get(f'/tournament/{tid}/ops-dashboard')
         assert r.status_code == 200
 
+    def test_dashboard_exposes_schedule_preflight(self, auth_client, tid):
+        r = auth_client.get(f'/tournament/{tid}/ops-dashboard')
+
+        assert r.status_code == 200
+        assert b'Schedule Preflight:' in r.data
+
     def test_auto_refresh_meta_tag_present(self, auth_client, tid):
         """Page must contain an auto-refresh directive."""
         r = auth_client.get(f'/tournament/{tid}/ops-dashboard')
