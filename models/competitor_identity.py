@@ -45,11 +45,11 @@ registration path somebody writes.  ``attach_identity_allocator`` therefore
 creates the identity object at construction time, so there is always something
 for the proxy to write through.
 """
-from datetime import datetime
 
 import sqlalchemy as sa
 
 from database import db
+from services.time_utils import utc_now_naive
 
 from ._types import BIG_ID
 
@@ -77,7 +77,7 @@ class Competitor(db.Model):
         nullable=False,
     )
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
 
     # Contact.  Moved off pro_competitors / college_competitors by q6e7f8a0b2c3.
     #
@@ -129,7 +129,7 @@ def allocate_uid(connection, tournament_id, kind):
         table.insert().values(
             kind=kind,
             tournament_id=tournament_id,
-            created_at=datetime.utcnow(),
+            created_at=utc_now_naive(),
         )
     )
     return result.inserted_primary_key[0]

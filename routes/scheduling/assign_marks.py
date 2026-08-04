@@ -320,7 +320,7 @@ def assign_marks(tournament_id: int, event_id: int):
       manual_save   — write per-row mark inputs from the table
       csv_import    — parse pasted "name,mark" CSV/TSV block
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     event = Event.query.filter_by(id=event_id, tournament_id=tournament_id).first_or_404()
 
     eligible = is_mark_assignment_eligible(event)

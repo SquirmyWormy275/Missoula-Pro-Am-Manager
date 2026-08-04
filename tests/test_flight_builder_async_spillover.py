@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import pytest
 
+from database import db
 from database import db as _db
 
 # D12-C commit E: the roster is `heat_assignments` rows now, so a heat
@@ -274,7 +275,7 @@ class TestAsyncBuildChainsSpillover:
             integrate_college_spillover_into_flights,
         )
 
-        target = Tournament.query.get(tournament_id)
+        target = db.session.get(Tournament, tournament_id)
         if not target:
             raise RuntimeError(f"Tournament {tournament_id} not found.")
         try:
@@ -376,7 +377,7 @@ class TestAsyncBuildChainsSpillover:
                 integrate_college_spillover_into_flights,  # patched
             )
 
-            target = Tournament.query.get(t.id)
+            target = db.session.get(Tournament, t.id)
             try:
                 build_pro_flights(target, num_flights=2, commit=False)
                 integrate_college_spillover_into_flights(

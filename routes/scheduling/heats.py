@@ -28,8 +28,8 @@ from . import (
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/heats')
 def event_heats(tournament_id, event_id):
     """View and manage heats for an event."""
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament.id:
         abort(404)
 
@@ -109,7 +109,7 @@ def event_heats(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/generate-heats', methods=['POST'])
 def generate_heats(tournament_id, event_id):
     """Generate heats for an event using snake draft distribution."""
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
 
@@ -204,7 +204,7 @@ def generate_heats(tournament_id, event_id):
                 'warning'
             )
         # Recompute hand-saw stand block alternation after heat gen commits.
-        tournament = Tournament.query.get(tournament_id)
+        tournament = db.session.get(Tournament, tournament_id)
         if tournament is not None:
             trigger_saw_block_recompute(tournament)
     except Exception as e:
@@ -250,7 +250,7 @@ def generate_college_heats(tournament_id):
     """Bulk-generate heats for all closed college events in one click."""
     from services.heat_generator import generate_event_heats
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     events = tournament.events.filter_by(event_type='college').order_by(Event.name, Event.gender).all()
 
     generated = 0
@@ -307,7 +307,7 @@ def generate_college_heats(tournament_id):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/move-competitor', methods=['POST'])
 def move_competitor_between_heats(tournament_id, event_id):
     """Move a competitor between heats (and mirrored dual run heat, if needed)."""
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
 
@@ -319,8 +319,8 @@ def move_competitor_between_heats(tournament_id, event_id):
         flash('Invalid move request.', 'error')
         return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
-    from_heat = Heat.query.get_or_404(from_heat_id)
-    to_heat = Heat.query.get_or_404(to_heat_id)
+    from_heat = db.get_or_404(Heat, from_heat_id)
+    to_heat = db.get_or_404(Heat, to_heat_id)
     if from_heat.event_id != event.id or to_heat.event_id != event.id:
         abort(404)
     if from_heat.id == to_heat.id:
@@ -395,7 +395,7 @@ def move_competitor_between_heats(tournament_id, event_id):
         try:
             from models import Event as EventModel
             from services.gear_sharing import competitors_share_gear_for_event
-            mover = ProCompetitor.query.get(competitor_id)
+            mover = db.session.get(ProCompetitor, competitor_id)
             if mover:
                 mover_gear = mover.get_gear_sharing()
                 all_events = EventModel.query.filter_by(tournament_id=event.tournament_id).all()
@@ -468,7 +468,7 @@ def scratch_competitor(tournament_id, event_id):
     references, and recalculates positions if the event has scored results.
     For dual-run events, mirrors the scratch across both run heats.
     """
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
 
@@ -479,7 +479,7 @@ def scratch_competitor(tournament_id, event_id):
         flash('Invalid scratch request.', 'error')
         return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
-    heat = Heat.query.get_or_404(heat_id)
+    heat = db.get_or_404(Heat, heat_id)
     if heat.event_id != event.id:
         abort(404)
 
@@ -495,9 +495,9 @@ def scratch_competitor(tournament_id, event_id):
 
     # Look up competitor name for flash message
     if event.event_type == 'college':
-        comp = CollegeCompetitor.query.get(competitor_id)
+        comp = db.session.get(CollegeCompetitor, competitor_id)
     else:
-        comp = ProCompetitor.query.get(competitor_id)
+        comp = db.session.get(ProCompetitor, competitor_id)
     comp_name = comp.display_name if comp else f'Competitor #{competitor_id}'
 
     try:
@@ -538,7 +538,7 @@ def scratch_competitor(tournament_id, event_id):
         if comp:
             try:
                 from services.gear_sharing import cleanup_scratched_gear_entries
-                tournament = Tournament.query.get(tournament_id)
+                tournament = db.session.get(Tournament, tournament_id)
                 cleanup_scratched_gear_entries(tournament, scratched_competitor=comp)
             except Exception:
                 pass  # Gear cleanup failure should not block the scratch
@@ -603,8 +603,8 @@ def add_to_heat(tournament_id, event_id):
     Validates capacity, creates EventResult if missing, and mirrors
     dual-run events. Blocked once the show is active for that division.
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
-    event = Event.query.get_or_404(event_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
 
@@ -615,7 +615,7 @@ def add_to_heat(tournament_id, event_id):
         flash('Invalid add request.', 'error')
         return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
-    heat = Heat.query.get_or_404(heat_id)
+    heat = db.get_or_404(Heat, heat_id)
     if heat.event_id != event.id:
         abort(404)
 
@@ -792,11 +792,11 @@ def add_to_heat(tournament_id, event_id):
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/delete-heat/<int:heat_id>', methods=['POST'])
 def delete_heat(tournament_id, event_id, heat_id):
     """Delete an empty heat and renumber remaining heats."""
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
 
-    heat = Heat.query.get_or_404(heat_id)
+    heat = db.get_or_404(Heat, heat_id)
     if heat.event_id != event.id:
         abort(404)
 
@@ -887,7 +887,7 @@ def recompute_saw_blocks(tournament_id):
     """Manually recompute hand-saw stand block assignments for the tournament."""
     from services.saw_block_assignment import assign_saw_blocks
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     try:
         summary = assign_saw_blocks(tournament)
         flash(
@@ -914,7 +914,7 @@ def saw_blocks_status(tournament_id):
         get_saturday_ordered_heats,
     )
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     def _rows(ordered_heats):
         rows = []

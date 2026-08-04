@@ -11,6 +11,8 @@ import tempfile
 
 import pytest
 
+from database import db
+
 os.environ.setdefault("SECRET_KEY", "test-scratch-cascade")
 os.environ.setdefault("WTF_CSRF_ENABLED", "False")
 # NOTE: `TEST_USE_CREATE_ALL` is set inside the `app` fixture, NOT at module
@@ -594,7 +596,7 @@ class TestExecuteCascadeResultStatuses:
             execute_cascade(comp, effects, judge_user_id=1, tournament=t)
             db.session.commit()
 
-            updated = EventResult.query.get(result_id)
+            updated = db.session.get(EventResult, result_id)
             assert updated.status == "scratched"
             assert updated.points_awarded == 0
             assert updated.payout_amount == 0
@@ -686,7 +688,7 @@ class TestReverseCascadeHappyPath:
 
             assert undo["success"] is True
             assert comp.status == original_status
-            restored = EventResult.query.get(result_id)
+            restored = db.session.get(EventResult, result_id)
             assert restored.status == "pending"
 
 
@@ -694,7 +696,7 @@ class TestReverseCascadeExpiredWindow:
     """reverse_cascade() after 30 min returns error."""
 
     def test_expired_window_returns_error(self, app):
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         from database import db
         from models.audit_log import AuditLog
@@ -703,6 +705,7 @@ class TestReverseCascadeExpiredWindow:
             execute_cascade,
             reverse_cascade,
         )
+        from services.time_utils import utc_now_naive
 
         with app.app_context():
             t = _seed_base(db)
@@ -722,7 +725,7 @@ class TestReverseCascadeExpiredWindow:
                 .order_by(AuditLog.id.desc())
                 .first()
             )
-            entry.created_at = datetime.utcnow() - timedelta(minutes=31)
+            entry.created_at = utc_now_naive() - timedelta(minutes=31)
             db.session.commit()
 
             undo = reverse_cascade(comp.id, judge_user_id=1, tournament=t)
@@ -786,11 +789,11 @@ class TestExecuteReverseRoundTrip:
             reverse_cascade(comp.id, judge_user_id=1, tournament=t)
             db.session.commit()
 
-            final_comp = ProCompetitor.query.get(comp.id)
+            final_comp = db.session.get(ProCompetitor, comp.id)
             assert final_comp.status == original_comp_status
 
-            final_r1 = EventResult.query.get(r1_id)
-            final_r2 = EventResult.query.get(r2_id)
+            final_r1 = db.session.get(EventResult, r1_id)
+            final_r2 = db.session.get(EventResult, r2_id)
             assert final_r1.status == original_r1_status
             assert final_r2.status == original_r2_status
 

@@ -41,6 +41,10 @@ from tests.conftest import (
     make_tournament,
 )
 
+pytestmark = pytest.mark.filterwarnings(
+    "error:The default datetime adapter is deprecated:DeprecationWarning"
+)
+
 _MIGRATION = (
     pathlib.Path(__file__).resolve().parent.parent
     / "migrations" / "versions" / "u0c4d5e6f7a8_birling_bracket_tables.py"

@@ -14,6 +14,7 @@ import os
 
 import pytest
 
+from database import db
 from database import db as _db
 
 
@@ -107,7 +108,7 @@ def _make_heat(
 
     ensure_competitors(
         db_session,
-        Tournament.query.get(event.tournament_id),
+        db.session.get(Tournament, event.tournament_id),
         competitors,
         event.event_type,
     )

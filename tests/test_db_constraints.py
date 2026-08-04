@@ -21,6 +21,7 @@ import os
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from database import db
 from tests.conftest import (
     ensure_competitors,
     make_college_competitor,
@@ -53,7 +54,7 @@ class TestForeignKeyCascades:
         db_session.delete(t)
         db_session.flush()
 
-        assert Event.query.get(eid) is None
+        assert db.session.get(Event, eid) is None
 
     def test_delete_tournament_cascades_to_teams(self, db_session):
         from models.team import Team
@@ -65,7 +66,7 @@ class TestForeignKeyCascades:
         db_session.delete(t)
         db_session.flush()
 
-        assert Team.query.get(team_id) is None
+        assert db.session.get(Team, team_id) is None
 
     def test_delete_tournament_cascades_to_competitors(self, db_session):
         from models.competitor import CollegeCompetitor, ProCompetitor
@@ -79,8 +80,8 @@ class TestForeignKeyCascades:
         db_session.delete(t)
         db_session.flush()
 
-        assert CollegeCompetitor.query.get(cc_id) is None
-        assert ProCompetitor.query.get(pc_id) is None
+        assert db.session.get(CollegeCompetitor, cc_id) is None
+        assert db.session.get(ProCompetitor, pc_id) is None
 
     def test_delete_event_cascades_to_heats_and_results(self, db_session):
         from models.event import EventResult
@@ -97,8 +98,8 @@ class TestForeignKeyCascades:
         db_session.delete(e)
         db_session.flush()
 
-        assert Heat.query.get(hid) is None
-        assert EventResult.query.get(rid) is None
+        assert db.session.get(Heat, hid) is None
+        assert db.session.get(EventResult, rid) is None
 
 
 # ===========================================================================

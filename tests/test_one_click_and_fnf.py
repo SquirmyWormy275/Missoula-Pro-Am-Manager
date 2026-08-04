@@ -17,6 +17,7 @@ import os
 
 import pytest
 
+from database import db
 from database import db as _db
 
 # D12-C commit E: the roster is `heat_assignments` rows now, so a heat
@@ -514,7 +515,7 @@ class TestFNFPerEventStandOverride:
             data = _seed_two_event_show(_db.session)
             t = data["tournament"]
             p1b_id = data["p1b"].id
-            assert Event.query.get(p1b_id).max_stands == 2
+            assert db.session.get(Event, p1b_id).max_stands == 2
             _db.session.commit()
             tid = t.id
 
@@ -531,7 +532,7 @@ class TestFNFPerEventStandOverride:
         assert resp.status_code in (302, 303)
 
         with app.app_context():
-            assert Event.query.get(p1b_id).max_stands == 3
+            assert db.session.get(Event, p1b_id).max_stands == 3
 
     def test_blank_stand_input_preserves_existing(self, app, auth_client):
         from models import Event
@@ -540,7 +541,7 @@ class TestFNFPerEventStandOverride:
             data = _seed_two_event_show(_db.session)
             t = data["tournament"]
             p1b_id = data["p1b"].id
-            Event.query.get(p1b_id).max_stands = 5
+            db.session.get(Event, p1b_id).max_stands = 5
             _db.session.commit()
             tid = t.id
 
@@ -557,7 +558,7 @@ class TestFNFPerEventStandOverride:
         assert resp.status_code in (302, 303)
 
         with app.app_context():
-            assert Event.query.get(p1b_id).max_stands == 5
+            assert db.session.get(Event, p1b_id).max_stands == 5
 
     def test_invalid_stand_input_rejected_without_crash(self, app, auth_client):
         from models import Event
@@ -566,7 +567,7 @@ class TestFNFPerEventStandOverride:
             data = _seed_two_event_show(_db.session)
             t = data["tournament"]
             p1b_id = data["p1b"].id
-            Event.query.get(p1b_id).max_stands = 4
+            db.session.get(Event, p1b_id).max_stands = 4
             _db.session.commit()
             tid = t.id
 
@@ -583,7 +584,7 @@ class TestFNFPerEventStandOverride:
             )
             assert resp.status_code in (302, 303)
             with app.app_context():
-                assert Event.query.get(p1b_id).max_stands == 4
+                assert db.session.get(Event, p1b_id).max_stands == 4
 
     def test_generate_heats_respects_new_cap(self, app, auth_client):
         """Integration: set stands=3 on Pro 1-Board with 9 competitors,
@@ -624,7 +625,7 @@ class TestFNFPerEventStandOverride:
         assert resp.status_code in (302, 303)
 
         with app.app_context():
-            e = Event.query.get(p1b_id)
+            e = db.session.get(Event, p1b_id)
             assert e.max_stands == 3
             heats = Heat.query.filter_by(event_id=p1b_id).all()
             assert len(heats) >= 3

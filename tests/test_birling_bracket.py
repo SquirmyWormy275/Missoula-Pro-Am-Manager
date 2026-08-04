@@ -8,13 +8,12 @@ needed.
 Run:  pytest tests/test_birling_bracket.py -v
 """
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.conftest import patched_bracket_deps
-
 from services.birling_bracket import BirlingBracket
+from tests.conftest import patched_bracket_deps
 
 # ---------------------------------------------------------------------------
 # Helper: create a mock event with a mutable payouts field
@@ -37,6 +36,22 @@ def _bracket(num_competitors=4, seeding=None, event_type='college'):
         comps = [{'id': i, 'name': f'Comp{i}'} for i in range(1, num_competitors + 1)]
         b.generate_bracket(comps, seeding)
     return b
+
+
+class TestStoredDocument:
+    def test_malformed_json_is_treated_as_no_fallback_document(self):
+        bracket = object.__new__(BirlingBracket)
+        bracket.event = _mock_event('{')
+
+        assert bracket._stored_document() is None
+
+    def test_unexpected_json_loader_failure_is_not_silenced(self):
+        bracket = object.__new__(BirlingBracket)
+        bracket.event = _mock_event('{"bracket": {}}')
+
+        with patch('services.birling_bracket.json.loads', side_effect=RuntimeError('broken loader')):
+            with pytest.raises(RuntimeError, match='broken loader'):
+                bracket._stored_document()
 
 
 # ---------------------------------------------------------------------------

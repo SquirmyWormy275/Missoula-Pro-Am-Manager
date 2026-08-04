@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from database import db
 from services.proam_relay import ProAmRelay, compute_team_health
 
 # ---------------------------------------------------------------------------
@@ -61,11 +62,10 @@ def _make_full_team():
 
 def _mock_competitor_lookup(status_map):
     """
-    Return a side_effect function that mocks ProCompetitor.query.get() and
-    CollegeCompetitor.query.get() based on {id: status} map.
+    Return a side-effect function for db.session.get(model, id).
     """
 
-    def _get(cid):
+    def _get(_model_cls, cid):
         mock = MagicMock()
         mock.status = status_map.get(cid, "active")
         return mock
@@ -86,12 +86,9 @@ class TestComputeTeamHealthGreen:
         # All 8 members active
         status_map = {i: "active" for i in range(1, 9)}
 
-        with (
-            patch("services.proam_relay.ProCompetitor") as mock_pro,
-            patch("services.proam_relay.CollegeCompetitor") as mock_col,
+        with patch(
+            "services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(status_map)
         ):
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(status_map)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(status_map)
             result = compute_team_health(team, tournament)
 
         assert result["status"] == "green"
@@ -102,12 +99,9 @@ class TestComputeTeamHealthGreen:
         tournament = MagicMock()
         status_map = {i: "active" for i in range(1, 9)}
 
-        with (
-            patch("services.proam_relay.ProCompetitor") as mock_pro,
-            patch("services.proam_relay.CollegeCompetitor") as mock_col,
+        with patch(
+            "services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(status_map)
         ):
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(status_map)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(status_map)
             result = compute_team_health(team, tournament)
 
         assert result["status"] == "green"
@@ -137,12 +131,9 @@ class TestComputeTeamHealthYellow:
             8: "active",
         }
 
-        with (
-            patch("services.proam_relay.ProCompetitor") as mock_pro,
-            patch("services.proam_relay.CollegeCompetitor") as mock_col,
+        with patch(
+            "services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(status_map)
         ):
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(status_map)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(status_map)
             result = compute_team_health(team, tournament)
 
         assert result["status"] == "yellow"
@@ -163,12 +154,9 @@ class TestComputeTeamHealthYellow:
             8: "scratched",
         }
 
-        with (
-            patch("services.proam_relay.ProCompetitor") as mock_pro,
-            patch("services.proam_relay.CollegeCompetitor") as mock_col,
+        with patch(
+            "services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(status_map)
         ):
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(status_map)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(status_map)
             result = compute_team_health(team, tournament)
 
         assert result["status"] == "yellow"
@@ -187,12 +175,9 @@ class TestComputeTeamHealthYellow:
             8: "active",
         }
 
-        with (
-            patch("services.proam_relay.ProCompetitor") as mock_pro,
-            patch("services.proam_relay.CollegeCompetitor") as mock_col,
+        with patch(
+            "services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(status_map)
         ):
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(status_map)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(status_map)
             result = compute_team_health(team, tournament)
 
         assert (
@@ -224,12 +209,9 @@ class TestComputeTeamHealthRed:
             8: "active",
         }
 
-        with (
-            patch("services.proam_relay.ProCompetitor") as mock_pro,
-            patch("services.proam_relay.CollegeCompetitor") as mock_col,
+        with patch(
+            "services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(status_map)
         ):
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(status_map)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(status_map)
             result = compute_team_health(team, tournament)
 
         assert result["status"] == "red"
@@ -250,12 +232,9 @@ class TestComputeTeamHealthRed:
             8: "scratched",
         }
 
-        with (
-            patch("services.proam_relay.ProCompetitor") as mock_pro,
-            patch("services.proam_relay.CollegeCompetitor") as mock_col,
+        with patch(
+            "services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(status_map)
         ):
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(status_map)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(status_map)
             result = compute_team_health(team, tournament)
 
         assert result["status"] == "red"
@@ -275,12 +254,9 @@ class TestComputeTeamHealthRed:
             8: "active",
         }
 
-        with (
-            patch("services.proam_relay.ProCompetitor") as mock_pro,
-            patch("services.proam_relay.CollegeCompetitor") as mock_col,
+        with patch(
+            "services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(status_map)
         ):
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(status_map)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(status_map)
             result = compute_team_health(team, tournament)
 
         assert result["status"] == "red"
@@ -299,12 +275,9 @@ class TestComputeTeamHealthRed:
             8: "active",
         }
 
-        with (
-            patch("services.proam_relay.ProCompetitor") as mock_pro,
-            patch("services.proam_relay.CollegeCompetitor") as mock_col,
+        with patch(
+            "services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(status_map)
         ):
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(status_map)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(status_map)
             result = compute_team_health(team, tournament)
 
         assert result["detail"]
@@ -339,11 +312,10 @@ class TestReplaceCompetitorHealthWarning:
         with (
             patch("services.proam_relay.ProCompetitor") as mock_pro,
             patch("services.proam_relay.CollegeCompetitor") as mock_col,
+            patch("services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(all_active)),
             patch.object(relay, "_save_relay_data"),
         ):
             mock_pro.query.filter_by.return_value.first.return_value = new_comp
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(all_active)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(all_active)
             result = relay.replace_competitor(1, 1, 99, "pro")
 
         assert result is not None
@@ -376,11 +348,10 @@ class TestReplaceCompetitorHealthWarning:
         with (
             patch("services.proam_relay.ProCompetitor") as mock_pro,
             patch("services.proam_relay.CollegeCompetitor") as mock_col,
+            patch("services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(post_status)),
             patch.object(relay, "_save_relay_data"),
         ):
             mock_pro.query.filter_by.return_value.first.return_value = new_comp
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(post_status)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(post_status)
             result = relay.replace_competitor(1, 1, 99, "pro")
 
         assert result["health"]["status"] == "red"
@@ -410,11 +381,10 @@ class TestReplaceCompetitorHealthWarning:
         with (
             patch("services.proam_relay.ProCompetitor") as mock_pro,
             patch("services.proam_relay.CollegeCompetitor") as mock_col,
+            patch("services.proam_relay.db.session.get", side_effect=_mock_competitor_lookup(post_status)),
             patch.object(relay, "_save_relay_data"),
         ):
             mock_pro.query.filter_by.return_value.first.return_value = new_comp
-            mock_pro.query.get.side_effect = _mock_competitor_lookup(post_status)
-            mock_col.query.get.side_effect = _mock_competitor_lookup(post_status)
             result = relay.replace_competitor(1, 1, 99, "pro")
 
         # Replacement happened — new comp is in team

@@ -3,6 +3,7 @@ Routes for validation and data integrity checks.
 """
 from flask import Blueprint, jsonify, render_template, request
 
+from database import db
 from models import Tournament
 from services.validation import (
     CollegeCompetitorValidator,
@@ -18,7 +19,7 @@ bp = Blueprint('validation', __name__, url_prefix='/tournament/<int:tournament_i
 @bp.route('/')
 def validation_dashboard(tournament_id):
     """Validation dashboard showing all checks."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     # Run all validations
     results = TournamentValidator.validate_full(tournament_id)
@@ -32,7 +33,7 @@ def validation_dashboard(tournament_id):
 @bp.route('/college')
 def college_validation(tournament_id):
     """Detailed college validation results."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     result = TournamentValidator.validate_college(tournament_id)
 
     return render_template('validation/college.html',
@@ -43,7 +44,7 @@ def college_validation(tournament_id):
 @bp.route('/pro')
 def pro_validation(tournament_id):
     """Detailed pro validation results."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     result = TournamentValidator.validate_pro(tournament_id)
 
     return render_template('validation/pro.html',

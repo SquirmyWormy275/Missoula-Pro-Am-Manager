@@ -15,8 +15,10 @@ Requirements:
 """
 import json
 import math
+import warnings
 
 import pytest
+from sqlalchemy.exc import SAWarning
 
 from database import db as _db
 
@@ -488,7 +490,9 @@ class TestRegeneration:
         ev.status = 'pending'
         db_session.flush()
 
-        generate_event_heats(ev)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', SAWarning)
+            generate_event_heats(ev)
 
         heats_second = _all_heats_for_event(ev.id)
 

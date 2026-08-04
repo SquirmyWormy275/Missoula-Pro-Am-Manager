@@ -19,6 +19,7 @@ import uuid
 
 import pytest
 
+from database import db
 from tests.conftest import make_college_competitor, make_team, make_tournament
 
 
@@ -127,7 +128,7 @@ class TestOverrideTeamValidationRoute:
         db_session.expire_all()
         from models.team import Team
 
-        team = Team.query.get(team.id)
+        team = db.session.get(Team, team.id)
         assert team.is_override is True
         assert team.status == "active"
         assert len(team.get_validation_errors()) > 0, "errors preserved for display"
@@ -151,7 +152,7 @@ class TestOverrideTeamValidationRoute:
         db_session.expire_all()
         from models.team import Team
 
-        team = Team.query.get(team.id)
+        team = db.session.get(Team, team.id)
         assert team.is_override is True, "revalidate must not clear override"
         assert team.status == "active", "overridden team stays active after revalidate"
 
@@ -170,7 +171,7 @@ class TestOverrideTeamValidationRoute:
         db_session.expire_all()
         from models.team import Team
 
-        team = Team.query.get(team.id)
+        team = db.session.get(Team, team.id)
         assert team.is_override is False
         assert (
             team.status == "invalid"
@@ -192,7 +193,7 @@ class TestOverrideTeamValidationRoute:
         db_session.expire_all()
         from models.team import Team
 
-        team = Team.query.get(team.id)
+        team = db.session.get(Team, team.id)
         assert team.is_override is False
         assert team.status == "invalid", "nothing should change"
 

@@ -19,6 +19,7 @@ import json
 
 import pytest
 
+from database import db
 from database import db as _db
 from tests.conftest import (
     make_college_competitor,
@@ -272,7 +273,7 @@ class TestNumericPrecision:
         db_session.flush()
 
         from models.event import EventResult
-        loaded = EventResult.query.get(r.id)
+        loaded = db.session.get(EventResult, r.id)
         assert abs(loaded.result_value - 15.123456789) < 0.001
 
     def test_handicap_factor_precision(self, db_session, tournament):
@@ -283,7 +284,7 @@ class TestNumericPrecision:
         db_session.flush()
 
         from models.event import EventResult
-        loaded = EventResult.query.get(r.id)
+        loaded = db.session.get(EventResult, r.id)
         assert abs(loaded.handicap_factor - 3.456) < 0.01
 
     def test_payout_amount_zero_default(self, db_session, tournament):
@@ -293,7 +294,7 @@ class TestNumericPrecision:
         db_session.flush()
 
         from models.event import EventResult
-        loaded = EventResult.query.get(r.id)
+        loaded = db.session.get(EventResult, r.id)
         assert loaded.payout_amount == 0.0
 
 

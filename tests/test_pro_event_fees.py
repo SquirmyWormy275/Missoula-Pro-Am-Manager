@@ -21,6 +21,7 @@ import os
 
 import pytest
 
+from database import db
 from database import db as _db
 
 
@@ -178,9 +179,9 @@ class TestEventFeesPostSetsFees:
         with app.app_context():
             from models.competitor import ProCompetitor
 
-            c0 = ProCompetitor.query.get(c0_id)
-            c1 = ProCompetitor.query.get(c1_id)
-            c2 = ProCompetitor.query.get(c2_id)
+            c0 = db.session.get(ProCompetitor, c0_id)
+            c1 = db.session.get(ProCompetitor, c1_id)
+            c2 = db.session.get(ProCompetitor, c2_id)
 
             # c0 and c1 are enrolled in evt_a → fee set
             assert c0.get_entry_fees().get(str(evt_a_id)) == 25
@@ -210,7 +211,7 @@ class TestEventFeesPostSetsFees:
         with app.app_context():
             from models.competitor import ProCompetitor
 
-            c0 = ProCompetitor.query.get(c0_id)
+            c0 = db.session.get(ProCompetitor, c0_id)
             assert c0.get_entry_fees().get(str(evt_a_id)) == 15  # untouched
 
     def test_post_skips_existing_non_zero_fee_by_default(self, app, auth_client):
@@ -234,8 +235,8 @@ class TestEventFeesPostSetsFees:
         with app.app_context():
             from models.competitor import ProCompetitor
 
-            c0 = ProCompetitor.query.get(c0_id)
-            c1 = ProCompetitor.query.get(c1_id)
+            c0 = db.session.get(ProCompetitor, c0_id)
+            c1 = db.session.get(ProCompetitor, c1_id)
             # c0 kept the original 15 (existing, no overwrite)
             assert c0.get_entry_fees().get(str(evt_a_id)) == 15
             # c1 got the new 30 (no existing fee)
@@ -261,7 +262,7 @@ class TestEventFeesPostSetsFees:
         with app.app_context():
             from models.competitor import ProCompetitor
 
-            c0 = ProCompetitor.query.get(c0_id)
+            c0 = db.session.get(ProCompetitor, c0_id)
             assert c0.get_entry_fees().get(str(evt_a_id)) == 30
 
     def test_post_invalid_fee_does_not_crash(self, app, auth_client):

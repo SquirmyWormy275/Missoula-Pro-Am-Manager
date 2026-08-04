@@ -16,6 +16,7 @@ import json
 
 import pytest
 
+from database import db
 from database import db as _db
 
 
@@ -324,7 +325,7 @@ class TestRelayVsChokermanOrdering:
             h.flight_position
             for h in last_flight_heats
             if h.event_id != chokerman.id
-            and Event.query.get(h.event_id).name == "Pro-Am Relay"
+            and db.session.get(Event, h.event_id).name == "Pro-Am Relay"
         ]
         chokerman_positions = [
             h.flight_position for h in last_flight_heats if h.event_id == chokerman.id

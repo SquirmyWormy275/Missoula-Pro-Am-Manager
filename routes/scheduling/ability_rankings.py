@@ -30,7 +30,7 @@ def ability_rankings(tournament_id):
         ProEventRank,
     )
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     if request.method == 'POST':
         # Parse order_{category}_{gender} fields — each is a comma-separated list

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
+from database import db
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.event import Event
 from models.heat import Heat
@@ -68,7 +69,7 @@ def get_event_heats_for_judging(event_id: int) -> JudgeSheetData | None:
     the event exists but has no heats (caller handles the "no heats" case, e.g.
     the bulk-PDF route skips events without heats instead of erroring).
     """
-    event = Event.query.get(event_id)
+    event = db.session.get(Event, event_id)
     if event is None:
         return None
 

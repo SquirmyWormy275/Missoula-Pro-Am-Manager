@@ -12,6 +12,7 @@ import os
 
 import pytest
 
+from database import db
 from database import db as _db
 
 # ---------------------------------------------------------------------------

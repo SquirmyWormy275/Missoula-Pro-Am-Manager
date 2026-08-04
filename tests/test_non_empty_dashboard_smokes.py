@@ -30,6 +30,7 @@ import os
 
 import pytest
 
+from database import db
 from database import db as _db
 
 
@@ -272,7 +273,7 @@ def _seed(app):
     # the trilogy doc warns about (member vs pro_members / college_members).
     # Service requires pros to be entered in the axe event first.
     for pid in pro_ids[:4]:
-        p = ProCompetitor.query.get(pid)
+        p = db.session.get(ProCompetitor, pid)
         entered = list(p.get_events_entered() or [])
         entered.append(str(axe_event.id))
         p.set_events_entered(entered)

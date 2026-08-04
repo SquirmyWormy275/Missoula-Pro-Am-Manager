@@ -17,6 +17,7 @@ import os
 
 import pytest
 
+from database import db
 from database import db as _db
 
 # ---------------------------------------------------------------------------
@@ -446,8 +447,8 @@ class TestCollegeGearMirror:
         _ok(resp)
 
         # Re-fetch to bypass any session caching.
-        a = CollegeCompetitor.query.get(comp_a.id)
-        b = CollegeCompetitor.query.get(comp_b.id)
+        a = db.session.get(CollegeCompetitor, comp_a.id)
+        b = db.session.get(CollegeCompetitor, comp_b.id)
         assert a.get_gear_sharing().get('springboard') == 'G4 Comp B'
         assert b.get_gear_sharing().get('springboard') == 'G4 Comp A', (
             'college gear update did not mirror onto partner row (gear audit G4)'

@@ -63,7 +63,7 @@ def dashboard(tournament_id):
     an Event row (GET-with-side-effect is the same class of bug as the
     Woodboss ghost rows — one of the reasons this branch exists).
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = find_partnered_axe_throw(tournament_id)
 
     if pat is None:
@@ -90,7 +90,7 @@ def dashboard(tournament_id):
 @bp.route('/enable', methods=['POST'])
 def enable(tournament_id):
     """Explicit POST to create the Partnered Axe Throw event row."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
     get_or_create_partnered_axe_throw(tournament_id)
     invalidate_tournament_caches(tournament_id)
     flash('Partnered Axe Throw enabled for this tournament.', 'success')
@@ -100,7 +100,7 @@ def enable(tournament_id):
 @bp.route('/register-pair', methods=['POST'])
 def register_pair(tournament_id):
     """Register a new pair."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = get_or_create_partnered_axe_throw(tournament_id)
 
     try:
@@ -130,7 +130,7 @@ def register_pair(tournament_id):
 @bp.route('/prelims')
 def prelims(tournament_id):
     """Prelims scoring page."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = find_partnered_axe_throw(tournament_id)
     if pat is None:
         flash('Partnered Axe Throw is not enabled for this tournament.', 'warning')
@@ -148,7 +148,7 @@ def prelims(tournament_id):
 @bp.route('/prelims/record', methods=['POST'])
 def record_prelim(tournament_id):
     """Record a prelim result."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = get_or_create_partnered_axe_throw(tournament_id)
 
     try:
@@ -185,7 +185,7 @@ def record_prelim(tournament_id):
 @bp.route('/advance-to-finals', methods=['POST'])
 def advance_to_finals(tournament_id):
     """Advance top 4 to finals."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = get_or_create_partnered_axe_throw(tournament_id)
 
     try:
@@ -204,7 +204,7 @@ def advance_to_finals(tournament_id):
 @bp.route('/finals')
 def finals(tournament_id):
     """Finals scoring page."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = find_partnered_axe_throw(tournament_id)
     if pat is None:
         flash('Partnered Axe Throw is not enabled for this tournament.', 'warning')
@@ -221,7 +221,7 @@ def finals(tournament_id):
 @bp.route('/finals/record', methods=['POST'])
 def record_final(tournament_id):
     """Record a final result."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = get_or_create_partnered_axe_throw(tournament_id)
 
     try:
@@ -257,7 +257,7 @@ def record_final(tournament_id):
 @bp.route('/results')
 def results(tournament_id):
     """Final results page."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = find_partnered_axe_throw(tournament_id)
     if pat is None:
         flash('Partnered Axe Throw is not enabled for this tournament.', 'warning')
@@ -274,7 +274,7 @@ def results(tournament_id):
 @bp.route('/reset', methods=['POST'])
 def reset(tournament_id):
     """Reset the event."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = find_partnered_axe_throw(tournament_id)
     if pat is None:
         flash('Partnered Axe Throw is not enabled for this tournament.', 'warning')
@@ -291,7 +291,7 @@ def reset(tournament_id):
 @bp.route('/api/status')
 def api_status(tournament_id):
     """Get event status as JSON."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     pat = find_partnered_axe_throw(tournament_id)
     if pat is None:
         return jsonify({

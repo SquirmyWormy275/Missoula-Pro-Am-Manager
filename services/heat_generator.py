@@ -1370,8 +1370,8 @@ def _delete_event_heats(event_id: int) -> None:
     """Delete all heats for an event, clearing HeatAssignment rows first to satisfy FK constraints."""
     heat_ids = [h.id for h in Heat.query.filter_by(event_id=event_id).with_entities(Heat.id).all()]
     if heat_ids:
-        HeatAssignment.query.filter(HeatAssignment.heat_id.in_(heat_ids)).delete(synchronize_session=False)
-    Heat.query.filter_by(event_id=event_id).delete(synchronize_session=False)
+        HeatAssignment.query.filter(HeatAssignment.heat_id.in_(heat_ids)).delete(synchronize_session='fetch')
+    Heat.query.filter_by(event_id=event_id).delete(synchronize_session='fetch')
 
 
 def check_gear_sharing_conflicts(heats: list) -> list:

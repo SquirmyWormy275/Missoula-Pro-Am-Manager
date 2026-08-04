@@ -82,7 +82,7 @@ def friday_feature(tournament_id):
     """Configure Friday Night Feature events and Saturday college spillover."""
     from services.schedule_builder import COLLEGE_SATURDAY_PRIORITY
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     # FNF: pro events eligible for Friday Night
     eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
@@ -236,7 +236,7 @@ def friday_feature(tournament_id):
 @record_print('fnf_print')
 def friday_feature_print(tournament_id):
     """Printable Friday Night Feature schedule — heat-by-heat order per event."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
     pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
     eligible_events = [e for e in pro_events if e.name in eligible_names]
@@ -244,13 +244,13 @@ def friday_feature_print(tournament_id):
     fnf_config = _load_fnf_config(tournament)
     fnf_schedule = _build_fnf_schedule(tournament, eligible_events, fnf_config)
 
-    from datetime import datetime
+    from services.time_utils import utc_now_naive
     return render_template(
         'scheduling/friday_feature_print.html',
         tournament=tournament,
         fnf_schedule=fnf_schedule,
         notes=fnf_config.get('notes', ''),
-        now=datetime.utcnow(),
+        now=utc_now_naive(),
     )
 
 
@@ -263,11 +263,10 @@ def friday_feature_pdf(tournament_id):
     On Railway the fallback serves HTML with Content-Type text/html so the user
     can still print via Ctrl-P without the deploy needing cairo/pango.
     """
-    from datetime import datetime
-
     from services.print_response import weasyprint_or_html
+    from services.time_utils import utc_now_naive
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
     pro_events = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
     eligible_events = [e for e in pro_events if e.name in eligible_names]
@@ -280,7 +279,7 @@ def friday_feature_pdf(tournament_id):
         tournament=tournament,
         fnf_schedule=fnf_schedule,
         notes=fnf_config.get('notes', ''),
-        now=datetime.utcnow(),
+        now=utc_now_naive(),
     )
     safe_name = f"{tournament.name}_{tournament.year}_friday_night_feature".replace(' ', '_').replace('/', '-')
     return weasyprint_or_html(html, safe_name)
