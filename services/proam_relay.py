@@ -49,7 +49,9 @@ class ProAmRelay:
                 raw = relay_event.payouts
             try:
                 return json.loads(raw or '{}')
-            except:
+            except (json.JSONDecodeError, TypeError):
+                # A legacy state field may be empty or malformed. Other
+                # decoder failures are operational errors and must surface.
                 pass
 
         return {
