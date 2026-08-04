@@ -8,13 +8,12 @@ installed, HTML fallback otherwise).
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from flask import render_template
 
 from models import Event, Tournament
 from services.print_catalog import record_print
 from services.print_response import weasyprint_or_html
+from services.time_utils import utc_now_naive
 
 from . import scheduling_bp
 
@@ -75,7 +74,7 @@ def pro_checkout_roster_print(tournament_id):
         "scheduling/pro_checkout_roster_print.html",
         tournament=tournament,
         rows=rows,
-        now=datetime.utcnow(),
+        now=utc_now_naive(),
     )
 
 
@@ -89,7 +88,7 @@ def pro_checkout_roster_pdf(tournament_id):
         "scheduling/pro_checkout_roster_print.html",
         tournament=tournament,
         rows=rows,
-        now=datetime.utcnow(),
+        now=utc_now_naive(),
     )
     filename = f"{tournament.name}_{tournament.year}_pro_checkout_roster".replace(
         " ", "_"

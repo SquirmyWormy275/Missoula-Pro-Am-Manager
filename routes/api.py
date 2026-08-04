@@ -8,6 +8,8 @@ from decimal import Decimal
 
 from flask import Blueprint, Response, current_app, jsonify, stream_with_context
 
+from services.time_utils import utc_now_naive
+
 
 def _json_default(obj):
     """JSON encoder fallback for types the stdlib encoder doesn't handle.
@@ -278,7 +280,7 @@ def standings_poll(tournament_id):
 
     payload = {
         'tournament_id': tournament_id,
-        'last_updated': datetime.utcnow().isoformat() + 'Z',
+        'last_updated': utc_now_naive().isoformat() + 'Z',
         'college_teams': teams,
         'bull': bull,
         'belle': belle,

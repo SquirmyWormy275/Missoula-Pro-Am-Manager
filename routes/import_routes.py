@@ -27,6 +27,7 @@ from database import db
 from models import Event, EventResult, ProCompetitor, Tournament
 from services.audit import log_action
 from services.gear_sharing import build_name_index, parse_gear_sharing_details, resolve_partner_name
+from services.time_utils import utc_now_naive
 from services.upload_security import malware_scan, save_upload, validate_excel_upload
 
 import_pro_bp = Blueprint('import_pro', __name__)
@@ -258,7 +259,7 @@ def confirm_pro_entries(tournament_id):
     # Competitors whose gear_sharing was just written and need to be mirrored
     # to their partners after the main commit (gear audit fix G5 — 2026-04-07).
     gear_synced_competitors: list = []
-    now      = datetime.utcnow()
+    now      = utc_now_naive()
 
     roster = ProCompetitor.query.filter_by(tournament_id=tournament_id).all()
     existing_names = [c.name for c in roster]

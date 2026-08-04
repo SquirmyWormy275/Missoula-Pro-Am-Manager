@@ -19,8 +19,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import date, datetime
+from datetime import date
 from typing import Optional
+
+from services.time_utils import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +282,7 @@ def log_skipped_competitor(name: str, event_name: str) -> None:
         data.append({
             'name': name,
             'event': event_name,
-            'skipped_at': datetime.utcnow().isoformat(),
+            'skipped_at': utc_now_naive().isoformat(),
         })
         with open(_SKIPPED_LOG_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
@@ -432,7 +434,7 @@ def _push_rows_validated(rows: list, event_label: str) -> dict:
         inserted = int(result.get('inserted', 0))
         skipped = int(result.get('skipped', 0))
         errors = list(result.get('errors', []) or [])
-        _write_sync_cache(datetime.utcnow().isoformat(), inserted)
+        _write_sync_cache(utc_now_naive().isoformat(), inserted)
         if errors:
             logger.warning(
                 'STRATHMARK: %s push reported %d errors: %s',
@@ -458,7 +460,7 @@ def _push_rows_validated(rows: list, event_label: str) -> dict:
         from strathmark import push_results
         df = pd.DataFrame(rows)
         count = push_results(df, show_name=SHOW_NAME, source_app=SOURCE_APP)
-        _write_sync_cache(datetime.utcnow().isoformat(), count)
+        _write_sync_cache(utc_now_naive().isoformat(), count)
         logger.info('STRATHMARK: %s push -- inserted=%d (legacy API)', event_label, count)
         return {'inserted': int(count), 'skipped': 0, 'errors': []}
     except Exception as exc:

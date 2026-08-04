@@ -160,9 +160,8 @@ def _serialize_heat_detail(tournament: Tournament, event: Event, heat: Heat) -> 
 @record_print("heat_sheets")
 def heat_sheets(tournament_id):
     """Print-ready heat sheets for all flights and events."""
-    from datetime import datetime
-
     from services.flight_builder import _STAND_CONFLICT_GAP
+    from services.time_utils import utc_now_naive
 
     tournament = Tournament.query.get_or_404(tournament_id)
 
@@ -343,7 +342,7 @@ def heat_sheets(tournament_id):
         flight_data=flight_data,
         no_flight_heats=no_flight_heats,
         birling_brackets=birling_brackets,
-        now=datetime.utcnow(),
+        now=utc_now_naive(),
         stand_conflict_gap=_STAND_CONFLICT_GAP,
     )
 
@@ -363,10 +362,9 @@ def relay_teams_sheet(tournament_id):
     cairo/pango fall back to HTML (Content-Type: text/html) while still showing
     a PDF filename hint.
     """
-    from datetime import datetime
-
     from services.print_response import weasyprint_or_html
     from services.proam_relay import ProAmRelay
+    from services.time_utils import utc_now_naive
 
     tournament = Tournament.query.get_or_404(tournament_id)
     relay = ProAmRelay(tournament)
@@ -383,7 +381,7 @@ def relay_teams_sheet(tournament_id):
         tournament=tournament,
         teams=teams,
         drawn=drawn,
-        now=datetime.utcnow(),
+        now=utc_now_naive(),
     )
     safe_name = (
         f"{tournament.name}_{tournament.year}_relay_teams"

@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
+
+from services.time_utils import utc_now_naive
 
 if TYPE_CHECKING:
     from models.competitor import CollegeCompetitor, ProCompetitor
@@ -622,7 +624,7 @@ def find_undoable_scratch(competitor_id: int, competitor_type: str | None = None
     """
     from models.audit_log import AuditLog
 
-    cutoff = datetime.utcnow() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
+    cutoff = utc_now_naive() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
     return next(
         (
             entry
@@ -657,7 +659,7 @@ def find_undoable_scratches(competitor_ids, competitor_type: str | None = None) 
     if not ids:
         return set()
 
-    cutoff = datetime.utcnow() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
+    cutoff = utc_now_naive() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
     return {
         entry.entity_id
         for entry in AuditLog.query.filter(

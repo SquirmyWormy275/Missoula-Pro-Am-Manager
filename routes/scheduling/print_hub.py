@@ -375,9 +375,9 @@ def _render_document_html(tournament, doc, entity_obj):
     Flask view function directly — view functions may set response headers
     we don't want in an email context.
     """
-    from datetime import datetime
-
     from flask import render_template
+
+    from services.time_utils import utc_now_naive
 
     filename_base = f"{tournament.name}_{tournament.year}_{doc.key}".replace(" ", "_")
 
@@ -389,7 +389,7 @@ def _render_document_html(tournament, doc, entity_obj):
             "scheduling/pro_checkout_roster_print.html",
             tournament=tournament,
             rows=rows,
-            now=datetime.utcnow(),
+            now=utc_now_naive(),
         )
         return html, filename_base
 
@@ -424,7 +424,7 @@ def _render_document_html(tournament, doc, entity_obj):
             tournament=tournament,
             fnf_schedule=fnf_schedule,
             notes=fnf_config.get("notes", ""),
-            now=datetime.utcnow(),
+            now=utc_now_naive(),
         )
         return html, filename_base
 
@@ -646,6 +646,6 @@ def _compose_body(tournament, doc_label: str, extra_note: Optional[str]) -> str:
 
 
 def _utcnow_iso() -> str:
-    from datetime import datetime
+    from services.time_utils import utc_now_naive
 
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    return utc_now_naive().strftime("%Y-%m-%d %H:%M UTC")
