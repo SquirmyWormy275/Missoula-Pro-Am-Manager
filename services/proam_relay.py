@@ -15,6 +15,7 @@ import random
 from database import db
 from models import Event, EventResult, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
+from models.relay import RelayState, RelayTeam, RelayTeamEvent, RelayTeamMember
 
 
 class ProAmRelay:
@@ -87,9 +88,120 @@ class ProAmRelay:
             )
             db.session.add(relay_event)
 
+        member_uids = self._relay_member_uids() if self._has_projectable_teams() else None
         relay_event.event_state = json.dumps(self.relay_data)
+        db.session.flush()
+        if member_uids is not None:
+            self._sync_relay_tables(relay_event, member_uids)
         if commit:
             db.session.commit()
+        else:
+            db.session.flush()
+
+    def _has_projectable_teams(self) -> bool:
+        """Return whether current state has the complete team shape for row sync.
+
+        The service's transaction API also supports saving a deliberately
+        minimal state document before a draw exists. It remains valid legacy
+        state, but it is not a roster that normalized tables can represent.
+        """
+        teams = self.relay_data.get("teams", [])
+        if not isinstance(teams, list):
+            return False
+        for team in teams:
+            if not isinstance(team, dict) or not isinstance(team.get("name"), str):
+                return False
+            if not isinstance(team.get("pro_members"), list):
+                return False
+            if not isinstance(team.get("college_members"), list):
+                return False
+            events = team.get("events")
+            if not isinstance(events, dict) or set(events) != set(self.RELAY_EVENTS):
+                return False
+        return True
+
+    def _relay_member_uids(self) -> dict[str, dict[int, int]]:
+        """Resolve legacy member ids to identity uids before mutating either store."""
+        member_ids = {"pro": set(), "college": set()}
+        for team in self.relay_data.get("teams", []):
+            for member in team.get("pro_members", []):
+                member_ids["pro"].add(member.get("id"))
+            for member in team.get("college_members", []):
+                member_ids["college"].add(member.get("id"))
+
+        resolved = {"pro": {}, "college": {}}
+        for kind, model in (("pro", ProCompetitor), ("college", CollegeCompetitor)):
+            ids = {member_id for member_id in member_ids[kind] if isinstance(member_id, int)}
+            if not ids:
+                continue
+            rows = model.query.filter(
+                model.id.in_(ids), model.tournament_id == self.tournament.id
+            ).all()
+            resolved[kind] = {row.id: row.uid for row in rows}
+            missing = ids - set(resolved[kind])
+            if missing:
+                raise ValueError("Relay roster contains a competitor outside this tournament")
+        return resolved
+
+    def _sync_relay_tables(self, relay_event: Event, member_uids: dict[str, dict[int, int]]):
+        """Replace the row projection in the same transaction as legacy state.
+
+        Membership records carry durable competitor identities. A team-event
+        record deliberately carries only the team, event key, result, and
+        completion state: teams choose their own relay legs and those results
+        never enter individual or college scoring.
+        """
+        state = RelayState.query.filter_by(event_id=relay_event.id).first()
+        if state is None:
+            state = RelayState(event_id=relay_event.id)
+            db.session.add(state)
+            db.session.flush()
+
+        state.status = self.relay_data.get("status", "not_drawn")
+        team_ids = [row.id for row in RelayTeam.query.filter_by(relay_state_id=state.id).all()]
+        if team_ids:
+            RelayTeamEvent.query.filter(RelayTeamEvent.relay_team_id.in_(team_ids)).delete(
+                synchronize_session=False
+            )
+            RelayTeamMember.query.filter(RelayTeamMember.relay_team_id.in_(team_ids)).delete(
+                synchronize_session=False
+            )
+            RelayTeam.query.filter(RelayTeam.id.in_(team_ids)).delete(synchronize_session=False)
+            db.session.flush()
+
+        seen_uids = set()
+        for team_data in self.relay_data.get("teams", []):
+            team = RelayTeam(
+                relay_state_id=state.id,
+                team_number=team_data["team_number"],
+                name=team_data["name"],
+                total_time=team_data.get("total_time"),
+            )
+            db.session.add(team)
+            db.session.flush()
+
+            for key, kind in (("pro_members", "pro"), ("college_members", "college")):
+                for member in team_data.get(key, []):
+                    uid = member_uids[kind].get(member.get("id"))
+                    if uid is None:
+                        raise ValueError("Relay roster contains an unresolved competitor")
+                    if uid in seen_uids:
+                        raise ValueError("A relay competitor cannot appear on multiple teams")
+                    seen_uids.add(uid)
+                    db.session.add(RelayTeamMember(
+                        relay_state_id=state.id,
+                        relay_team_id=team.id,
+                        uid=uid,
+                    ))
+
+            for event_key in self.RELAY_EVENTS:
+                event_data = team_data["events"][event_key]
+                db.session.add(RelayTeamEvent(
+                    relay_team_id=team.id,
+                    event_key=event_key,
+                    result=event_data.get("result"),
+                    status=event_data.get("status", "pending"),
+                ))
 
     def get_eligible_pro_competitors(self) -> list:
         """Get pro competitors who opted into the lottery."""
@@ -523,6 +635,15 @@ class ProAmRelay:
                             raise ValueError("Replacement pro competitor must be opted into Pro-Am lottery")
                         if competitor_type == 'college' and not new_comp.pro_am_lottery_opt_in:
                             raise ValueError("Replacement college competitor must be opted into Pro-Am lottery")
+                        for existing_team in teams:
+                            for existing_member in existing_team.get(member_key, []):
+                                if (
+                                    existing_member.get('id') == new_competitor_id
+                                    and existing_member is not member
+                                ):
+                                    raise ValueError(
+                                        "Replacement competitor is already assigned to a relay team"
+                                    )
                         team[member_key][i] = new_comp_data
                         affected_team = team
                         break
