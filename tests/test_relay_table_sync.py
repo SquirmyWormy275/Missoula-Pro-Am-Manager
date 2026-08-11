@@ -65,3 +65,40 @@ def test_replacement_rejects_competitor_already_on_another_relay_team(db_session
 
     with pytest.raises(ValueError, match="already assigned"):
         relay.replace_competitor(1, pros[0].id, pros[1].id, "pro")
+
+
+def test_reader_prefers_normalized_rows_over_malformed_legacy_json(db_session):
+    from models.event import Event
+
+    tournament = make_tournament(db_session)
+    school = make_team(db_session, tournament)
+    pro = make_pro_competitor(db_session, tournament, "Pro One", gender="M")
+    college = make_college_competitor(
+        db_session, tournament, school, "College One", gender="F"
+    )
+    pro.pro_am_lottery_opt_in = True
+    college.pro_am_lottery_opt_in = True
+    db_session.flush()
+
+    relay = ProAmRelay(tournament)
+    relay.set_teams_manually([{
+        "pro_member_ids": [pro.id],
+        "college_member_ids": [college.id],
+    }])
+    relay.record_event_result(1, "partnered_sawing", 20.5)
+
+    relay_event = Event.query.filter_by(
+        tournament_id=tournament.id, name="Pro-Am Relay"
+    ).one()
+    relay_event.event_state = "{not valid json"
+    db_session.commit()
+
+    reloaded = ProAmRelay(tournament)
+    assert reloaded.get_status() == "in_progress"
+    team = reloaded.get_teams()[0]
+    assert [member["id"] for member in team["pro_members"]] == [pro.id]
+    assert [member["id"] for member in team["college_members"]] == [college.id]
+    assert team["events"]["partnered_sawing"] == {
+        "result": 20.5,
+        "status": "completed",
+    }
