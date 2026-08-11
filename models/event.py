@@ -70,10 +70,9 @@ class Event(db.Model):
     # Payout configuration (pro only) - stored as JSON
     payouts = db.Column(db.Text, nullable=False, default='{}')  # Dict: position -> amount
 
-    # State-machine storage for events that overload payouts (Pro-Am Relay,
-    # Partnered Axe Throw, Birling bracket).  Nullable TEXT — NULL means no
-    # state has been written yet.  Populated by migration b1c2d3e4f5a6 for
-    # pre-existing events and by their respective services going forward.
+    # State-machine storage for Partnered Axe Throw, Birling, and legacy Relay.
+    # NULL means no JSON fallback is needed; projected Relay state is stored
+    # in its dedicated tables instead.
     event_state = db.Column(db.Text, nullable=True)
 
     # Status

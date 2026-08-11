@@ -36,8 +36,8 @@ class ProAmRelay:
     def _load_relay_data(self) -> dict:
         """Load relay data from tournament or create new.
 
-        Reads from event_state (primary) with fallback to payouts for
-        backward compatibility during the migration transition.
+        Reads normalized Relay tables first, then event_state or payouts only
+        for legacy documents that could not be projected safely.
         """
         relay_event = Event.query.filter_by(
             tournament_id=self.tournament.id,
@@ -159,7 +159,12 @@ class ProAmRelay:
         }
 
     def _save_relay_data(self, commit: bool = True):
-        """Save relay data to the relay event.
+        """Save relay data to normalized tables when its shape is complete.
+
+        A successful table projection clears ``event_state`` so new Relay
+        writes have one authoritative store. An incomplete legacy document
+        stays in JSON because it cannot yet be represented without losing
+        data. Payouts are never used for Relay state on this path.
 
         Args:
             commit: When True (default) commits immediately so existing
@@ -182,11 +187,15 @@ class ProAmRelay:
             )
             db.session.add(relay_event)
 
-        member_uids = self._relay_member_uids() if self._has_projectable_teams() else None
-        relay_event.event_state = json.dumps(self.relay_data)
+        # A first write creates the Event above, so establish its id before
+        # creating RelayState with the event foreign key.
         db.session.flush()
-        if member_uids is not None:
+        if self._has_projectable_teams():
+            member_uids = self._relay_member_uids()
             self._sync_relay_tables(relay_event, member_uids)
+            relay_event.event_state = None
+        else:
+            relay_event.event_state = json.dumps(self.relay_data)
         if commit:
             db.session.commit()
         else:

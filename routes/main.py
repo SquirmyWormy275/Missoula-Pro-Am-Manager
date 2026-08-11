@@ -855,12 +855,9 @@ def ops_dashboard(tid):
     team_health = []
     if relay_event:
         try:
-            import json as _json
+            from services.proam_relay import ProAmRelay, compute_team_health
 
-            from services.proam_relay import compute_team_health
-            raw = relay_event.event_state or relay_event.payouts or '{}'
-            relay_data = _json.loads(raw)
-            for team in relay_data.get('teams', []):
+            for team in ProAmRelay(tournament).get_teams():
                 health = compute_team_health(team, tournament)
                 team_health.append({'team': team, 'health': health})
         except Exception:

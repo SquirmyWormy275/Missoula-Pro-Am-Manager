@@ -134,16 +134,17 @@ class TestRelayCommitTrue:
 
 class TestRelayCommitFalse:
     def test_no_commit_allows_rollback(self, db_session, tournament, relay_event):
-        """commit=False: event_state is flushed to the DB session but not
-        committed; a subsequent rollback must restore the original value."""
+        """commit=False flushes normalized Relay rows without committing them."""
+        from models.relay import RelayState
+
         relay = _relay_instance(tournament, relay_event)
         event_id = relay_event.id
 
         relay.relay_data["status"] = "drawn"
         relay._save_relay_data(commit=False)
 
-        # The object in-session should have the new value
-        assert relay_event.event_state is not None
+        assert relay_event.event_state is None
+        assert RelayState.query.filter_by(event_id=event_id).one().status == "drawn"
 
         # Rolling back must discard the pending write.
         # The relay_event row was added inside db_session (a savepoint), so
@@ -153,8 +154,8 @@ class TestRelayCommitFalse:
         from models.event import Event as _Event
         fresh = _db.session.get(_Event, event_id)
         if fresh is not None:
-            state = json.loads(fresh.event_state) if fresh.event_state else {}
-            assert state.get("status") != "drawn"
+            state = RelayState.query.filter_by(event_id=event_id).first()
+            assert state is None or state.status != "drawn"
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +238,8 @@ class TestRelayOuterSavepointRollback:
         self, db_session, tournament, relay_event
     ):
         """Outer savepoint wraps _save_relay_data(commit=False); rollback restores."""
+        from models.relay import RelayState
+
         relay = _relay_instance(tournament, relay_event)
         relay.relay_data["status"] = "drawn"
 
@@ -244,17 +247,16 @@ class TestRelayOuterSavepointRollback:
         sp = _db.session.begin_nested()
         relay._save_relay_data(commit=False)
 
-        assert relay_event.event_state is not None
-        drawn = json.loads(relay_event.event_state).get("status")
-        assert drawn == "drawn"
+        assert relay_event.event_state is None
+        assert RelayState.query.filter_by(event_id=relay_event.id).one().status == "drawn"
 
         # Roll back the inner savepoint
         sp.rollback()
         _db.session.expire(relay_event)
         fresh = _db.session.get(relay_event.__class__, relay_event.id)
         if fresh is not None:
-            state = json.loads(fresh.event_state) if fresh.event_state else {}
-            assert state.get("status") != "drawn"
+            state = RelayState.query.filter_by(event_id=relay_event.id).first()
+            assert state is None or state.status != "drawn"
 
 
 # ---------------------------------------------------------------------------
