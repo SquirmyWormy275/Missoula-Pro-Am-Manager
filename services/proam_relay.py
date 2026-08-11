@@ -12,6 +12,8 @@ import copy
 import json
 import random
 
+from flask import has_app_context
+
 from database import db
 from models import Event, EventResult, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
@@ -43,6 +45,10 @@ class ProAmRelay:
         ).first()
 
         if relay_event:
+            if has_app_context():
+                table_data = self._load_table_relay_data(relay_event)
+                if table_data is not None:
+                    return table_data
             # Primary: event_state column (new path)
             raw = relay_event.event_state
             if not raw:
@@ -62,6 +68,94 @@ class ProAmRelay:
             'eligible_pro': [],
             'drawn_college': [],
             'drawn_pro': []
+        }
+
+    def _load_table_relay_data(self, relay_event: Event) -> dict | None:
+        """Rebuild the existing relay view payload from its row projection.
+
+        A missing or incomplete projection remains a JSON-reader case. This is
+        deliberate during the staged migration: a legacy document that could
+        not safely project is still usable, rather than becoming an empty
+        relay because it lacks rows.
+        """
+        state = RelayState.query.filter_by(event_id=relay_event.id).first()
+        if state is None:
+            return None
+
+        teams = RelayTeam.query.filter_by(relay_state_id=state.id).order_by(
+            RelayTeam.team_number
+        ).all()
+        team_ids = [team.id for team in teams]
+        members_by_team = {team_id: [] for team_id in team_ids}
+        for member in RelayTeamMember.query.filter(
+            RelayTeamMember.relay_team_id.in_(team_ids)
+        ).order_by(RelayTeamMember.id):
+            members_by_team[member.relay_team_id].append(member.uid)
+
+        all_uids = {uid for uids in members_by_team.values() for uid in uids}
+        pro_by_uid = {
+            competitor.uid: competitor
+            for competitor in ProCompetitor.query.filter(ProCompetitor.uid.in_(all_uids)).all()
+        }
+        college_by_uid = {
+            competitor.uid: competitor
+            for competitor in CollegeCompetitor.query.filter(
+                CollegeCompetitor.uid.in_(all_uids)
+            ).all()
+        }
+        if len(pro_by_uid) + len(college_by_uid) != len(all_uids):
+            return None
+
+        events_by_team = {team_id: {} for team_id in team_ids}
+        for team_event in RelayTeamEvent.query.filter(
+            RelayTeamEvent.relay_team_id.in_(team_ids)
+        ).all():
+            events_by_team[team_event.relay_team_id][team_event.event_key] = {
+                'result': team_event.result,
+                'status': team_event.status,
+            }
+
+        rendered_teams = []
+        drawn_pro = []
+        drawn_college = []
+        for team in teams:
+            event_data = events_by_team[team.id]
+            if set(event_data) != set(self.RELAY_EVENTS):
+                return None
+            pro_members = []
+            college_members = []
+            for uid in members_by_team[team.id]:
+                pro = pro_by_uid.get(uid)
+                if pro is not None:
+                    member = {'id': pro.id, 'name': pro.name, 'gender': pro.gender}
+                    pro_members.append(member)
+                    drawn_pro.append(member)
+                    continue
+                college = college_by_uid[uid]
+                member = {
+                    'id': college.id,
+                    'name': college.name,
+                    'gender': college.gender,
+                    'team': college.team.team_code if college.team else 'N/A',
+                }
+                college_members.append(member)
+                drawn_college.append(member)
+            rendered_teams.append({
+                'team_number': team.team_number,
+                'name': team.name,
+                'pro_members': pro_members,
+                'college_members': college_members,
+                'events': event_data,
+                'total_time': team.total_time,
+            })
+
+        return {
+            'status': state.status,
+            'teams': rendered_teams,
+            'eligible_college': [],
+            'eligible_pro': [],
+            'drawn_college': drawn_college,
+            'drawn_pro': drawn_pro,
         }
 
     def _save_relay_data(self, commit: bool = True):
