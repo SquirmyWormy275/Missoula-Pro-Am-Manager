@@ -293,7 +293,7 @@ def upgrade():
             ["relay_state_id", "relay_team_id"],
             ["relay_teams.relay_state_id", "relay_teams.id"],
         ),
-        sa.ForeignKeyConstraint(["uid"], ["competitors.uid"]),
+        sa.ForeignKeyConstraint(["uid"], ["competitors.uid"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("relay_state_id", "uid", name="uq_relay_members_state_uid"),
     )

@@ -89,7 +89,7 @@ class RelayTeamMember(db.Model):
             ["relay_state_id", "relay_team_id"],
             ["relay_teams.relay_state_id", "relay_teams.id"],
         ),
-        db.ForeignKeyConstraint(["uid"], ["competitors.uid"]),
+        db.ForeignKeyConstraint(["uid"], ["competitors.uid"], ondelete="CASCADE"),
         db.UniqueConstraint("relay_state_id", "uid", name="uq_relay_members_state_uid"),
     )
 

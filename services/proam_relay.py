@@ -88,14 +88,37 @@ class ProAmRelay:
             )
             db.session.add(relay_event)
 
-        member_uids = self._relay_member_uids()
+        member_uids = self._relay_member_uids() if self._has_projectable_teams() else None
         relay_event.event_state = json.dumps(self.relay_data)
         db.session.flush()
-        self._sync_relay_tables(relay_event, member_uids)
+        if member_uids is not None:
+            self._sync_relay_tables(relay_event, member_uids)
         if commit:
             db.session.commit()
         else:
             db.session.flush()
+
+    def _has_projectable_teams(self) -> bool:
+        """Return whether current state has the complete team shape for row sync.
+
+        The service's transaction API also supports saving a deliberately
+        minimal state document before a draw exists. It remains valid legacy
+        state, but it is not a roster that normalized tables can represent.
+        """
+        teams = self.relay_data.get("teams", [])
+        if not isinstance(teams, list):
+            return False
+        for team in teams:
+            if not isinstance(team, dict) or not isinstance(team.get("name"), str):
+                return False
+            if not isinstance(team.get("pro_members"), list):
+                return False
+            if not isinstance(team.get("college_members"), list):
+                return False
+            events = team.get("events")
+            if not isinstance(events, dict) or set(events) != set(self.RELAY_EVENTS):
+                return False
+        return True
 
     def _relay_member_uids(self) -> dict[str, dict[int, int]]:
         """Resolve legacy member ids to identity uids before mutating either store."""
