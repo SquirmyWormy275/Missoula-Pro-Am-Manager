@@ -691,16 +691,15 @@ def clone_tournament(tournament_id):
         )
         db.session.add(new_comp)
 
-    # Copy events (no heats or results). Several event types store workflow
-    # state in the `payouts` JSON field rather than payout amounts — copying
-    # that state across tournaments drags stale pairs / bracket rows / relay
-    # teams along with competitor IDs from the source tournament that don't
-    # exist in the clone. Reset those to empty state during clone.
-    _STATEFUL_EVENT_NAMES = {'Partnered Axe Throw', 'Pro-Am Relay'}
+    # Copy events but not heats, results, or event_state.
     new_events_by_source_id = {}
     for event in source.events.all():
-        is_state_event = (
-            event.name in _STATEFUL_EVENT_NAMES
+        # Relay and Partnered Axe state moved to event_state, so their payout
+        # schedules are normal setup that a clone must retain. Birling keeps a
+        # legacy payouts fallback with source competitor references, so reset
+        # it until that fallback can be retired after its data repair.
+        has_legacy_birling_state = (
+            event.scoring_type == 'bracket'
             or (event.stand_type or '').lower() == 'birling'
         )
         new_event = Event(
@@ -719,7 +718,7 @@ def clone_tournament(tournament_id):
             stand_type=event.stand_type,
             max_stands=event.max_stands,
             has_prelims=event.has_prelims,
-            payouts='{}' if is_state_event else event.payouts,
+            payouts='{}' if has_legacy_birling_state else event.payouts,
             status='pending',
             is_finalized=False,
         )

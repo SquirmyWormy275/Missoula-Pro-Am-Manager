@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 
+from models import Event, Tournament
 from models.audit_log import AuditLog
 from models.user import User
 from routes import reporting as reporting_routes
@@ -47,6 +48,65 @@ def test_clone_tournament_writes_audit_log(app, db_session):
     details = json.loads(entry.details_json)
     assert details['source_id'] == tournament.id
     assert details['source_name'] == 'Source Tournament'
+
+
+def test_clone_preserves_migrated_event_payouts_but_resets_birling_fallback(
+        app, db_session):
+    client, _admin = _make_logged_in_client(app, db_session, 'clone_payout_admin')
+    source = make_tournament(db_session, name='Clone Payout Source', year=2026)
+
+    relay = Event(
+        tournament_id=source.id,
+        name='Pro-Am Relay',
+        event_type='pro',
+        scoring_type='time',
+        scoring_order='lowest_wins',
+        stand_type='underhand',
+        payouts=json.dumps({'1': 800.0, '2': 400.0}),
+        event_state=json.dumps({'teams': []}),
+    )
+    partnered_axe = Event(
+        tournament_id=source.id,
+        name='Partnered Axe Throw',
+        event_type='pro',
+        scoring_type='hits',
+        scoring_order='highest_wins',
+        stand_type='axe_throw',
+        has_prelims=True,
+        payouts=json.dumps({'1': 500.0, '2': 250.0}),
+        event_state=json.dumps({'stage': 'prelims', 'pairs': []}),
+    )
+    birling = Event(
+        tournament_id=source.id,
+        name='Birling',
+        event_type='pro',
+        scoring_type='bracket',
+        scoring_order='lowest_wins',
+        stand_type='birling',
+        payouts=json.dumps({'bracket': {'matches': [{'competitor_id': 123}]}}),
+        event_state=json.dumps({'bracket': {'matches': []}}),
+    )
+    db_session.add_all([relay, partnered_axe, birling])
+    db_session.flush()
+
+    response = client.post(f'/tournament/{source.id}/clone', follow_redirects=False)
+
+    assert response.status_code == 302
+    clone = Tournament.query.filter(
+        Tournament.name == f'Copy of {source.name}',
+        Tournament.id != source.id,
+    ).one()
+    cloned_events = {event.name: event for event in clone.events.all()}
+
+    assert cloned_events['Pro-Am Relay'].get_payouts() == {'1': 800.0, '2': 400.0}
+    assert cloned_events['Partnered Axe Throw'].get_payouts() == {
+        '1': 500.0,
+        '2': 250.0,
+    }
+    assert cloned_events['Pro-Am Relay'].event_state is None
+    assert cloned_events['Partnered Axe Throw'].event_state is None
+    assert cloned_events['Birling'].get_payouts() == {}
+    assert cloned_events['Birling'].event_state is None
 
 
 def test_tournament_settings_update_writes_audit_log(app, db_session):
