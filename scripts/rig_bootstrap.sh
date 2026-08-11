@@ -88,4 +88,4 @@ fi
 
 say "done. run the suite:"
 echo "  PROAM_APP_ROOT=$REPO PROAM_RIG_TEMPLATE=proam_prod_mirror_p0 \\"
-echo "  SECRET_KEY=\$(python3 -c 'print(\"x\"*64)') $PY -m pytest proam_regression -p no:randomly -q"
+echo "  SECRET_KEY=\$(\"$PY\" -c 'print(\"x\"*64)') $PY -m pytest proam_regression -p no:randomly -q"
