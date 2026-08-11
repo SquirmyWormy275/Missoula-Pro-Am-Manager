@@ -36,8 +36,8 @@ def _heat_data(event, competitors, heat_number=1):
     return {'heat': heat, 'event': event, 'competitors': set(competitors)}
 
 
-def _axe_event(payouts_json='{}'):
-    ev = SimpleNamespace(payouts=payouts_json)
+def _axe_event(payouts_json='{}', event_state=None):
+    ev = SimpleNamespace(payouts=payouts_json, event_state=event_state)
     return ev
 
 
@@ -234,6 +234,18 @@ class TestGetPartneredAxeQualifierPairs:
         ev = _axe_event(payouts_json=json.dumps(state))
         result = _get_partnered_axe_qualifier_pairs(ev, 4)
         assert len(result) == 4
+
+    def test_prefers_event_state_over_legacy_payouts(self):
+        current_pairs = [self._make_pair(1, 2, score=30), self._make_pair(3, 4, score=29)]
+        legacy_pairs = [self._make_pair(5, 6, score=99)]
+        ev = _axe_event(
+            payouts_json=json.dumps({'prelim_results': legacy_pairs}),
+            event_state=json.dumps({'prelim_results': current_pairs}),
+        )
+
+        result = _get_partnered_axe_qualifier_pairs(ev, 4)
+
+        assert [pair['competitor1']['id'] for pair in result] == [1, 3]
 
     def test_uses_pairs_when_no_prelim_results(self):
         """Falls back to 'pairs' key sorted by prelim_score."""
