@@ -70,9 +70,9 @@ class Event(db.Model):
     # Payout configuration (pro only) - stored as JSON
     payouts = db.Column(db.Text, nullable=False, default='{}')  # Dict: position -> amount
 
-    # State-machine storage for Partnered Axe Throw, Birling, and legacy Relay.
-    # NULL means no JSON fallback is needed; projected Relay state is stored
-    # in its dedicated tables instead.
+    # State-machine storage for Partnered Axe Throw and legacy Relay documents.
+    # Complete Relay state is authoritative in dedicated tables. Birling keeps
+    # its migration fallback document in payouts until the era-1 repair ends.
     event_state = db.Column(db.Text, nullable=True)
 
     # Status
@@ -122,10 +122,10 @@ class Event(db.Model):
     def uses_payouts_for_state(self):
         """True when the payouts column still stores state-machine data.
 
-        Partnered Axe Throw and Pro-Am Relay now store their state in
-        ``event_state`` (migration b1c2d3e4f5a6), so their purses can use the
-        payouts column. Birling remains guarded while legacy bracket fallback
-        data can still be read from that column.
+        Partnered Axe Throw uses ``event_state`` and Relay uses its normalized
+        tables after a complete projection, so both can use payouts normally.
+        Birling remains guarded while its legacy bracket fallback can still be
+        read from that column.
         """
         return self.scoring_type == 'bracket'
 
