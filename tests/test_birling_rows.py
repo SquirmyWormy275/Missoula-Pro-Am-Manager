@@ -726,38 +726,29 @@ class TestPreSeedsComeFromTheRankingsPage:
 
     def test_the_first_generate_keeps_the_pre_seedings_once_rows_exist(
             self, db_session):
-        """The c63 defect, and the one arrangement in which it stops firing.
-
-        Written in an earlier session to pin the defect. It now records the
-        opposite outcome, and the change of outcome is the point.
-
-        ``BirlingBracket._stored_document`` returns the stored document only if
-        it carries a ``bracket`` key, and otherwise throws the whole thing away
-        and starts from a fresh skeleton. The production order of operations is
-        exactly the losing one: the ability rankings page writes
-        ``pre_seedings`` onto an event that has no bracket yet, and before A3b
-        the first generate then silently dropped it. What was lost is the
-        record of what each school actually asked for, which is what a later
-        regenerate would need.
-
-        A3b flipped the reader onto the row tables, and the rows do not have
-        that hole: the pre-seed rows load whether or not a bracket sits beside
-        them. So on any event the ability rankings page has touched, and that
-        page has projected rows alongside the JSON since A2, the pre-seedings
-        now survive the first generate.
-
-        This is behaviour A3b happens to change, not the c63 fix. c63 stays
-        open. ``_stored_document`` is untouched and still discards a
-        bracket-less payload whole, so an event whose rows were never projected
-        still loses its pre-seedings through the fallback path. Fixing that is
-        a modification nobody has approved.
-        """
+        """Projected pre-seeds survive the first bracket generation."""
         _tour, event, people = _world(db_session, "Clobbered")
         pre = {str(people[0].id): 1, str(people[1].id): 2}
         event.payouts = json.dumps({"pre_seedings": pre})
         rows.project(event)
         db.session.flush()
         assert _counts(event.id)["pre_seeds"] == 2
+
+        BirlingBracket(event).generate_bracket(_entrants(people[:4]))
+
+        assert json.loads(event.payouts)["pre_seedings"] == pre
+        counts = _counts(event.id)
+        assert counts["pre_seeds"] == 2
+        assert counts["seeds"] == 4
+
+    def test_the_first_generate_keeps_pre_seedings_without_projected_rows(
+            self, db_session):
+        """Fallback generation keeps a pre-seeding-only payload intact."""
+        _tour, event, people = _world(db_session, "FallbackPreSeeds")
+        pre = {str(people[0].id): 1, str(people[1].id): 2}
+        event.payouts = json.dumps({"pre_seedings": pre})
+        db.session.flush()
+        assert _counts(event.id)["pre_seeds"] == 0
 
         BirlingBracket(event).generate_bracket(_entrants(people[:4]))
 

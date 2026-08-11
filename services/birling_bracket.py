@@ -63,14 +63,10 @@ class BirlingBracket:
     def _stored_document(self):
         """The JSON document in ``events.payouts``, or None if there is none.
 
-        Behaviour preserved exactly from the pre-A3b ``_load_bracket_data``,
-        including two things that are wrong and are not this commit's to fix:
-
-        The payload is discarded whole when it carries no ``bracket`` key
-        rather than being merged, which is the c63 defect that destroys
-        ``pre_seedings`` the first time a bracket is generated over them. That
-        fix needs its own approval and its own commit; doing it here would put
-        two changes under one commit message.
+        A pre-seeding can be saved before any bracket exists. Preserve that
+        input by merging it into the normal empty bracket skeleton, so fallback
+        generation cannot discard the school seed order before rows exist.
+        Other payout-shaped JSON remains non-bracket data and is ignored.
 
         Malformed or non-string JSON is treated as an absent fallback document.
         Other failures are allowed to surface so a programming or persistence
@@ -78,8 +74,15 @@ class BirlingBracket:
         """
         try:
             data = json.loads(self.event.payouts or '{}')
+            if not isinstance(data, dict):
+                return None
             if 'bracket' in data:
                 return data
+            pre_seedings = data.get('pre_seedings')
+            if isinstance(pre_seedings, dict):
+                document = birling_rows.empty_document()
+                document['pre_seedings'] = pre_seedings
+                return document
         except (json.JSONDecodeError, TypeError):
             return None
         return None
