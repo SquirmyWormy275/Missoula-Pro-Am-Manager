@@ -17,6 +17,8 @@ import os
 
 import pytest
 
+from database import db
+
 os.environ.setdefault("SECRET_KEY", "test-secret-partner-reassign")
 os.environ.setdefault("WTF_CSRF_ENABLED", "False")
 
@@ -391,8 +393,8 @@ class TestReassignPartnerRoute:
         # Verify bidirectional update
         from models.competitor import ProCompetitor
 
-        alice_fresh = ProCompetitor.query.get(alice.id)
-        carol_fresh = ProCompetitor.query.get(carol.id)
+        alice_fresh = db.session.get(ProCompetitor, alice.id)
+        carol_fresh = db.session.get(ProCompetitor, carol.id)
         assert alice_fresh.get_partners().get(str(ev.id)) == "Carol"
         assert carol_fresh.get_partners().get(str(ev.id)) == "Alice"
 
@@ -430,7 +432,7 @@ class TestReassignPartnerRoute:
 
         from models.competitor import ProCompetitor
 
-        alice_fresh = ProCompetitor.query.get(alice.id)
+        alice_fresh = db.session.get(ProCompetitor, alice.id)
         # partner should still be Bob (unchanged)
         assert alice_fresh.get_partners().get(str(ev.id)) == "Bob"
 
@@ -470,7 +472,7 @@ class TestReassignPartnerRoute:
 
         from models.competitor import ProCompetitor
 
-        alice_fresh = ProCompetitor.query.get(alice.id)
+        alice_fresh = db.session.get(ProCompetitor, alice.id)
         assert alice_fresh.get_partners().get(str(ev.id)) == "Bob"
 
     def test_result_partner_name_updated(self, app, db_session, auth_client):

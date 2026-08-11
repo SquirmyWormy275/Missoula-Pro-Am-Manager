@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("SECRET_KEY", "qa-solo-heat-secret")
 os.environ.setdefault("WTF_CSRF_ENABLED", "False")
 
+from database import db  # noqa: E402
 from tests.db_test_utils import create_test_app  # noqa: E402
 
 REPORT: list[tuple[str, str, str]] = []
@@ -179,7 +180,7 @@ def _case_stock_saw_19_men(app) -> None:
             max_stands=2,
             competitor_names=comps,
         )
-        ev = Event.query.get(event_id)
+        ev = db.session.get(Event, event_id)
         n_heats = generate_event_heats(ev)
         db.session.commit()
 
@@ -267,7 +268,7 @@ def _case_stock_saw_13_women(app) -> None:
             max_stands=2,
             competitor_names=comps,
         )
-        ev = Event.query.get(event_id)
+        ev = db.session.get(Event, event_id)
         generate_event_heats(ev)
         db.session.commit()
         layout = _heat_sizes(db, Heat, HeatAssignment, event_id)
@@ -302,7 +303,7 @@ def _case_even_field_no_reorder(app) -> None:
             max_stands=2,
             competitor_names=comps,
         )
-        ev = Event.query.get(event_id)
+        ev = db.session.get(Event, event_id)
         generate_event_heats(ev)
         db.session.commit()
         layout = _heat_sizes(db, Heat, HeatAssignment, event_id)
@@ -333,7 +334,7 @@ def _case_underhand_7_on_3(app) -> None:
             max_stands=3,
             competitor_names=comps,
         )
-        ev = Event.query.get(event_id)
+        ev = db.session.get(Event, event_id)
         generate_event_heats(ev)
         db.session.commit()
         layout = _heat_sizes(db, Heat, HeatAssignment, event_id)
@@ -365,7 +366,7 @@ def _case_springboard_5_odd(app) -> None:
             max_stands=2,
             competitor_names=comps,
         )
-        ev = Event.query.get(event_id)
+        ev = db.session.get(Event, event_id)
         generate_event_heats(ev)
         db.session.commit()
         layout = _heat_sizes(db, Heat, HeatAssignment, event_id)

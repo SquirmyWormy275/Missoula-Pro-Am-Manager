@@ -56,6 +56,29 @@ def _make_team(num, total_time=None):
 
 
 # ---------------------------------------------------------------------------
+# Relay state loading
+# ---------------------------------------------------------------------------
+
+class TestRelayStateLoading:
+    def test_malformed_saved_state_falls_back_to_empty_relay(self):
+        relay_event = MagicMock(event_state="{not-json", payouts=None)
+        with patch("services.proam_relay.Event") as mock_event:
+            mock_event.query.filter_by.return_value.first.return_value = relay_event
+            relay = ProAmRelay(MagicMock())
+
+        assert relay.get_status() == "not_drawn"
+        assert relay.get_teams() == []
+
+    def test_unexpected_decoder_failure_is_not_silenced(self):
+        relay_event = MagicMock(event_state="{}", payouts=None)
+        with patch("services.proam_relay.Event") as mock_event:
+            mock_event.query.filter_by.return_value.first.return_value = relay_event
+            with patch("services.proam_relay.json.loads", side_effect=RuntimeError("decoder failed")):
+                with pytest.raises(RuntimeError, match="decoder failed"):
+                    ProAmRelay(MagicMock())
+
+
+# ---------------------------------------------------------------------------
 # get_status / get_teams
 # ---------------------------------------------------------------------------
 

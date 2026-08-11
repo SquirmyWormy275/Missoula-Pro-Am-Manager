@@ -87,6 +87,19 @@
                 </div>
                 <div class="d-flex gap-2 flex-wrap align-items-center">
                     <span id="refresh-countdown">Refreshing in <span id="rc-num">30</span>s</span>
+                    <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
+                       class="btn btn-sm {% if not preflight_summary.available or preflight_summary.has_blockers %}btn-outline-danger{% elif preflight_summary.issue_count %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+                        <i class="bi bi-shield-check me-1"></i>
+                        {% if not preflight_summary.available %}
+                            Schedule Preflight Unavailable
+                        {% elif preflight_summary.has_blockers %}
+                            Schedule Preflight: {{ preflight_summary.issue_count }} blocker{{ '' if preflight_summary.issue_count == 1 else 's' }}
+                        {% elif preflight_summary.issue_count %}
+                            Schedule Preflight: {{ preflight_summary.issue_count }} issue{{ '' if preflight_summary.issue_count == 1 else 's' }}
+                        {% else %}
+                            Schedule Preflight: Clear
+                        {% endif %}
+                    </a>
                     <button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">
                         <i class="bi bi-arrow-clockwise me-1"></i>Refresh Now
                     </button>

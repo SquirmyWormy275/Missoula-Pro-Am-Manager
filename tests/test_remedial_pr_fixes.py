@@ -10,6 +10,7 @@ import tempfile
 
 import pytest
 
+from database import db
 from tests.db_test_utils import create_test_app, skip_unless_sqlite
 
 
@@ -121,7 +122,7 @@ def test_friday_feature_persists_in_schedule_config(app, admin_client):
     assert response.status_code == 302
 
     with app.app_context():
-        tournament = Tournament.query.get(tournament_id)
+        tournament = db.session.get(Tournament, tournament_id)
         saved = tournament.get_schedule_config()
         assert saved['friday_pro_event_ids'] == [event_id]
         assert saved['friday_feature_notes'] == 'Friday showcase'
@@ -141,7 +142,7 @@ def test_activate_competition_requires_post(app, admin_client):
     assert post_response.status_code == 302
 
     with app.app_context():
-        tournament = Tournament.query.get(tournament_id)
+        tournament = db.session.get(Tournament, tournament_id)
         assert tournament.status == 'college_active'
 
 

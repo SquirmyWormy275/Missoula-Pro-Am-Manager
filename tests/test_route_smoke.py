@@ -1,6 +1,7 @@
 """QA route smoke tests over the full Flask URL map."""
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import uuid
@@ -34,7 +35,10 @@ def _discover_routes() -> list[dict[str, object]]:
 
 ROUTE_SPECS = _discover_routes()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DB = PROJECT_ROOT / "instance" / "proam.db"
+_SOURCE_DB_ENV = os.environ.get("PROAM_ROUTE_SMOKE_SOURCE_DB", "").strip()
+SOURCE_DB = Path(_SOURCE_DB_ENV) if _SOURCE_DB_ENV else PROJECT_ROOT / "instance" / "proam.db"
+if not SOURCE_DB.is_absolute():
+    SOURCE_DB = PROJECT_ROOT / SOURCE_DB
 TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
 
 

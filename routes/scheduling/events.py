@@ -210,7 +210,7 @@ def event_list(tournament_id):
     from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
     from services.heat_generator import generate_event_heats
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     session_key = f'schedule_options_{tournament_id}'
 
     all_pro = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
@@ -302,7 +302,7 @@ def event_list(tournament_id):
 @scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])
 def setup_events(tournament_id):
     """Configure events for the tournament."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     college_open_events = [_with_field_key(e) for e in config.COLLEGE_OPEN_EVENTS]
     college_closed_events = [_with_field_key(e) for e in config.COLLEGE_CLOSED_EVENTS]
     pro_events = [_with_field_key(e) for e in config.PRO_EVENTS]
@@ -609,7 +609,7 @@ def day_schedule(tournament_id):
 def reorder_friday_events(tournament_id):
     """Save custom Friday event display order. Expects JSON {event_ids: [int, ...]}."""
     from flask import jsonify
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     try:
         data = request.get_json(force=True)
         event_ids = [int(eid) for eid in data.get('event_ids', [])]
@@ -633,7 +633,7 @@ def reorder_friday_events(tournament_id):
 def reorder_saturday_events(tournament_id):
     """Save custom Saturday event display order (fallback mode). Expects JSON {event_ids: [int, ...]}."""
     from flask import jsonify
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     try:
         data = request.get_json(force=True)
         event_ids = [int(eid) for eid in data.get('event_ids', [])]
@@ -657,7 +657,7 @@ def reset_event_order(tournament_id):
     Without the day key, resets both.
     """
     from flask import jsonify
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     cfg = tournament.get_schedule_config()
     try:
         data = request.get_json(force=True) or {}
@@ -688,7 +688,7 @@ def _day_schedule_legacy(tournament_id):
     from services.heat_generator import generate_event_heats
     from services.schedule_builder import COLLEGE_SATURDAY_PRIORITY, build_day_schedule
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     friday_feature_names = set(config.FRIDAY_NIGHT_EVENTS)
     pro_events = [
         event for event in tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
@@ -815,7 +815,7 @@ def _build_event_progress(event: Event, entrant_count: int) -> dict:
 def apply_saturday_priority(tournament_id):
     """Re-number college event heats so COLLEGE_SATURDAY_PRIORITY_DEFAULT events run first."""
     import json as _json
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     # Load override file if present, else use default
     order_path = _os.path.join('instance', f'saturday_priority_{tournament_id}.json')

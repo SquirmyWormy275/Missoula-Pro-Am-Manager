@@ -20,6 +20,8 @@ Formulas (per head judge specification):
 import math
 from collections import defaultdict
 
+from database import db
+
 # ---------------------------------------------------------------------------
 # Block event group definitions
 # Maps (fragment_in_event_name, competitor_type, gender) -> config_key
@@ -1020,7 +1022,7 @@ def _detect_friday_feature_springboard(tournament_id):
 
     try:
         from models.tournament import Tournament
-        tournament = Tournament.query.get(tournament_id)
+        tournament = db.session.get(Tournament, tournament_id)
         if tournament:
             fnf_event_ids = {
                 int(event_id)

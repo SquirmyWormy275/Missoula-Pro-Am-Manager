@@ -23,12 +23,11 @@ import re
 from unittest.mock import MagicMock
 
 import pytest
-
-from tests.conftest import patched_bracket_deps
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from services.birling_bracket import BirlingBracket
 from services.birling_print import build_birling_print_context
+from tests.conftest import patched_bracket_deps
 
 # ---------------------------------------------------------------------------
 # Helpers (mirror tests/test_birling_bracket_12.py style: no DB, mocked)

@@ -1,8 +1,6 @@
 """
 User model for role-based authentication.
 """
-from datetime import datetime
-
 import sqlalchemy as sa
 
 try:
@@ -22,6 +20,7 @@ except ModuleNotFoundError:
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import db
+from services.time_utils import utc_now_naive
 
 
 class User(UserMixin, db.Model):
@@ -51,8 +50,8 @@ class User(UserMixin, db.Model):
         db.Boolean, nullable=False, default=True, server_default=sa.true()
     )
 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=utc_now_naive, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
     def __repr__(self):
         return f'<User {self.username} ({self.role})>'

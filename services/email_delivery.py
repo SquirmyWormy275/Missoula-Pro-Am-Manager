@@ -26,12 +26,13 @@ import os
 import re
 import smtplib
 from dataclasses import dataclass
-from datetime import datetime
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Iterable, Optional
+
+from services.time_utils import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +215,7 @@ def queue_document_email(
         doc_key=doc_key,
         entity_id=entity_id,
         subject=subject[:300],
-        sent_at=datetime.utcnow(),
+        sent_at=utc_now_naive(),
         sent_by_user_id=sent_by_user_id,
         status="queued",
         error=None,

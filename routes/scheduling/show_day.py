@@ -3,6 +3,7 @@ Show Day live operations dashboard route.
 """
 from flask import render_template
 
+from database import db
 from models import Event, Flight, Heat, Tournament
 
 from . import scheduling_bp
@@ -14,7 +15,7 @@ from . import scheduling_bp
 @scheduling_bp.route('/<int:tournament_id>/show-day')
 def show_day(tournament_id):
     """Live operations dashboard for show day."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     flights = Flight.query.filter_by(tournament_id=tournament_id).order_by(Flight.flight_number).all()
 
     flight_data = []
@@ -28,12 +29,12 @@ def show_day(tournament_id):
         if current_heat is None:
             current_heat = next((h for h in heats_ordered if h.status not in ('completed',)), None)
 
-        current_event = Event.query.get(current_heat.event_id) if current_heat else None
+        current_event = db.session.get(Event, current_heat.event_id) if current_heat else None
 
         upcoming_pairs = []
         for h in heats_ordered:
             if h.status != 'completed' and h is not current_heat:
-                ev = Event.query.get(h.event_id)
+                ev = db.session.get(Event, h.event_id)
                 if ev:
                     upcoming_pairs.append((h, ev))
                 if len(upcoming_pairs) >= 2:

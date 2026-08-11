@@ -11,8 +11,11 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
+
+from database import db
+from services.time_utils import utc_now_naive
 
 if TYPE_CHECKING:
     from models.competitor import CollegeCompetitor, ProCompetitor
@@ -168,14 +171,14 @@ def compute_scratch_effects(competitor, tournament) -> list[CascadeEffect]:
                 partner_effect_rows.append((fr, fr.partner_name, fr.event_id))
 
     for pr, partner_display_name, event_id in partner_effect_rows:
-        ev = events_by_id.get(event_id) or Event.query.get(event_id)
+        ev = events_by_id.get(event_id) or db.session.get(Event, event_id)
         event_name = ev.name if ev else f"Event #{event_id}"
 
         # Resolve the partner competitor's status.
         if pr.competitor_type == "college":
-            owning_comp = CollegeCompetitor.query.get(pr.competitor_id)
+            owning_comp = db.session.get(CollegeCompetitor, pr.competitor_id)
         else:
-            owning_comp = ProCompetitor.query.get(pr.competitor_id)
+            owning_comp = db.session.get(ProCompetitor, pr.competitor_id)
 
         # For forward-ref rows the "owning_comp" is this competitor, not the
         # partner — resolve the partner instead when we have a partner name.
@@ -371,16 +374,16 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                 partner_result_id = effect.affected_entity_id
                 pr = event_result_map.get(partner_result_id)
                 if pr is None:
-                    pr = EventResult.query.get(partner_result_id)
+                    pr = db.session.get(EventResult, partner_result_id)
                 # Both name forms, for the reason documented on the Direction A
                 # query above: college partner_name carries the team suffix.
                 if pr is not None and pr.partner_name in (
                     competitor.name, competitor.display_name
                 ):
                     if pr.competitor_type == "college":
-                        partner_comp = CollegeCompetitor.query.get(pr.competitor_id)
+                        partner_comp = db.session.get(CollegeCompetitor, pr.competitor_id)
                     else:
-                        partner_comp = ProCompetitor.query.get(pr.competitor_id)
+                        partner_comp = db.session.get(ProCompetitor, pr.competitor_id)
 
                     # This effect is scoped to ONE event: the one this partner
                     # result belongs to.  partners is event_id -> partner_name
@@ -432,7 +435,7 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
 
             elif effect.effect_type == "relay_team":
                 relay_event_id = effect.affected_entity_id
-                relay_event = Event.query.get(relay_event_id)
+                relay_event = db.session.get(Event, relay_event_id)
                 if relay_event is not None:
                     relay = ProAmRelay(tournament)
                     # Remove the competitor from all member lists in all teams.
@@ -449,7 +452,7 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
             elif effect.effect_type == "standings":
                 finalized_event_ids = effect.metadata.get("finalized_event_ids", [])
                 for ev_id in finalized_event_ids:
-                    ev = Event.query.get(ev_id)
+                    ev = db.session.get(Event, ev_id)
                     if ev is not None and ev.is_finalized:
                         ev.is_finalized = False
                         affected_event_ids.add(ev_id)
@@ -553,7 +556,7 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
             try:
                 from services.heat_generator import rebalance_stock_saw_solo_stands
                 for ev_id in touched_event_ids:
-                    ev = Event.query.get(ev_id)
+                    ev = db.session.get(Event, ev_id)
                     if ev is not None:
                         rebalance_stock_saw_solo_stands(ev)
             except Exception:
@@ -622,7 +625,7 @@ def find_undoable_scratch(competitor_id: int, competitor_type: str | None = None
     """
     from models.audit_log import AuditLog
 
-    cutoff = datetime.utcnow() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
+    cutoff = utc_now_naive() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
     return next(
         (
             entry
@@ -657,7 +660,7 @@ def find_undoable_scratches(competitor_ids, competitor_type: str | None = None) 
     if not ids:
         return set()
 
-    cutoff = datetime.utcnow() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
+    cutoff = utc_now_naive() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
     return {
         entry.entity_id
         for entry in AuditLog.query.filter(
@@ -734,7 +737,7 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
         # --- Restore competitor status ---------------------------------------
         comp_type = competitor_type or snapshot.get("competitor_type", "pro")
         CompModel = CollegeCompetitor if comp_type == "college" else ProCompetitor
-        comp = CompModel.query.get(competitor_id)
+        comp = db.session.get(CompModel, competitor_id)
 
         if comp is not None:
             comp.status = snapshot.get("competitor_status", "active")
@@ -756,7 +759,7 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
         # the judge re-paired the partner during the undo window, that new
         # pairing is the current truth and must survive the undo.
         for p_snap in snapshot.get("partners", []):
-            p_result = EventResult.query.get(p_snap.get("result_id"))
+            p_result = db.session.get(EventResult, p_snap.get("result_id"))
             if p_result is not None and not p_result.partner_name:
                 p_result.partner_name = p_snap.get("result_partner_name")
 
@@ -769,7 +772,7 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                 if p_snap.get("competitor_type") == "college"
                 else ProCompetitor
             )
-            p_comp = PartnerModel.query.get(p_comp_id)
+            p_comp = db.session.get(PartnerModel, p_comp_id)
             if p_comp is None:
                 continue
             p_data = p_comp.get_partners()
@@ -783,7 +786,7 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
         previously_finalized_event_ids: set[int] = set()
 
         for r_snap in snapshot.get("results", []):
-            r = EventResult.query.get(r_snap["id"])
+            r = db.session.get(EventResult, r_snap["id"])
             if r is not None:
                 r.status = r_snap["status"]
                 r.points_awarded = r_snap.get("points_awarded")
@@ -836,9 +839,9 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
         # status, restore finalization to True — but that's risky.  Instead we track
         # which events were un-finalized via the effects metadata.
         for r_snap in snapshot.get("results", []):
-            r = EventResult.query.get(r_snap["id"])
+            r = db.session.get(EventResult, r_snap["id"])
             if r is not None:
-                ev = Event.query.get(r.event_id)
+                ev = db.session.get(Event, r.event_id)
                 if ev is not None and not ev.is_finalized:
                     # Only re-finalize if the original result was in a completed state
                     # (meaning the event was finalized at scratch time).
@@ -864,7 +867,7 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
 
         restored_event_ids: set[int] = set()
         for h_snap in snapshot.get("heats", []):
-            heat = Heat.query.get(h_snap.get("heat_id"))
+            heat = db.session.get(Heat, h_snap.get("heat_id"))
             if heat is None:
                 continue
             comp_ids = heat.get_competitors()
@@ -911,7 +914,7 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
             try:
                 from services.heat_generator import rebalance_stock_saw_solo_stands
                 for ev_id in restored_event_ids:
-                    ev = Event.query.get(ev_id)
+                    ev = db.session.get(Event, ev_id)
                     if ev is not None:
                         rebalance_stock_saw_solo_stands(ev)
             except Exception:

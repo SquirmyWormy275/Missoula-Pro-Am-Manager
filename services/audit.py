@@ -1,7 +1,6 @@
 """Helpers for writing security audit logs."""
 import json
 import logging
-from datetime import datetime
 
 from flask import request
 
@@ -15,6 +14,7 @@ except ModuleNotFoundError:
     current_user = _AnonymousCurrentUser()
 from database import db
 from models.audit_log import AuditLog
+from services.time_utils import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def log_action(action: str, entity_type: str, entity_id: int | None = None, deta
         'details_json': json.dumps(details or {}),
         # Set explicitly. A Core insert does apply the column's Python-side
         # default, but naming it here keeps this independent of the model.
-        'created_at': datetime.utcnow(),
+        'created_at': utc_now_naive(),
     }
 
     if _supports_independent_write():

@@ -7,12 +7,13 @@ Run:
 """
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
 
 from database import db as _db
+from services.time_utils import utc_now_naive
 from tests.conftest import (
     make_college_competitor,
     make_event,
@@ -257,7 +258,7 @@ class TestHeatLocking:
         h = make_heat(db_session, e)
         h.acquire_lock(user_id=u1.id)
         # Force lock to be expired (5+ minutes ago)
-        h.locked_at = datetime.utcnow() - timedelta(seconds=400)
+        h.locked_at = utc_now_naive() - timedelta(seconds=400)
         db_session.flush()
 
         assert h.is_locked() is False

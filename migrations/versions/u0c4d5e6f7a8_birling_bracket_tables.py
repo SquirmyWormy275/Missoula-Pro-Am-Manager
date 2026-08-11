@@ -119,6 +119,12 @@ BIG_ID = sa.BigInteger().with_variant(sa.Integer(), "sqlite")
 
 _POOL_TABLE = {"college": "college_competitors", "pro": "pro_competitors"}
 
+_FALL_INSERT = sa.text(
+    "INSERT INTO birling_falls "
+    "(match_row_id, fall_number, winner_uid, recorded_at) "
+    "VALUES (:m, :n, :w, :t)"
+).bindparams(sa.bindparam("t", type_=sa.DateTime()))
+
 
 def _parse(raw):
     """Parse a ``payouts`` value into a dict, forgiving what it must.
@@ -450,9 +456,7 @@ def _write(connection, plan):
 
         for fall in match["falls"]:
             connection.execute(
-                sa.text("INSERT INTO birling_falls "
-                        "(match_row_id, fall_number, winner_uid, recorded_at) "
-                        "VALUES (:m, :n, :w, :t)"),
+                _FALL_INSERT,
                 {"m": row_id, "n": fall["fall_number"], "w": fall["winner_uid"],
                  "t": fall["recorded_at"]})
 

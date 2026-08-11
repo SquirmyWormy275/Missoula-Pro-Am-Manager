@@ -36,7 +36,7 @@ def one_click_generate(tournament_id):
     from services.heat_generator import generate_event_heats
     from services.saw_block_assignment import trigger_saw_block_recompute
 
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     db_config = tournament.get_schedule_config() or {}
     saturday_college_event_ids = [int(i) for i in db_config.get('saturday_college_event_ids', [])]
@@ -83,7 +83,7 @@ def one_click_generate(tournament_id):
 @scheduling_bp.route('/<int:tournament_id>/flights')
 def flight_list(tournament_id):
     """View and manage flights for pro competition."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     flights = Flight.query.filter_by(tournament_id=tournament_id).order_by(Flight.flight_number).all()
 
     # Pre-fetch competitor names + stand assignments for display.
@@ -92,7 +92,7 @@ def flight_list(tournament_id):
     for flight in flights:
         heat_rows = []
         for heat in flight.get_heats_ordered():
-            event = Event.query.get(heat.event_id)
+            event = db.session.get(Event, heat.event_id)
             if not event:
                 continue
             comp_ids = heat.get_competitors()
@@ -255,7 +255,7 @@ def _resolve_num_flights_from_persisted_config(tournament) -> int | None:
 @scheduling_bp.route('/<int:tournament_id>/flights/build', methods=['GET', 'POST'])
 def build_flights(tournament_id):
     """Build flights for pro competition."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     if request.method == 'POST':
         from services.flight_builder import build_pro_flights
@@ -388,7 +388,7 @@ def build_flights(tournament_id):
                     integrate_college_spillover_into_flights,
                     integrate_proam_relay_into_final_flight,
                 )
-                target = Tournament.query.get(target_tournament_id)
+                target = db.session.get(Tournament, target_tournament_id)
                 if not target:
                     raise RuntimeError(f'Tournament {target_tournament_id} not found.')
                 try:
@@ -536,7 +536,7 @@ def build_flights(tournament_id):
 @scheduling_bp.route('/<int:tournament_id>/flights/<int:flight_id>/reorder', methods=['POST'])
 def reorder_flight_heats(tournament_id, flight_id):
     """Reorder heats within a flight. Expects JSON {heat_ids: [int, ...]}."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     flight = Flight.query.filter_by(id=flight_id, tournament_id=tournament_id).first_or_404()
     try:
         data = request.get_json(force=True)
@@ -569,7 +569,7 @@ def bulk_reorder_flights(tournament_id):
     currently assigned to any of those flights — otherwise refuse to prevent
     an incomplete drag from wiping state.
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
 
     try:
         data = request.get_json(force=True)
@@ -642,7 +642,7 @@ def drag_move_competitor(tournament_id, source_heat_id):
 
     Returns: {ok: bool, error?: str, source?: {...}, target?: {...}}
     """
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     source = Heat.query.filter_by(id=source_heat_id).first_or_404()
 
     try:
@@ -772,7 +772,7 @@ def drag_move_competitor(tournament_id, source_heat_id):
 @scheduling_bp.route('/<int:tournament_id>/flights/<int:flight_id>/start', methods=['POST'])
 def start_flight(tournament_id, flight_id):
     """Mark a flight as in_progress and send SMS to competitors in upcoming flights."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     flight = Flight.query.filter_by(id=flight_id, tournament_id=tournament_id).first_or_404()
 
     if flight.status == 'in_progress':
@@ -824,7 +824,7 @@ def _send_upcoming_heat_sms(tournament_id: int, current_flight_number: int) -> N
         return
 
     # Batch-load all events referenced by this flight's heats so the SMS
-    # notify path doesn't issue one Event.query.get() per heat. Was N+1.
+    # notify path doesn't issue one db.session.get(Event, ) per heat. Was N+1.
     heats = list(target_flight.heats.all())
     event_ids = {h.event_id for h in heats}
     events_by_id = {

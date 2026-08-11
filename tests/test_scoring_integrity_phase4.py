@@ -23,6 +23,7 @@ from decimal import Decimal
 
 import pytest
 
+from database import db
 from database import db as _db
 from tests.conftest import seat_roster  # noqa: E402
 
@@ -185,8 +186,8 @@ class TestHeatUndoStripsPoints:
         db_session.flush()
 
         c1_id, c2_id = c1.id, c2.id
-        assert CollegeCompetitor.query.get(c1_id).individual_points == Decimal('10.00')
-        assert CollegeCompetitor.query.get(c2_id).individual_points == Decimal('7.00')
+        assert db.session.get(CollegeCompetitor, c1_id).individual_points == Decimal('10.00')
+        assert db.session.get(CollegeCompetitor, c2_id).individual_points == Decimal('7.00')
 
         # Plant an undo token in the session — undo route requires it.
         with judge_client.session_transaction() as sess:
@@ -203,8 +204,8 @@ class TestHeatUndoStripsPoints:
         # The competitors' cached individual_points should be back to 0
         # because the EventResult rows were deleted and the rebuild SUM
         # finds nothing for them.
-        c1_loaded = CollegeCompetitor.query.get(c1_id)
-        c2_loaded = CollegeCompetitor.query.get(c2_id)
+        c1_loaded = db.session.get(CollegeCompetitor, c1_id)
+        c2_loaded = db.session.get(CollegeCompetitor, c2_id)
         assert c1_loaded.individual_points == Decimal('0.00')
         assert c2_loaded.individual_points == Decimal('0.00')
 
@@ -226,7 +227,7 @@ class TestHeatUndoStripsPoints:
         calculate_positions(event)
         db_session.flush()
         team_id = team.id
-        assert Team.query.get(team_id).total_points == Decimal('17.00')  # 10 + 7
+        assert db.session.get(Team, team_id).total_points == Decimal('17.00')  # 10 + 7
 
         with judge_client.session_transaction() as sess:
             sess[f'undo_heat_{heat.id}'] = {
@@ -238,7 +239,7 @@ class TestHeatUndoStripsPoints:
         r = judge_client.post(f'/scoring/{tid}/heat/{heat.id}/undo')
         assert r.status_code in (200, 302)
 
-        assert Team.query.get(team_id).total_points == Decimal('0.00')
+        assert db.session.get(Team, team_id).total_points == Decimal('0.00')
 
     def test_undo_heat_deletes_event_result_rows(self, db_session, judge_client, tid):
         """The EventResult rows are gone after undo (existing behavior preserved)."""
@@ -309,7 +310,7 @@ class TestRepairPointsRoute:
         assert body['teams_rebuilt'] >= 1
 
         # The cache should now match the SUM of points_awarded.
-        c1_loaded = CollegeCompetitor.query.get(c1_id)
+        c1_loaded = db.session.get(CollegeCompetitor, c1_id)
         assert c1_loaded.individual_points == Decimal('8.50')
 
     def test_repair_rebuilds_team_totals(self, db_session, admin_client, tid):
@@ -334,7 +335,7 @@ class TestRepairPointsRoute:
         resp = admin_client.post(f'/scoring/admin/repair-points/{tid}')
         assert resp.status_code == 200
         # Total should now be 5 + 3 = 8.
-        assert Team.query.get(team_id).total_points == Decimal('8.00')
+        assert db.session.get(Team, team_id).total_points == Decimal('8.00')
 
     def test_repair_requires_admin_role(self, db_session, judge_client, tid):
         """Judge role is rejected — admin only."""
@@ -382,7 +383,7 @@ class TestRepairPointsRoute:
         c1_id = c1.id
 
         admin_client.post(f'/scoring/admin/repair-points/{tid}')
-        first = CollegeCompetitor.query.get(c1_id).individual_points
+        first = db.session.get(CollegeCompetitor, c1_id).individual_points
         admin_client.post(f'/scoring/admin/repair-points/{tid}')
-        second = CollegeCompetitor.query.get(c1_id).individual_points
+        second = db.session.get(CollegeCompetitor, c1_id).individual_points
         assert first == second == Decimal('7.00')

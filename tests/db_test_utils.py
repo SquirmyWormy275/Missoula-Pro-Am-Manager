@@ -53,6 +53,16 @@ _pg_template_ready = False
 _pg_counter = [0]
 
 
+def _isolate_report_cache():
+    """Clear process cache state and keep tests out of the production shelf."""
+    from services import report_cache
+
+    with report_cache._lock:
+        report_cache._cache.clear()
+    report_cache._shelf_path = None
+    report_cache._shelf_resolved = True
+
+
 def _pg_run(sql, dbname="postgres"):
     import subprocess
     return subprocess.run(
@@ -197,6 +207,7 @@ def _create_test_app_pg():
         })
         with _app.app_context():
             _db.engine.dispose()
+        _isolate_report_cache()
         return _app, name
     finally:
         if old is None:
@@ -273,6 +284,7 @@ def create_test_app():
             else:
                 upgrade(directory=migrations_dir)
 
+        _isolate_report_cache()
         return _app, db_path
     finally:
         # Restore original DATABASE_URL

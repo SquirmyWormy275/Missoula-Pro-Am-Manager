@@ -39,6 +39,7 @@ from typing import Callable, Iterable, Optional
 from flask import g
 
 from database import db
+from services.time_utils import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -732,7 +733,7 @@ def upsert_tracker(
         q = q.filter(PrintTracker.entity_id == entity_id)
     row = q.first()
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     if row is None:
         row = PrintTracker(
             tournament_id=tournament_id,

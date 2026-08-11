@@ -34,6 +34,8 @@ from __future__ import annotations
 import logging
 import sys
 
+from database import db
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,7 +68,7 @@ def repair(tournament_id: int, xlsx_path: str, dry_run: bool = False) -> dict:
         "errors": [],
     }
 
-    tournament = Tournament.query.get(tournament_id)
+    tournament = db.session.get(Tournament, tournament_id)
     if tournament is None:
         summary["errors"].append(f"Tournament {tournament_id} not found.")
         return summary

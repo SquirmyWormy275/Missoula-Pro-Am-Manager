@@ -406,12 +406,6 @@ class TestAssignHandicapMarksSuccess:
     })
     @patch('services.mark_assignment._pull_global_results_df', return_value=None)
     @patch('services.mark_assignment._get_handicap_calculator')
-    @pytest.mark.xfail(
-        strict=False,
-        reason="D15-B (c42): passes with the full STRATHMARK environment (the "
-               "operator's machine); fails in the minimal cloud rig. Ambient red "
-               "trains people to ignore red. Remove this marker when D14-B "
-               "(Postgres everywhere + STRATHMARK fake) lands.")
     def test_marks_stored_on_event_results(self, mock_calc_factory, mock_pull, db_session, tournament):
         """handicap_factor and predicted_time are written from MarkResult mocks."""
         event = _make_event(db_session, tournament,
@@ -446,12 +440,6 @@ class TestAssignHandicapMarksSuccess:
     })
     @patch('services.mark_assignment._pull_global_results_df', return_value=None)
     @patch('services.mark_assignment._get_handicap_calculator')
-    @pytest.mark.xfail(
-        strict=False,
-        reason="D15-B (c42): passes with the full STRATHMARK environment (the "
-               "operator's machine); fails in the minimal cloud rig. Ambient red "
-               "trains people to ignore red. Remove this marker when D14-B "
-               "(Postgres everywhere + STRATHMARK fake) lands.")
     def test_zero_predicted_time_preserved(self, mock_calc_factory, mock_pull, db_session, tournament):
         """A MarkResult with predicted_time == 0.0 is stored as 0.0, not None.
 
@@ -480,12 +468,6 @@ class TestAssignHandicapMarksSuccess:
     })
     @patch('services.mark_assignment._pull_global_results_df', return_value=None)
     @patch('services.mark_assignment._get_handicap_calculator')
-    @pytest.mark.xfail(
-        strict=False,
-        reason="D15-B (c42): passes with the full STRATHMARK environment (the "
-               "operator's machine); fails in the minimal cloud rig. Ambient red "
-               "trains people to ignore red. Remove this marker when D14-B "
-               "(Postgres everywhere + STRATHMARK fake) lands.")
     def test_different_marks_per_competitor(self, mock_calc_factory, mock_pull, db_session, tournament):
         """Different competitors can receive different start marks."""
         event = _make_event(db_session, tournament,
@@ -515,12 +497,6 @@ class TestAssignHandicapMarksSuccess:
     })
     @patch('services.mark_assignment._pull_global_results_df', return_value=None)
     @patch('services.mark_assignment._get_handicap_calculator')
-    @pytest.mark.xfail(
-        strict=False,
-        reason="D15-B (c42): passes with the full STRATHMARK environment (the "
-               "operator's machine); fails in the minimal cloud rig. Ambient red "
-               "trains people to ignore red. Remove this marker when D14-B "
-               "(Postgres everywhere + STRATHMARK fake) lands.")
     def test_calculator_value_error_returns_error_status(self, mock_calc_factory, mock_pull, db_session, tournament):
         """STRATHMARK rejecting the input (e.g. unknown event_code) → status='error'."""
         event = _make_event(db_session, tournament,
@@ -555,12 +531,6 @@ class TestAssignHandicapMarksSkipPaths:
     })
     @patch('services.mark_assignment._pull_global_results_df', return_value=None)
     @patch('services.mark_assignment._get_handicap_calculator')
-    @pytest.mark.xfail(
-        strict=False,
-        reason="D15-B (c42): passes with the full STRATHMARK environment (the "
-               "operator's machine); fails in the minimal cloud rig. Ambient red "
-               "trains people to ignore red. Remove this marker when D14-B "
-               "(Postgres everywhere + STRATHMARK fake) lands.")
     def test_competitor_not_in_calculator_output_skipped(self, mock_calc_factory, mock_pull, db_session, tournament):
         """When the calculator returns no MarkResult for a competitor (e.g.
         the panel-mark fallback dropped them), that competitor is skipped
@@ -593,12 +563,6 @@ class TestAssignHandicapMarksSkipPaths:
     })
     @patch('services.mark_assignment._pull_global_results_df', return_value=None)
     @patch('services.mark_assignment._get_handicap_calculator')
-    @pytest.mark.xfail(
-        strict=False,
-        reason="D15-B (c42): passes with the full STRATHMARK environment (the "
-               "operator's machine); fails in the minimal cloud rig. Ambient red "
-               "trains people to ignore red. Remove this marker when D14-B "
-               "(Postgres everywhere + STRATHMARK fake) lands.")
     def test_empty_calculator_output_skips_all(self, mock_calc_factory, mock_pull, db_session, tournament):
         """When calculator.calculate() returns [], every competitor is skipped."""
         event = _make_event(db_session, tournament,
@@ -622,12 +586,6 @@ class TestAssignHandicapMarksSkipPaths:
     })
     @patch('services.mark_assignment._pull_global_results_df', return_value=None)
     @patch('services.mark_assignment._get_handicap_calculator')
-    @pytest.mark.xfail(
-        strict=False,
-        reason="D15-B (c42): passes with the full STRATHMARK environment (the "
-               "operator's machine); fails in the minimal cloud rig. Ambient red "
-               "trains people to ignore red. Remove this marker when D14-B "
-               "(Postgres everywhere + STRATHMARK fake) lands.")
     def test_no_results_returns_ok_zero(self, mock_calc_factory, mock_pull, db_session, tournament):
         """Event with no EventResult rows short-circuits before the calculator."""
         event = _make_event(db_session, tournament,
@@ -690,12 +648,6 @@ class TestAssignHandicapMarksLogging:
     })
     @patch('services.mark_assignment._pull_global_results_df', return_value=None)
     @patch('services.mark_assignment._get_handicap_calculator')
-    @pytest.mark.xfail(
-        strict=False,
-        reason="D15-B (c42): passes with the full STRATHMARK environment (the "
-               "operator's machine); fails in the minimal cloud rig. Ambient red "
-               "trains people to ignore red. Remove this marker when D14-B "
-               "(Postgres everywhere + STRATHMARK fake) lands.")
     def test_info_log_on_successful_marks(self, mock_calc_factory, mock_pull, db_session, tournament, caplog):
         """An INFO log line with the assigned/skipped counts is emitted."""
         event = _make_event(db_session, tournament,
@@ -722,12 +674,6 @@ class TestAssignHandicapMarksLogging:
     })
     @patch('services.mark_assignment._pull_global_results_df', return_value=None)
     @patch('services.mark_assignment._get_handicap_calculator')
-    @pytest.mark.xfail(
-        strict=False,
-        reason="D15-B (c42): passes with the full STRATHMARK environment (the "
-               "operator's machine); fails in the minimal cloud rig. Ambient red "
-               "trains people to ignore red. Remove this marker when D14-B "
-               "(Postgres everywhere + STRATHMARK fake) lands.")
     def test_info_log_zero_marks(self, mock_calc_factory, mock_pull, db_session, tournament, caplog):
         """Even with zero marks assigned, the INFO log line is emitted."""
         event = _make_event(db_session, tournament,

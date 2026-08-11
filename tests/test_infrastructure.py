@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from database import db
 from database import db as _db
 
 # ---------------------------------------------------------------------------
@@ -127,6 +128,17 @@ class TestReportCache:
         invalidate_prefix('')
         assert get('a') is None
         assert get('b') is None
+
+    def test_test_app_isolation_clears_memory_and_disables_disk(self):
+        from services import report_cache
+        from tests.db_test_utils import _isolate_report_cache
+
+        report_cache.set('api:standings-poll:1', {'teams': ['stale']}, 60)
+        _isolate_report_cache()
+
+        assert report_cache.get('api:standings-poll:1') is None
+        assert report_cache._shelf_resolved is True
+        assert report_cache._shelf_path is None
 
     def test_multiple_keys_independent(self):
         from services.report_cache import get, set

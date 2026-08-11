@@ -19,6 +19,8 @@ import tempfile
 
 import pytest
 
+from database import db
+
 os.environ.setdefault("SECRET_KEY", "test-scratch-routes")
 os.environ.setdefault("WTF_CSRF_ENABLED", "False")
 # NOTE: `TEST_USE_CREATE_ALL` is set inside the `app` fixture, NOT at module
@@ -301,10 +303,10 @@ class TestScratchConfirmPost:
             assert resp.status_code in (302, 303)
 
             # Verify DB state
-            comp_reloaded = ProCompetitor.query.get(comp_id)
+            comp_reloaded = db.session.get(ProCompetitor, comp_id)
             assert comp_reloaded.status == "scratched"
 
-            result_reloaded = EventResult.query.get(result_id)
+            result_reloaded = db.session.get(EventResult, result_id)
             assert result_reloaded.status == "scratched"
 
     def test_happy_path_partial_effects_only_checked_execute(self, app):
@@ -346,11 +348,11 @@ class TestScratchConfirmPost:
             assert resp.status_code in (302, 303)
 
             # Competitor should still be scratched (status is always set)
-            comp_reloaded = ProCompetitor.query.get(comp_id)
+            comp_reloaded = db.session.get(ProCompetitor, comp_id)
             assert comp_reloaded.status == "scratched"
 
             # EventResult should NOT be scratched (effect was unchecked)
-            result_reloaded = EventResult.query.get(result_id)
+            result_reloaded = db.session.get(EventResult, result_id)
             assert result_reloaded.status == "pending"
 
     def test_no_effects_checked_flashes_no_changes(self, app):
@@ -455,7 +457,7 @@ class TestScratchUndoPost:
             )
             assert undo_resp.status_code in (302, 303)
 
-            comp_reloaded = ProCompetitor.query.get(comp_id)
+            comp_reloaded = db.session.get(ProCompetitor, comp_id)
             assert comp_reloaded.status == "active"
 
     def test_undo_after_window_flashes_expired(self, app):

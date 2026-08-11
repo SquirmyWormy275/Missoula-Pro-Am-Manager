@@ -15,9 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests.conftest import patched_bracket_deps
-
 from services.birling_bracket import BirlingBracket
+from tests.conftest import patched_bracket_deps
 from tests.fixtures.synthetic_data import BIRLING_MEN_BRACKET, BIRLING_WOMEN_BRACKET
 
 # ---------------------------------------------------------------------------

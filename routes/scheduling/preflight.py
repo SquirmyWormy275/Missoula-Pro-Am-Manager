@@ -21,7 +21,7 @@ from . import scheduling_bp
 @scheduling_bp.route('/<int:tournament_id>/preflight', methods=['GET', 'POST'])
 def preflight_check(tournament_id):
     """Run preflight checks and offer one-click auto-fix actions."""
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     from services.flight_builder import integrate_college_spillover_into_flights
     from services.partner_matching import auto_assign_pro_partners
     from services.preflight import build_preflight_report
@@ -81,7 +81,7 @@ def preflight_check(tournament_id):
 def preflight_json(tournament_id):
     """JSON endpoint: inline preflight status for the events page."""
     from services.preflight import BLOCKING_CODES, build_preflight_report
-    tournament = Tournament.query.get_or_404(tournament_id)
+    tournament = db.get_or_404(Tournament, tournament_id)
     session_key = f'schedule_options_{tournament_id}'
     saved = tournament.get_schedule_config() or session.get(session_key, {})
     saturday_ids = [int(eid) for eid in saved.get('saturday_college_event_ids', [])]
@@ -108,7 +108,7 @@ def preflight_json(tournament_id):
 @scheduling_bp.route('/<int:tournament_id>/events/generate-async', methods=['POST'])
 def generate_async(tournament_id):
     """Submit heat + flight generation as a background job and return a job_id."""
-    Tournament.query.get_or_404(tournament_id)
+    db.get_or_404(Tournament, tournament_id)
 
     job_id = submit_job(
         f'generate_all:{tournament_id}',

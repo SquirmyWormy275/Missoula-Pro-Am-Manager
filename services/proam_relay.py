@@ -49,7 +49,9 @@ class ProAmRelay:
                 raw = relay_event.payouts
             try:
                 return json.loads(raw or '{}')
-            except:
+            except (json.JSONDecodeError, TypeError):
+                # A legacy state field may be empty or malformed. Other
+                # decoder failures are operational errors and must surface.
                 pass
 
         return {
@@ -559,7 +561,7 @@ def compute_team_health(team_data: dict, tournament) -> dict:
     inactive_names = []
 
     def _member_status(member, model_cls):
-        obj = model_cls.query.get(member['id'])
+        obj = db.session.get(model_cls, member['id'])
         if obj is None:
             return 'unknown'
         return obj.status

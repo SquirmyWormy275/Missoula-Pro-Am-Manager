@@ -9,9 +9,8 @@ data underlying the print; if the fingerprint changes between the last print
 and the next Hub page load, the row is flagged STALE.
 """
 
-from datetime import datetime
-
 from database import db
+from services.time_utils import utc_now_naive
 
 
 class PrintTracker(db.Model):
@@ -34,7 +33,7 @@ class PrintTracker(db.Model):
     # ids that exist; orphans are acceptable historical bookkeeping.
     entity_id = db.Column(db.Integer, nullable=True)
 
-    last_printed_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_printed_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
     last_printed_fingerprint = db.Column(db.String(64), nullable=False)
     last_printed_by_user_id = db.Column(
         db.Integer,
