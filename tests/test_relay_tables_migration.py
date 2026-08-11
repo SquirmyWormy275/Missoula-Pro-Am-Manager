@@ -94,9 +94,8 @@ class TestRelayTableMigration:
             "ORDER BY event_key")).fetchall()
         assert len(leg) == 4
         assert {row[0] for row in leg} == set(mig.RELAY_EVENT_KEYS)
-        columns = db_session.connection().execute(sa.text(
-            "PRAGMA table_info('relay_team_events')")).fetchall()
-        assert "uid" not in {column[1] for column in columns}
+        columns = sa.inspect(db_session.connection()).get_columns("relay_team_events")
+        assert "uid" not in {column["name"] for column in columns}
 
     def test_unresolvable_member_leaves_every_table_empty(self, db_session):
         relay_event, pro, college = _world(db_session)
