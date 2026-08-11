@@ -20,6 +20,65 @@ from models.competitor import CollegeCompetitor, ProCompetitor
 from models.relay import RelayState, RelayTeam, RelayTeamEvent, RelayTeamMember
 
 
+def relay_payout_summary(tournament: Tournament) -> dict:
+    """Return payable, team-level Relay awards for a completed Relay.
+
+    Relay money is intentionally separate from individual EventResult payouts.
+    A team earns the configured amount for its final placement, and its
+    RelayTeam row carries the binary settlement state.
+    """
+    relay_event = Event.query.filter_by(
+        tournament_id=tournament.id,
+        name='Pro-Am Relay',
+    ).first()
+    if relay_event is None:
+        return _empty_relay_payout_summary()
+
+    state = RelayState.query.filter_by(event_id=relay_event.id).first()
+    # Partial relay times are provisional. Do not expose a payable placement
+    # until the whole relay has a final ordering.
+    if state is None or state.status != 'completed':
+        return _empty_relay_payout_summary()
+
+    payouts = relay_event.get_payouts()
+    rows = []
+    teams = RelayTeam.query.filter_by(relay_state_id=state.id).filter(
+        RelayTeam.total_time.isnot(None)
+    ).order_by(RelayTeam.total_time, RelayTeam.team_number).all()
+    for placement, team in enumerate(teams, start=1):
+        try:
+            amount = float(payouts.get(str(placement), 0) or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        if amount <= 0:
+            continue
+        rows.append({
+            'team': team,
+            'placement': placement,
+            'payout_amount': amount,
+        })
+
+    total_owed = sum(row['payout_amount'] for row in rows)
+    total_settled = sum(
+        row['payout_amount'] for row in rows if row['team'].payout_settled
+    )
+    return {
+        'rows': rows,
+        'total_owed': total_owed,
+        'total_settled': total_settled,
+        'total_outstanding': total_owed - total_settled,
+    }
+
+
+def _empty_relay_payout_summary() -> dict:
+    return {
+        'rows': [],
+        'total_owed': 0.0,
+        'total_settled': 0.0,
+        'total_outstanding': 0.0,
+    }
+
+
 class ProAmRelay:
     """Manages the Pro-Am Relay lottery and teams."""
     RELAY_EVENTS = (
@@ -261,24 +320,40 @@ class ProAmRelay:
             db.session.flush()
 
         state.status = self.relay_data.get("status", "not_drawn")
-        team_ids = [row.id for row in RelayTeam.query.filter_by(relay_state_id=state.id).all()]
-        if team_ids:
-            RelayTeamEvent.query.filter(RelayTeamEvent.relay_team_id.in_(team_ids)).delete(
-                synchronize_session=False
-            )
-            RelayTeamMember.query.filter(RelayTeamMember.relay_team_id.in_(team_ids)).delete(
-                synchronize_session=False
-            )
-            RelayTeam.query.filter(RelayTeam.id.in_(team_ids)).delete(synchronize_session=False)
+        existing_teams = RelayTeam.query.filter_by(relay_state_id=state.id).all()
+        existing_uids = {row.id: set() for row in existing_teams}
+        for member in RelayTeamMember.query.filter(
+            RelayTeamMember.relay_team_id.in_(existing_uids)
+        ):
+            existing_uids[member.relay_team_id].add(member.uid)
+        existing_settlements = {
+            row.team_number: (row.payout_settled, existing_uids[row.id])
+            for row in existing_teams
+        }
+        if existing_teams:
+            # Use ORM deletion so the identity map cannot keep a deleted team
+            # under an id SQLite may immediately reuse for its replacement.
+            # Relationships own the member and leg cascades.
+            for existing_team in existing_teams:
+                db.session.delete(existing_team)
             db.session.flush()
 
         seen_uids = set()
         for team_data in self.relay_data.get("teams", []):
+            incoming_uids = set()
+            for key, kind in (("pro_members", "pro"), ("college_members", "college")):
+                for member in team_data.get(key, []):
+                    uid = member_uids[kind].get(member.get("id"))
+                    if uid is None:
+                        raise ValueError("Relay roster contains an unresolved competitor")
+                    incoming_uids.add(uid)
+            previous = existing_settlements.get(team_data["team_number"])
             team = RelayTeam(
                 relay_state_id=state.id,
                 team_number=team_data["team_number"],
                 name=team_data["name"],
                 total_time=team_data.get("total_time"),
+                payout_settled=bool(previous and previous[0] and previous[1] == incoming_uids),
             )
             db.session.add(team)
             db.session.flush()
@@ -286,8 +361,6 @@ class ProAmRelay:
             for key, kind in (("pro_members", "pro"), ("college_members", "college")):
                 for member in team_data.get(key, []):
                     uid = member_uids[kind].get(member.get("id"))
-                    if uid is None:
-                        raise ValueError("Relay roster contains an unresolved competitor")
                     if uid in seen_uids:
                         raise ValueError("A relay competitor cannot appear on multiple teams")
                     seen_uids.add(uid)

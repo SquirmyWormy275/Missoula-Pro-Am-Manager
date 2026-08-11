@@ -244,7 +244,7 @@ def event_results_print(tournament_id, event_id):
 
 @reporting_bp.route('/<int:tournament_id>/pro/payouts', methods=['GET', 'POST'])
 def pro_payout_summary(tournament_id):
-    """View pro competitor payout summary with settlement tracking."""
+    """View individual pro and team Relay payouts with settlement tracking."""
     tournament = db.get_or_404(Tournament, tournament_id)
     from models.competitor import ProCompetitor
 
@@ -269,8 +269,16 @@ def pro_payout_summary(tournament_id):
     total_competitors = len(competitors)
 
     earners = [c for c in competitors if c.total_earnings and c.total_earnings > 0]
-    total_owed = sum(c.total_earnings for c in earners)
-    total_settled = sum(c.total_earnings for c in earners if c.payout_settled)
+    individual_total_owed = sum(c.total_earnings for c in earners)
+    individual_total_settled = sum(
+        c.total_earnings for c in earners if c.payout_settled
+    )
+
+    from services.proam_relay import relay_payout_summary
+
+    relay_payouts = relay_payout_summary(tournament)
+    total_owed = individual_total_owed + relay_payouts['total_owed']
+    total_settled = individual_total_settled + relay_payouts['total_settled']
     total_outstanding = total_owed - total_settled
 
     # Build a mapping of competitor_id → first EventResult id with payout_amount > 0
@@ -306,6 +314,8 @@ def pro_payout_summary(tournament_id):
                            total_outstanding=total_outstanding,
                            earners_count=len(earners),
                            total_competitors=total_competitors,
+                           individual_total_owed=individual_total_owed,
+                           relay_payouts=relay_payouts,
                            result_id_map=result_id_map)
 
 
@@ -318,11 +328,16 @@ def pro_payout_summary_print(tournament_id):
     competitors = tournament.pro_competitors.filter_by(status='active').all()
     competitors = sorted(competitors, key=lambda c: c.total_earnings, reverse=True)
     competitors = [c for c in competitors if c.total_earnings and c.total_earnings > 0]
-    total_paid = sum(c.total_earnings for c in competitors)
+    individual_total_paid = sum(c.total_earnings for c in competitors)
+    from services.proam_relay import relay_payout_summary
+
+    relay_payouts = relay_payout_summary(tournament)
+    total_paid = individual_total_paid + relay_payouts['total_owed']
 
     return render_template('reports/payout_summary_print.html',
                            tournament=tournament,
                            competitors=competitors,
+                           relay_payouts=relay_payouts,
                            total_paid=total_paid)
 
 
