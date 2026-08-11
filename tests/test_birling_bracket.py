@@ -45,6 +45,12 @@ class TestStoredDocument:
 
         assert bracket._stored_document() is None
 
+    def test_json_list_is_not_a_fallback_document(self):
+        bracket = object.__new__(BirlingBracket)
+        bracket.event = _mock_event('[]')
+
+        assert bracket._stored_document() is None
+
     def test_unexpected_json_loader_failure_is_not_silenced(self):
         bracket = object.__new__(BirlingBracket)
         bracket.event = _mock_event('{"bracket": {}}')
