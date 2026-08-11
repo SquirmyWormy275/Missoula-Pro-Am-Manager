@@ -173,6 +173,29 @@ class TestPartneredAxeLifecycle:
         # Top 4 from finals + 2 non-finalists from prelims
         assert len(standings) == 6
 
+    def test_payout_configuration_preserves_pair_state(
+            self, auth_client, db_session, tournament, axe_event):
+        """Purses and Partnered Axe state occupy separate columns."""
+        from services.partnered_axe import PartneredAxeThrow
+
+        pat = PartneredAxeThrow(axe_event)
+        c1, c2 = _make_pair(
+            db_session, tournament, 'Payout State A', 'Payout State B',
+            event_id=axe_event.id,
+        )
+        pat.register_pair(c1.id, c2.id)
+        state_before = axe_event.event_state
+
+        response = auth_client.post(
+            f'/scoring/{tournament.id}/event/{axe_event.id}/payouts',
+            data={'payout_1': '500', 'payout_2': '300'},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 302
+        assert axe_event.get_payouts() == {'1': 500.0, '2': 300.0}
+        assert axe_event.event_state == state_before
+
 
 # ---------------------------------------------------------------------------
 # Edge cases

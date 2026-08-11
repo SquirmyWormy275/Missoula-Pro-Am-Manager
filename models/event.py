@@ -121,13 +121,14 @@ class Event(db.Model):
 
     @property
     def uses_payouts_for_state(self):
-        """True when the payouts column stores state-machine data instead of
-        payout amounts (Partnered Axe Throw, Birling bracket).
+        """True when the payouts column still stores state-machine data.
 
-        Pro-Am Relay is excluded: its state-machine data moved to event_state
-        (migration b1c2d3e4f5a6), so payouts is now free for payout amounts.
+        Partnered Axe Throw and Pro-Am Relay now store their state in
+        ``event_state`` (migration b1c2d3e4f5a6), so their purses can use the
+        payouts column. Birling remains guarded while legacy bracket fallback
+        data can still be read from that column.
         """
-        return self.has_prelims or self.scoring_type == 'bracket'
+        return self.scoring_type == 'bracket'
 
     def get_payouts(self):
         """Return dict of position -> payout amount."""

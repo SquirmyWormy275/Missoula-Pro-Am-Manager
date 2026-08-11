@@ -292,9 +292,9 @@ class TestUsesPayoutsForState:
         ev = self._make_event(scoring_type='bracket')
         assert ev.uses_payouts_for_state is True
 
-    def test_has_prelims_returns_true(self):
+    def test_has_prelims_returns_false_after_state_migration(self):
         ev = self._make_event(has_prelims=True)
-        assert ev.uses_payouts_for_state is True
+        assert ev.uses_payouts_for_state is False
 
     def test_ordinary_event_returns_false(self):
         ev = self._make_event(name='Underhand Speed', scoring_type='time')
