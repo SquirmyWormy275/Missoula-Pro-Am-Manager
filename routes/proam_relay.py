@@ -7,8 +7,15 @@ from sqlalchemy.orm.exc import StaleDataError
 from database import db
 from models import Tournament
 from models.event import Event
+from models.relay import RelayTeam
+from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
-from services.proam_relay import compute_team_health, create_proam_relay_event, get_proam_relay
+from services.proam_relay import (
+    compute_team_health,
+    create_proam_relay_event,
+    get_proam_relay,
+    relay_payout_summary,
+)
 
 # Shared message for the concurrent-edit case — surfaced when SQLAlchemy
 # version_id detects a parallel update has advanced the row. Without this
@@ -298,6 +305,42 @@ def save_relay_payouts(tournament_id):
     invalidate_tournament_caches(tournament_id)
     flash('Relay payouts saved.', 'success')
     return redirect(url_for('proam_relay.relay_payouts', tournament_id=tournament_id))
+
+
+@bp.route('/team/<int:team_id>/toggle-settled', methods=['POST'])
+def toggle_relay_settlement(tournament_id, team_id):
+    """Toggle payment status for one final, payable Relay team."""
+    tournament = db.get_or_404(Tournament, tournament_id)
+    payout_row = next(
+        (
+            row for row in relay_payout_summary(tournament)['rows']
+            if row['team'].id == team_id
+        ),
+        None,
+    )
+    if payout_row is None:
+        abort(404)
+
+    team = db.get_or_404(RelayTeam, team_id)
+    team.payout_settled = not team.payout_settled
+    db.session.commit()
+    invalidate_tournament_caches(tournament_id)
+    log_action(
+        'relay_payout_settlement_toggled',
+        'relay_team',
+        team.id,
+        {
+            'settled': team.payout_settled,
+            'team_name': team.name,
+            'team_number': team.team_number,
+            'payout_amount': payout_row['payout_amount'],
+        },
+    )
+
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    if is_ajax:
+        return jsonify({'ok': True, 'settled': team.payout_settled})
+    return redirect(url_for('reporting.pro_payout_summary', tournament_id=tournament_id))
 
 
 # API endpoints for AJAX calls

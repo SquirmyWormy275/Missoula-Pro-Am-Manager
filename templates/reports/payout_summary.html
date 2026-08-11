@@ -73,8 +73,8 @@
                             <strong>{{ total_competitors }}</strong>
                         </li>
                         <li class="d-flex justify-content-between">
-                            <span>Avg Earnings</span>
-                            <strong>${{ "%.2f"|format(total_owed / (earners_count or 1)) }}</strong>
+                            <span>Avg Individual</span>
+                            <strong>${{ "%.2f"|format(individual_total_owed / (earners_count or 1)) }}</strong>
                         </li>
                     </ul>
                 </div>
@@ -181,6 +181,61 @@
             {% endif %}
         </div>
     </div>
+
+    {% if relay_payouts.rows %}
+    <div class="card mt-4">
+        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-people-fill"></i> Pro-Am Relay Team Payouts</h5>
+            <strong>${{ "%.2f"|format(relay_payouts.total_owed) }}</strong>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Place</th>
+                            <th>Team</th>
+                            <th class="text-end">Time</th>
+                            <th class="text-end">Payout</th>
+                            <th class="text-center">Status</th>
+                            {% if current_user.is_authenticated and current_user.is_admin %}
+                            <th class="text-center">Action</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in relay_payouts.rows %}
+                        {% set team = row.team %}
+                        <tr class="{% if team.payout_settled %}table-success{% endif %}">
+                            <td>{{ row.placement }}</td>
+                            <td><strong>{{ team.name }}</strong></td>
+                            <td class="text-end">{{ "%.2f"|format(team.total_time) }}s</td>
+                            <td class="text-end"><strong>${{ "%.2f"|format(row.payout_amount) }}</strong></td>
+                            <td class="text-center">
+                                {% if team.payout_settled %}
+                                <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> Paid</span>
+                                {% else %}
+                                <span class="badge bg-warning text-dark">Pending</span>
+                                {% endif %}
+                            </td>
+                            {% if current_user.is_authenticated and current_user.is_admin %}
+                            <td class="text-center">
+                                <form method="POST" action="{{ url_for('proam_relay.toggle_relay_settlement', tournament_id=tournament.id, team_id=team.id) }}" style="display:inline;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-sm {% if team.payout_settled %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+                                        {% if team.payout_settled %}Unmark{% else %}Mark Paid{% endif %}
+                                    </button>
+                                </form>
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <script>

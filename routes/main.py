@@ -969,6 +969,11 @@ def ops_dashboard(tid):
         if row:
             total_purse = float(row.total or 0.0)
             total_settled = float(row.settled or 0.0)
+    from services.proam_relay import relay_payout_summary
+
+    relay_payouts = relay_payout_summary(tournament)
+    total_purse += relay_payouts['total_owed']
+    total_settled += relay_payouts['total_settled']
     payout_outstanding = total_purse - total_settled
     payout_pct = int(total_settled / total_purse * 100) if total_purse > 0 else 0
     payout_summary = {

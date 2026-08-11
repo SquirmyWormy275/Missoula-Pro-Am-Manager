@@ -144,6 +144,32 @@
         </tfoot>
     </table>
 
+    {% if relay_payouts.rows %}
+    <h2 style="margin-top: 24px;">Pro-Am Relay Team Payouts</h2>
+    <table>
+        <thead>
+            <tr>
+                <th class="rank">Place</th>
+                <th>Team</th>
+                <th class="earnings">Time</th>
+                <th class="earnings">Payout</th>
+                <th style="text-align: center; width: 110px;">Signature</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in relay_payouts.rows %}
+            <tr>
+                <td class="rank">{{ row.placement }}</td>
+                <td><strong>{{ row.team.name }}</strong></td>
+                <td class="earnings">{{ "%.2f"|format(row.team.total_time) }}s</td>
+                <td class="earnings">${{ "%.2f"|format(row.payout_amount) }}</td>
+                <td></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
     <div class="signature-line">
         <div class="signature-block">Tournament Director</div>
         <div class="signature-block">Date</div>

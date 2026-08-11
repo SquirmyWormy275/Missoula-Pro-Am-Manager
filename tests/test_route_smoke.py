@@ -51,6 +51,7 @@ def _seed_minimal_smoke_data(app):
     and one EventResult for settlement-toggle routes.
     """
     from database import db as _db
+    from models.relay import RelayState, RelayTeam, RelayTeamEvent
     from models.user import User
     from tests.conftest import (
         make_college_competitor,
@@ -92,11 +93,35 @@ def _seed_minimal_smoke_data(app):
             _db.session, tournament, name="Birling", event_type="college",
             gender="M", scoring_type="bracket", stand_type="birling",
         )
-        # Pro-Am Relay event needed for relay_payouts routes (they 404 without it)
-        make_event(
+        # Relay payout routes require a final, payable relay team rather than
+        # the generic college Team record used by other routes.
+        relay_event = make_event(
             _db.session, tournament, name="Pro-Am Relay", event_type="pro",
-            scoring_type="time", stand_type="underhand",
+            scoring_type="time", stand_type="underhand", payouts={"1": 100.0},
         )
+        relay_state = RelayState(event_id=relay_event.id, status="completed")
+        _db.session.add(relay_state)
+        _db.session.flush()
+        relay_team = RelayTeam(
+            relay_state_id=relay_state.id,
+            team_number=1,
+            name="Smoke Relay Team",
+            total_time=100.0,
+        )
+        _db.session.add(relay_team)
+        _db.session.flush()
+        for event_key in (
+            "partnered_sawing",
+            "standing_butcher_block",
+            "underhand_butcher_block",
+            "team_axe_throw",
+        ):
+            _db.session.add(RelayTeamEvent(
+                relay_team_id=relay_team.id,
+                event_key=event_key,
+                result=25.0,
+                status="completed",
+            ))
         make_heat(_db.session, event, heat_number=1, competitors=[pro.id])
         # EventResult needed for toggle_settlement route
         make_event_result(
@@ -169,6 +194,7 @@ def smoke_env(monkeypatch):
     with app.app_context():
         from models import Event, EventResult, Heat, Team, Tournament, User
         from models.competitor import CollegeCompetitor, ProCompetitor
+        from models.relay import RelayTeam
 
         first_tournament = Tournament.query.order_by(Tournament.id).first()
         first_event = Event.query.order_by(Event.id).first()
@@ -182,6 +208,7 @@ def smoke_env(monkeypatch):
         # Route-specific event lookups (some routes 404 on wrong event type)
         partnered_event = Event.query.filter_by(is_partnered=True).order_by(Event.id).first()
         relay_event = Event.query.filter_by(name="Pro-Am Relay").order_by(Event.id).first()
+        relay_team = RelayTeam.query.order_by(RelayTeam.id).first()
 
         ids = {
             "tournament_id": first_tournament.id,
@@ -200,6 +227,7 @@ def smoke_env(monkeypatch):
             "partnered_event_id": partnered_event.id if partnered_event else None,
             "relay_event_id": relay_event.id if relay_event else None,
             "relay_tournament_id": relay_event.tournament_id if relay_event else None,
+            "relay_team_id": relay_team.id if relay_team else None,
             "result_id": first_result.id if first_result else None,
             "flight_id": None,
             "job_id": None,
@@ -241,6 +269,7 @@ def _build_path(rule: str, ids: dict[str, object]) -> str:
     tournament_id = ids["tournament_id"]
     competitor_id = ids["competitor_id"]
     competitor_type = ids["competitor_type"]
+    team_id = ids["team_id"]
 
     if "/birling" in rule and ids["birling_event_id"] is not None:
         event_id = ids["birling_event_id"]
@@ -248,6 +277,8 @@ def _build_path(rule: str, ids: dict[str, object]) -> str:
         event_id = ids["partnered_event_id"]
     if "/proam-relay/payouts" in rule and ids.get("relay_tournament_id") is not None:
         tournament_id = ids["relay_tournament_id"]
+    if "/proam-relay/team/" in rule:
+        team_id = ids["relay_team_id"]
     if "/delete-heat/" in rule:
         event_id = ids["heat_event_id"]
     if "/pro/" in rule:
@@ -266,7 +297,7 @@ def _build_path(rule: str, ids: dict[str, object]) -> str:
         "<int:heat_id>": str(ids["heat_id"]),
         "<int:source_heat_id>": str(ids["heat_id"]),
         "<int:user_id>": str(ids["user_id"]),
-        "<int:team_id>": str(ids["team_id"]) if ids["team_id"] is not None else "",
+        "<int:team_id>": str(team_id) if team_id is not None else "",
         "<int:competitor_id>": str(competitor_id) if competitor_id is not None else "",
         "<int:flight_id>": str(ids["flight_id"]) if ids["flight_id"] is not None else "",
         "<int:result_id>": str(ids["result_id"]) if ids.get("result_id") is not None else "",
@@ -312,6 +343,8 @@ def _should_skip(rule: str, ids: dict[str, object]) -> str | None:
         return "no partnered event exists in Phase 0B database state"
     if "/proam-relay/payouts" in rule and ids.get("relay_event_id") is None:
         return "no Pro-Am Relay event exists in Phase 0B database state"
+    if "/proam-relay/team/" in rule and ids.get("relay_team_id") is None:
+        return "no final Pro-Am Relay team exists in Phase 0B database state"
 
     # Generic backstop.  _build_path resolves parameters through a fixed
     # lookup table, so any route carrying a parameter name that is not in that
