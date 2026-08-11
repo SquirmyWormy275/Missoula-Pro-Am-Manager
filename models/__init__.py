@@ -18,6 +18,7 @@ from .payout_template import PayoutTemplate
 from .print_email_log import PrintEmailLog
 from .print_tracker import PrintTracker
 from .pro_event_rank import ProEventRank
+from .relay import RelayState, RelayTeam, RelayTeamEvent, RelayTeamMember
 from .school_captain import SchoolCaptain
 from .team import Team
 from .tournament import Tournament
@@ -44,6 +45,10 @@ __all__ = [
     'PayoutTemplate',
     'PrintTracker',
     'PrintEmailLog',
+    'RelayState',
+    'RelayTeam',
+    'RelayTeamMember',
+    'RelayTeamEvent',
     'Competitor',
     'TournamentEvent',
     'BirlingSeed',
