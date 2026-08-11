@@ -7,7 +7,7 @@ from services.proam_relay import ProAmRelay
 from tests.conftest import make_college_competitor, make_pro_competitor, make_team, make_tournament
 
 
-def test_manual_teams_dual_write_to_normalized_relay_tables(db_session):
+def test_manual_teams_persist_only_to_normalized_relay_tables(db_session):
     tournament = make_tournament(db_session)
     school = make_team(db_session, tournament)
     pro = make_pro_competitor(db_session, tournament, "Pro One", gender="M")
@@ -35,11 +35,20 @@ def test_manual_teams_dual_write_to_normalized_relay_tables(db_session):
     assert db_session.execute(sa.text(
         "SELECT count(*) FROM relay_team_events")).scalar() == 4
 
+    from models.event import Event
+
+    relay_event = Event.query.filter_by(
+        tournament_id=tournament.id, name="Pro-Am Relay"
+    ).one()
+    assert relay_event.event_state is None
+    assert relay_event.results.count() == 0
+
     relay.record_event_result(1, "partnered_sawing", 20.5)
     assert db_session.execute(sa.text(
         "SELECT result, status FROM relay_team_events "
         "WHERE event_key = 'partnered_sawing'"
     )).one() == (20.5, "completed")
+    assert relay_event.event_state is None
 
 
 def test_replacement_rejects_competitor_already_on_another_relay_team(db_session):
@@ -102,3 +111,27 @@ def test_reader_prefers_normalized_rows_over_malformed_legacy_json(db_session):
         "result": 20.5,
         "status": "completed",
     }
+
+
+def test_ops_dashboard_reads_normalized_relay_rows(auth_client, db_session):
+    tournament = make_tournament(db_session)
+    school = make_team(db_session, tournament)
+    pro = make_pro_competitor(db_session, tournament, "Pro One", gender="M")
+    college = make_college_competitor(
+        db_session, tournament, school, "College One", gender="F"
+    )
+    pro.pro_am_lottery_opt_in = True
+    college.pro_am_lottery_opt_in = True
+    db_session.flush()
+
+    ProAmRelay(tournament).set_teams_manually([{
+        "pro_member_ids": [pro.id],
+        "college_member_ids": [college.id],
+    }])
+
+    response = auth_client.get(f"/tournament/{tournament.id}/ops-dashboard")
+
+    assert response.status_code == 200
+    assert b"Relay Team Health" in response.data
+    assert b"1 teams" in response.data
+    assert b"Team 1" in response.data
