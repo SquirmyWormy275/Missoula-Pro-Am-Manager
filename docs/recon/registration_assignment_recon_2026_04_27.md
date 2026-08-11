@@ -5,7 +5,7 @@ Source tree: `Missoula-Pro-Am-Manager/` (current main, post-V2.14.14, 2026-04-27
 
 > **Update (later same day, post-V2.14.16):** companion recon `docs/recon/dual_path_recon_2026_04_27.md` covers the dual-path (pro xlsx + college xlsx) and Pro-Am Relay merge in detail. New findings discovered while writing the companion are appended at the end of each section below as "Amendment (dual-path pass)". The original prose is unchanged.
 
-Note on `scheduling.py` (referenced at 2,018 lines in the request): that monolith no longer exists. Per `CLAUDE.md` Section 5 ("Scheduling blueprint decomposed into package"), `routes/scheduling.py` was split into the `routes/scheduling/` package (14 files, 6,571 LOC). Section 6 below treats the closest analogs as the scheduling boundary: the route package plus `services/heat_generator.py`, `services/flight_builder.py`, `services/schedule_builder.py`, `services/schedule_status.py`, `services/schedule_generation.py`. Combined they are ~10,431 LOC — five times the size of the old monolith.
+Note on `scheduling.py` (referenced at 2,018 lines in the request): that monolith no longer exists. Per `CLAUDE.md` Section 5 ("Scheduling blueprint decomposed into package"), `routes/scheduling.py` was split into the `routes/scheduling/` package. Current measurement: 14 Python files, 6,607 lines by `Get-Content ... .Count`, with `heats.py` largest at 978 lines, then `flights.py` at 885 and `events.py` at 851. Section 6 below treats the closest analogs as the scheduling boundary: the route package plus `services/heat_generator.py`, `services/flight_builder.py`, `services/schedule_builder.py`, `services/schedule_status.py`, `services/schedule_generation.py`. The old monolith risk is closed by commit `1eb068b`, which deleted `routes/scheduling.py`, not deleted from history. [corrected 2026-08-03: was "Current measurement: 14 Python files, 7,170 lines by `Get-Content ... .Count`"]
 
 ---
 
@@ -160,7 +160,7 @@ services/schedule_status.py
 
 1. **Five files >1,000 lines do the heavy domain work.** `gear_sharing.py` (1,892), `flight_builder.py` (1,525), `heat_generator.py` (1,238), `registration_import.py` (1,073), `excel_io.py` (1,122). Any rebuild of registration / partner / gear will touch all five. Race-day risk: each is single-author, integration-test-heavy, and brittle to JSON-shape changes.
 2. **Two parallel ingestion paths exist.** Pro entries: `pro_entry_importer.py` (basic) → `registration_import.py` (enhanced). Each parses the same xlsx but produces overlapping outputs. The confirm route (`routes/import_routes.py`) runs the enhanced pipeline first, falls back to the basic on exception, then runs `compute_review_flags()` again on top. Skew between the two parsers is a live source of subtle field drift.
-3. **The `routes/scheduling/` package consumed the old 2,018-line monolith and grew 5x.** Total scheduling surface today is ~10,431 LOC across 19 files. Any "rewrite scheduling because it's small" framing is stale by a year.
+3. **The `routes/scheduling/` package replaced the old 2,018-line monolith.** Current measurement: the route package has 14 Python files and 6,607 lines by `Get-Content ... .Count`; largest files are `heats.py` at 978 lines, `flights.py` at 885, and `events.py` at 851. Any "rewrite scheduling because it's small" framing is stale; the old monolith risk is closed by commit `1eb068b`, which deleted `routes/scheduling.py`, not deleted from history. [corrected 2026-08-03: was "the route package has 14 Python files and 7,170 lines by `Get-Content ... .Count`"]
 
 ### Amendment (dual-path pass)
 
@@ -818,16 +818,16 @@ The system also has a NEGATIVE check (`is_using_value`) to prevent treating part
 
 ## SECTION 6 — SCHEDULING DEPENDENCIES
 
-`scheduling.py` referenced at 2,018 lines no longer exists as a single file. The closest analogs are:
+`scheduling.py` referenced at 2,018 lines no longer exists as a single file. Current measurement shows the route package is the closest analog:
 
-- `routes/scheduling/` package — 14 files, 6,571 LOC.
+- `routes/scheduling/` package: 14 Python files, 6,607 lines by `Get-Content ... .Count`; largest files are `heats.py` at 978 lines, `flights.py` at 885, and `events.py` at 851. [corrected 2026-08-03: was "14 Python files, 7,170 lines by `Get-Content ... .Count`"]
 - `services/heat_generator.py` — 1,238 LOC.
 - `services/flight_builder.py` — 1,525 LOC.
 - `services/schedule_builder.py` — 557 LOC.
 - `services/schedule_status.py` — 500 LOC.
 - `services/schedule_generation.py` — 140 LOC.
 
-Combined: ~10,431 LOC across 19 files. Five times the size of the old monolith.
+The old monolith risk is closed, not deleted from history.
 
 ### Imports in the scheduling boundary (consolidated)
 

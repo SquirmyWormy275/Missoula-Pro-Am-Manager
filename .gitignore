@@ -53,6 +53,10 @@ htmlcov/
 # Session handoff paste buffers — generated per session, not source
 SESSION_HANDOFF_*.md
 
+# Local session output and identity audits are not repository source.
+/STATUS.md
+/docs/git-config-audit.md
+
 # Patch transfer between the Claude session and this checkout.
 # _claude_inbox/ holds exactly two files, both overwritten on every delivery:
 # patches.mbox (every commit this checkout does not have yet) and apply.bat

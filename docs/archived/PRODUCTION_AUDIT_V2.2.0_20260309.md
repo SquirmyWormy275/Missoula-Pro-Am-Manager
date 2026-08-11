@@ -51,6 +51,8 @@ key locations. No raw SQLite-specific syntax beyond the already-guarded PRAGMA i
 | 1C-4 | `services/flight_builder.py` | 83–87 | low | `Flight.query.filter_by(tournament_id=tournament.id).delete(synchronize_session=False)` deletes all existing flights for the tournament before rebuilding. If the new build fails, the caller must rollback. This is correct but requires the caller to always be in a `try/except rollback` block. | Verified in `_handle_event_list_post()` — outer try/except rollbacks on failure. No action needed beyond Phase 2E improvements. |
 | 1C-5 | `services/flight_builder.py` | (not present) | low | `integrate_college_spillover_into_flights()` partial failure: the function itself doesn't commit; the caller calls `db.session.commit()` after. On partial failure the caller's try/except rollbacks. Safe. | No action needed. |
 
+Current note at commit `43607e6`: `routes/scheduling.py` no longer exists as a monolith. Scheduling route code now lives under `routes/scheduling/`; this archived finding is retained as history and marked closed by the package split.
+
 ---
 
 ## 1D. Input Validation Coverage
@@ -70,6 +72,8 @@ All other `int()`/`float()` calls on form data found by static scan are inside `
 - `routes/woodboss.py`: line 148–151 — guarded.
 - `routes/reporting.py`: lines 368–370, 412–414 — all guarded.
 - `routes/scoring.py`: `_parse_payout_form()` lines 740–743 — guarded.
+
+Current note at commit `43607e6`: `routes/scheduling.py` no longer exists as a monolith. Scheduling route code now lives under `routes/scheduling/`; this archived clean-list reference is retained as history and marked closed by the package split.
 
 ---
 

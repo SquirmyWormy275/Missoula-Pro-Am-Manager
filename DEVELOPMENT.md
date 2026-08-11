@@ -1529,7 +1529,7 @@ Files changed: `static/css/theme.css`, `templates/base.html`, `templates/role_en
 
 **Production Audit Sweep — scheduling decomposition, Postgres migration guide, handicap scoring, mark assignment pipeline:**
 
-- **Scheduling blueprint package (Phase 3A):** Decomposed monolithic `routes/scheduling.py` (2025 lines) into a proper Flask Blueprint package at `routes/scheduling/`. Sub-modules: `events.py`, `heats.py`, `flights.py`, `heat_sheets.py`, `friday_feature.py`, `show_day.py`, `ability_rankings.py`, `preflight.py`, `assign_marks.py`. All 24 routes preserved at identical URL paths. Blueprint name `'scheduling'` unchanged. Shared helpers (`_normalize_name`, `_load_competitor_lookup`, `_generate_all_heats`, etc.) defined in `__init__.py` before sub-module imports to avoid circular imports.
+- **Scheduling blueprint package (Phase 3A):** Decomposed monolithic `routes/scheduling.py` (2025 lines) into a proper Flask Blueprint package at `routes/scheduling/`. Current measurement at commit `43607e6`: 14 Python files, with `heats.py` largest at 978 lines, then `flights.py` at 885 and `events.py` at 851. The original monolith risk is closed, not deleted from history. All URL paths were preserved and blueprint name `'scheduling'` is unchanged.
 
 - **Route smoke tests (Phase 3B):** Created `tests/test_routes_smoke.py` — pytest-based smoke tests using Flask test client with in-memory SQLite; CSRF disabled; seeds one admin user + one tournament; covers all blueprints: public, main, registration, scheduling, scoring, reporting, auth, portal, validation, woodboss, proam-relay, partnered-axe, import. Asserts no route returns 500/502/503.
 
@@ -1584,7 +1584,7 @@ Files changed: `static/css/theme.css`, `templates/base.html`, `templates/role_en
 - Added `Event.is_handicap` (Boolean, default False) to `models/event.py`: stores Championship vs. Handicap format choice per event; applies only to underhand, standing block, and springboard Speed events
 - Added migration `j7k8l9m0n1o2_add_is_handicap_to_events.py` (down_revision: `i6j7k8l9m0n1`): `is_handicap` column with `server_default='0'`
 - Added `HANDICAP_ELIGIBLE_STAND_TYPES = {'underhand', 'standing_block', 'springboard'}` to `config.py`: single gating constant used across routes and templates
-- Updated `routes/scheduling.py` (`_upsert_event`, `_create_college_events`, `_create_pro_events`, `_get_existing_event_config`): reads `handicap_format_{field_key}` form field for eligible events (excluding `scoring_type == 'hits'`); saves to `event.is_handicap`; `_get_existing_event_config` returns `college_handicap` and `pro_handicap` state dicts
+- Updated scheduling event helpers, now in `routes/scheduling/events.py` (`_upsert_event`, `_create_college_events`, `_create_pro_events`, `_get_existing_event_config`): reads `handicap_format_{field_key}` form field for eligible events (excluding `scoring_type == 'hits'`); saves to `event.is_handicap`; `_get_existing_event_config` returns `college_handicap` and `pro_handicap` state dicts
 - Updated `templates/scheduling/setup_events.html` and `templates/tournament_setup.html` (Events tab): Championship / Handicap radio toggle rendered beneath each eligible college CLOSED event and within each eligible pro event card; toggle hidden for Hard Hit events (`scoring_type == 'hits'`)
 
 **Eligible events with Championship/Handicap toggle:**
@@ -1606,7 +1606,7 @@ Files changed: `static/css/theme.css`, `templates/base.html`, `templates/role_en
 
 **Reliability & Error Handling:**
 - Split `StaleDataError` and `IntegrityError` handlers in `routes/scoring.py`: StaleDataError now shows "another judge edited this — reload" warning; IntegrityError shows constraint violation error
-- Added transactional rollback to scheduling: each `generate_all` / `rebuild_flights` / `integrate_spillover` action in `routes/scheduling.py` wrapped in `try/except db.session.rollback()`
+- Added transactional rollback to scheduling: each `generate_all` / `rebuild_flights` / `integrate_spillover` action was wrapped in `try/except db.session.rollback()` before the route package split. Current route code lives under `routes/scheduling/`.
 - Fixed error leakage in `routes/registration.py`: unexpected exceptions no longer flash `str(e)` to users; generic admin-contact message shown instead
 - Added `JSONDecodeError` guards to all model `.get_*()` methods — `CollegeCompetitor`, `ProCompetitor`, `Event.get_payouts()`, `Heat.get_competitors()`, `Heat.get_stand_assignments()` — return empty list/dict rather than propagating decode error
 
@@ -1620,14 +1620,14 @@ Files changed: `static/css/theme.css`, `templates/base.html`, `templates/role_en
 **New Features:**
 - Competitor self-service portal: `competitor_my_results` route in `routes/portal.py` at `/portal/competitor/<tid>/<type>/<id>/my-results`; PIN gate template `templates/portal/competitor_pin_gate.html`; results dashboard `templates/portal/competitor_my_results.html` showing events entered, heat assignments (with stand/flight/run), personal results with position and payout, gear-sharing partners; mobile/full view toggle
 - Heat sheet PDF: `heat_sheet_pdf` route in `routes/scoring.py` at `/scoring/<tid>/heat/<hid>/pdf`; uses WeasyPrint if installed, falls back to print-styled HTML; standalone `templates/scoring/heat_sheet_print.html` with `@page` CSS, run-aware columns, "Print / Save as PDF" button; "Print Heat Sheet" link added to `enter_heat.html`
-- Async heat/flight generation: `generate_async` POST and `generation_job_status` GET routes in `routes/scheduling.py`; wraps `background_jobs.submit()`; returns 202 + `job_id`; poll endpoint returns status/progress JSON
+- Async heat/flight generation: `generate_async` POST and `generation_job_status` GET routes now live in `routes/scheduling/preflight.py`; wraps `background_jobs.submit()`; returns 202 + `job_id`; poll endpoint returns status/progress JSON
 - API v1 prefix: `api_bp` now registered at both `/api/` and `/api/v1/` (name='api_v1') in `app.py`
 
 **Code Organization:**
 - Added `FlightBuilder` class to `services/flight_builder.py`: OO wrapper with `build()`, `integrate_spillover()`, and `spacing()` convenience methods
 - Added `logging.getLogger(__name__)` + `logger.info(...)` at entry of `calculate_positions()` in `services/scoring_engine.py`
 - Added `logging.getLogger(__name__)` + `logger.info(...)` at entry of `generate_event_heats()` in `services/heat_generator.py`
-- Extracted `_handle_event_list_post()` helper in `routes/scheduling.py` to separate POST action dispatch from GET rendering
+- Extracted `_handle_event_list_post()` helper, now in the scheduling route package, to separate POST action dispatch from GET rendering
 
 **UI:**
 - Added Bootstrap 5 conflict modal to `templates/scoring/enter_heat.html`: 409 conflict response shows modal with server message and reload link
@@ -1654,10 +1654,10 @@ Files changed: `static/css/theme.css`, `templates/base.html`, `templates/role_en
 **Pro Ability Rankings:**
 - Added `models/pro_event_rank.py` (`ProEventRank`): per-tournament ability ranking for pro competitors per event category; 7 categories: springboard, underhand, standing_block, obstacle_pole, singlebuck, doublebuck, jack_jill; rank 1 = best; unranked placed after ranked
 - Added `templates/scheduling/ability_rankings.html`: judge UI to assign ability ranks before heat generation
-- Added `/scheduling/<tid>/ability-rankings` route in `routes/scheduling.py`
+- Added `/scheduling/<tid>/ability-rankings` route, now in `routes/scheduling/ability_rankings.py`
 
 **Show Day Dashboard:**
-- Added `templates/scheduling/show_day.html` and `show_day` route in `routes/scheduling.py`: flight status cards (live/completed/pending), current heat CTA, upcoming heats, college event progress bars; 60s auto-refresh; linked from the 4-step scheduling wizard
+- Added `templates/scheduling/show_day.html` and `show_day` route, now in `routes/scheduling/show_day.py`: flight status cards (live/completed/pending), current heat CTA, upcoming heats, college event progress bars; 60s auto-refresh; linked from the 4-step scheduling wizard
 
 ---
 
@@ -1735,7 +1735,7 @@ Files changed: `static/css/theme.css`, `templates/base.html`, `templates/role_en
 
 **HeatAssignment sync (`Heat.sync_assignments`):**
 - New `Heat.sync_assignments(competitor_type)` method: deletes and rebuilds `HeatAssignment` rows from the authoritative `Heat.competitors` JSON — closes the consistency gap between the two representations
-- Called automatically after heat generation (`heat_generator.py`), after flight rebuilds (`flight_builder.py`), and after competitor moves (`scheduling.py` `move_competitor_between_heats`)
+- Called automatically after heat generation (`heat_generator.py`), after flight rebuilds (`flight_builder.py`), and after competitor moves, now through `routes/scheduling/heats.py`
 
 **Score entry: "Save & Next Heat" button:**
 - `routes/scoring.py` now queries the next pending heat in the same event; passes `next_heat_url` to `enter_heat.html`
@@ -1794,7 +1794,7 @@ Files changed: `static/css/theme.css`, `templates/base.html`, `templates/role_en
 
 ### 2026-02-27 (V1.3.0)
 - Fixed `CollegeCompetitor.closed_event_count` to compare against `COLLEGE_CLOSED_EVENTS` names (#20)
-- Added heat sync check (GET JSON) + sync fix (POST reconcile) in scheduling.py; modal + JS in heats.html (#19)
+- Added heat sync check (GET JSON) + sync fix (POST reconcile), now in `routes/scheduling/heats.py`; modal + JS in heats.html (#19)
 - Added heat sheets print page (`/scheduling/<tid>/heat-sheets` + `heat_sheets_print.html`) (#7)
 - Added Saturday priority route (`POST /scheduling/<tid>/college/saturday-priority`) (#15)
 - Added audit log viewer (`/auth/audit`, admin-only, paginated, filterable) + `audit_log.html` (#9)
