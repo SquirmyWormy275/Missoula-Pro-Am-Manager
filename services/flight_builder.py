@@ -385,9 +385,10 @@ def _prepare_partnered_axe_show_heats(event: Event | None) -> list[Heat]:
 
 def _get_partnered_axe_qualifier_pairs(event: Event, count: int) -> list[dict]:
     """Read prelim standings from partnered axe event state and return top N pairs."""
+    raw_state = getattr(event, 'event_state', None) or event.payouts
     try:
-        state = json.loads(event.payouts or '{}')
-    except Exception:
+        state = json.loads(raw_state or '{}')
+    except (json.JSONDecodeError, TypeError):
         return []
 
     prelim_results = state.get('prelim_results')
