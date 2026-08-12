@@ -321,6 +321,42 @@ class TestHeatUndoStripsPoints:
         assert response.get_json()['message'].startswith('Scores changed')
         assert EventResult.query.filter_by(id=result.id).one().result_value == Decimal('18.00')
 
+    def test_undo_rejects_roster_changed_after_save(self, db_session, judge_client, tid):
+        """Undo must not apply a stale result set after a heat roster change."""
+        from datetime import datetime, timezone
+
+        from models.event import EventResult
+        team = _make_team(db_session, tid, code='UM-E')
+        first = _make_college(db_session, tid, team.id, 'Original Runner')
+        replacement = _make_college(db_session, tid, team.id, 'Replacement Runner')
+        event = _make_event(db_session, tid, name='Undo Roster Conflict')
+        heat = _make_heat(
+            db_session, event, competitors=[first.id], status='completed'
+        )
+        result = _make_result(db_session, event, first, 20.0)
+        db_session.commit()
+
+        with judge_client.session_transaction() as sess:
+            sess[f'undo_heat_{heat.id}'] = {
+                'heat_id': heat.id,
+                'event_id': event.id,
+                'heat_version': heat.version_id,
+                'result_versions': {str(result.id): result.version_id},
+                'saved_at': datetime.now(timezone.utc).isoformat(),
+            }
+
+        seat_roster(db_session, heat, [replacement.id])
+        db_session.commit()
+
+        response = judge_client.post(
+            f'/scoring/{tid}/heat/{heat.id}/undo',
+            headers={'X-Requested-With': 'XMLHttpRequest'},
+        )
+
+        assert response.status_code == 409
+        assert response.get_json()['message'].startswith('Heat changed')
+        assert EventResult.query.filter_by(id=result.id).one().result_value == Decimal('20.00')
+
 
 # ===========================================================================
 # 2. Admin repair route
