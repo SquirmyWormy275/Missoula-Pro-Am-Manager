@@ -20,12 +20,11 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table("relay_teams") as batch_op:
-        batch_op.add_column(
-            sa.Column("version_id", sa.Integer(), nullable=False, server_default="1")
-        )
+    op.add_column(
+        "relay_teams",
+        sa.Column("version_id", sa.Integer(), nullable=False, server_default="1"),
+    )
 
 
 def downgrade():
-    with op.batch_alter_table("relay_teams") as batch_op:
-        batch_op.drop_column("version_id")
+    op.drop_column("relay_teams", "version_id")
