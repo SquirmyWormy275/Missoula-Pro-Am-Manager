@@ -651,9 +651,13 @@ def fee_tracker(tournament_id):
         if action == 'unmark_all':
             competitor.fees_paid = '{}'
         else:
-            # Mark every enrolled event as paid
-            entered = [str(eid) for eid in competitor.get_events_entered()]
-            competitor.fees_paid = json.dumps({eid: True for eid in entered})
+            # Mark every currently owed fee, including non-event obligations
+            # such as the Pro-Am Relay lottery fee.
+            competitor.fees_paid = json.dumps({
+                str(key): True
+                for key, amount in competitor.get_entry_fees().items()
+                if float(amount or 0.0) > 0.0
+            })
 
         db.session.commit()
         log_action('fee_payment_updated', 'pro_competitor', comp_id, {
@@ -672,14 +676,19 @@ def fee_tracker(tournament_id):
     for c in competitors:
         fees = c.get_entry_fees()
         paid = c.get_fees_paid()
-        entered = [str(eid) for eid in c.get_events_entered()]
-
         event_rows = []
-        for eid in entered:
+        for key, fee in fees.items():
+            eid = str(key)
+            try:
+                amount = float(fee or 0.0)
+            except (TypeError, ValueError):
+                amount = 0.0
+            if amount <= 0.0:
+                continue
             event_rows.append({
                 'event_id': eid,
-                'name': event_map.get(eid, f'Event {eid}'),
-                'fee': fees.get(eid, 0),
+                'name': event_map.get(eid, 'Pro-Am Relay Lottery' if eid == 'relay' else f'Fee {eid}'),
+                'fee': amount,
                 'paid': paid.get(eid, False),
             })
 

@@ -279,3 +279,37 @@ class TestEventFeesPostSetsFees:
             follow_redirects=False,
         )
         assert resp.status_code == 302  # no 500
+
+    def test_fee_tracker_marks_and_displays_relay_fee(self, app, auth_client):
+        """The relay lottery fee is owed and settled alongside event fees."""
+        with app.app_context():
+            data = _seed_tournament_with_events(_db.session)
+            competitor = data['c0']
+            competitor.set_entry_fee(data['evt_a'].id, 25.0)
+            competitor.set_entry_fee('relay', 5.0)
+            _db.session.commit()
+            tournament_id = data['t'].id
+            competitor_id = competitor.id
+            event_id = data['evt_a'].id
+
+        page = auth_client.get(f'/reporting/{tournament_id}/pro/fee-tracker')
+        assert page.status_code == 200
+        assert b'Pro-Am Relay Lottery' in page.data
+        assert b'$30.00' in page.data
+
+        response = auth_client.post(
+            f'/reporting/{tournament_id}/pro/fee-tracker',
+            data={'competitor_id': competitor_id, 'action': 'mark_all_paid'},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        with app.app_context():
+            from models.competitor import ProCompetitor
+
+            fresh = db.session.get(ProCompetitor, competitor_id)
+            assert fresh.get_fees_paid() == {
+                str(event_id): True,
+                'relay': True,
+            }
+            assert fresh.total_fees_paid == 30.0
