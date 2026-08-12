@@ -152,7 +152,8 @@ def repair(tournament_id: int, xlsx_path: str, dry_run: bool = False) -> dict:
         from services.heat_generator import generate_event_heats
 
         try:
-            generate_event_heats(event)
+            with db.session.begin_nested():
+                generate_event_heats(event)
             summary["heat_regenerations"].append(event.display_name)
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append(f"regenerate {event.display_name}: {exc!s}")

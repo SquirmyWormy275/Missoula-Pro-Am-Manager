@@ -166,3 +166,29 @@ def test_generate_tournament_schedule_artifacts_orchestrates_heat_and_flight_gen
     assert result['skipped'] == 1
     assert result['errors'] == ['kaboom']
     assert result['flights'] == 2
+
+
+def test_generate_tournament_schedule_rolls_back_partial_failed_event(
+    db_session,
+    monkeypatch,
+):
+    """A failed event must not leak flushed heat rows into the final commit."""
+    from models import Heat
+    from services.schedule_generation import generate_tournament_schedule_artifacts
+
+    tournament = _make_tournament(db_session)
+    failed_event = _make_event(db_session, tournament, 'Partial Failure', event_type='pro')
+
+    def _partial_failure(event):
+        _db.session.add(Heat(event_id=event.id, heat_number=1, run_number=1))
+        _db.session.flush()
+        raise RuntimeError('forced failure after flush')
+
+    monkeypatch.setattr('services.heat_generator.generate_event_heats', _partial_failure)
+
+    result = generate_tournament_schedule_artifacts(tournament.id)
+
+    assert result['ok'] is True
+    assert result['generated'] == 0
+    assert result['errors'] == ['forced failure after flush']
+    assert Heat.query.filter_by(event_id=failed_event.id).count() == 0
