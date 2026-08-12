@@ -1181,7 +1181,12 @@ def scratch_confirm(tournament_id, competitor_id):
     """
     comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
 
-    from services.scratch_cascade import CascadeEffect, compute_scratch_effects, execute_cascade
+    from services.scratch_cascade import (
+        CascadeEffect,
+        ScratchCascadeConflict,
+        compute_scratch_effects,
+        execute_cascade,
+    )
 
     # Re-compute from fresh DB state so we can't be fed stale/forged IDs.
     try:
@@ -1222,7 +1227,7 @@ def scratch_confirm(tournament_id, competitor_id):
     try:
         result = execute_cascade(comp, checked_effects, judge_id, tournament)
         db.session.commit()
-    except StaleDataError:
+    except (StaleDataError, ScratchCascadeConflict):
         # A cascade can update several versioned heats. Never leave a judge on
         # a 500 or accept a review that no longer reflects the live schedule.
         db.session.rollback()
@@ -1280,7 +1285,7 @@ def scratch_undo(tournament_id, competitor_id):
     """POST: Reverse the most recent scratch within the undo window."""
     comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
 
-    from services.scratch_cascade import reverse_cascade
+    from services.scratch_cascade import ScratchCascadeConflict, reverse_cascade
 
     judge_id = _current_user_id()
     # Pass the type: college and pro ids collide, so an audit lookup on the
@@ -1292,7 +1297,7 @@ def scratch_undo(tournament_id, competitor_id):
         )
         if result['success']:
             db.session.commit()
-    except StaleDataError:
+    except (StaleDataError, ScratchCascadeConflict):
         db.session.rollback()
         message = (
             'The schedule changed while this scratch undo was being applied. '

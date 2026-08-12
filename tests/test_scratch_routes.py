@@ -445,6 +445,33 @@ class TestScratchConfirmPost:
             assert "scratch-preview" in resp.location
             assert db.session.get(ProCompetitor, comp_id).status == "active"
 
+    def test_locked_cascade_redirects_to_a_fresh_review(self, app):
+        from database import db
+        from models.competitor import ProCompetitor
+        from services.scratch_cascade import ScratchCascadeConflict
+
+        with app.app_context():
+            t = _seed_tournament(db)
+            u = _seed_admin(db)
+            comp = _seed_pro(db, t)
+            comp_id = comp.id
+            db.session.commit()
+
+            client = _auth_client(app, u)
+            with patch(
+                'services.scratch_cascade.execute_cascade',
+                side_effect=ScratchCascadeConflict("locked"),
+            ):
+                resp = client.post(
+                    f"/scoring/{t.id}/competitor/{comp_id}/scratch-confirm",
+                    data={"effect_count": "0"},
+                    follow_redirects=False,
+                )
+
+            assert resp.status_code in (302, 303)
+            assert "scratch-preview" in resp.location
+            assert db.session.get(ProCompetitor, comp_id).status == "active"
+
 
 # ===========================================================================
 # TestScratchUndoPost
@@ -545,6 +572,32 @@ class TestScratchUndoPost:
             with patch(
                 'services.scratch_cascade.reverse_cascade',
                 side_effect=StaleDataError(),
+            ):
+                resp = client.post(
+                    f"/scoring/{t.id}/competitor/{comp_id}/scratch-undo",
+                    follow_redirects=False,
+                )
+
+            assert resp.status_code in (302, 303)
+            assert "scratch-preview" in resp.location
+            assert db.session.get(ProCompetitor, comp_id).status == "active"
+
+    def test_locked_undo_returns_to_a_safe_retry(self, app):
+        from database import db
+        from models.competitor import ProCompetitor
+        from services.scratch_cascade import ScratchCascadeConflict
+
+        with app.app_context():
+            t = _seed_tournament(db)
+            u = _seed_admin(db)
+            comp = _seed_pro(db, t)
+            comp_id = comp.id
+            db.session.commit()
+
+            client = _auth_client(app, u)
+            with patch(
+                'services.scratch_cascade.reverse_cascade',
+                side_effect=ScratchCascadeConflict("locked"),
             ):
                 resp = client.post(
                     f"/scoring/{t.id}/competitor/{comp_id}/scratch-undo",

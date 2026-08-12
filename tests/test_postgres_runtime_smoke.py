@@ -69,3 +69,39 @@ def test_postgresql_round_trip_insert_and_lookup(app):
 
         _db.session.delete(loaded)
         _db.session.commit()
+
+
+def test_scratch_cascade_row_lock_uses_postgresql_nowait(app, monkeypatch):
+    """Race-day scratch locks must be real NOWAIT locks on PostgreSQL."""
+    from models.competitor import ProCompetitor
+    from models.tournament import Tournament
+    from services import scratch_cascade
+
+    with app.app_context():
+        tournament = Tournament(name='Postgres Scratch Lock', year=2099, status='setup')
+        _db.session.add(tournament)
+        _db.session.flush()
+        competitor = ProCompetitor(
+            tournament_id=tournament.id,
+            name='Postgres Lock Competitor',
+            gender='M',
+            status='active',
+        )
+        _db.session.add(competitor)
+        _db.session.commit()
+
+        statements = []
+        original_execute = _db.session.execute
+
+        def capture_execute(statement, *args, **kwargs):
+            statements.append(str(statement.compile(dialect=_db.engine.dialect)))
+            return original_execute(statement, *args, **kwargs)
+
+        monkeypatch.setattr(_db.session, 'execute', capture_execute)
+        scratch_cascade._lock_cascade_rows(competitor, tournament, [])
+
+        assert any('FOR UPDATE NOWAIT' in statement for statement in statements)
+
+        _db.session.delete(competitor)
+        _db.session.delete(tournament)
+        _db.session.commit()

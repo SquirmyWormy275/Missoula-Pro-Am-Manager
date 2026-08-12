@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import OperationalError
+
 from database import db
 from services.time_utils import utc_now_naive
 
@@ -26,6 +28,10 @@ logger = logging.getLogger(__name__)
 SCRATCH_UNDO_WINDOW_MINUTES = 30
 
 
+class ScratchCascadeConflict(RuntimeError):
+    """A live PostgreSQL row lock prevented a scratch cascade from starting."""
+
+
 @dataclass
 class CascadeEffect:
     effect_type: str  # 'event_result' | 'partner' | 'relay_team' | 'standings'
@@ -33,6 +39,107 @@ class CascadeEffect:
     affected_entity_id: int  # PK of the affected row
     affected_entity_type: str  # 'event_result' | 'competitor' | 'event'
     metadata: dict = field(default_factory=dict)
+
+
+def _lock_cascade_rows(
+    competitor,
+    tournament,
+    effects,
+    *,
+    heat_ids: set[int] | None = None,
+    relay_team_ids: set[int] | None = None,
+) -> None:
+    """Acquire NOWAIT locks for the rows a cascade may mutate on PostgreSQL.
+
+    SQLite intentionally ignores row locks during local tests. PostgreSQL is
+    where two judges can operate at once, so lock all participating rows before
+    taking a snapshot or changing state. A lock collision becomes one explicit
+    retry outcome instead of an interleaved scratch.
+    """
+    bind = db.session.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+
+    from models.competitor import CollegeCompetitor, ProCompetitor
+    from models.event import Event, EventResult
+    from models.heat import Heat, HeatAssignment
+    from models.relay import RelayTeam, RelayTeamMember
+
+    competitor_model = CollegeCompetitor if isinstance(competitor, CollegeCompetitor) else ProCompetitor
+    result_ids = {
+        effect.affected_entity_id
+        for effect in effects
+        if effect.effect_type in {"event_result", "partner"}
+    }
+    event_ids = {
+        effect.metadata.get("event_id")
+        for effect in effects
+        if effect.effect_type == "event_result"
+    }
+    for effect in effects:
+        if effect.effect_type == "standings":
+            event_ids.update(effect.metadata.get("finalized_event_ids", []))
+    event_ids.discard(None)
+
+    try:
+        competitor_model.query.filter_by(
+            id=competitor.id, tournament_id=tournament.id,
+        ).with_for_update(nowait=True).one()
+
+        locked_results = []
+        if result_ids:
+            locked_results = EventResult.query.filter(
+                EventResult.id.in_(result_ids),
+            ).with_for_update(nowait=True).all()
+        if event_ids:
+            Event.query.filter(Event.id.in_(event_ids)).with_for_update(nowait=True).all()
+
+        partner_ids = {result.competitor_id for result in locked_results}
+        partner_types = {result.competitor_type for result in locked_results}
+        if partner_ids:
+            if "pro" in partner_types:
+                ProCompetitor.query.filter(
+                    ProCompetitor.id.in_(partner_ids),
+                ).with_for_update(nowait=True).all()
+            if "college" in partner_types:
+                CollegeCompetitor.query.filter(
+                    CollegeCompetitor.id.in_(partner_ids),
+                ).with_for_update(nowait=True).all()
+
+        if heat_ids:
+            Heat.query.filter(Heat.id.in_(heat_ids)).with_for_update(nowait=True).all()
+        else:
+            heat_type = "college" if isinstance(competitor, CollegeCompetitor) else "pro"
+            Heat.query.join(Event).join(Heat.assignments).filter(
+                Event.tournament_id == tournament.id,
+                Event.event_type == heat_type,
+                Heat.status != "completed",
+                HeatAssignment.uid == competitor.uid,
+            ).with_for_update(nowait=True).all()
+
+        relay_member_ids = {
+            effect.metadata.get("relay_member_id")
+            for effect in effects
+            if effect.effect_type == "relay_team"
+        }
+        relay_member_ids.discard(None)
+        if relay_member_ids:
+            relay_members = RelayTeamMember.query.filter(
+                RelayTeamMember.id.in_(relay_member_ids),
+            ).with_for_update(nowait=True).all()
+            relay_team_ids = (relay_team_ids or set()) | {
+                member.relay_team_id for member in relay_members
+            }
+        if relay_team_ids:
+            RelayTeam.query.filter(RelayTeam.id.in_(relay_team_ids)).with_for_update(
+                    nowait=True,
+            ).all()
+    except OperationalError as exc:
+        if getattr(exc.orig, "pgcode", None) == "55P03":
+            raise ScratchCascadeConflict(
+                "A judge is already updating this competitor's schedule."
+            ) from exc
+        raise
 
 
 # Statuses that represent an active (non-terminal) entry.
@@ -335,6 +442,8 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
     from services.audit import log_action
     from services.proam_relay import ProAmRelay
     from services.scoring_engine import _rebuild_individual_points
+
+    _lock_cascade_rows(competitor, tournament, effects)
 
     # --- Build pre-scratch snapshot ------------------------------------------
     result_ids = [
@@ -818,19 +927,46 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
 
     snapshot = details.get("scratch_snapshot", {})
 
+    comp_type = competitor_type or snapshot.get("competitor_type", "pro")
+    CompModel = CollegeCompetitor if comp_type == "college" else ProCompetitor
+    comp = db.session.get(CompModel, competitor_id)
+    if comp is None:
+        return {"success": False, "message": "Competitor no longer exists"}
+
+    _lock_cascade_rows(
+        comp,
+        tournament,
+        [
+            CascadeEffect(
+                effect_type="event_result",
+                description="restore snapshot result",
+                affected_entity_id=result_snapshot["id"],
+                affected_entity_type="event_result",
+                metadata={},
+            )
+            for result_snapshot in snapshot.get("results", [])
+        ],
+        heat_ids={
+            heat_snapshot.get("heat_id")
+            for heat_snapshot in snapshot.get("heats", [])
+            if heat_snapshot.get("heat_id") is not None
+        },
+        relay_team_ids={
+            relay_snapshot.get("relay_team_id")
+            for relay_snapshot in snapshot.get("relay_teams", [])
+            if isinstance(relay_snapshot, dict)
+            and relay_snapshot.get("relay_team_id") is not None
+        },
+    )
+
     with db.session.begin_nested():
         # --- Restore competitor status ---------------------------------------
-        comp_type = competitor_type or snapshot.get("competitor_type", "pro")
-        CompModel = CollegeCompetitor if comp_type == "college" else ProCompetitor
-        comp = db.session.get(CompModel, competitor_id)
-
-        if comp is not None:
-            comp.status = snapshot.get("competitor_status", "active")
-            if isinstance(comp, ProCompetitor) and "total_earnings" in snapshot:
-                comp.total_earnings = float(snapshot["total_earnings"] or 0.0)
-            # Restore partners JSON
-            if "partner_json" in snapshot and snapshot["partner_json"] is not None:
-                comp.partners = snapshot["partner_json"]
+        comp.status = snapshot.get("competitor_status", "active")
+        if isinstance(comp, ProCompetitor) and "total_earnings" in snapshot:
+            comp.total_earnings = float(snapshot["total_earnings"] or 0.0)
+        # Restore partners JSON
+        if "partner_json" in snapshot and snapshot["partner_json"] is not None:
+            comp.partners = snapshot["partner_json"]
 
         # --- Restore partner counterparties ----------------------------------
         # execute_cascade nulls the partner's EventResult.partner_name and drops
