@@ -569,7 +569,7 @@ def reorder_flight_heats(tournament_id, flight_id):
         return jsonify({'ok': False, 'error': 'Invalid heat_ids'}), 400
 
     existing = {h.id: h for h in flight.get_heats_ordered()}
-    if set(heat_ids) != set(existing.keys()):
+    if len(heat_ids) != len(existing) or set(heat_ids) != set(existing.keys()):
         return jsonify({'ok': False, 'error': 'Heat set mismatch — refresh and try again'}), 400
 
     for position, hid in enumerate(heat_ids, start=1):
@@ -613,6 +613,8 @@ def bulk_reorder_flights(tournament_id):
         return jsonify({'ok': False, 'error': 'No flights in payload'}), 400
 
     flight_ids = [fid for fid, _ in payload]
+    if len(flight_ids) != len(set(flight_ids)):
+        return jsonify({'ok': False, 'error': 'Each flight may appear only once'}), 400
     flights = Flight.query.filter(
         Flight.id.in_(flight_ids),
         Flight.tournament_id == tournament_id,
@@ -624,8 +626,12 @@ def bulk_reorder_flights(tournament_id):
     # present in the payload. Prevents a half-loaded DOM from dropping heats.
     existing_heats = Heat.query.filter(Heat.flight_id.in_(flight_ids)).all()
     existing_heat_ids = {h.id for h in existing_heats}
-    payload_heat_ids = {hid for _, hids in payload for hid in hids}
-    if existing_heat_ids != payload_heat_ids:
+    payload_heat_id_list = [hid for _, hids in payload for hid in hids]
+    payload_heat_ids = set(payload_heat_id_list)
+    if (
+        len(payload_heat_id_list) != len(payload_heat_ids)
+        or existing_heat_ids != payload_heat_ids
+    ):
         return jsonify({
             'ok': False,
             'error': 'Heat set mismatch — refresh and try again',

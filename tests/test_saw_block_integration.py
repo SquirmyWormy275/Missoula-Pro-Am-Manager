@@ -434,6 +434,39 @@ def test_reorder_flight_heats_rejects_out_of_order_event(app, auth_client):
         assert _db.session.get(Heat, second_id).flight_position == 2
 
 
+def test_reorder_flight_heats_rejects_duplicate_heat_id(app, auth_client):
+    """A duplicate heat ID cannot create a gap in flight positions."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        first_event = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        second_event = _seed_saw_event(_db, t, name="Double Buck", event_type="pro")
+        flight = _seed_flight(_db, t, flight_number=1)
+        first = _seed_heat(
+            _db, first_event, 1, competitors=[1], stand_assignments={"1": 1},
+            flight=flight, flight_position=1,
+        )
+        second = _seed_heat(
+            _db, second_event, 1, competitors=[2], stand_assignments={"2": 1},
+            flight=flight, flight_position=2,
+        )
+        _db.session.commit()
+        tid, fid, first_id, second_id = t.id, flight.id, first.id, second.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/flights/{fid}/reorder",
+        json={"heat_ids": [first_id, second_id, second_id]},
+    )
+
+    assert resp.status_code == 400
+    with app.app_context():
+        from models import Heat
+
+        assert _db.session.get(Heat, first_id).flight_position == 1
+        assert _db.session.get(Heat, second_id).flight_position == 2
+
+
 def test_bulk_reorder_moves_heat_between_flights(app, auth_client):
     """Bulk reorder endpoint moves a heat from one flight to another,
     updates flight_id and flight_position correctly for every heat in the
@@ -516,6 +549,47 @@ def test_bulk_reorder_rejects_out_of_order_event(app, auth_client):
 
     assert resp.status_code == 409
     assert resp.get_json()["code"] == "event_sequence"
+    with app.app_context():
+        from models import Heat
+
+        assert _db.session.get(Heat, first_id).flight_id == first_flight_id
+        assert _db.session.get(Heat, second_id).flight_id == second_flight_id
+
+
+def test_bulk_reorder_rejects_duplicate_heat_id(app, auth_client):
+    """A heat may occur in one bulk-reorder destination exactly once."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        first_event = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        second_event = _seed_saw_event(_db, t, name="Double Buck", event_type="pro")
+        first_flight = _seed_flight(_db, t, flight_number=1)
+        second_flight = _seed_flight(_db, t, flight_number=2)
+        first = _seed_heat(
+            _db, first_event, 1, competitors=[1], stand_assignments={"1": 1},
+            flight=first_flight, flight_position=1,
+        )
+        second = _seed_heat(
+            _db, second_event, 1, competitors=[2], stand_assignments={"2": 1},
+            flight=second_flight, flight_position=1,
+        )
+        _db.session.commit()
+        tid = t.id
+        first_flight_id, second_flight_id = first_flight.id, second_flight.id
+        first_id, second_id = first.id, second.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/flights/bulk-reorder",
+        json={
+            "flights": [
+                {"flight_id": first_flight_id, "heat_ids": [first_id, second_id]},
+                {"flight_id": second_flight_id, "heat_ids": [second_id]},
+            ]
+        },
+    )
+
+    assert resp.status_code == 400
     with app.app_context():
         from models import Heat
 
