@@ -986,12 +986,17 @@ class BirlingBracket:
         self.event.status = 'completed'
         db.session.commit()
 
-        # Recalculate college team totals if this is a college event
+        # Rebuild derived college standings after the authoritative result rows
+        # are durable. A failed rebuild must not erase an already finalized
+        # bracket, but it must be visible to operators rather than swallowed.
         if self.event.event_type == 'college':
             try:
                 from models.competitor import CollegeCompetitor
                 from models.team import Team
+                from services.scoring_engine import _rebuild_individual_points
+
                 comp_ids = [int(k) for k in placements.keys()]
+                _rebuild_individual_points(comp_ids)
                 team_ids = set()
                 for comp in CollegeCompetitor.query.filter(
                         CollegeCompetitor.id.in_(comp_ids)).all():
@@ -1001,7 +1006,13 @@ class BirlingBracket:
                     team.recalculate_points()
                 db.session.commit()
             except Exception:
-                pass  # non-blocking — team totals can be recalculated manually
+                db.session.rollback()
+                logger.warning(
+                    'Birling finalization completed but college standings rebuild '
+                    'failed for event %s',
+                    self.event.id,
+                    exc_info=True,
+                )
 
 
 def create_birling_bracket(event: Event, competitors: list, seeding: list = None):
