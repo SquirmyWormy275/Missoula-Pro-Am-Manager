@@ -377,6 +377,14 @@ _QUERY_ARGS: dict[str, dict[str, str]] = {
     "scoring.scratch_preview": {"competitor_type": "college"},
 }
 
+# Some mutation routes deliberately reject a syntactically valid request when
+# the generated smoke fixture cannot satisfy the domain precondition. Relay
+# settlement is only available for a completed relay team with a configured
+# prize, so its placeholder team id correctly returns 404 outside that state.
+_POST_ALLOWED_STATUS: dict[str, set[int]] = {
+    "proam_relay.toggle_relay_settlement": {404},
+}
+
 
 def _run_smoke(route: dict[str, object], smoke_env) -> None:
     """Execute one smoke request and assert it does not 500."""
@@ -402,6 +410,7 @@ def _run_smoke(route: dict[str, object], smoke_env) -> None:
     allowed = {200, 202, 301, 302, 403}
     if method == "POST":
         allowed.add(400)
+        allowed.update(_POST_ALLOWED_STATUS.get(endpoint, set()))
 
     assert response.status_code in allowed, (
         f"{endpoint} {method} {path} returned {response.status_code}"
