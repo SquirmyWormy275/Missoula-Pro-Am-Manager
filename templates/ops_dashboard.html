@@ -225,6 +225,56 @@
 
     </div>{# /row 1 #}
 
+    <div class="row g-3 mb-3">
+        <div class="col-12">
+            <div class="ops-card" id="partner-orphans-section">
+                <div class="ops-card-header">
+                    <span><i class="bi bi-people-fill me-1 text-warning"></i>Partner Reassignments</span>
+                    {% if partner_orphans %}
+                        <span class="badge bg-warning text-dark">{{ partner_orphans|length }} need action</span>
+                    {% else %}
+                        <span class="badge bg-success">clear</span>
+                    {% endif %}
+                </div>
+                <div class="ops-card-body p-0">
+                    {% if partner_orphans %}
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0" style="font-size:0.84rem;">
+                            <thead>
+                                <tr>
+                                    <th class="ps-3">Event</th>
+                                    <th>Competitor</th>
+                                    <th>Scratched Partner</th>
+                                    <th class="pe-3 text-end">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for orphan in partner_orphans %}
+                                <tr>
+                                    <td class="ps-3">{{ orphan.event.display_name }}</td>
+                                    <td>{{ orphan.competitor.name }}</td>
+                                    <td class="text-muted text-decoration-line-through">{{ orphan.old_partner_name }}</td>
+                                    <td class="pe-3 text-end">
+                                        <a class="btn btn-sm btn-outline-warning"
+                                           href="{{ url_for('scheduling.partner_queue', tid=tournament.id, eid=orphan.event.id) }}">
+                                            Reassign
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="ops-card-body text-muted small">
+                        <i class="bi bi-check-circle text-success me-1"></i>No partner reassignments needed.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
     {# ══════════════════════════════════════════════════════════════
        ROW 2: Payout Status | Event Strip
     ══════════════════════════════════════════════════════════════ #}

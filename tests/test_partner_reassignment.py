@@ -366,6 +366,20 @@ class TestPartnerQueueRoute:
         assert resp.status_code == 200
         assert b"No orphaned partners" in resp.data
 
+    def test_ops_dashboard_surfaces_orphans_from_partnered_events(
+        self, app, db_session, auth_client
+    ):
+        """The race-day dashboard links every outstanding partner recovery task."""
+        t, ev, alice, bob, carol = _setup_orphan_scenario(db_session)
+        db_session.commit()
+
+        response = auth_client.get(f"/tournament/{t.id}/ops-dashboard")
+
+        assert response.status_code == 200
+        assert b"Partner Reassignments" in response.data
+        assert b"Alice" in response.data
+        assert f"/scheduling/{t.id}/events/{ev.id}/partner-queue".encode() in response.data
+
     def test_queue_404_for_non_partnered_event(self, app, db_session, auth_client):
         """GET partner_queue on a non-partnered event returns 404."""
         from models.event import Event

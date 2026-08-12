@@ -929,6 +929,22 @@ def ops_dashboard(tid):
     # ------------------------------------------------------------------
     # Section 4: Payout status — pro events only
     # ------------------------------------------------------------------
+    # A scratch can orphan competitors in several events. The per-event queue
+    # remains the recovery surface; this dashboard makes every live orphan
+    # visible without requiring a judge to remember which queues to inspect.
+    from routes.scheduling.partners import get_orphaned_competitors
+
+    partner_orphans = []
+    for ev in all_events:
+        if not ev.is_partnered:
+            continue
+        for orphan in get_orphaned_competitors(ev):
+            partner_orphans.append({
+                'event': ev,
+                'competitor': orphan['competitor'],
+                'old_partner_name': orphan['old_partner_name'],
+            })
+
     # Keep the operator's go/no-go signal on the race-day dashboard. The full
     # report remains the source for details and any authorized autofix action.
     try:
@@ -1011,6 +1027,7 @@ def ops_dashboard(tid):
         team_health=team_health,
         relay_event=relay_event,
         integrity_warnings=integrity_warnings,
+        partner_orphans=partner_orphans,
         preflight_summary=preflight_summary,
         payout_summary=payout_summary,
         events=events,
