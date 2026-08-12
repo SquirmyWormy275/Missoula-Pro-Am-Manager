@@ -431,8 +431,10 @@ class TestAssignHandicapMarksSuccess:
 
         assert r1.handicap_factor == 5.0
         assert r1.predicted_time == 12.5
+        assert r1.mark_assigned_at is not None
         assert r2.handicap_factor == 8.0
         assert r2.predicted_time == 18.0
+        assert r2.mark_assigned_at is not None
 
     @patch.dict('os.environ', {
         'STRATHMARK_SUPABASE_URL': 'https://fake.supabase.co',
@@ -461,6 +463,7 @@ class TestAssignHandicapMarksSuccess:
 
         assert r.handicap_factor == 3.0
         assert r.predicted_time == 0.0  # NOT None
+        assert r.mark_assigned_at is not None
 
     @patch.dict('os.environ', {
         'STRATHMARK_SUPABASE_URL': 'https://fake.supabase.co',
@@ -555,7 +558,9 @@ class TestAssignHandicapMarksSkipPaths:
         assert result['assigned'] == 1
         assert result['skipped'] == 1
         assert r_with.handicap_factor == 5.0
+        assert r_with.mark_assigned_at is not None
         assert r_without.handicap_factor == 0.0  # untouched DB default (scratch)
+        assert r_without.mark_assigned_at is None
 
     @patch.dict('os.environ', {
         'STRATHMARK_SUPABASE_URL': 'https://fake.supabase.co',
@@ -960,6 +965,24 @@ class TestAssignMarksRouteCascadeDegradation:
         from models.event import EventResult
         refreshed = db_session.get(EventResult, result.id)
         assert refreshed.handicap_factor == 6.5
+        assert refreshed.mark_assigned_at is not None
+
+    def test_operator_can_confirm_existing_scratch_mark_review(self, app, db_session, tournament):
+        """An intentional zero-second scratch can be explicitly reviewed."""
+        event = _make_event(db_session, tournament,
+                            stand_type='underhand', scoring_type='time', is_handicap=True)
+        comp = _make_pro_competitor(db_session, tournament, 'Scratch Sam', 'M')
+        result = _make_result(db_session, event, comp)
+        db_session.commit()
+
+        client = self._logged_in_client(app, db_session)
+        url = f'/scheduling/{tournament.id}/events/{event.id}/assign-marks'
+        resp = client.post(url, data={'action': 'confirm_reviewed'}, follow_redirects=False)
+
+        assert resp.status_code == 302
+        refreshed = db_session.get(type(result), result.id)
+        assert refreshed.handicap_factor == 0.0
+        assert refreshed.mark_assigned_at is not None
 
     def test_get_under_5s_when_ollama_and_gemini_dead(self, app, db_session, tournament):
         """Race-day budget: GET must complete fast even with no LLM tier."""

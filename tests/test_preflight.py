@@ -66,7 +66,8 @@ def tournament(db_session):
 # ---------------------------------------------------------------------------
 
 def _make_event(db_session, tournament, name, event_type='pro', gender=None,
-                scoring_type='time', stand_type=None, is_partnered=False):
+                scoring_type='time', stand_type=None, is_partnered=False,
+                is_handicap=False):
     """Create and return an Event."""
     from models import Event
     e = Event(
@@ -77,10 +78,29 @@ def _make_event(db_session, tournament, name, event_type='pro', gender=None,
         scoring_type=scoring_type,
         stand_type=stand_type,
         is_partnered=is_partnered,
+        is_handicap=is_handicap,
     )
     db_session.add(e)
     db_session.flush()
     return e
+
+
+def _make_event_result(db_session, event, competitor, status='pending', reviewed=False):
+    """Create an active event result for mark-review preflight coverage."""
+    from models import EventResult
+    from services.time_utils import utc_now_naive
+
+    result = EventResult(
+        event_id=event.id,
+        competitor_id=competitor.id,
+        competitor_type=event.event_type,
+        competitor_name=competitor.name,
+        status=status,
+        mark_assigned_at=utc_now_naive() if reviewed else None,
+    )
+    db_session.add(result)
+    db_session.flush()
+    return result
 
 
 def _make_heat(db_session, event, heat_number=1, run_number=1, flight_id=None):
@@ -512,6 +532,39 @@ class TestFullyValidTournament:
         assert 'has_autofixable' in report
         assert isinstance(report['issues'], list)
         assert isinstance(report['severity'], dict)
+
+
+class TestHandicapMarkReview:
+    """Late entrants must not be indistinguishable from scratch marks."""
+
+    def test_unreviewed_handicap_entry_is_high_priority_issue(self, db_session, tournament):
+        event = _make_event(
+            db_session, tournament, 'Handicap Underhand', gender='M',
+            stand_type='underhand', is_handicap=True,
+        )
+        competitor = _make_pro(db_session, tournament, 'Late Entry', event_ids=[event.id])
+        _make_event_result(db_session, event, competitor, reviewed=False)
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(tournament)
+
+        issue = next(i for i in report['issues'] if i['code'] == 'handicap_marks_unreviewed')
+        assert issue['severity'] == 'high'
+        assert issue['unreviewed_marks'][0]['competitor_name'] == 'Late Entry'
+
+    def test_reviewed_scratch_mark_is_not_reported_as_missing(self, db_session, tournament):
+        event = _make_event(
+            db_session, tournament, 'Handicap Underhand', gender='M',
+            stand_type='underhand', is_handicap=True,
+        )
+        competitor = _make_pro(db_session, tournament, 'Intentional Scratch', event_ids=[event.id])
+        result = _make_event_result(db_session, event, competitor, reviewed=True)
+        result.handicap_factor = 0.0
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(tournament)
+
+        assert 'handicap_marks_unreviewed' not in {i['code'] for i in report['issues']}
 
 
 # ---------------------------------------------------------------------------

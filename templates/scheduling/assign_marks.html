@@ -90,9 +90,14 @@
                     <span class="fs-4 fw-bold">{{ mark_rows | length }}</span>
                     <p class="small text-muted mt-1 mb-0">active result records in this event.</p>
                     {% set marked = mark_rows | selectattr('has_mark') | list | length %}
+                    {% set reviewed = mark_rows | selectattr('is_reviewed') | list | length %}
                     <p class="small text-muted mb-0">
                         <strong>{{ marked }}</strong> already have a mark assigned;
                         <strong>{{ mark_rows | length - marked }}</strong> are currently set to scratch.
+                    </p>
+                    <p class="small text-muted mb-0">
+                        <strong>{{ reviewed }}</strong> reviewed;
+                        <strong>{{ mark_rows | length - reviewed }}</strong> need review.
                     </p>
                 </div>
             </div>
@@ -128,6 +133,15 @@
     <div class="alert alert-secondary mb-4">
         This event is not eligible for automatic mark assignment.
     </div>
+    {% endif %}
+
+    {% if eligible and mark_rows | rejectattr('is_reviewed') | list | length %}
+    <form method="post" class="alert alert-warning d-flex justify-content-between align-items-center gap-3 mb-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="confirm_reviewed">
+        <span class="small">Some active entrants have no recorded mark review. Confirm only after checking every listed start mark, including intended scratches.</span>
+        <button type="submit" class="btn btn-warning btn-sm text-nowrap">Confirm Current Marks Reviewed</button>
+    </form>
     {% endif %}
 
     {# CSV upload — pre-computed marks from a local STRATHMARK run #}
@@ -270,6 +284,7 @@
                         <tr>
                             <th>Competitor</th>
                             <th>Status</th>
+                            <th>Mark Review</th>
                             <th>Current</th>
                             <th style="width: 160px;">New Mark (s)</th>
                         </tr>
@@ -281,6 +296,11 @@
                             <td>
                                 <span class="badge bg-{{ 'secondary' if row.result.status == 'pending' else 'success' }}">
                                     {{ row.result.status }}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge bg-{{ 'success' if row.is_reviewed else 'warning text-dark' }}">
+                                    {{ 'Reviewed' if row.is_reviewed else 'Needs review' }}
                                 </span>
                             </td>
                             <td>

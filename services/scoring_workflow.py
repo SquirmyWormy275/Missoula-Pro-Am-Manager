@@ -193,6 +193,28 @@ def save_heat_results_submission(
 
     result_by_comp = existing_results_for_event(event, competitor_ids)
     comp_lookup = competitor_lookup_for_event(event, competitor_ids)
+    from services.mark_assignment import get_unreviewed_handicap_competitor_ids
+
+    unreviewed_mark_ids = get_unreviewed_handicap_competitor_ids(event, competitor_ids)
+    if unreviewed_mark_ids:
+        names = ', '.join(
+            getattr(comp_lookup.get(competitor_id), 'display_name', str(competitor_id))
+            for competitor_id in unreviewed_mark_ids[:5]
+        )
+        suffix = f' (+{len(unreviewed_mark_ids) - 5} more)' if len(unreviewed_mark_ids) > 5 else ''
+        return {
+            'ok': False,
+            'category': 'error',
+            'message': (
+                'Scoring is blocked until handicap marks are reviewed for: '
+                f'{names}{suffix}.'
+            ),
+            'redirect_kind': 'mark_assignment',
+            'redirect_event_id': event.id,
+            'redirect_heat_id': heat.id,
+            'status_code': 409,
+        }
+
     # One extra query, only for partnered events, only on a heat save.  See
     # event_partner_pool for why the heat-local pool cannot be reused here.
     partner_pool = event_partner_pool(event) if event.is_partnered else {}

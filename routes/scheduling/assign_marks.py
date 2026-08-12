@@ -50,6 +50,7 @@ from services.mark_assignment import (
     parse_marks_csv,
 )
 from services.strathmark_sync import is_configured as strathmark_is_configured
+from services.time_utils import utc_now_naive
 
 from . import scheduling_bp
 
@@ -175,6 +176,7 @@ def _handle_manual_save(event) -> None:
     skipped = 0
     bad: list[str] = []
 
+    reviewed_at = utc_now_naive()
     for key, raw in request.form.items():
         if not key.startswith('mark_'):
             continue
@@ -195,6 +197,7 @@ def _handle_manual_save(event) -> None:
         if s.lower() in ('scratch', 'clear', 'none', '-'):
             result.handicap_factor = _SCRATCH_PLACEHOLDER
             result.predicted_time = None
+            result.mark_assigned_at = reviewed_at
             cleared += 1
             continue
 
@@ -206,6 +209,7 @@ def _handle_manual_save(event) -> None:
         result.handicap_factor = mark
         # Manual marks have no STRATHMARK prediction backing them.
         result.predicted_time = None
+        result.mark_assigned_at = reviewed_at
         assigned += 1
 
     if not assigned and not cleared:
@@ -255,6 +259,7 @@ def _handle_csv_import(event) -> None:
     bad: list[str] = []
 
     lines = [ln for ln in blob.splitlines() if ln.strip()]
+    reviewed_at = utc_now_naive()
     for idx, line in enumerate(lines):
         # Split on tab first, then comma, then whitespace
         if '\t' in line:
@@ -285,6 +290,7 @@ def _handle_csv_import(event) -> None:
 
         result.handicap_factor = mark
         result.predicted_time = None
+        result.mark_assigned_at = reviewed_at
         assigned += 1
 
     if not assigned:
@@ -381,6 +387,7 @@ def assign_marks(tournament_id: int, event_id: int):
             results_by_id = {r.id: r for r in results}
             written = 0
             skipped = 0
+            reviewed_at = utc_now_naive()
             for r in results:
                 key = f'mark_{r.id}'
                 raw = (request.form.get(key) or '').strip()
@@ -406,6 +413,7 @@ def assign_marks(tournament_id: int, event_id: int):
                 # Predicted-time is unknown for CSV-imported marks; clear it so
                 # the residual logger doesn't compare against a stale value.
                 r.predicted_time = None
+                r.mark_assigned_at = reviewed_at
                 written += 1
 
             try:
@@ -441,6 +449,8 @@ def assign_marks(tournament_id: int, event_id: int):
 
         if action == 'manual_save':
             _handle_manual_save(event)
+        elif action == 'confirm_reviewed':
+            _handle_confirm_reviewed(event)
         elif action == 'csv_import':
             # Blob-paste path: judge pastes "name,mark" lines into a textarea
             # and we apply by name match.  See _handle_csv_import for the
@@ -476,10 +486,36 @@ def _build_mark_rows(results):
     mark_rows = []
     for r in results:
         hf = r.handicap_factor
-        has_mark = hf is not None and hf != 1.0
+        has_mark = hf is not None and hf > 0
         mark_rows.append({
             'result': r,
             'has_mark': has_mark,
             'mark_display': f'{hf:.1f}s' if has_mark else 'None (scratch)',
+            'is_reviewed': r.mark_assigned_at is not None,
         })
     return mark_rows
+
+
+def _handle_confirm_reviewed(event) -> None:
+    """Record an operator's explicit review of existing handicap marks.
+
+    This is primarily the migration path for marks entered before the app
+    tracked review provenance.  It also lets a judge intentionally retain a
+    zero-second scratch mark without disguising an unreviewed late entrant.
+    """
+    results = _load_event_results(event.id)
+    unreviewed = [r for r in results if r.mark_assigned_at is None]
+    if not unreviewed:
+        flash('All active marks are already reviewed.', 'info')
+        return
+
+    reviewed_at = utc_now_naive()
+    for result in unreviewed:
+        result.mark_assigned_at = reviewed_at
+
+    _commit_or_flash(
+        f'Confirmed {len(unreviewed)} current mark(s) as reviewed.',
+        'marks_reviewed',
+        event.id,
+        {'reviewed': len(unreviewed), 'source': 'operator_confirmation'},
+    )

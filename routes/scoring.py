@@ -503,7 +503,13 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
     redirect_kind = outcome.pop('redirect_kind')
     redirect_event_id = outcome.pop('redirect_event_id')
     redirect_heat_id = outcome.pop('redirect_heat_id')
-    if redirect_kind == 'heat_entry':
+    if redirect_kind == 'mark_assignment':
+        outcome['redirect_url'] = url_for(
+            'scheduling.assign_marks',
+            tournament_id=tournament_id,
+            event_id=redirect_event_id,
+        )
+    elif redirect_kind == 'heat_entry':
         outcome['redirect_url'] = url_for(
             'scoring.enter_heat_results',
             tournament_id=tournament_id,

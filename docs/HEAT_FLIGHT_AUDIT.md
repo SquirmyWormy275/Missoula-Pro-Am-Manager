@@ -109,12 +109,16 @@ The **flight builder** handles cross-event spacing (minimum 4 heats between a co
 
 #### E. Marks/handicaps on add/remove
 
-**Marks and handicaps are NOT automatically adjusted when a competitor is added to or removed from a heat.**
+**Marks and handicaps are NOT automatically recalculated when a competitor is added to or removed from a heat.**
 
 - `EventResult.handicap_factor` is populated by `services/mark_assignment.py` → `assign_handicap_marks()`, which is a separate manual action triggered via the `/scheduling/<tid>/events/<eid>/assign-marks` POST route.
 - Moving a competitor between heats does not touch `handicap_factor` or `predicted_time`.
 - Regenerating heats does not clear or recalculate marks. The `_delete_event_heats()` function deletes Heat and HeatAssignment rows but does NOT touch EventResult rows. Marks survive regeneration.
-- If a new competitor is added to an event after marks were assigned, they will have `handicap_factor=0.0` (scratch) unless marks are reassigned.
+- A new competitor still begins with `handicap_factor=0.0`, but this no longer
+  silently acts as a scratch. `EventResult.mark_assigned_at` stays empty until
+  a judge or STRATHMARK explicitly reviews the row. Preflight lists such
+  entrants and scoring blocks their heat until the mark-review page resolves
+  them. Existing legacy rows also require a one-time operator confirmation.
 
 #### F. How flights are composed from heats
 
@@ -130,7 +134,9 @@ See the Flight Builder section below.
 4. Generates new heats from scratch.
 5. Calls `flush()` — does NOT commit. The calling route owns the transaction.
 
-**Important:** Regeneration preserves EventResult data (scores, marks, positions) but destroys all heat assignments. After regeneration, scored heats no longer map to any Heat row. This is safe pre-scoring but dangerous post-scoring.
+**Important:** Regeneration preserves EventResult data (scores, marks, positions) but destroys all heat assignments. It is safe pre-scoring. Every
+single-event, bulk, and Friday regeneration path now refuses events with
+completed results, so scored rows cannot be orphaned from their heat history.
 
 The route (`heats.py:71-135`) wraps this in try/except with `db.session.rollback()` on failure and `db.session.commit()` on success.
 

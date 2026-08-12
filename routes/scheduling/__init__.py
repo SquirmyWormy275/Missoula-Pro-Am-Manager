@@ -24,7 +24,7 @@ from flask import Blueprint
 import config
 from config import LIST_ONLY_EVENT_NAMES
 from database import db
-from models import Event, Flight, Heat, HeatAssignment, Tournament
+from models import Event, EventResult, Flight, Heat, HeatAssignment, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 
 scheduling_bp = Blueprint('scheduling', __name__)
@@ -235,10 +235,18 @@ def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
     events = tournament.events.order_by(Event.event_type, Event.name, Event.gender).all()
     generated = 0
     skipped_events: list[tuple[Event, str]] = []
+    protected_events: list[tuple[Event, str]] = []
     failed_events: list[tuple[Event, str]] = []
     unpaired_by_event: list[tuple[Event, list[dict]]] = []
 
     for event in events:
+        if event.is_finalized:
+            protected_events.append((event, 'finalized'))
+            continue
+        if event.status == 'completed' or EventResult.query.filter_by(
+                event_id=event.id, status='completed').first() is not None:
+            protected_events.append((event, 'scored'))
+            continue
         try:
             with db.session.begin_nested():   # savepoint per event — rollback on failure
                 generate_event_heats_fn(event)
@@ -258,7 +266,22 @@ def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
                     'error',
                 )
 
-    flash(f'Heats generated for {generated} event(s).', 'success')
+    if generated:
+        flash(f'Heats generated for {generated} event(s).', 'success')
+
+    if protected_events:
+        labels = ', '.join(
+            f'{_event_label(event)} ({reason})' for event, reason in protected_events[:8]
+        )
+        suffix = (
+            f' (+{len(protected_events) - 8} more)'
+            if len(protected_events) > 8 else ''
+        )
+        flash(
+            f'{len(protected_events)} finalized or scored event(s) were left unchanged '
+            f'to preserve heat history: {labels}{suffix}.',
+            'warning',
+        )
 
     # Surface partnered-event entrants that were held back across the bulk run.
     # One aggregated flash with a Preflight link beats N per-event flashes that

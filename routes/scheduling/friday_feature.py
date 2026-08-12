@@ -4,7 +4,7 @@ from flask import flash, redirect, render_template, request, session, url_for
 
 import config
 from database import db
-from models import Event, Tournament
+from models import Event, EventResult, Tournament
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
 from services.print_catalog import record_print
@@ -173,9 +173,14 @@ def friday_feature(tournament_id):
             from services.heat_generator import generate_event_heats
             generated = 0
             errors = []
+            skipped_scored = []
             for event_id in selected_ids:
                 event = Event.query.filter_by(id=event_id, tournament_id=tournament_id).first()
                 if not event:
+                    continue
+                if event.is_finalized or event.status == 'completed' or EventResult.query.filter_by(
+                        event_id=event.id, status='completed').first() is not None:
+                    skipped_scored.append(event.display_name)
                     continue
                 try:
                     with db.session.begin_nested():
@@ -188,6 +193,14 @@ def friday_feature(tournament_id):
             if errors:
                 for err in errors:
                     flash(f'Heat generation error — {err}', 'error')
+            if skipped_scored:
+                names = ', '.join(skipped_scored[:5])
+                suffix = f' (+{len(skipped_scored) - 5} more)' if len(skipped_scored) > 5 else ''
+                flash(
+                    f'{len(skipped_scored)} scored or finalized Friday event(s) were left unchanged '
+                    f'to preserve heat history: {names}{suffix}.',
+                    'warning',
+                )
             if generated > 0:
                 flash(f'Generated {generated} Friday Night Feature heat(s).', 'success')
             elif not errors:
@@ -195,6 +208,7 @@ def friday_feature(tournament_id):
             log_action('fnf_heats_generated', 'tournament', tournament_id, {
                 'event_ids': selected_ids,
                 'heats_generated': generated,
+                'skipped_scored': len(skipped_scored),
             })
         else:
             log_action('friday_feature_configured', 'tournament', tournament_id, {

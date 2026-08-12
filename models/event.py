@@ -239,6 +239,11 @@ class EventResult(db.Model):
     # NULL means no prediction was recorded (mark assignment not run, or competitor scratched).
     predicted_time = db.Column(db.Float, nullable=True, default=None)
 
+    # Set only when an operator or STRATHMARK explicitly reviews this row's
+    # handicap mark.  A numeric 0.0 is a valid deliberate scratch mark, so it
+    # cannot also serve as evidence that a late entrant was reviewed.
+    mark_assigned_at = db.Column(db.DateTime, nullable=True)
+
     # Placement
     final_position = db.Column(db.Integer, nullable=True)  # 1st, 2nd, 3rd, etc.
 

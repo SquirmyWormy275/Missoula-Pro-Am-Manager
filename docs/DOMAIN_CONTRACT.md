@@ -139,6 +139,18 @@ Warning-only:
   still run.
 - Left-handed springboard overflow that the field crew can consciously accept.
 
+## Handicap Marks And Scoring
+
+For handicap time events, every active entrant must have an explicitly
+reviewed start mark before their heat can be scored. A zero-second mark is a
+valid intentional scratch and must be recorded as reviewed; it must never be
+assumed merely because a result row has the database default of `0.0`.
+
+Preflight reports unreviewed handicap entrants. Heat scoring enforces the same
+rule and redirects the judge to the mark-review page before any score is
+written. Heat regeneration preserves scored heat history by refusing to
+regenerate events with completed results, including bulk and Friday workflows.
+
 ## Production Parity
 
 Local SQLite success does not prove Railway/PostgreSQL behavior. Local Python

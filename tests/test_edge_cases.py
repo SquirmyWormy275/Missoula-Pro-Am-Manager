@@ -507,7 +507,7 @@ def test_score_value_boundaries_and_status_values(qa_env):
 
 
 def test_delete_scored_competitor_and_regenerate_scored_event(qa_env):
-    """Deleting a scored competitor should not orphan rows, and scored events should not regenerate silently."""
+    """Deleting a scored competitor should not orphan rows, and scored events stay immutable."""
     app = qa_env["app"]
     client = qa_env["client"]
 
@@ -548,7 +548,7 @@ def test_delete_scored_competitor_and_regenerate_scored_event(qa_env):
 
     regenerate = client.post(
         f"/scheduling/{tournament_id}/event/{event_id}/generate-heats",
-        data={},
+        data={"confirm": "true"},
         follow_redirects=False,
     )
     assert regenerate.status_code == 302

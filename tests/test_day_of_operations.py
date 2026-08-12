@@ -602,7 +602,7 @@ class TestFinalizationGuard:
         assert resp.status_code == 200
         assert b"finalized" in resp.data.lower()
 
-    def test_regen_scored_event_without_confirm_warned(self, db_session, auth_client):
+    def test_regen_scored_event_is_blocked_even_with_confirm(self, db_session, auth_client):
         t = _make_tournament(db_session)
         e = _make_event(db_session, t.id, name="Scored Test")
         c = _make_pro(db_session, t.id, "Scored_A", events=[e.id])
@@ -612,11 +612,27 @@ class TestFinalizationGuard:
         # POST without confirm — should warn
         resp = auth_client.post(
             f"/scheduling/{t.id}/event/{e.id}/generate-heats",
-            data={},  # no confirm
+            data={"confirm": "true"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
         assert b"scored results" in resp.data.lower()
+
+    def test_bulk_regeneration_skips_scored_event(self, app, db_session):
+        """The one-click helper cannot bypass the scored-event guard."""
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Bulk Scored Test")
+        c = _make_pro(db_session, t.id, "Bulk_Scored", events=[e.id])
+        _make_result(db_session, e.id, c, status="completed", result_value=10.0)
+        db_session.flush()
+
+        calls = []
+        from routes.scheduling import _generate_all_heats
+
+        with app.test_request_context("/"):
+            _generate_all_heats(t, lambda event: calls.append(event.id))
+
+        assert calls == []
 
     def test_regen_gear_conflict_is_blocked_without_replacing_existing_heats(
         self, db_session, auth_client

@@ -61,6 +61,7 @@ from typing import Any, Optional
 import config
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.event import Event, EventResult
+from services.time_utils import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,40 @@ def is_mark_assignment_eligible(event: Event) -> bool:
     if event.stand_type not in _STAND_TYPE_TO_EVENT_CODE:
         return False
     return True
+
+
+def get_unreviewed_handicap_competitor_ids(
+    event: Event,
+    competitor_ids: list[int],
+) -> list[int]:
+    """Return heat competitors whose marks have not been explicitly reviewed.
+
+    Missing result rows are unreviewed by definition: scoring would otherwise
+    create one with the database's 0.0 default and turn an omission into an
+    indistinguishable scratch.  Results already marked scratched, DNF, or DQ
+    are excluded because they no longer need a handicap start mark.
+    """
+    if not is_mark_assignment_eligible(event):
+        return []
+
+    ids = sorted({int(competitor_id) for competitor_id in competitor_ids})
+    if not ids:
+        return []
+
+    rows = EventResult.query.filter(
+        EventResult.event_id == event.id,
+        EventResult.competitor_id.in_(ids),
+        EventResult.competitor_type == event.event_type,
+    ).all()
+    by_competitor = {row.competitor_id: row for row in rows}
+    inactive_statuses = {'scratched', 'dnf', 'dq'}
+    return [
+        competitor_id for competitor_id in ids
+        if (
+            (row := by_competitor.get(competitor_id)) is None
+            or (row.status not in inactive_statuses and row.mark_assigned_at is None)
+        )
+    ]
 
 
 def assign_handicap_marks(event: Event) -> dict:
@@ -249,6 +284,7 @@ def assign_handicap_marks(event: Event) -> dict:
         # IS a valid prediction, however unlikely).  Store unconditionally.
         result.handicap_factor = float(mr.mark)
         result.predicted_time = float(mr.predicted_time)
+        result.mark_assigned_at = utc_now_naive()
         assigned += 1
         logger.debug(
             'mark_assignment: event=%s competitor=%s mark=%ds predicted=%.2fs method=%s',

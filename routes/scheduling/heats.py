@@ -169,13 +169,15 @@ def generate_heats(tournament_id, event_id):
         return redirect(url_for('scheduling.event_heats',
                                 tournament_id=tournament_id, event_id=event_id))
 
-    # Soft warn: scored events require explicit confirmation to regenerate
+    # A completed result belongs to the existing heat history. Rebuilding the
+    # roster would delete that heat while retaining its score row, leaving no
+    # reliable audit trail for where the score came from.
     has_scored = EventResult.query.filter_by(event_id=event.id, status='completed').first() is not None
-    if has_scored and request.form.get('confirm') != 'true':
+    if has_scored:
         flash(
-            f'{event.display_name} has scored results. Regenerating heats will orphan '
-            f'those results. Click Regenerate again to confirm.',
-            'warning'
+            f'{event.display_name} has scored results. Heat regeneration is blocked '
+            'to preserve the scored heat history.',
+            'error'
         )
         return redirect(url_for('scheduling.event_heats',
                                 tournament_id=tournament_id, event_id=event_id))
@@ -301,6 +303,7 @@ def generate_college_heats(tournament_id):
     generated = 0
     skipped_open = 0
     skipped_completed = 0
+    skipped_scored = 0
     errors = 0
 
     skipped_finalized = 0
@@ -310,6 +313,9 @@ def generate_college_heats(tournament_id):
             continue
         if event.status == 'completed':
             skipped_completed += 1
+            continue
+        if EventResult.query.filter_by(event_id=event.id, status='completed').first() is not None:
+            skipped_scored += 1
             continue
         if event.is_finalized:
             skipped_finalized += 1
@@ -338,6 +344,8 @@ def generate_college_heats(tournament_id):
         parts.append(f'{skipped_open} signup-list event(s) skipped')
     if skipped_completed:
         parts.append(f'{skipped_completed} completed event(s) unchanged')
+    if skipped_scored:
+        parts.append(f'{skipped_scored} scored event(s) unchanged')
     if skipped_finalized:
         parts.append(f'{skipped_finalized} finalized event(s) unchanged')
     if parts:
@@ -345,6 +353,7 @@ def generate_college_heats(tournament_id):
 
     log_action('generate_college_heats', 'tournament', tournament_id,
                {'generated': generated, 'skipped_open': skipped_open,
+                'skipped_completed': skipped_completed, 'skipped_scored': skipped_scored,
                 'skipped_finalized': skipped_finalized, 'errors': errors})
     return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 

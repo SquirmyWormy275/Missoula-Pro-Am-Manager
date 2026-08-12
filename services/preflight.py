@@ -17,6 +17,7 @@ from services.gear_sharing import (
     normalize_person_name,
     strip_using_prefix,
 )
+from services.mark_assignment import is_mark_assignment_eligible
 
 # Issue codes that hard-block heat / flight generation. Anything not listed
 # here is advisory — generation can still run, the warning informs the
@@ -104,6 +105,50 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
     # is a projection of it that nothing reads. Two things that cannot
     # disagree do not need a check that they agree, and keeping one would
     # have meant keeping the column alive to be the thing compared against.
+
+    # 1a) Handicap mark review.  Zero is a legitimate scratch mark, so a
+    # value alone cannot distinguish a deliberate decision from a late entry
+    # created after the event's marks were set.  The explicit timestamp makes
+    # that distinction visible before race-day scoring starts.
+    unreviewed_marks: list[dict] = []
+    handicap_events = [
+        event for event in tournament.events.all()
+        if is_mark_assignment_eligible(event)
+    ]
+    for event in handicap_events:
+        results = EventResult.query.filter_by(event_id=event.id).filter(
+            EventResult.status.in_(['pending', 'completed'])
+        ).all()
+        for result in results:
+            if result.mark_assigned_at is None:
+                unreviewed_marks.append({
+                    'event_id': event.id,
+                    'event_name': event.display_name,
+                    'result_id': result.id,
+                    'competitor_name': result.competitor_name,
+                })
+    if unreviewed_marks:
+        names = ', '.join(
+            f"{row['competitor_name']} ({row['event_name']})"
+            for row in unreviewed_marks[:5]
+        )
+        suffix = (
+            f' (+{len(unreviewed_marks) - 5} more)'
+            if len(unreviewed_marks) > 5 else ''
+        )
+        issues.append({
+            'severity': 'high',
+            'code': 'handicap_marks_unreviewed',
+            'title': 'Handicap marks need review',
+            'detail': (
+                f'{len(unreviewed_marks)} active handicap entrant(s) have no '
+                f'explicit mark review. This includes late entrants and legacy '
+                f'rows, where 0.0 may mean either scratch or unassigned. Review '
+                f'the marks page before scoring: {names}{suffix}.'
+            ),
+            'autofix': False,
+            'unreviewed_marks': unreviewed_marks,
+        })
 
     # 2) Partner completeness for ALL partnered events (college + pro).
     # Previously pro-only — Jack & Jill / Double Buck / Pulp Toss / Peavey on

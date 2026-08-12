@@ -99,6 +99,53 @@ def test_save_heat_results_submission_persists_results_and_undo_token(db_session
     assert heat.status == 'completed'
 
 
+def test_save_heat_results_submission_blocks_unreviewed_handicap_mark(db_session):
+    tournament = make_tournament(db_session)
+    team = make_team(db_session, tournament)
+    competitor = make_college_competitor(db_session, tournament, team, 'Late Handicap Entry')
+    event = make_event(
+        db_session,
+        tournament,
+        'Handicap Underhand',
+        event_type='college',
+        scoring_type='time',
+        scoring_order='lowest_wins',
+        stand_type='underhand',
+        is_handicap=True,
+    )
+    heat = make_heat(
+        db_session,
+        event,
+        competitors=[competitor.id],
+        stand_assignments={str(competitor.id): 1},
+    )
+    make_event_result(
+        db_session,
+        event,
+        competitor,
+        competitor_type='college',
+        status='pending',
+    )
+
+    outcome = save_heat_results_submission(
+        tournament_id=tournament.id,
+        heat=heat,
+        event=event,
+        form_data={
+            'heat_version': str(heat.version_id),
+            f't1_run1_{competitor.id}': '15.0',
+            f't2_run1_{competitor.id}': '15.2',
+            f'status_{competitor.id}': 'completed',
+        },
+        judge_user_id=7,
+    )
+
+    assert outcome['ok'] is False
+    assert outcome['status_code'] == 409
+    assert outcome['redirect_kind'] == 'mark_assignment'
+    assert heat.status == 'pending'
+
+
 def test_save_heat_results_submission_keeps_scores_when_auto_finalize_fails(db_session, monkeypatch):
     tournament = make_tournament(db_session)
     team = make_team(db_session, tournament)
