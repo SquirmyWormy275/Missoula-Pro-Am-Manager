@@ -670,10 +670,9 @@ class TestFinalizationGuard:
         second = _make_pro(db_session, t.id, "Gear_B", events=[e.id])
         _make_result(db_session, e.id, first)
         _make_result(db_session, e.id, second)
-        original = _make_heat(
+        _make_heat(
             db_session, e.id, competitors=[first.id], stand_assignments={str(first.id): 1}
         )
-        original_id = original.id
         first.gear_sharing = json.dumps({str(e.id): "Gear_B"})
         second.gear_sharing = json.dumps({str(e.id): "Gear_A"})
         db_session.commit()
@@ -686,10 +685,12 @@ class TestFinalizationGuard:
 
         assert resp.status_code == 200
         assert b"gear-sharing conflict" in resp.data.lower()
+        from models.heat import Heat
+
         _db.session.expire_all()
-        persisted = _db.session.get(type(original), original_id)
-        assert persisted is not None
-        assert sorted(persisted.get_competitors()) == sorted([first.id, second.id])
+        heats = Heat.query.filter_by(event_id=e.id).all()
+        assert len(heats) == 1
+        assert sorted(heats[0].get_competitors()) == sorted([first.id, second.id])
 
 
 # ---------------------------------------------------------------------------
