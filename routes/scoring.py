@@ -1219,8 +1219,26 @@ def scratch_confirm(tournament_id, competitor_id):
         pass
 
     judge_id = _current_user_id()
-    result = execute_cascade(comp, checked_effects, judge_id, tournament)
-    db.session.commit()
+    try:
+        result = execute_cascade(comp, checked_effects, judge_id, tournament)
+        db.session.commit()
+    except StaleDataError:
+        # A cascade can update several versioned heats. Never leave a judge on
+        # a 500 or accept a review that no longer reflects the live schedule.
+        db.session.rollback()
+        message = (
+            'The schedule changed while this scratch was being confirmed. '
+            'Review the current effects and confirm again.'
+        )
+        if _is_async():
+            return jsonify({'ok': False, 'message': message}), 409
+        flash(message, 'warning')
+        return redirect(url_for(
+            'scoring.scratch_preview',
+            tournament_id=tournament_id,
+            competitor_id=competitor_id,
+            return_event_id=request.form.get('return_event_id'),
+        ))
     invalidate_tournament_caches(tournament_id)
 
     if result['effects_applied'] == 0 and effect_count > 0:
