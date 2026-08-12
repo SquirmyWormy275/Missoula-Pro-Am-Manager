@@ -579,6 +579,8 @@ def test_move_competitor_pair_moves_both(app, auth_client):
     from database import db as _db
 
     with app.app_context():
+        from models.competitor import ProCompetitor
+
         t = _seed_tournament(_db)
         ev = _seed_saw_event(_db, t, name="Jack & Jill", event_type="pro",
                              is_partnered=True)
@@ -587,6 +589,10 @@ def test_move_competitor_pair_moves_both(app, auth_client):
                         stand_assignments={"10": 1, "11": 1, "12": 2, "13": 2})
         h_b = _seed_heat(_db, ev, 2, competitors=[],
                         stand_assignments={})
+        first = _db.session.get(ProCompetitor, 10)
+        second = _db.session.get(ProCompetitor, 11)
+        first.partners = json.dumps({str(ev.id): second.name})
+        second.partners = json.dumps({str(ev.id): first.name})
         _db.session.commit()
         tid, h_a_id, h_b_id = t.id, h_a.id, h_b.id
 
@@ -605,6 +611,30 @@ def test_move_competitor_pair_moves_both(app, auth_client):
         assert 11 not in h_a.get_competitors()
         assert 10 in h_b.get_competitors()
         assert 11 in h_b.get_competitors()
+        assignments = h_b.get_stand_assignments()
+        assert assignments["10"] == assignments["11"]
+
+
+def test_move_competitor_rejects_partial_partnered_pair(app, auth_client):
+    """Partnered drag moves must include the complete reciprocal pair."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        ev = _seed_saw_event(_db, t, name="Double Buck", event_type="pro", is_partnered=True)
+        h_a = _seed_heat(_db, ev, 1, competitors=[10, 11],
+                         stand_assignments={"10": 1, "11": 1})
+        h_b = _seed_heat(_db, ev, 2, competitors=[], stand_assignments={})
+        _db.session.commit()
+        tid, h_a_id, h_b_id = t.id, h_a.id, h_b.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/heats/{h_a_id}/drag-move",
+        json={"competitor_ids": [10], "target_heat_id": h_b_id},
+    )
+
+    assert resp.status_code == 400
+    assert "exactly one confirmed pair" in resp.get_json()["error"].lower()
 
 
 def test_reorder_friday_events_triggers_recompute(app, auth_client):

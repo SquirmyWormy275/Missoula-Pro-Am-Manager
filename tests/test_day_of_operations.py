@@ -495,6 +495,28 @@ class TestMoveCapacityGuard:
         assert _db.session.get(type(source), source.id).get_competitors() == [mover.id]
         assert _db.session.get(type(target), target.id).get_competitors() == [resident.id]
 
+    def test_move_single_partnered_entry_is_rejected(self, db_session, auth_client):
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Double Buck", max_stands=2, is_partnered=True)
+        first = _make_pro(db_session, t.id, "Move Pair A", events=[e.id])
+        second = _make_pro(db_session, t.id, "Move Pair B", events=[e.id])
+        source = _make_heat(
+            db_session, e.id, heat_number=1,
+            competitors=[first.id, second.id],
+            stand_assignments={str(first.id): 1, str(second.id): 1},
+        )
+        target = _make_heat(db_session, e.id, heat_number=2, competitors=[], stand_assignments={})
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/move-competitor",
+            data={"competitor_id": first.id, "from_heat_id": source.id, "to_heat_id": target.id},
+            follow_redirects=True,
+        )
+
+        assert b"must move as a pair" in resp.data.lower()
+        assert first.id in _db.session.get(type(source), source.id).get_competitors()
+
 
 class TestFinalizationGuard:
     """Test that heat generation is blocked for finalized events."""
@@ -628,6 +650,22 @@ class TestAddToHeat:
 
         assert b"add blocked" in resp.data.lower()
         assert _db.session.get(type(heat), heat.id).get_competitors() == [resident.id]
+
+    def test_add_single_partnered_entry_is_rejected(self, db_session, auth_client):
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Double Buck", max_stands=2, is_partnered=True)
+        entrant = _make_pro(db_session, t.id, "Add Pair A", events=[e.id])
+        heat = _make_heat(db_session, e.id, competitors=[], stand_assignments={})
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/add-to-heat",
+            data={"competitor_id": entrant.id, "heat_id": heat.id},
+            follow_redirects=True,
+        )
+
+        assert b"confirmed pair" in resp.data.lower()
+        assert _db.session.get(type(heat), heat.id).get_competitors() == []
 
     def test_add_creates_event_result_if_missing(self, db_session, auth_client):
         t = _make_tournament(db_session)

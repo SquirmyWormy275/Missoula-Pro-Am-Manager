@@ -365,6 +365,12 @@ def move_competitor_between_heats(tournament_id, event_id):
     if from_heat.id == to_heat.id:
         flash('Select a different destination heat.', 'warning')
         return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+    if event.is_partnered:
+        flash(
+            'Partnered-event entries must move as a pair. Use the heat-board drag control.',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
     # Lock check — don't move into a heat that's being scored by another judge
     user_id = _current_user_id()
@@ -666,6 +672,12 @@ def add_to_heat(tournament_id, event_id):
     # Verify competitor is already in the heat list — reject if duplicate
     if competitor_id in heat.get_competitors():
         flash('Competitor is already in this heat.', 'warning')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+    if event.is_partnered:
+        flash(
+            'Partnered-event entries must be added as a confirmed pair before heat generation.',
+            'error',
+        )
         return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
     # Look up competitor. Filter on tournament_id + status='active' at

@@ -11,6 +11,7 @@ from models.competitor import CollegeCompetitor, ProCompetitor
 from models.competitor_identity import Competitor
 from services.audit import log_action
 from services.background_jobs import submit as submit_job
+from services.partner_resolver import _resolve_partner_name_local, lookup_partner_cid
 
 from . import _build_pro_flights_if_possible, _generate_all_heats, scheduling_bp
 
@@ -680,16 +681,56 @@ def drag_move_competitor(tournament_id, source_heat_id):
             'error': f'Competitor(s) {missing} not in source heat — refresh and try again.',
         }), 400
 
+    if len(set(competitor_ids)) != len(competitor_ids):
+        return jsonify({'ok': False, 'error': 'Each competitor may be moved only once.'}), 400
+
+    if event.is_partnered:
+        if len(competitor_ids) != 2:
+            return jsonify({
+                'ok': False,
+                'error': 'Partnered events require moving exactly one confirmed pair.',
+            }), 400
+        competitors = (
+            CollegeCompetitor.query.filter(
+                CollegeCompetitor.id.in_(competitor_ids),
+                CollegeCompetitor.tournament_id == tournament_id,
+                CollegeCompetitor.status == 'active',
+            ).all()
+            if event.event_type == 'college'
+            else ProCompetitor.query.filter(
+                ProCompetitor.id.in_(competitor_ids),
+                ProCompetitor.tournament_id == tournament_id,
+                ProCompetitor.status == 'active',
+            ).all()
+        )
+        by_id = {competitor.id: competitor for competitor in competitors}
+        if set(by_id) != set(competitor_ids):
+            return jsonify({'ok': False, 'error': 'Partnered competitors must be active in this tournament.'}), 400
+        first_id, second_id = competitor_ids
+        first_partner = _resolve_partner_name_local(by_id[first_id], event)
+        second_partner = _resolve_partner_name_local(by_id[second_id], event)
+        if (
+            lookup_partner_cid(first_partner, by_id, first_id) != second_id
+            or lookup_partner_cid(second_partner, by_id, second_id) != first_id
+        ):
+            return jsonify({
+                'ok': False,
+                'error': 'Partnered entries must be a confirmed reciprocal pair for this event.',
+            }), 400
+
     # Target heat capacity check.
     max_stands = event.max_stands or 4
     target_comps = target.get_competitors()
-    if len(target_comps) + len(competitor_ids) > max_stands:
+    target_assignments = target.get_stand_assignments()
+    used_stands = {int(value) for value in target_assignments.values() if value is not None}
+    stands_needed = 1 if event.is_partnered else len(competitor_ids)
+    if len(used_stands) + stands_needed > max_stands:
         return jsonify({
             'ok': False,
             'code': 'target_full',
             'error': (
                 f'Target heat {target.heat_number} is full '
-                f'({len(target_comps)}/{max_stands}). '
+                f'({len(used_stands)}/{max_stands} stands occupied). '
                 'Use the holding bin to rearrange, or pick a heat with open stands.'
             ),
         }), 409
@@ -716,13 +757,14 @@ def drag_move_competitor(tournament_id, source_heat_id):
     # heat's assignment rows five times to reach one final layout.
     source_ids = source.get_competitors()
     target_ids = target.get_competitors()
+    paired_stand = _next_stand() if event.is_partnered else None
     for cid in competitor_ids:
         if cid in source_ids:
             source_ids.remove(cid)
         source_assignments.pop(str(cid), None)
         if cid not in target_ids:
             target_ids.append(cid)
-        target_assignments[str(cid)] = _next_stand()
+        target_assignments[str(cid)] = paired_stand if paired_stand is not None else _next_stand()
 
     competitor_type = 'pro' if event.event_type == 'pro' else 'college'
     source.set_roster(competitor_type, source_ids, source_assignments)
