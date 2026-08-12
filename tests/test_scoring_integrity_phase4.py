@@ -357,6 +357,49 @@ class TestHeatUndoStripsPoints:
         assert response.get_json()['message'].startswith('Heat changed')
         assert EventResult.query.filter_by(id=result.id).one().result_value == Decimal('20.00')
 
+    def test_undo_second_dual_run_retains_first_run(self, db_session, judge_client, tid):
+        """Undoing Run 2 never deletes the shared Run 1 result value."""
+        from datetime import datetime, timezone
+
+        from models.event import EventResult
+        team = _make_team(db_session, tid, code='UM-F')
+        competitor = _make_college(db_session, tid, team.id, 'Two Run Competitor')
+        event = _make_event(
+            db_session, tid, name='Dual Run Undo', requires_dual_runs=True
+        )
+        run_one = _make_heat(
+            db_session, event, run_number=1, competitors=[competitor.id], status='completed'
+        )
+        run_two = _make_heat(
+            db_session, event, run_number=2, competitors=[competitor.id], status='completed'
+        )
+        result = _make_result(db_session, event, competitor, 18.0)
+        result.run1_value = 18.0
+        result.run2_value = 16.0
+        result.t1_run1 = Decimal('18.00')
+        result.t2_run1 = Decimal('18.00')
+        result.t1_run2 = Decimal('16.00')
+        result.t2_run2 = Decimal('16.00')
+        result.calculate_best_run(event.scoring_order)
+        db_session.commit()
+
+        with judge_client.session_transaction() as sess:
+            sess[f'undo_heat_{run_two.id}'] = {
+                'heat_id': run_two.id,
+                'event_id': event.id,
+                'heat_version': run_two.version_id,
+                'result_versions': {str(result.id): result.version_id},
+                'saved_at': datetime.now(timezone.utc).isoformat(),
+            }
+
+        response = judge_client.post(f'/scoring/{tid}/heat/{run_two.id}/undo')
+
+        assert response.status_code in (200, 302)
+        restored = EventResult.query.filter_by(id=result.id).one()
+        assert restored.run1_value == 18.0
+        assert restored.run2_value is None
+        assert restored.result_value == 18.0
+
 
 # ===========================================================================
 # 2. Admin repair route

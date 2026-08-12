@@ -904,12 +904,26 @@ def undo_heat_save(tournament_id, heat_id):
     # 'completed' and the cache is unchanged.
     try:
         with db.session.begin_nested():
-            # Step 2: delete the result rows.
-            EventResult.query.filter(
-                EventResult.event_id == event.id,
-                EventResult.competitor_id.in_(competitor_ids),
-                EventResult.competitor_type == event.event_type,
-            ).delete(synchronize_session='fetch')
+            # Step 2: undo exactly the rows saved by this token. Dual-run
+            # events share one EventResult across two physical heats, so an
+            # undo of Run 2 must retain the already-entered Run 1 fields.
+            if event.requires_dual_runs:
+                for result in current_results:
+                    if heat.run_number == 1:
+                        result.run1_value = None
+                        result.t1_run1 = None
+                        result.t2_run1 = None
+                    else:
+                        result.run2_value = None
+                        result.t1_run2 = None
+                        result.t2_run2 = None
+                    result.calculate_best_run(event.scoring_order)
+                    if result.run1_value is None and result.run2_value is None:
+                        db.session.delete(result)
+            else:
+                for result in current_results:
+                    db.session.delete(result)
+            db.session.flush()
 
             # Step 3 + 4: rebuild caches (college only — pro doesn't have an
             # equivalent SUM cache for total_earnings, those rows just stay
