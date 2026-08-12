@@ -27,7 +27,11 @@ The only defense that survives that failure mode is to stop inventing inputs.
 So:
 
 * No factories. No mocks. No `conftest` fixtures that build competitors.
-* Every test gets a private clone of the production mirror.
+* Every test gets a private clone of the production mirror, then upgrades that
+  clone through this checkout's migration chain before exercising current code.
+  Before migration, the clone receives the documented exact-name repair for
+  historical era-1 references; the repair fails closed on any ambiguity. The
+  read-only mirror itself is never migrated or written.
 * Every action goes through a real route with a real HTTP request.
 * Every assertion reads the database back. Nothing trusts a return value or a
   flash message.

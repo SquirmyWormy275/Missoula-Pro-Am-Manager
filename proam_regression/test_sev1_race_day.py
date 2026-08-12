@@ -20,22 +20,9 @@ import rig
 TID = rig.TOURNAMENT_ID
 
 
-# ---------------------------------------------------------------------------
-# 1. Birling bracket generator infinite-loops / OOM-kills the worker
-#    services/birling_bracket.py:202-216
-# ---------------------------------------------------------------------------
-
-@pytest.mark.sev1
-@pytest.mark.slow
-def test_birling_manage_page_returns_instead_of_hanging(dburl):
-    """A plain GET of the birling manage page must terminate.
-
-    Run out-of-process with a hard timeout: the defect is a non-terminating
-    loop, so an in-process call would hang the whole suite and then OOM.
-    Both real birling events (28, 29) carry stale power-of-two shape with zero
-    recorded results, so rebuild_if_stale_shape reaches the generator.
-    """
-    script = textwrap.dedent(f"""
+def _subprocess_app_setup(dburl):
+    """Bootstrap a private clone before an out-of-process route probe."""
+    return textwrap.dedent(f"""
         import os, sys
         os.environ['DATABASE_URL'] = {dburl!r}
         os.environ.setdefault('SECRET_KEY', 'x' * 64)
@@ -44,9 +31,34 @@ def test_birling_manage_page_returns_instead_of_hanging(dburl):
         app = create_app()
         app.config['TESTING'] = True
         app.config['WTF_CSRF_ENABLED'] = False
+        from database import db
+        from flask_migrate import upgrade
+        with app.app_context():
+            db.engine.dispose()
+            upgrade(directory=os.path.join({rig.APP_ROOT!r}, 'migrations'))
+            db.engine.dispose()
         c = app.test_client()
         with c.session_transaction() as s:
             s['_user_id'] = '{rig.ADMIN_USER_ID}'
+    """)
+
+
+# ---------------------------------------------------------------------------
+# 1. Birling bracket generator infinite-loops / OOM-kills the worker
+#    services/birling_bracket.py:202-216
+# ---------------------------------------------------------------------------
+
+@pytest.mark.sev1
+@pytest.mark.slow
+def test_birling_manage_page_returns_instead_of_hanging(prepared_dburl):
+    """A plain GET of the birling manage page must terminate.
+
+    Run out-of-process with a hard timeout: the defect is a non-terminating
+    loop, so an in-process call would hang the whole suite and then OOM.
+    Both real birling events (28, 29) carry stale power-of-two shape with zero
+    recorded results, so rebuild_if_stale_shape reaches the generator.
+    """
+    script = _subprocess_app_setup(prepared_dburl) + textwrap.dedent(f"""
         for eid in (28, 29):
             r = c.get('/scheduling/{TID}/event/%d/birling' % eid)
             print('EVENT', eid, 'STATUS', r.status_code)
@@ -68,19 +80,9 @@ def test_birling_manage_page_returns_instead_of_hanging(dburl):
 
 @pytest.mark.sev1
 @pytest.mark.slow
-def test_birling_print_routes_return_instead_of_hanging(dburl):
+def test_birling_print_routes_return_instead_of_hanging(prepared_dburl):
     """print-blank and print-all reach the same generator via the Print Hub."""
-    script = textwrap.dedent(f"""
-        import os, sys
-        os.environ['DATABASE_URL'] = {dburl!r}
-        os.environ.setdefault('SECRET_KEY', 'x' * 64)
-        sys.path.insert(0, {rig.APP_ROOT!r})
-        from app import create_app
-        app = create_app()
-        app.config['TESTING'] = True
-        c = app.test_client()
-        with c.session_transaction() as s:
-            s['_user_id'] = '{rig.ADMIN_USER_ID}'
+    script = _subprocess_app_setup(prepared_dburl) + textwrap.dedent(f"""
         r = c.get('/scheduling/{TID}/event/28/birling/print-blank')
         print('BLANK', r.status_code)
         r = c.get('/scheduling/{TID}/birling/print-all')

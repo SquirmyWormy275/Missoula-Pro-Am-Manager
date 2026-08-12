@@ -16,6 +16,49 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rig  # noqa: E402
 
 
+def _repair_legacy_references_in_clone(dburl: str) -> None:
+    """Apply the checked, deterministic era-1 repair only to a test clone.
+
+    The post-reseed 2026 mirror holds known stale ids in legacy Birling and
+    relay documents. Current migrations deliberately fail closed until those
+    ids are repaired. The repair utility resolves every reference by an exact
+    stored-name match; any ambiguity aborts this fixture before it can write
+    a partial result.
+    """
+    import sqlalchemy as sa
+    from sqlalchemy.orm import Session
+
+    from scripts import repair_era1_references as repair
+
+    engine = sa.create_engine(dburl)
+    try:
+        with Session(engine) as session:
+            findings = repair.audit(session)
+            by_id, by_name = repair.load_rosters(session)
+            plan, refusals, _details = repair.build_plan(findings, by_id, by_name)
+            if refusals:
+                session.rollback()
+                raise RuntimeError(
+                    'Historical reference repair was ambiguous; refusing to '
+                    'migrate this disposable regression clone.'
+                )
+            if not plan:
+                return
+
+            events = repair._event_rows(session, {row_id for _store, row_id in plan})
+            applied = repair.apply_plan(session, plan, events)
+            defects = repair.post_check(session, plan, applied, findings)
+            if defects:
+                session.rollback()
+                raise RuntimeError(
+                    'Historical reference repair post-check failed for this '
+                    'disposable regression clone.'
+                )
+            session.commit()
+    finally:
+        engine.dispose()
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "sev1: race-day fatal, confirmed on real data")
@@ -56,20 +99,80 @@ def dburl():
 
 
 @pytest.fixture()
-def app(dburl):
-    """The real application, bound to this test's private production clone."""
+def raw_sql(dburl):
+    """Query an untouched private clone without creating or migrating Flask."""
+    import sqlalchemy as sa
+
+    engine = sa.create_engine(dburl)
+    try:
+        def _q(statement, **params):
+            with engine.connect() as conn:
+                return conn.execute(sa.text(statement), params).fetchall()
+
+        yield _q
+    finally:
+        engine.dispose()
+
+
+def _application_for_clone(dburl):
+    """Create an application bound to one already-private clone."""
     os.environ["DATABASE_URL"] = dburl
     os.environ.setdefault("SECRET_KEY", "regression-harness-" + "x" * 48)
     if rig.APP_ROOT not in sys.path:
         sys.path.insert(0, rig.APP_ROOT)
 
-    # create_app re-resolves DATABASE_URL at call time (config.py:120-123),
-    # so a per-test app really does bind to this clone.
     from app import create_app
 
     application = create_app()
     application.config["TESTING"] = True
     application.config["WTF_CSRF_ENABLED"] = False
+    return application
+
+
+def _prepare_clone(dburl):
+    """Repair and migrate a private clone before current-code route probes."""
+    _repair_legacy_references_in_clone(dburl)
+    application = _application_for_clone(dburl)
+
+    from flask_migrate import upgrade
+
+    from database import db
+
+    migrations_dir = os.path.join(rig.APP_ROOT, "migrations")
+    with application.app_context():
+        # The clone is private to this test. Keep the mirror frozen, but bring
+        # the clone to the schema current production code needs.
+        db.engine.dispose()
+        upgrade(directory=migrations_dir)
+        db.engine.dispose()
+
+
+@pytest.fixture()
+def prepared_dburl(dburl):
+    """Return a repaired, current-schema private clone for route probes.
+
+    The mirror preserves the 2026 rows at its original migration stamp. Each
+    disposable clone is upgraded to this checkout's schema before the app
+    loads so current model code is tested against historical data safely.
+    """
+    _prepare_clone(dburl)
+    return dburl
+
+
+@pytest.fixture()
+def prepared_app_factory():
+    """Build a current-code app after a test performs clone-local setup."""
+    def _build(dburl):
+        _prepare_clone(dburl)
+        return _application_for_clone(dburl)
+
+    return _build
+
+
+@pytest.fixture()
+def app(prepared_dburl):
+    """The real application, bound to a prepared production-data clone."""
+    application = _application_for_clone(prepared_dburl)
 
     # flask_login caches the resolved user on ``g`` as ``_login_user``. Flask
     # pushes a new application context per request only when one is not already

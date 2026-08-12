@@ -661,7 +661,7 @@ class TestFinalizationGuard:
 
         assert calls == []
 
-    def test_regen_gear_conflict_is_blocked_without_replacing_existing_heats(
+    def test_regen_gear_conflict_rebuilds_with_operator_warning(
         self, db_session, auth_client
     ):
         t = _make_tournament(db_session)
@@ -673,6 +673,7 @@ class TestFinalizationGuard:
         original = _make_heat(
             db_session, e.id, competitors=[first.id], stand_assignments={str(first.id): 1}
         )
+        original_id = original.id
         first.gear_sharing = json.dumps({str(e.id): "Gear_B"})
         second.gear_sharing = json.dumps({str(e.id): "Gear_A"})
         db_session.commit()
@@ -685,9 +686,10 @@ class TestFinalizationGuard:
 
         assert resp.status_code == 200
         assert b"gear-sharing conflict" in resp.data.lower()
-        persisted = _db.session.get(type(original), original.id)
+        _db.session.expire_all()
+        persisted = _db.session.get(type(original), original_id)
         assert persisted is not None
-        assert persisted.get_competitors() == [first.id]
+        assert sorted(persisted.get_competitors()) == sorted([first.id, second.id])
 
 
 # ---------------------------------------------------------------------------

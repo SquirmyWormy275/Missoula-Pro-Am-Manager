@@ -224,22 +224,18 @@ def generate_event_heats(event: Event) -> int:
                                          gear_violations=gear_violations,
                                          unpaired_log=unpaired_log)
 
+    forced_conflicts: list[dict] = []
     if gear_violations:
         forced_conflicts = [v for v in gear_violations if not v.get('reason')]
         unplaced = [v for v in gear_violations if v.get('reason')]
-        details: list[str] = []
-        if forced_conflicts:
-            names = ', '.join(v.get('comp_name', '') for v in forced_conflicts[:5])
-            extra = f' (+{len(forced_conflicts) - 5} more)' if len(forced_conflicts) > 5 else ''
-            details.append(f'gear-sharing conflict for {names}{extra}')
         if unplaced:
             names = ', '.join(v.get('comp_name', '') for v in unplaced[:5])
             extra = f' (+{len(unplaced) - 5} more)' if len(unplaced) > 5 else ''
-            details.append(f'no safe springboard capacity for {names}{extra}')
-        raise HeatGenerationSafetyError(
-            f'Heat generation blocked for {event.display_name}: ' + '; '.join(details) +
-            '. Resolve the roster or gear-sharing records before regenerating.'
-        )
+            raise HeatGenerationSafetyError(
+                f'Heat generation blocked for {event.display_name}: no safe '
+                f'springboard capacity for {names}{extra}. Resolve the roster '
+                'before regenerating.'
+            )
 
     # No safety blocker remains, so replacing the current layout is safe.
     _delete_event_heats(event.id)
@@ -475,6 +471,15 @@ def generate_event_heats(event: Event) -> int:
                 u.get('comp_name', ''), event.display_name,
                 u.get('partner_name', ''), u.get('reason', ''),
             )
+
+    if forced_conflicts:
+        _last_gear_violations[event.id] = list(forced_conflicts)
+        names = ', '.join(v.get('comp_name', '') for v in forced_conflicts[:5])
+        extra = f' (+{len(forced_conflicts) - 5} more)' if len(forced_conflicts) > 5 else ''
+        logger.warning(
+            'FORCED GEAR-SHARING CONFLICT: %s%s (event=%r)',
+            names, extra, event.display_name,
+        )
 
     # Flush but do NOT commit — the calling route owns the transaction boundary and
     # will commit (or roll back) after all scheduling actions are complete.  This

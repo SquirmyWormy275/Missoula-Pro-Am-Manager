@@ -2067,10 +2067,11 @@ def _flight_ordered_heats(sql):
 
 
 def _status(app):
+    from database import db
     from models.tournament import Tournament
     from services.schedule_status import build_schedule_status
     with app.test_request_context():
-        return build_schedule_status(Tournament.query.get(TID))
+        return build_schedule_status(db.session.get(Tournament, TID))
 
 
 def _expected_conflict_count(sql):
@@ -2591,18 +2592,29 @@ def test_the_clone_still_carries_no_heats_results_or_entries(client, sql):
 
 
 @pytest.mark.sev3
-def test_the_clone_still_wipes_stateful_event_payouts(client, sql):
-    """CONTROL. clone_tournament already resets `payouts` on Partnered Axe,
-    Pro-Am Relay and birling because it holds source competitor ids. Carrying
-    schedule_config must not weaken that guard.
-    """
+def test_the_clone_keeps_payout_setup_but_wipes_stateful_event_data(client, sql):
+    """Payout schedules are setup; competitor-bearing state must not copy."""
     new = _do_clone(client, sql)
-    rows = sql("SELECT name, payouts FROM events WHERE tournament_id=:t AND "
-               "(name IN ('Partnered Axe Throw', 'Pro-Am Relay') "
-               " OR lower(coalesce(stand_type,''))='birling')", t=new)
+    rows = sql("SELECT name, payouts, event_state FROM events WHERE "
+               "tournament_id=:t AND (name IN ('Partnered Axe Throw', "
+               "'Pro-Am Relay') OR lower(coalesce(stand_type,''))='birling')",
+               t=new)
     assert rows, "no stateful events in the clone to check"
-    for name, payouts in rows:
-        assert payouts in ("{}", None), f"{name} carried state: {payouts!r}"
+    for name, payouts, event_state in rows:
+        if name == "Pro-Am Relay":
+            assert payouts == '{"1": 800.0}', (
+                f"{name} lost its reusable payout setup: {payouts!r}")
+        elif "birling" in name.lower():
+            assert payouts in ("{}", None), (
+                f"{name} retained legacy competitor-bearing payouts: {payouts!r}")
+        assert event_state is None, f"{name} carried legacy state: {event_state!r}"
+
+    relay_rows = sql("SELECT count(*) FROM relay_states rs JOIN events e "
+                     "ON e.id=rs.event_id WHERE e.tournament_id=:t", t=new)[0][0]
+    birling_rows = sql("SELECT count(*) FROM birling_seeds bs JOIN events e "
+                       "ON e.id=bs.event_id WHERE e.tournament_id=:t", t=new)[0][0]
+    assert relay_rows == 0, f"clone carried {relay_rows} relay state row(s)"
+    assert birling_rows == 0, f"clone carried {birling_rows} Birling seed row(s)"
 
 
 @pytest.mark.sev3
@@ -2821,13 +2833,36 @@ DB_EVENT = 38                    # Men's Double Buck: 12 real pairs, 3 heats, 4 
 DB_DROPPED = [39, 40]            # Mike Johnson + Owen Vredenburg, one pair
 
 
-def _generate_heats(client, event_id):
+def _generate_heats(client, *args):
+    """Generate heats, optionally proving a route call replaced stored rows."""
+    if len(args) == 1:
+        sql = None
+        event_id = args[0]
+    elif len(args) == 2:
+        sql, event_id = args
+    else:
+        raise TypeError("expected event_id or sql, event_id")
+
+    before_ids = set()
+    if sql is not None:
+        before_ids = {
+            row[0] for row in sql("SELECT id FROM heats WHERE event_id = :e", e=event_id)
+        }
     r = client.post(
         f"/scheduling/{TID}/event/{event_id}/generate-heats",
         data={"confirm": "true"},
         follow_redirects=False,
     )
     assert r.status_code in (302, 303), r.status_code
+    if sql is not None:
+        after_ids = {
+            row[0] for row in sql("SELECT id FROM heats WHERE event_id = :e", e=event_id)
+        }
+        with client.session_transaction() as sess:
+            messages = list(sess.get("_flashes", []))
+        assert after_ids and after_ids.isdisjoint(before_ids), (
+            f"generation for event {event_id} left the historical heats intact; "
+            f"the route redirected without rebuilding. flashes={messages}")
     return r
 
 
@@ -2854,7 +2889,7 @@ def test_regenerating_double_buck_leaves_no_entrant_out_of_the_event(client, sql
     assert len(before) == 24, before
     assert all(c in before for c in DB_DROPPED), before
 
-    _generate_heats(client, DB_EVENT)
+    _generate_heats(client, sql, DB_EVENT)
 
     after = sorted(c for roster in _heat_rosters(sql, DB_EVENT) for c in roster)
     missing = sorted(set(before) - set(after))
@@ -2870,7 +2905,7 @@ def test_regenerating_double_buck_fills_the_third_heat(client, sql):
     real event: the missing stand is missing because the pair that belonged on
     it was thrown away, not because the draft distributed badly.
     """
-    _generate_heats(client, DB_EVENT)
+    _generate_heats(client, sql, DB_EVENT)
     sizes = [len(r) for r in _heat_rosters(sql, DB_EVENT)]
     assert sizes == [8, 8, 8], sizes
 
@@ -2885,7 +2920,7 @@ def test_a_pair_that_cannot_dodge_a_gear_conflict_is_flagged_not_deleted(client,
     sees it, because the walk gives up before reaching the heat with room, so
     nothing is placed and nothing is recorded. Silence here reads as success.
     """
-    _generate_heats(client, DB_EVENT)
+    _generate_heats(client, sql, DB_EVENT)
 
     placed = [c for roster in _heat_rosters(sql, DB_EVENT) for c in roster]
     assert all(c in placed for c in DB_DROPPED), (
@@ -2904,7 +2939,7 @@ def test_a_pair_that_cannot_dodge_a_gear_conflict_is_flagged_not_deleted(client,
 @pytest.mark.sev3
 def test_the_underhand_snake_draft_is_unchanged(client, sql):
     """CONTROL. 25 pros, 5 heats of 5, one gear conflict dodged in the draft."""
-    _generate_heats(client, 32)
+    _generate_heats(client, sql, 32)
     assert _heat_rosters(sql, 32) == [
         [1, 30, 32, 43, 44],
         [20, 28, 33, 41, 45],
@@ -2917,7 +2952,7 @@ def test_the_underhand_snake_draft_is_unchanged(client, sql):
 @pytest.mark.sev3
 def test_the_cookie_stack_snake_draft_is_unchanged(client, sql):
     """CONTROL. Seven heats is the most bounces of any pro event on the card."""
-    _generate_heats(client, 43)
+    _generate_heats(client, sql, 43)
     assert _heat_rosters(sql, 43) == [
         [1, 26, 27, 42, 43],
         [8, 24, 29, 40, 47],
@@ -2937,7 +2972,7 @@ def test_the_single_buck_partial_heats_still_close_the_event(client, sql):
     walk maintains, so a change to placement shows up here as a reordering as
     well as a rebalancing.
     """
-    _generate_heats(client, 36)
+    _generate_heats(client, sql, 36)
     assert _heat_rosters(sql, 36) == [
         [3, 32, 35, 48],
         [20, 29, 36, 47],
@@ -2953,9 +2988,9 @@ def test_gear_conflict_avoidance_still_steers_the_small_events(client, sql):
     """CONTROL. Both of these regenerate differently with the conflict check
     disabled, so they pin the fact that the check still fires and still moves
     people. Pole Climb runs 2 heats of 2, Women's Single Buck 4 + 3."""
-    _generate_heats(client, 42)
+    _generate_heats(client, sql, 42)
     assert _heat_rosters(sql, 42) == [[23, 41], [31, 49]]
-    _generate_heats(client, 37)
+    _generate_heats(client, sql, 37)
     assert _heat_rosters(sql, 37) == [[5, 11, 13, 19], [8, 9, 15]]
 
 

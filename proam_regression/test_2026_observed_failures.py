@@ -998,19 +998,18 @@ def test_completed_heats_keep_their_recorded_stands(app, client):
 
 BIRLING_M = 28   # 12 entrants
 BIRLING_F = 29   # 9 entrants
-BIRLING_F_PHANTOM = ("W1_8", 16, 100031)  # stacked match; 16 is an era-1 GHOST and does not shift
-BIRLING_F_TOP_SEED = 5                 # Mackenzie Breitner, gets the compact bye
+BIRLING_F_PHANTOM = ("W1_8", 100092, 100031)  # stacked match after era-1 repair
+BIRLING_F_TOP_SEED = 100081            # first seed, gets the compact bye
 
 
 def _bracket_shape(event_id):
     """(entrants, round1_matches, byes, seeding, {match_id: (c1, c2)})."""
-    import json as _json
-
     from database import db
     from models.event import Event
+    from services.birling_bracket import BirlingBracket
 
     db.session.expire_all()
-    d = _json.loads(db.session.get(Event, event_id).payouts or "{}")
+    d = BirlingBracket(db.session.get(Event, event_id)).bracket_data
     r1 = ((d.get("bracket") or {}).get("winners") or [[]])[0]
     pairs = {
         m["match_id"]: (m.get("competitor1"), m.get("competitor2"))
@@ -1025,24 +1024,20 @@ def _bracket_shape(event_id):
     )
 
 
-def _write_payouts(event_id, mutate):
-    """Load, mutate, and store an event's payouts JSON."""
-    import json as _json
-
+def _write_bracket(event_id, mutate):
+    """Load, mutate, and project a bracket through its authoritative rows."""
     from database import db
     from models.event import Event
+    from services.birling_bracket import BirlingBracket
 
-    ev = db.session.get(Event, event_id)
-    d = _json.loads(ev.payouts or "{}")
-    mutate(d)
-    ev.payouts = _json.dumps(d)
-    db.session.commit()
+    bracket = BirlingBracket(db.session.get(Event, event_id))
+    mutate(bracket.bracket_data)
+    bracket._save_bracket_data()
 
 
 @pytest.mark.sev1
 def test_both_race_day_brackets_are_still_stale_at_rest(app):
-    """Population guard and the finding itself: the April 2026 bracket JSON
-    sits in production unchanged, phantom match included."""
+    """Population guard: the migrated April 2026 rows retain the stale shape."""
     n, r1, byes, seeding, pairs = _bracket_shape(BIRLING_M)
     assert (n, r1, byes) == (12, 8, 4), f"men's bracket: {(n, r1, byes)}"
 
@@ -1056,7 +1051,7 @@ def test_both_race_day_brackets_are_still_stale_at_rest(app):
 
 @pytest.mark.sev1
 def test_opening_the_manage_page_rebuilds_both_stale_brackets(app, client):
-    """THE DATA FIX. A plain GET must migrate the power-of-two JSON to the
+    """THE DATA FIX. A plain GET must migrate the power-of-two shape to the
     compact shape: 12 entrants become 6 pairs with no byes, 9 entrants
     become 1 bye plus 4 pairs with the bye going to the TOP seed, and the
     seeding order survives so the judges reprint the matchups they expect.
@@ -1105,8 +1100,8 @@ def test_a_recorded_fall_blocks_the_rebuild(app, client):
     def add_fall(d):
         for m in d["bracket"]["winners"][0]:
             if m["match_id"] == BIRLING_F_PHANTOM[0]:
-                m["falls"] = [16]
-    _write_payouts(BIRLING_F, add_fall)
+                m["falls"] = [{"fall_number": 1, "winner": m["competitor1"]}]
+    _write_bracket(BIRLING_F, add_fall)
 
     r = client.get(f"/scheduling/{TID}/event/{BIRLING_F}/birling")
     assert r.status_code == 200
@@ -1123,8 +1118,8 @@ def test_recorded_placements_block_the_rebuild(app, client):
     """Same gate, other end of the day: a bracket with final placements is
     history, not a layout problem."""
     def add_placement(d):
-        d["placements"] = {"9": 1}
-    _write_payouts(BIRLING_M, add_placement)
+        d["placements"] = {str(d["seeding"][0]): 1}
+    _write_bracket(BIRLING_M, add_placement)
 
     r = client.get(f"/scheduling/{TID}/event/{BIRLING_M}/birling")
     assert r.status_code == 200
@@ -1137,20 +1132,24 @@ def test_recorded_placements_block_the_rebuild(app, client):
 @pytest.mark.sev1
 def test_the_repair_happens_once_not_on_every_page_view(app, client):
     """After the migration the bracket is compact, the staleness test is
-    False, and further GETs must not rewrite the stored JSON at all. A
-    repair that re-fires on every view churns payouts forever and makes
+    False, and further GETs must not rewrite the authoritative rows. A
+    repair that re-fires on every view churns the bracket forever and makes
     every page load a write."""
+    import copy
+
     from database import db
     from models.event import Event
+    from services.birling_bracket import BirlingBracket
 
     r = client.get(f"/scheduling/{TID}/event/{BIRLING_F}/birling")
     assert r.status_code == 200
     db.session.expire_all()
-    first = db.session.get(Event, BIRLING_F).payouts
+    first = copy.deepcopy(
+        BirlingBracket(db.session.get(Event, BIRLING_F)).bracket_data)
 
     r = client.get(f"/scheduling/{TID}/event/{BIRLING_F}/birling")
     assert r.status_code == 200
     db.session.expire_all()
-    assert db.session.get(Event, BIRLING_F).payouts == first, (
-        "second GET rewrote payouts after the bracket was already compact"
+    assert BirlingBracket(db.session.get(Event, BIRLING_F)).bracket_data == first, (
+        "second GET rewrote the bracket after it was already compact"
     )

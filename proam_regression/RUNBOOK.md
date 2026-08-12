@@ -29,10 +29,12 @@ touches the template itself.
 | pristine  | proam_prod_mirror_2026pristine | pre-reseed archive; used only by test_college_id_reseed.py to keep proving the c38 migration |
 
 The pristine lane is invoked differently and getting it wrong is silent.
-`test_college_id_reseed.py` hardcodes its own template name, so it runs with
-**no** `PROAM_RIG_TEMPLATE` set at all:
+`test_college_id_reseed.py` hardcodes its own template name for cloning, but
+the session-level real-data gate validates the configured template first. Set
+the pristine template explicitly:
 
-    PROAM_APP_ROOT=<repo root> SECRET_KEY=<any 64 chars> \
+    PROAM_APP_ROOT=<repo root> PROAM_RIG_TEMPLATE=proam_prod_mirror_2026pristine \
+    SECRET_KEY=<any 64 chars> \
     python -m pytest proam_regression/test_college_id_reseed.py -p no:randomly -q
 
 ## Standing numbers

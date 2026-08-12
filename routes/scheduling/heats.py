@@ -219,6 +219,7 @@ def generate_heats(tournament_id, event_id):
     from services.heat_generator import (
         HeatGenerationSafetyError,
         generate_event_heats,
+        get_last_gear_violations,
         get_last_gender_excluded,
         get_last_unpaired_partnered,
     )
@@ -231,6 +232,16 @@ def generate_heats(tournament_id, event_id):
             flash(f'{event.display_name} uses signups only (no heats).', 'success')
         else:
             flash(text.FLASH['heats_generated'].format(num_heats=num_heats, event_name=event.display_name), 'success')
+        forced_conflicts = get_last_gear_violations(event.id)
+        if forced_conflicts:
+            names = ', '.join(v.get('comp_name', '') for v in forced_conflicts[:5])
+            extra = f' (+{len(forced_conflicts) - 5} more)' if len(forced_conflicts) > 5 else ''
+            flash(
+                f'WARNING: {len(forced_conflicts)} gear-sharing conflict(s) '
+                f'could not be separated in {event.display_name}: {names}{extra}. '
+                'Review the affected heat assignments before the event.',
+                'warning'
+            )
         # Surface partnered-event entrants held back due to unresolved partner.
         # Operator must resolve in Preflight before they show up in heats.
         unpaired = get_last_unpaired_partnered(event.id)

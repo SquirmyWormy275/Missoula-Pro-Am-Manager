@@ -32,7 +32,8 @@ OFFSET = 100000
 
 # c39: the lane templates are reseeded at the source now. This module's job
 # is to keep proving the MIGRATION on real unreseeded data, so it pins its
-# clones to the archival pristine snapshot taken before the cutover.
+# clones to the archival pristine snapshot taken before the cutover. The
+# command still sets this template for the session-level real-data gate.
 PRISTINE = "proam_prod_mirror_2026pristine"
 
 
@@ -58,7 +59,7 @@ def _run_script(dburl, mode):
 
 @pytest.mark.sev1
 @pytest.mark.slow
-def test_the_mirror_still_carries_the_defect_the_reseed_kills(dburl, sql):
+def test_the_mirror_still_carries_the_defect_the_reseed_kills(dburl):
     """Adversarial baseline as a standing fact: 21 pro/college collisions
     and the era-1 ghosts, measured fresh on every run. When this fails
     because the template was reseeded at the source, retire the module's
@@ -72,21 +73,21 @@ def test_the_mirror_still_carries_the_defect_the_reseed_kills(dburl, sql):
 
 @pytest.mark.sev1
 @pytest.mark.slow
-def test_the_reseed_kills_every_collision_and_breaks_nothing(dburl, sql):
+def test_the_reseed_kills_every_collision_and_breaks_nothing(dburl, raw_sql):
     p = _run_script(dburl, "--apply")
     assert p.returncode == 0, p.stdout + p.stderr
 
     # Independent measurements, not the script's word for it.
-    assert sql("SELECT count(*) FROM college_competitors c "
+    assert raw_sql("SELECT count(*) FROM college_competitors c "
                "JOIN pro_competitors p ON p.id = c.id")[0][0] == 0
-    assert sql("SELECT count(*), min(id), max(id) FROM college_competitors"
+    assert raw_sql("SELECT count(*), min(id), max(id) FROM college_competitors"
                )[0] == (COLLEGE_COUNT, 29 + OFFSET, OLD_MAX_ID + OFFSET)
 
     # Every reference class resolves, ghosts exactly preserved.
-    assert sql("SELECT count(*) FROM event_results r WHERE "
+    assert raw_sql("SELECT count(*) FROM event_results r WHERE "
                "r.competitor_type = 'college' AND r.competitor_id NOT IN "
                "(SELECT id FROM college_competitors)")[0][0] == 0
-    assert sql("SELECT count(*) FROM heat_assignments a WHERE "
+    assert raw_sql("SELECT count(*) FROM heat_assignments a WHERE "
                "a.competitor_type = 'college' AND a.competitor_id NOT IN "
                "(SELECT id FROM college_competitors)")[0][0] == 0
     # `heats.competitors` used to be checked here the same way, by unnesting
@@ -97,9 +98,9 @@ def test_the_reseed_kills_every_collision_and_breaks_nothing(dburl, sql):
     # a check for that would now fail by design. The assertion above measures
     # the same population on the store that is actually authoritative.
 
-    valid = {r[0] for r in sql("SELECT id FROM college_competitors")}
+    valid = {r[0] for r in raw_sql("SELECT id FROM college_competitors")}
     ghosts = 0
-    for (payouts,) in sql("SELECT payouts FROM events WHERE event_type = "
+    for (payouts,) in raw_sql("SELECT payouts FROM events WHERE event_type = "
                           "'college' AND scoring_type = 'bracket' "
                           "AND payouts IS NOT NULL"):
         d = json.loads(payouts or "{}")
@@ -111,18 +112,21 @@ def test_the_reseed_kills_every_collision_and_breaks_nothing(dburl, sql):
         f"the reseed must preserve era-1 history bit-for-bit")
 
     # The fence: the next allocated college id lands above the new range.
-    nxt = sql("SELECT nextval('college_competitors_id_seq')")[0][0]
+    nxt = raw_sql("SELECT nextval('college_competitors_id_seq')")[0][0]
     assert nxt > OLD_MAX_ID + OFFSET, f"sequence not fenced: next id {nxt}"
 
 
 @pytest.mark.sev1
 @pytest.mark.slow
-def test_the_app_still_works_on_reseeded_data(dburl, client, sql):
+def test_the_app_still_works_on_reseeded_data(
+        dburl, raw_sql, prepared_app_factory):
     """Route smoke on a reseeded clone: the placed panel keeps its numbers,
     heat regeneration produces the c35 rosters shifted by exactly OFFSET,
     and the birling manage page still serves and rebuilds."""
     p = _run_script(dburl, "--apply")
     assert p.returncode == 0, p.stdout + p.stderr
+
+    application = prepared_app_factory(dburl)
 
     from flask import current_app
 
@@ -130,25 +134,30 @@ def test_the_app_still_works_on_reseeded_data(dburl, client, sql):
     from models import Tournament
     from services.schedule_status import build_schedule_status
 
-    db.session.expire_all()
-    with current_app.test_request_context():
-        s = build_schedule_status(db.session.get(Tournament, TID))
-    assert s["friday"]["competitors_total"] == 64
-    assert s["friday"]["competitors_placed"] == 37
-    assert s["friday"]["competitors_missing_from_heats"] == 27
+    with application.app_context():
+        db.session.expire_all()
+        with current_app.test_request_context():
+            s = build_schedule_status(db.session.get(Tournament, TID))
+        assert s["friday"]["competitors_total"] == 64
+        assert s["friday"]["competitors_placed"] == 37
+        assert s["friday"]["competitors_missing_from_heats"] == 27
 
-    r = client.post(f"/scheduling/{TID}/event/7/generate-heats",
-                    data={"confirm": "true"}, follow_redirects=False)
-    assert r.status_code in (302, 303)
-    # D12-C commit F1: the regenerated rosters are read off `heat_assignments`.
-    # The pins below are unchanged and must stay unchanged: `event_rosters`
-    # orders heats the same way this query did and orders each roster by
-    # assignment id, which is the order `set_roster` writes, which is the order
-    # the JSON array carried. If a pin moves, the rewrite is wrong, not the pin.
-    rosters = event_rosters(sql, 7)
-    c35_pins = [[32, 50, 51, 80, 85], [33, 43, 59, 79, 86],
-                [37, 42, 60, 78], [38, 39, 61, 74]]
-    assert rosters == [[i + OFFSET for i in heat] for heat in c35_pins], rosters
+        client = application.test_client()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(rig.ADMIN_USER_ID)
+            sess["_fresh"] = True
+        r = client.post(f"/scheduling/{TID}/event/7/generate-heats",
+                        data={"confirm": "true"}, follow_redirects=False)
+        assert r.status_code in (302, 303)
+        # D12-C commit F1: the regenerated rosters are read off `heat_assignments`.
+        # The pins below are unchanged and must stay unchanged: `event_rosters`
+        # orders heats the same way this query did and orders each roster by
+        # assignment id, which is the order `set_roster` writes, which is the order
+        # the JSON array carried. If a pin moves, the rewrite is wrong, not the pin.
+        rosters = event_rosters(raw_sql, 7)
+        c35_pins = [[32, 50, 51, 80, 85], [33, 43, 59, 79, 86],
+                    [37, 42, 60, 78], [38, 39, 61, 74]]
+        assert rosters == [[i + OFFSET for i in heat] for heat in c35_pins], rosters
 
-    r = client.get(f"/scheduling/{TID}/event/29/birling")
-    assert r.status_code == 200
+        r = client.get(f"/scheduling/{TID}/event/29/birling")
+        assert r.status_code == 200

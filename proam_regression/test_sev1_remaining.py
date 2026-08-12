@@ -41,8 +41,13 @@ def _loads(value):
 
 
 def _relay_state(sql):
-    raw = sql("SELECT event_state FROM events WHERE id = :e", e=RELAY_EVENT)[0][0]
-    return _loads(raw) or {}
+    """Read the normalized relay projection through the race-day service."""
+    from database import db
+    from models import Tournament
+    from services.proam_relay import get_proam_relay
+
+    del sql
+    return get_proam_relay(db.session.get(Tournament, TID)).relay_data
 
 
 # ---------------------------------------------------------------------------
@@ -332,10 +337,11 @@ def test_public_relay_desktop_view_prints_the_times_it_actually_has(app, client,
                 f"publish are not in it.")
 
     with app.app_context():
+        from database import db
         from models import Tournament
         from services.proam_relay import get_proam_relay
 
-        relay = get_proam_relay(Tournament.query.get(TID))
+        relay = get_proam_relay(db.session.get(Tournament, TID))
         for event_name, seconds in RELAY_SPLITS.items():
             relay.record_event_result(1, event_name, seconds)
 

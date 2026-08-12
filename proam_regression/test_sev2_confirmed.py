@@ -825,7 +825,7 @@ def test_already_assigned_relay_cards_keep_their_names(client, sql):
 
 
 @pytest.mark.sev2
-def test_the_pool_dicts_are_keyed_the_way_persisted_team_members_are(app, sql):
+def test_the_pool_dicts_are_keyed_the_way_persisted_team_members_are(app):
     """Positive control, and the whole argument for fixing the template.
 
     The obvious alternative fix is to rename the service key to display_name so
@@ -844,31 +844,24 @@ def test_the_pool_dicts_are_keyed_the_way_persisted_team_members_are(app, sql):
     So: the key the service hands out has to stay the key the persisted records
     already use. That is checkable without drawing anything, and this checks it.
     """
-    import json
-
+    from database import db
     from models import Tournament
     from services.proam_relay import ProAmRelay
 
     with app.app_context():
-        tournament = Tournament.query.get(TID)
+        tournament = db.session.get(Tournament, TID)
         assert tournament is not None, f"tournament {TID} is missing from the mirror"
         service = ProAmRelay(tournament)
         pro_pool = service.get_eligible_pro_competitors()
         college_pool = service.get_eligible_college_competitors()
+        state = service.relay_data
 
     assert pro_pool and college_pool, (
         f"the eligible pools came back empty (pro={len(pro_pool)}, "
         f"college={len(college_pool)}), so this test is checking nothing")
 
-    rows = sql("SELECT event_state FROM events "
-               "WHERE tournament_id = :t AND name = 'Pro-Am Relay'", t=TID)
-    assert rows and rows[0][0], (
-        "no Pro-Am Relay event_state in the mirror, so there is no persisted "
-        "record to compare the live dict shape against. This control needs a "
-        "drawn relay; it must not be allowed to pass by finding nothing.")
-    state = json.loads(rows[0][0])
     teams = state.get("teams") or []
-    assert teams, "the persisted relay has no teams drawn"
+    assert teams, "the persisted relay projection has no teams drawn"
 
     persisted = []
     for team in teams:
@@ -2782,7 +2775,7 @@ def test_the_generator_records_the_excluded_entrant_when_called_directly(app):
         get_last_gender_excluded,
     )
 
-    event = Event.query.get(UH_M)
+    event = db.session.get(Event, UH_M)
     generate_event_heats(event)
     db.session.commit()
 
