@@ -91,6 +91,7 @@ def _lock_cascade_rows(
             locked_results = EventResult.query.filter(
                 EventResult.id.in_(result_ids),
             ).with_for_update(nowait=True).all()
+            event_ids.update(result.event_id for result in locked_results)
         if event_ids:
             Event.query.filter(Event.id.in_(event_ids)).with_for_update(nowait=True).all()
 
@@ -945,6 +946,30 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                 metadata={},
             )
             for result_snapshot in snapshot.get("results", [])
+        ] + [
+            CascadeEffect(
+                effect_type="partner",
+                description="restore snapshot partner",
+                affected_entity_id=partner_snapshot["result_id"],
+                affected_entity_type="event_result",
+                metadata={},
+            )
+            for partner_snapshot in snapshot.get("partners", [])
+            if partner_snapshot.get("result_id") is not None
+        ] + [
+            CascadeEffect(
+                effect_type="standings",
+                description="restore event finalization",
+                affected_entity_id=tournament.id,
+                affected_entity_type="tournament",
+                metadata={
+                    "finalized_event_ids": [
+                        event_snapshot["event_id"]
+                        for event_snapshot in snapshot.get("unfinalized_events", [])
+                        if event_snapshot.get("event_id") is not None
+                    ],
+                },
+            ),
         ],
         heat_ids={
             heat_snapshot.get("heat_id")
