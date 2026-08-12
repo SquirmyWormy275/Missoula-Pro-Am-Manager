@@ -9,7 +9,7 @@ click-path fix rather than as advisory warnings.
 """
 from __future__ import annotations
 
-from models import Event, Flight, Tournament
+from models import Event, EventResult, Flight, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.gear_sharing import (
     event_matches_gear_key,
@@ -457,6 +457,53 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                 f': {_name_list(partner_mismatch_names)}. Use Auto-Populate Partners in the Gear Sharing Manager to sync.'
             ),
             'autofix': False,
+        })
+
+    # 2d) Pro earnings cache must match the event-level payout ledger.
+    # total_earnings is a fast standings cache; EventResult.payout_amount is
+    # the payout record. Alert operators before either report is trusted when
+    # an unusual correction path leaves the two out of sync.
+    payout_totals: dict[int, float] = {}
+    payout_rows = (
+        EventResult.query.join(Event)
+        .filter(
+            Event.tournament_id == tournament.id,
+            Event.event_type == 'pro',
+            EventResult.competitor_type == 'pro',
+            EventResult.payout_amount > 0,
+        )
+        .all()
+    )
+    for result in payout_rows:
+        payout_totals[result.competitor_id] = (
+            payout_totals.get(result.competitor_id, 0.0)
+            + float(result.payout_amount or 0.0)
+        )
+
+    payout_mismatches = []
+    for competitor in ProCompetitor.query.filter_by(
+            tournament_id=tournament.id, status='active').all():
+        ledger_total = round(payout_totals.get(competitor.id, 0.0), 2)
+        cached_total = round(float(competitor.total_earnings or 0.0), 2)
+        if ledger_total != cached_total:
+            payout_mismatches.append({
+                'competitor_name': competitor.name,
+                'ledger_total': ledger_total,
+                'cached_total': cached_total,
+            })
+    if payout_mismatches:
+        names = _name_list([item['competitor_name'] for item in payout_mismatches])
+        issues.append({
+            'severity': 'high',
+            'code': 'pro_earnings_cache_mismatch',
+            'title': 'Pro earnings cache does not match payout ledger',
+            'detail': (
+                f'{len(payout_mismatches)} active pro competitor(s) have earnings totals '
+                f'that differ from their event payout rows: {names}. Review the '
+                'event results and recalculate affected events before settling payouts.'
+            ),
+            'autofix': False,
+            'mismatches': payout_mismatches,
         })
 
     # 3) Saturday spillover integration

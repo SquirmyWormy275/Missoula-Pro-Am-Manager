@@ -177,6 +177,60 @@ def _make_flight(db_session, tournament, flight_number=1):
 # Empty tournament — no events, no heats
 # ---------------------------------------------------------------------------
 
+class TestProPayoutLedgerIntegrity:
+    def test_earnings_cache_mismatch_is_reported(self, db_session, tournament):
+        from models.event import EventResult
+        from services.preflight import build_preflight_report
+
+        event = _make_event(db_session, tournament, 'Paid Underhand')
+        competitor = _make_pro(db_session, tournament, 'Ledger Drift')
+        competitor.total_earnings = 500.0
+        db_session.add(EventResult(
+            event_id=event.id,
+            competitor_id=competitor.id,
+            competitor_type='pro',
+            competitor_name=competitor.name,
+            payout_amount=300.0,
+            status='completed',
+        ))
+        db_session.flush()
+
+        report = build_preflight_report(tournament)
+        mismatch = next(
+            issue for issue in report['issues']
+            if issue['code'] == 'pro_earnings_cache_mismatch'
+        )
+
+        assert mismatch['severity'] == 'high'
+        assert mismatch['mismatches'] == [{
+            'competitor_name': 'Ledger Drift',
+            'ledger_total': 300.0,
+            'cached_total': 500.0,
+        }]
+
+    def test_matching_earnings_cache_is_not_reported(self, db_session, tournament):
+        from models.event import EventResult
+        from services.preflight import build_preflight_report
+
+        event = _make_event(db_session, tournament, 'Matching Underhand')
+        competitor = _make_pro(db_session, tournament, 'Ledger Match')
+        competitor.total_earnings = 300.0
+        db_session.add(EventResult(
+            event_id=event.id,
+            competitor_id=competitor.id,
+            competitor_type='pro',
+            competitor_name=competitor.name,
+            payout_amount=300.0,
+            status='completed',
+        ))
+        db_session.flush()
+
+        report = build_preflight_report(tournament)
+        assert 'pro_earnings_cache_mismatch' not in {
+            issue['code'] for issue in report['issues']
+        }
+
+
 class TestEmptyTournament:
     """A tournament with no events or heats should return zero issues."""
 
