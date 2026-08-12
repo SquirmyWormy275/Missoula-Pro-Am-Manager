@@ -557,6 +557,23 @@ def _reject_invalid_flight_sequence(tournament: Tournament):
     }), 409
 
 
+def _reject_completed_heat_placement_change(placements: list[tuple[Heat, int, int]]):
+    """Keep the published schedule location of a scored heat immutable."""
+    for heat, flight_id, flight_position in placements:
+        if heat.status == 'completed' and (
+            heat.flight_id != flight_id or heat.flight_position != flight_position
+        ):
+            return jsonify({
+                'ok': False,
+                'code': 'completed_heat',
+                'error': (
+                    'Cannot move or reorder a completed heat. Its flight placement '
+                    'is preserved as scoring history.'
+                ),
+            }), 409
+    return None
+
+
 @scheduling_bp.route('/<int:tournament_id>/flights/<int:flight_id>/reorder', methods=['POST'])
 def reorder_flight_heats(tournament_id, flight_id):
     """Reorder heats within a flight. Expects JSON {heat_ids: [int, ...]}."""
@@ -571,6 +588,14 @@ def reorder_flight_heats(tournament_id, flight_id):
     existing = {h.id: h for h in flight.get_heats_ordered()}
     if len(heat_ids) != len(existing) or set(heat_ids) != set(existing.keys()):
         return jsonify({'ok': False, 'error': 'Heat set mismatch — refresh and try again'}), 400
+
+    placements = [
+        (existing[hid], flight.id, position)
+        for position, hid in enumerate(heat_ids, start=1)
+    ]
+    completed_heat_conflict = _reject_completed_heat_placement_change(placements)
+    if completed_heat_conflict:
+        return completed_heat_conflict
 
     for position, hid in enumerate(heat_ids, start=1):
         existing[hid].flight_position = position
@@ -638,6 +663,15 @@ def bulk_reorder_flights(tournament_id):
         }), 400
 
     heats_by_id = {h.id: h for h in existing_heats}
+    placements = [
+        (heats_by_id[hid], fid, position)
+        for fid, hids in payload
+        for position, hid in enumerate(hids, start=1)
+    ]
+    completed_heat_conflict = _reject_completed_heat_placement_change(placements)
+    if completed_heat_conflict:
+        return completed_heat_conflict
+
     for fid, hids in payload:
         for position, hid in enumerate(hids, start=1):
             heat = heats_by_id[hid]

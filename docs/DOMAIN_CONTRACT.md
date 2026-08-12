@@ -156,7 +156,9 @@ rule and redirects the judge to the mark-review page before any score is
 written. Heat regeneration preserves scored heat history by refusing to
 regenerate events with completed results, including bulk and Friday workflows.
 Once a heat is completed, its roster cannot be moved, expanded, deleted, or
-renumbered through heat-board scheduling controls.
+renumbered through heat-board scheduling controls. Its flight placement and
+stand assignments are also historical record: manual reorder and saw-block
+recompute must preserve them.
 
 ## Production Parity
 

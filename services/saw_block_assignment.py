@@ -58,6 +58,7 @@ def assign_saw_blocks(tournament: Tournament) -> dict:
             'saturday_saw_heats': int,
             'heats_updated': int,
             'heats_unchanged': int,
+            'heats_preserved': int,
         }
     """
     summary = {
@@ -65,6 +66,7 @@ def assign_saw_blocks(tournament: Tournament) -> dict:
         "saturday_saw_heats": 0,
         "heats_updated": 0,
         "heats_unchanged": 0,
+        "heats_preserved": 0,
     }
 
     try:
@@ -75,11 +77,14 @@ def assign_saw_blocks(tournament: Tournament) -> dict:
             if not event or event.stand_type != SAW_STAND_TYPE:
                 continue
             summary["friday_saw_heats"] += 1
-            changed = remap_heat_to_block(heat, block)
-            if changed:
-                summary["heats_updated"] += 1
+            if heat.status == "completed":
+                summary["heats_preserved"] += 1
             else:
-                summary["heats_unchanged"] += 1
+                changed = remap_heat_to_block(heat, block)
+                if changed:
+                    summary["heats_updated"] += 1
+                else:
+                    summary["heats_unchanged"] += 1
             block = BLOCK_B if block is BLOCK_A else BLOCK_A
 
         # Saturday — day boundary: reset to Block A independent of Friday
@@ -89,11 +94,14 @@ def assign_saw_blocks(tournament: Tournament) -> dict:
             if not event or event.stand_type != SAW_STAND_TYPE:
                 continue
             summary["saturday_saw_heats"] += 1
-            changed = remap_heat_to_block(heat, block)
-            if changed:
-                summary["heats_updated"] += 1
+            if heat.status == "completed":
+                summary["heats_preserved"] += 1
             else:
-                summary["heats_unchanged"] += 1
+                changed = remap_heat_to_block(heat, block)
+                if changed:
+                    summary["heats_updated"] += 1
+                else:
+                    summary["heats_unchanged"] += 1
             block = BLOCK_B if block is BLOCK_A else BLOCK_A
 
         db.session.commit()

@@ -434,6 +434,41 @@ def test_reorder_flight_heats_rejects_out_of_order_event(app, auth_client):
         assert _db.session.get(Heat, second_id).flight_position == 2
 
 
+def test_reorder_flight_heats_rejects_completed_heat_move(app, auth_client):
+    """A scored heat cannot be shifted within its published flight."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        first_event = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        second_event = _seed_saw_event(_db, t, name="Double Buck", event_type="pro")
+        flight = _seed_flight(_db, t, flight_number=1)
+        completed = _seed_heat(
+            _db, first_event, 1, competitors=[1], stand_assignments={"1": 1},
+            flight=flight, flight_position=1,
+        )
+        pending = _seed_heat(
+            _db, second_event, 1, competitors=[2], stand_assignments={"2": 1},
+            flight=flight, flight_position=2,
+        )
+        completed.status = "completed"
+        _db.session.commit()
+        tid, fid, completed_id, pending_id = t.id, flight.id, completed.id, pending.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/flights/{fid}/reorder",
+        json={"heat_ids": [pending_id, completed_id]},
+    )
+
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "completed_heat"
+    with app.app_context():
+        from models import Heat
+
+        assert _db.session.get(Heat, completed_id).flight_position == 1
+        assert _db.session.get(Heat, pending_id).flight_position == 2
+
+
 def test_reorder_flight_heats_rejects_duplicate_heat_id(app, auth_client):
     """A duplicate heat ID cannot create a gap in flight positions."""
     from database import db as _db
@@ -554,6 +589,49 @@ def test_bulk_reorder_rejects_out_of_order_event(app, auth_client):
 
         assert _db.session.get(Heat, first_id).flight_id == first_flight_id
         assert _db.session.get(Heat, second_id).flight_id == second_flight_id
+
+
+def test_bulk_reorder_rejects_completed_heat_move(app, auth_client):
+    """A full-flight snapshot cannot relocate a scored heat."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        first_event = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        second_event = _seed_saw_event(_db, t, name="Double Buck", event_type="pro")
+        first_flight = _seed_flight(_db, t, flight_number=1)
+        second_flight = _seed_flight(_db, t, flight_number=2)
+        completed = _seed_heat(
+            _db, first_event, 1, competitors=[1], stand_assignments={"1": 1},
+            flight=first_flight, flight_position=1,
+        )
+        pending = _seed_heat(
+            _db, second_event, 1, competitors=[2], stand_assignments={"2": 1},
+            flight=second_flight, flight_position=1,
+        )
+        completed.status = "completed"
+        _db.session.commit()
+        tid = t.id
+        first_flight_id, second_flight_id = first_flight.id, second_flight.id
+        completed_id, pending_id = completed.id, pending.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/flights/bulk-reorder",
+        json={
+            "flights": [
+                {"flight_id": first_flight_id, "heat_ids": [pending_id]},
+                {"flight_id": second_flight_id, "heat_ids": [completed_id]},
+            ]
+        },
+    )
+
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "completed_heat"
+    with app.app_context():
+        from models import Heat
+
+        assert _db.session.get(Heat, completed_id).flight_id == first_flight_id
+        assert _db.session.get(Heat, pending_id).flight_id == second_flight_id
 
 
 def test_bulk_reorder_rejects_duplicate_heat_id(app, auth_client):

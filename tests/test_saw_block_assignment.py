@@ -465,6 +465,32 @@ def test_idempotent_rerun(db_session, tournament):
     assert second["heats_unchanged"] == 2
 
 
+def test_completed_saw_heat_assignments_are_preserved(db_session, tournament):
+    """Recompute maintains history but still advances the pending block sequence."""
+    from services.saw_block_assignment import BLOCK_B, assign_saw_blocks
+
+    event = _make_event(db_session, tournament, "Single Buck", "pro", "M")
+    flight = _make_flight(db_session, tournament, 1)
+    completed = _make_heat(
+        db_session, event, 1, competitors=[1, 2],
+        stand_assignments={"1": 5, "2": 6},
+        flight=flight, flight_position=1,
+    )
+    pending = _make_heat(
+        db_session, event, 2, competitors=[3, 4],
+        stand_assignments={"3": 1, "4": 2},
+        flight=flight, flight_position=2,
+    )
+    completed.status = "completed"
+    db_session.flush()
+
+    summary = assign_saw_blocks(tournament)
+
+    assert _assignments(completed) == {1: 5, 2: 6}
+    assert set(_assignments(pending).values()) == set(BLOCK_B[:2])
+    assert summary["heats_preserved"] == 1
+
+
 # ---------------------------------------------------------------------------
 # 8. Flight builder reshuffle -> recompute reflects new run order
 # ---------------------------------------------------------------------------
