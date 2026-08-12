@@ -326,6 +326,7 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
         ),
         "results": snapshot_results,
         "partner_json": competitor.partners,
+        "unfinalized_events": [],
         # Populated inside the transaction below, by the heat-removal loop, at
         # the moment each heat is mutated.  It cannot be built here: the heats
         # a competitor is actually removed from are decided by the loop's own
@@ -468,6 +469,10 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                     ev = db.session.get(Event, ev_id)
                     if ev is not None and ev.is_finalized:
                         ev.is_finalized = False
+                        snapshot["unfinalized_events"].append({
+                            "event_id": ev.id,
+                            "result_versions": {},
+                        })
                         affected_event_ids.add(ev_id)
                 # Rebuild college individual points for affected competitors.
                 if affected_college_competitor_ids:
@@ -580,6 +585,16 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                     competitor.id,
                     exc_info=True,
                 )
+
+        if snapshot["unfinalized_events"]:
+            db.session.flush()
+            for event_snapshot in snapshot["unfinalized_events"]:
+                event_snapshot["result_versions"] = {
+                    str(result.id): result.version_id
+                    for result in EventResult.query.filter_by(
+                        event_id=event_snapshot["event_id"],
+                    ).all()
+                }
 
         # --- Audit log -------------------------------------------------------
         log_action(
@@ -796,6 +811,20 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                 p_data[p_key] = p_value
                 p_comp.partners = json.dumps(p_data)
 
+        safe_to_refinalize: set[int] = set()
+        for event_snapshot in snapshot.get("unfinalized_events", []):
+            event_id = event_snapshot.get("event_id")
+            ev = db.session.get(Event, event_id)
+            expected_versions = event_snapshot.get("result_versions")
+            if not isinstance(expected_versions, dict) or ev is None or ev.is_finalized:
+                continue
+            current_versions = {
+                str(result.id): result.version_id
+                for result in EventResult.query.filter_by(event_id=event_id).all()
+            }
+            if current_versions == expected_versions:
+                safe_to_refinalize.add(event_id)
+
         # --- Restore EventResult rows ----------------------------------------
         affected_college_competitor_ids: set[int] = set()
         previously_finalized_event_ids: set[int] = set()
@@ -854,16 +883,15 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
         # Simpler approach: for each affected event, if ALL results are now non-scratched
         # status, restore finalization to True — but that's risky.  Instead we track
         # which events were un-finalized via the effects metadata.
-        for r_snap in snapshot.get("results", []):
-            r = db.session.get(EventResult, r_snap["id"])
-            if r is not None:
-                ev = db.session.get(Event, r.event_id)
-                if ev is not None and not ev.is_finalized:
-                    # Only re-finalize if the original result was in a completed state
-                    # (meaning the event was finalized at scratch time).
-                    if r_snap.get("status") == "completed":
-                        ev.is_finalized = True
-                        previously_finalized_event_ids.add(ev.id)
+        for event_snapshot in snapshot.get("unfinalized_events", []):
+            ev = db.session.get(Event, event_snapshot.get("event_id"))
+            if (
+                ev is not None
+                and ev.id in safe_to_refinalize
+                and not ev.is_finalized
+            ):
+                ev.is_finalized = True
+                previously_finalized_event_ids.add(ev.id)
 
         # --- Restore heat membership -----------------------------------------
         # execute_cascade strips the competitor out of every non-completed heat

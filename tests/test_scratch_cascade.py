@@ -701,6 +701,72 @@ class TestExecuteCascadeEmptyEffects:
 class TestReverseCascadeHappyPath:
     """reverse_cascade() within 30 min restores all state."""
 
+    def test_reverse_refinalizes_an_unchanged_event(self, app):
+        from database import db
+        from models.event import Event
+        from services.scratch_cascade import (
+            compute_scratch_effects,
+            execute_cascade,
+            reverse_cascade,
+        )
+
+        with app.app_context():
+            t = _seed_base(db)
+            comp = _seed_pro(db, t, name="Refinalize Target")
+            event = _seed_event(db, t, name="Refinalize Event", is_finalized=True)
+            _seed_result_with_points(
+                db, event, comp, comp_type="pro", result_status="completed",
+            )
+            db.session.commit()
+
+            execute_cascade(
+                comp, compute_scratch_effects(comp, t), judge_user_id=1, tournament=t,
+            )
+            db.session.commit()
+            assert db.session.get(Event, event.id).is_finalized is False
+
+            undo = reverse_cascade(comp.id, judge_user_id=1, tournament=t)
+            db.session.commit()
+
+            assert undo["success"] is True
+            assert db.session.get(Event, event.id).is_finalized is True
+
+    def test_reverse_leaves_event_open_after_a_later_score_edit(self, app):
+        from database import db
+        from models.event import Event, EventResult
+        from services.scratch_cascade import (
+            compute_scratch_effects,
+            execute_cascade,
+            reverse_cascade,
+        )
+
+        with app.app_context():
+            t = _seed_base(db)
+            comp = _seed_pro(db, t, name="Open Target")
+            survivor = _seed_pro(db, t, name="Later Score")
+            event = _seed_event(db, t, name="Open Event", is_finalized=True)
+            _seed_result_with_points(
+                db, event, comp, comp_type="pro", result_status="completed",
+            )
+            survivor_result = _seed_result_with_points(
+                db, event, survivor, comp_type="pro", result_status="completed",
+            )
+            survivor_result_id = survivor_result.id
+            db.session.commit()
+
+            execute_cascade(
+                comp, compute_scratch_effects(comp, t), judge_user_id=1, tournament=t,
+            )
+            db.session.commit()
+            db.session.get(EventResult, survivor_result_id).result_value = 12.34
+            db.session.commit()
+
+            undo = reverse_cascade(comp.id, judge_user_id=1, tournament=t)
+            db.session.commit()
+
+            assert undo["success"] is True
+            assert db.session.get(Event, event.id).is_finalized is False
+
     def test_reverse_restores_competitor_and_results(self, app):
         from database import db
         from models.event import EventResult
