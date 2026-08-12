@@ -82,21 +82,21 @@
         </div>
     </div>
 
-    <!-- Earnings Table with Settlement -->
+    <!-- Payout Ledger -->
     <div class="card">
         <div class="card-header card-header-proam">
-            <h5 class="mb-0"><i class="bi bi-currency-dollar"></i> Competitor Earnings</h5>
+            <h5 class="mb-0"><i class="bi bi-currency-dollar"></i> Event Payout Ledger</h5>
         </div>
         <div class="card-body">
-            {% if competitors %}
+            {% if payout_rows %}
             <div class="table-responsive">
                 <table class="table table-hover align-middle">
                     <thead>
                         <tr>
-                            <th>Rank</th>
                             <th>Competitor</th>
-                            <th>Events</th>
-                            <th class="text-end">Earnings</th>
+                            <th>Event</th>
+                            <th class="text-center">Place</th>
+                            <th class="text-end">Payout</th>
                             <th class="text-center">Status</th>
                             {% if current_user.is_authenticated and current_user.is_admin %}
                             <th class="text-center">Action</th>
@@ -104,32 +104,21 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for c in competitors %}
-                        {% if c.total_earnings > 0 %}
-                        <tr class="{% if c.payout_settled %}table-success{% endif %}">
+                        {% for result, event, competitor in payout_rows %}
+                        <tr class="{% if result.payout_settled %}table-success{% endif %}">
                             <td>
-                                {% if loop.index == 1 %}
-                                    <span class="badge badge-gold">1</span>
-                                {% elif loop.index == 2 %}
-                                    <span class="badge badge-silver">2</span>
-                                {% elif loop.index == 3 %}
-                                    <span class="badge badge-bronze">3</span>
-                                {% else %}
-                                    {{ loop.index }}
-                                {% endif %}
-                            </td>
-                            <td>
-                                <strong>{{ c.name }}</strong>
-                                {% if c.is_ala_member %}
+                                <strong>{{ competitor.name }}</strong>
+                                {% if competitor.is_ala_member %}
                                     <span class="badge bg-info" title="ALA Member">ALA</span>
                                 {% endif %}
                             </td>
-                            <td>{{ c.get_events_entered()|length }}</td>
+                            <td>{{ event.name }}</td>
+                            <td class="text-center">{{ result.final_position or '-' }}</td>
                             <td class="text-end">
-                                <span class="fs-5 text-success fw-bold">${{ "%.2f"|format(c.total_earnings) }}</span>
+                                <span class="fs-5 text-success fw-bold">${{ "%.2f"|format(result.payout_amount) }}</span>
                             </td>
                             <td class="text-center">
-                                {% if c.payout_settled %}
+                                {% if result.payout_settled %}
                                 <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> Paid</span>
                                 {% else %}
                                 <span class="badge bg-warning text-dark">Pending</span>
@@ -137,37 +126,24 @@
                             </td>
                             {% if current_user.is_authenticated and current_user.is_admin %}
                             <td class="text-center">
-                                {% set rid = result_id_map.get(c.id) %}
-                                {% if rid %}
                                 <button
                                     type="button"
-                                    class="btn btn-sm settle-btn {% if c.payout_settled %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
-                                    data-result-id="{{ rid }}"
+                                    class="btn btn-sm settle-btn {% if result.payout_settled %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
+                                    data-result-id="{{ result.id }}"
                                     data-tournament-id="{{ tournament.id }}"
-                                    data-settled="{{ 'true' if c.payout_settled else 'false' }}"
+                                    data-settled="{{ 'true' if result.payout_settled else 'false' }}"
                                 >
-                                    {% if c.payout_settled %}Unmark{% else %}Mark Paid{% endif %}
+                                    {% if result.payout_settled %}Unmark{% else %}Mark Paid{% endif %}
                                 </button>
-                                {% else %}
-                                {# Fallback form for competitors without an EventResult yet #}
-                                <form method="POST" style="display:inline;">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <input type="hidden" name="competitor_id" value="{{ c.id }}">
-                                    <button type="submit" class="btn btn-sm {% if c.payout_settled %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
-                                        {% if c.payout_settled %}Unmark{% else %}Mark Paid{% endif %}
-                                    </button>
-                                </form>
-                                {% endif %}
                             </td>
                             {% endif %}
                         </tr>
-                        {% endif %}
                         {% endfor %}
                     </tbody>
                     <tfoot>
                         <tr class="table-success">
-                            <td colspan="3"><strong>Total</strong></td>
-                            <td class="text-end"><strong class="fs-5">${{ "%.2f"|format(total_owed) }}</strong></td>
+                            <td colspan="3"><strong>Individual Total</strong></td>
+                            <td class="text-end"><strong class="fs-5">${{ "%.2f"|format(individual_total_owed) }}</strong></td>
                             <td colspan="{% if current_user.is_authenticated and current_user.is_admin %}2{% else %}1{% endif %}"></td>
                         </tr>
                     </tfoot>

@@ -107,38 +107,38 @@
     </div>
 
     <div class="summary-box">
-        <div class="label">Total Payouts Distributed</div>
-        <div class="total">${{ "%.2f"|format(total_paid) }}</div>
+        <div class="label">Total Payout Obligation</div>
+        <div class="total">${{ "%.2f"|format(total_owed) }}</div>
     </div>
 
     <table>
         <thead>
             <tr>
-                <th class="rank">Rank</th>
                 <th>Competitor</th>
-                <th class="events">Events</th>
-                <th class="earnings">Total Earnings</th>
+                <th>Event</th>
+                <th class="rank">Place</th>
+                <th class="earnings">Payout</th>
                 <th style="text-align: center; width: 110px;">Signature</th>
             </tr>
         </thead>
         <tbody>
-            {% for c in competitors %}
+            {% for result, event, competitor in payout_rows %}
             <tr>
-                <td class="rank">{{ loop.index }}</td>
                 <td>
-                    <strong>{{ c.name }}</strong>
-                    {% if c.is_ala_member %}<small>(ALA)</small>{% endif %}
+                    <strong>{{ competitor.name }}</strong>
+                    {% if competitor.is_ala_member %}<small>(ALA)</small>{% endif %}
                 </td>
-                <td class="events">{{ c.get_events_entered()|length }}</td>
-                <td class="earnings">${{ "%.2f"|format(c.total_earnings) }}</td>
+                <td>{{ event.name }}</td>
+                <td class="rank">{{ result.final_position or '-' }}</td>
+                <td class="earnings">${{ "%.2f"|format(result.payout_amount) }}</td>
                 <td></td>
             </tr>
             {% endfor %}
         </tbody>
         <tfoot>
             <tr style="background-color: #efefef;">
-                <td colspan="3" style="text-align: right;"><strong>Total</strong></td>
-                <td class="earnings" style="font-size: 13pt;">${{ "%.2f"|format(total_paid) }}</td>
+                <td colspan="3" style="text-align: right;"><strong>Individual Total</strong></td>
+                <td class="earnings" style="font-size: 13pt;">${{ "%.2f"|format(individual_total_owed) }}</td>
                 <td></td>
             </tr>
         </tfoot>

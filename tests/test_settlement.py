@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 import pytest
 
@@ -235,6 +236,53 @@ class TestToggleSettlementEdgeCases:
             )
 
         assert resp.status_code in (302, 303)
+
+
+class TestPayoutLedger:
+    def test_report_keeps_each_event_settlement_separate(
+            self, app, auth_client, db_session):
+        tournament = _make_tournament(db_session)
+        competitor = _make_pro_competitor(db_session, tournament, name='Ledger Pro')
+        first_event = _make_event(db_session, tournament, name='Ledger Underhand')
+        second_event = _make_event(db_session, tournament, name='Ledger Springboard')
+        paid_result = _make_result(
+            db_session, first_event, competitor,
+            payout_amount=500.0, payout_settled=True,
+        )
+        pending_result = _make_result(
+            db_session, second_event, competitor,
+            payout_amount=300.0, payout_settled=False,
+        )
+        competitor.total_earnings = 800.0
+        db_session.commit()
+
+        page = auth_client.get(f'/reporting/{tournament.id}/pro/payouts')
+        assert page.status_code == 200
+        assert b'Event Payout Ledger' in page.data
+        assert b'Ledger Underhand' in page.data
+        assert b'Ledger Springboard' in page.data
+        assert b'$500.00' in page.data
+        assert b'$300.00' in page.data
+        assert b'$800.00' in page.data
+        assert re.search(
+            rb'data-result-id="%d".*?data-settled="true"' % paid_result.id,
+            page.data,
+            re.DOTALL,
+        )
+        assert re.search(
+            rb'data-result-id="%d".*?data-settled="false"' % pending_result.id,
+            page.data,
+            re.DOTALL,
+        )
+
+        printable = auth_client.get(
+            f'/reporting/{tournament.id}/pro/payouts/print'
+        )
+        assert printable.status_code == 200
+        assert b'Total Payout Obligation' in printable.data
+        assert b'Ledger Underhand' in printable.data
+        assert b'Ledger Springboard' in printable.data
+        assert b'$800.00' in printable.data
 
 
 class TestToggleSettlementAuth:

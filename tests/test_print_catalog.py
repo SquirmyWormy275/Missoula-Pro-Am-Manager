@@ -108,6 +108,25 @@ def test_status_pro_payouts_empty(empty_tournament):
     assert status.configured is False
 
 
+def test_status_pro_payouts_uses_event_result_ledger(app, db_session):
+    from tests.conftest import (
+        make_event,
+        make_event_result,
+        make_pro_competitor,
+        make_tournament,
+    )
+
+    tournament = make_tournament(db_session)
+    competitor = make_pro_competitor(db_session, tournament, 'Payout Ledger Pro')
+    event = make_event(db_session, tournament, 'Payout Ledger Event')
+    make_event_result(
+        db_session, event, competitor, payout_amount=500.0, status='completed',
+    )
+
+    status = print_catalog._status_pro_payouts(tournament)
+    assert status.configured is True
+
+
 def test_status_ala_empty(empty_tournament):
     status = print_catalog._status_ala(empty_tournament)
     assert status.configured is False

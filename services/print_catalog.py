@@ -400,9 +400,21 @@ def _fp_all_results(tournament, entity=None):
 
 
 def _status_pro_payouts(tournament, entity=None):
-    earners = [c for c in tournament.pro_competitors if (c.total_earnings or 0) > 0]
-    if not earners:
-        return _not_configured("No pro earnings recorded yet.")
+    from models import Event, EventResult
+
+    has_payout = (
+        EventResult.query.join(Event)
+        .filter(
+            Event.tournament_id == tournament.id,
+            Event.event_type == 'pro',
+            EventResult.competitor_type == 'pro',
+            EventResult.payout_amount > 0,
+        )
+        .first()
+        is not None
+    )
+    if not has_payout:
+        return _not_configured("No pro event payouts recorded yet.")
     return _ok()
 
 
@@ -410,12 +422,24 @@ def _fp_pro_payouts(tournament, entity=None):
     # Include name and events_entered — the payout summary print template
     # renders both columns, so a name change or event-list edit must shift
     # the fingerprint (Codex review 2026-04-22).
-    parts = []
-    for c in sorted(tournament.pro_competitors, key=lambda x: x.id):
-        parts.append(
-            f"{c.id}:{c.name}:{c.events_entered or ''}:"
-            f"{c.total_earnings or 0}:{int(c.payout_settled or False)}"
+    from models import Event, EventResult
+
+    results = (
+        EventResult.query.join(Event)
+        .filter(
+            Event.tournament_id == tournament.id,
+            Event.event_type == 'pro',
+            EventResult.competitor_type == 'pro',
+            EventResult.payout_amount > 0,
         )
+        .order_by(EventResult.id)
+        .all()
+    )
+    parts = [
+        f"{r.id}:{r.competitor_id}:{r.competitor_name}:{r.event.name}:"
+        f"{r.final_position}:{r.payout_amount}:{int(bool(r.payout_settled))}"
+        for r in results
+    ]
     return _sha1(parts)
 
 

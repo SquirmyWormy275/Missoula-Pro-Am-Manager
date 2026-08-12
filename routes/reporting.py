@@ -242,81 +242,52 @@ def event_results_print(tournament_id, event_id):
                            results=results)
 
 
-@reporting_bp.route('/<int:tournament_id>/pro/payouts', methods=['GET', 'POST'])
+@reporting_bp.route('/<int:tournament_id>/pro/payouts')
 def pro_payout_summary(tournament_id):
-    """View individual pro and team Relay payouts with settlement tracking."""
+    """View pro and Relay payouts using their authoritative settlement rows."""
     tournament = db.get_or_404(Tournament, tournament_id)
     from models.competitor import ProCompetitor
-
-    if request.method == 'POST':
-        try:
-            comp_id = int(request.form.get('competitor_id', ''))
-        except (TypeError, ValueError):
-            flash('Invalid request.', 'error')
-            return redirect(url_for('reporting.pro_payout_summary', tournament_id=tournament_id))
-
-        competitor = ProCompetitor.query.filter_by(id=comp_id, tournament_id=tournament_id).first_or_404()
-        competitor.payout_settled = not competitor.payout_settled
-        db.session.commit()
-        log_action('payout_settlement_toggled', 'pro_competitor', comp_id, {
-            'settled': competitor.payout_settled,
-            'name': competitor.name,
-        })
-        return redirect(url_for('reporting.pro_payout_summary', tournament_id=tournament_id))
-
-    competitors = tournament.pro_competitors.filter_by(status='active').all()
-    competitors = sorted(competitors, key=lambda c: c.total_earnings, reverse=True)
-    total_competitors = len(competitors)
-
-    earners = [c for c in competitors if c.total_earnings and c.total_earnings > 0]
-    individual_total_owed = sum(c.total_earnings for c in earners)
-    individual_total_settled = sum(
-        c.total_earnings for c in earners if c.payout_settled
+    from models.event import EventResult
+    payout_rows = (
+        db.session.query(EventResult, Event, ProCompetitor)
+        .join(Event, EventResult.event_id == Event.id)
+        .join(ProCompetitor, EventResult.competitor_id == ProCompetitor.id)
+        .filter(
+            Event.tournament_id == tournament_id,
+            Event.event_type == 'pro',
+            EventResult.competitor_type == 'pro',
+            ProCompetitor.tournament_id == tournament_id,
+            ProCompetitor.status == 'active',
+            EventResult.payout_amount > 0,
+        )
+        .order_by(ProCompetitor.name, Event.name, EventResult.id)
+        .all()
     )
+    individual_total_owed = sum(float(result.payout_amount or 0.0)
+                                for result, _, _ in payout_rows)
+    individual_total_settled = sum(
+        float(result.payout_amount or 0.0)
+        for result, _, _ in payout_rows if result.payout_settled
+    )
+    earners_count = len({competitor.id for _, _, competitor in payout_rows})
+    total_competitors = tournament.pro_competitors.filter_by(status='active').count()
 
     from services.proam_relay import relay_payout_summary
-
     relay_payouts = relay_payout_summary(tournament)
     total_owed = individual_total_owed + relay_payouts['total_owed']
     total_settled = individual_total_settled + relay_payouts['total_settled']
     total_outstanding = total_owed - total_settled
 
-    # Build a mapping of competitor_id → first EventResult id with payout_amount > 0
-    # so the template can wire per-result AJAX toggle buttons.
-    from models.event import EventResult
-    comp_ids = [c.id for c in competitors]
-    if comp_ids:
-        results_with_payout = (
-            EventResult.query
-            .join(Event, EventResult.event_id == Event.id)
-            .filter(
-                Event.tournament_id == tournament_id,
-                EventResult.competitor_type == 'pro',
-                EventResult.competitor_id.in_(comp_ids),
-                EventResult.payout_amount > 0,
-            )
-            .order_by(EventResult.payout_amount.desc())
-            .all()
-        )
-        # Keep only the first (highest-payout) result per competitor.
-        result_id_map = {}
-        for r in results_with_payout:
-            if r.competitor_id not in result_id_map:
-                result_id_map[r.competitor_id] = r.id
-    else:
-        result_id_map = {}
-
     return render_template('reports/payout_summary.html',
                            tournament=tournament,
-                           competitors=competitors,
+                           payout_rows=payout_rows,
                            total_owed=total_owed,
                            total_settled=total_settled,
                            total_outstanding=total_outstanding,
-                           earners_count=len(earners),
+                           earners_count=earners_count,
                            total_competitors=total_competitors,
                            individual_total_owed=individual_total_owed,
-                           relay_payouts=relay_payouts,
-                           result_id_map=result_id_map)
+                           relay_payouts=relay_payouts)
 
 
 @reporting_bp.route('/<int:tournament_id>/pro/payouts/print')
@@ -324,21 +295,36 @@ def pro_payout_summary(tournament_id):
 def pro_payout_summary_print(tournament_id):
     """Printable version of payout summary."""
     tournament = db.get_or_404(Tournament, tournament_id)
-
-    competitors = tournament.pro_competitors.filter_by(status='active').all()
-    competitors = sorted(competitors, key=lambda c: c.total_earnings, reverse=True)
-    competitors = [c for c in competitors if c.total_earnings and c.total_earnings > 0]
-    individual_total_paid = sum(c.total_earnings for c in competitors)
+    from models.competitor import ProCompetitor
+    from models.event import EventResult
+    payout_rows = (
+        db.session.query(EventResult, Event, ProCompetitor)
+        .join(Event, EventResult.event_id == Event.id)
+        .join(ProCompetitor, EventResult.competitor_id == ProCompetitor.id)
+        .filter(
+            Event.tournament_id == tournament_id,
+            Event.event_type == 'pro',
+            EventResult.competitor_type == 'pro',
+            ProCompetitor.tournament_id == tournament_id,
+            ProCompetitor.status == 'active',
+            EventResult.payout_amount > 0,
+        )
+        .order_by(ProCompetitor.name, Event.name, EventResult.id)
+        .all()
+    )
+    individual_total_owed = sum(float(result.payout_amount or 0.0)
+                                for result, _, _ in payout_rows)
     from services.proam_relay import relay_payout_summary
 
     relay_payouts = relay_payout_summary(tournament)
-    total_paid = individual_total_paid + relay_payouts['total_owed']
+    total_owed = individual_total_owed + relay_payouts['total_owed']
 
     return render_template('reports/payout_summary_print.html',
                            tournament=tournament,
-                           competitors=competitors,
+                           payout_rows=payout_rows,
+                           individual_total_owed=individual_total_owed,
                            relay_payouts=relay_payouts,
-                           total_paid=total_paid)
+                           total_owed=total_owed)
 
 
 @reporting_bp.route('/<int:tournament_id>/all-results')
