@@ -248,14 +248,14 @@ The only supported day-of competitor movement operation:
 
 | Operation | Route/Method | Notes |
 |-----------|-------------|-------|
-| Move competitor between heats | `POST /scheduling/<tid>/event/<eid>/move-competitor` | Mirrors dual-run heats; warns on gear conflicts; capacity + lock check |
+| Move competitor between heats | `POST /scheduling/<tid>/event/<eid>/move-competitor` | Mirrors dual-run heats; blocks gear conflicts, completed rosters, capacity, and conflicting scoring locks. |
 | **Scratch competitor from heat** | `POST /scheduling/<tid>/event/<eid>/scratch-competitor` | Removes from heat JSON, frees stand, sets EventResult.status='scratched', cleans gear refs, recalcs positions if scored, mirrors dual-run. Lock check. Audit logged. |
-| **Add late entry to heat** | `POST /scheduling/<tid>/event/<eid>/add-to-heat` | Adds competitor, assigns stand, creates EventResult if missing, re-add of scratched resets to pending + clears derived fields. Capacity + lock check. Show-start lockout. Mirrors dual-run. Audit logged. |
-| **Delete empty heat** | `POST /scheduling/<tid>/event/<eid>/delete-heat/<hid>` | Validates 0 competitors, deletes heat + HeatAssignment rows, clears flight association, renumbers remaining heats. Lock check. Mirrors dual-run delete. Audit logged. |
-| Regenerate heats for one event | `POST /scheduling/<tid>/event/<eid>/generate-heats` | Destroys and rebuilds all heats; preserves EventResult data. **Blocked if event.is_finalized. Warns if scored results exist.** |
+| **Add late entry to heat** | `POST /scheduling/<tid>/event/<eid>/add-to-heat` | Adds competitor, assigns stand, creates EventResult if missing, re-add of scratched resets to pending + clears derived fields. Blocks completed rosters, conflicting locks, and gear conflicts; mirrors dual-run. Audit logged. |
+| **Delete empty heat** | `POST /scheduling/<tid>/event/<eid>/delete-heat/<hid>` | Validates 0 competitors, blocks any event with a completed heat, then deletes and renumbers the remaining pending heats. Mirrors dual-run delete. Audit logged. |
+| Regenerate heats for one event | `POST /scheduling/<tid>/event/<eid>/generate-heats` | Destroys and rebuilds only an unscored, non-finalized event. Completed-result history is a hard block. |
 | Bulk regenerate college heats | `POST /scheduling/<tid>/generate-college-heats` | All non-completed, non-finalized college events. Per-event savepoint isolation. |
 | Rebuild all flights | `POST /scheduling/<tid>/flights/build` | Destroys and rebuilds all flights |
-| Reorder heats within a flight | `POST /scheduling/<tid>/flights/<fid>/reorder` | Drag-and-drop via JSON |
+| Reorder heats within a flight | `POST /scheduling/<tid>/flights/<fid>/reorder` | Drag-and-drop via JSON; rejects an order that puts a later heat ahead of an earlier heat from the same event. |
 | Sync HeatAssignment drift | `POST /scheduling/<tid>/event/<eid>/heats/sync-fix` | Repairs JSON ↔ table divergence |
 | Mark flight started/completed | `POST /scheduling/<tid>/flights/<fid>/start` | Sends SMS to competitors in upcoming flights |
 
@@ -264,7 +264,7 @@ The only supported day-of competitor movement operation:
 | Operation | Impact | Workaround |
 |-----------|--------|------------|
 | **Swap two competitors between heats** | The move route only supports one-directional moves. A true swap (A→Heat2, B→Heat1 atomically) requires two sequential moves. | Two separate move operations. |
-| **Re-assign marks after heat change** | Moving a competitor or regenerating heats does not trigger mark reassignment. A moved competitor keeps their old mark; a new competitor gets `handicap_factor=0.0`. | Manually re-run mark assignment for the event. |
+| **Re-assign marks after heat change** | Moving a competitor does not calculate a new handicap mark. Existing marks remain subject to explicit review, and a new entrant must be assigned and reviewed before scoring. | Use the mark-review page; scoring blocks unreviewed handicap entrants. |
 | **Insert a heat into an existing flight** | No route adds a single heat to a flight. Flight rebuild is all-or-nothing. | Rebuild all flights. |
 | **Partially regenerate (one heat only)** | Regeneration is all-or-nothing per event. No way to rebuild just Heat 3 of 5. | Regenerate all heats for the event. |
 
@@ -273,18 +273,18 @@ The only supported day-of competitor movement operation:
 | Rule | Intent | Actual Enforcement |
 |------|--------|--------------------|
 | **Heat size maximum** | Competitors per heat ≤ max_stands | Enforced during generation AND on move/add operations via `_max_per_heat()`. |
-| **Gear conflict in destination** | Moving/adding a competitor should warn about gear conflicts | Implemented as warning only. Move/add never blocked by gear conflicts. |
+| **Gear conflict in destination** | Moving/adding a competitor must not create a shared-gear conflict | **ENFORCED.** Manual move, add, and flight-board drag reject the conflict. |
 | **Cookie Stack / Standing Block mutual exclusion** | Never schedule both in the same flight window | Enforced in flight builder scoring (-1 within 8 heats). NOT enforced during heat generation. |
-| **Event.is_finalized guard on regeneration** | Finalized events should not have heats regenerated | **ENFORCED.** Hard block on finalized events. Soft warn + confirm required on scored events. |
-| **Heat lock on mutations** | Locked heats should not be mutated by other judges | **ENFORCED** on scratch, add, delete, and move operations. |
+| **Event.is_finalized guard on regeneration** | Finalized or scored events should not have heats regenerated | **ENFORCED.** Finalized and completed-result events are hard blocks. |
+| **Heat lock on mutations** | Locked heats should not be mutated by other judges | **ENFORCED** on scratch, add, delete, manual move, and flight-board drag operations. |
 | **Heat.competitors ↔ HeatAssignment sync** | Always consistent | Sync is called after generation, moves, scratch, add. Manual sync-fix route exists. |
 | **Competitor spacing in college overflow** | College overflow should respect spacing | Implemented in `integrate_college_spillover_into_flights` with MIN_HEAT_SPACING check and fallback. |
-| **Sequential heat order** | Heat 1 before Heat 2 within each event | Enforced in flight builder's per-event queue. Validated by `build_flight_audit_report()`. |
+| **Sequential heat order** | Heat 1 before Heat 2 within each event | Enforced in the builder and on both manual flight reorder APIs. |
 | **Show-start lockout on additions** | No late entries after show starts | **ENFORCED** on add-to-heat. Blocked when tournament.status is active for that division. Scratches always allowed. |
 
 ### Critical Day-of Risks
 
-1. **Regeneration destroys heat assignments but not results**: If heats are regenerated after scoring has begun, scored results become orphaned. **Mitigated:** Finalization guard blocks regen on finalized events; warns on scored events.
+1. **Regeneration destroys heat assignments but not results**: If heats are regenerated after scoring has begun, scored results could become orphaned. **Mitigated:** finalized and completed-result events are hard-blocked from regeneration.
 
 2. **Undo window race condition**: `undo_heat_save()` uses the current competitor list. If a scratch/add happens during the 30-second undo window, undo may affect the wrong competitors. **Documented limitation** — narrow window, low probability.
 

@@ -91,6 +91,11 @@ path must immediately rerun:
 2. College spillover integration.
 3. Saw-block/field-prep recompute.
 
+Manual flight edits may rearrange heats only when they preserve each event's
+ascending heat-number sequence across the whole Saturday show. Reorder APIs
+must reject an invalid order; an audit warning after the schedule has changed
+is not sufficient.
+
 ## College Spillover
 
 Saturday college spillover is not an independent schedule. It is integrated into

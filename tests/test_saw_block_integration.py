@@ -358,6 +358,7 @@ def test_reorder_flight_heats_triggers_recompute(app, auth_client):
     with app.app_context():
         t = _seed_tournament(_db)
         sb = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        dbuck = _seed_saw_event(_db, t, name="Double Buck", event_type="pro")
         flight = _seed_flight(_db, t, flight_number=1)
         h_a = _seed_heat(
             _db,
@@ -370,8 +371,8 @@ def test_reorder_flight_heats_triggers_recompute(app, auth_client):
         )
         h_b = _seed_heat(
             _db,
-            sb,
-            2,
+            dbuck,
+            1,
             competitors=[5, 6, 7, 8],
             stand_assignments={"5": 5, "6": 6, "7": 7, "8": 8},
             flight=flight,
@@ -383,7 +384,7 @@ def test_reorder_flight_heats_triggers_recompute(app, auth_client):
         h_a_id = h_a.id
         h_b_id = h_b.id
 
-    # Reverse the flight order: h_b first, h_a second
+    # Reverse two different events. Event-local heat sequencing stays valid.
     resp = auth_client.post(
         f"/scheduling/{tid}/flights/{fid}/reorder",
         json={"heat_ids": [h_b_id, h_a_id]},
@@ -398,6 +399,39 @@ def test_reorder_flight_heats_triggers_recompute(app, auth_client):
         # h_b is now first in flight -> Block A; h_a is second -> Block B
         assert _used_stands(h_b) == BLOCK_A
         assert _used_stands(h_a) == BLOCK_B
+
+
+def test_reorder_flight_heats_rejects_out_of_order_event(app, auth_client):
+    """Manual ordering must preserve Heat 1, Heat 2, ... within each event."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        event = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        flight = _seed_flight(_db, t, flight_number=1)
+        first = _seed_heat(
+            _db, event, 1, competitors=[1], stand_assignments={"1": 1},
+            flight=flight, flight_position=1,
+        )
+        second = _seed_heat(
+            _db, event, 2, competitors=[2], stand_assignments={"2": 1},
+            flight=flight, flight_position=2,
+        )
+        _db.session.commit()
+        tid, fid, first_id, second_id = t.id, flight.id, first.id, second.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/flights/{fid}/reorder",
+        json={"heat_ids": [second_id, first_id]},
+    )
+
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "event_sequence"
+    with app.app_context():
+        from models import Heat
+
+        assert _db.session.get(Heat, first_id).flight_position == 1
+        assert _db.session.get(Heat, second_id).flight_position == 2
 
 
 def test_bulk_reorder_moves_heat_between_flights(app, auth_client):
@@ -446,6 +480,47 @@ def test_bulk_reorder_moves_heat_between_flights(app, auth_client):
         assert h_a.flight_id == f1_id and h_a.flight_position == 1
         assert h_b.flight_id == f2_id and h_b.flight_position == 1
         assert h_c.flight_id == f2_id and h_c.flight_position == 2
+
+
+def test_bulk_reorder_rejects_out_of_order_event(app, auth_client):
+    """Cross-flight drag cannot put Heat 2 in front of Heat 1."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        event = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        first_flight = _seed_flight(_db, t, flight_number=1)
+        second_flight = _seed_flight(_db, t, flight_number=2)
+        first = _seed_heat(
+            _db, event, 1, competitors=[1], stand_assignments={"1": 1},
+            flight=first_flight, flight_position=1,
+        )
+        second = _seed_heat(
+            _db, event, 2, competitors=[2], stand_assignments={"2": 1},
+            flight=second_flight, flight_position=1,
+        )
+        _db.session.commit()
+        tid = t.id
+        first_flight_id, second_flight_id = first_flight.id, second_flight.id
+        first_id, second_id = first.id, second.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/flights/bulk-reorder",
+        json={
+            "flights": [
+                {"flight_id": first_flight_id, "heat_ids": [second_id]},
+                {"flight_id": second_flight_id, "heat_ids": [first_id]},
+            ]
+        },
+    )
+
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "event_sequence"
+    with app.app_context():
+        from models import Heat
+
+        assert _db.session.get(Heat, first_id).flight_id == first_flight_id
+        assert _db.session.get(Heat, second_id).flight_id == second_flight_id
 
 
 def test_bulk_reorder_rejects_mismatched_heat_set(app, auth_client):

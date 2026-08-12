@@ -535,6 +535,28 @@ def build_flights(tournament_id):
 # Flight heat reorder — drag-and-drop endpoint
 # ---------------------------------------------------------------------------
 
+def _reject_invalid_flight_sequence(tournament: Tournament):
+    """Roll back a manual order that puts a later event heat ahead of an earlier one."""
+    from services.flight_builder import build_flight_audit_report
+
+    report = build_flight_audit_report(tournament)
+    violations = report.get('sequential_violations', [])
+    if not violations:
+        return None
+
+    db.session.rollback()
+    violation = violations[0]
+    return jsonify({
+        'ok': False,
+        'code': 'event_sequence',
+        'error': (
+            f"{violation['event']} Heat {violation['heat_number']} cannot run before "
+            f"Heat {violation['previous_heat_number']}. Keep each event's heats "
+            'in ascending order across the show.'
+        ),
+    }), 409
+
+
 @scheduling_bp.route('/<int:tournament_id>/flights/<int:flight_id>/reorder', methods=['POST'])
 def reorder_flight_heats(tournament_id, flight_id):
     """Reorder heats within a flight. Expects JSON {heat_ids: [int, ...]}."""
@@ -552,6 +574,9 @@ def reorder_flight_heats(tournament_id, flight_id):
 
     for position, hid in enumerate(heat_ids, start=1):
         existing[hid].flight_position = position
+    invalid_sequence = _reject_invalid_flight_sequence(tournament)
+    if invalid_sequence:
+        return invalid_sequence
     db.session.commit()
     log_action('flight_heats_reordered', 'flight', flight_id, {'order': heat_ids})
 
@@ -612,6 +637,9 @@ def bulk_reorder_flights(tournament_id):
             heat = heats_by_id[hid]
             heat.flight_id = fid
             heat.flight_position = position
+    invalid_sequence = _reject_invalid_flight_sequence(tournament)
+    if invalid_sequence:
+        return invalid_sequence
     db.session.commit()
 
     log_action('flights_bulk_reordered', 'tournament', tournament_id,
