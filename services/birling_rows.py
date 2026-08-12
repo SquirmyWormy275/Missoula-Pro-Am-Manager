@@ -1,40 +1,20 @@
-"""The birling bracket document and the five birling tables, both directions.
+"""The Birling bracket document adapter and its authoritative row tables.
 
-D13-C commits A2 and A3a. A2 built the forward half, which turns a document
-into rows. A3a builds the inverse, which turns rows back into a document.
+The bracket service keeps a document in memory because its progression logic
+is naturally tree-shaped. This module validates that document and persists it
+to the five Birling tables; readers rebuild the same in-memory shape from
+those rows. ``events.payouts`` is payout configuration, not bracket state.
 
-Forward half, D13-C commit A2. Commit A1 created ``birling_seeds``,
-``birling_pre_seeds``, ``birling_matches``, ``birling_falls`` and
-``birling_placements`` and filled them once, from the migration, out of the
-JSON document living in ``events.payouts``. Nothing has written a row since.
-This module is what keeps them current: every time the document changes, the
-rows are rebuilt from it.
-
-The JSON is still the truth in A2. Nothing reads these rows. A3 moves the
-readers and is where an unprojectable bracket stops being harmless; A4 drops
-the document. Until then this module exists to be proved correct against a
-document that is still authoritative, which is the only window in which it can
-be proved correct cheaply.
+``project`` remains as a migration and repair adapter for legacy JSON
+documents. Live application writers call ``project_document`` or
+``replace_pre_seedings`` directly and never write bracket state to JSON.
 
 Why this is a module and not a method on ``BirlingBracket``
 ==========================================================
-The register's phrasing for this commit is that ``BirlingBracket`` dual-writes,
-and for four of the five tables that is exactly where the write happens. But
-``birling_pre_seeds`` is a projection of ``payouts['pre_seedings']``, and
-``pre_seedings`` is written by ``routes/scheduling/ability_rankings.py``, which
-never constructs a ``BirlingBracket`` and has no reason to. A projector that
-lived on the service would ship a table that live code never writes and that
-only the A1 backfill had ever touched. So the projector is a free function over
-an ``Event``, and both writers call it.
-
-Those two are the whole set, enumerated by searching the tree for assignments
-to ``Event.payouts``. ``scripts/reseed_college_ids.py`` also rewrites the
-document and deliberately does NOT call this, because it does not need to: a
-reseed changes the bare integer ids inside the document and leaves every
-``competitors.uid`` alone, so the projection is reseed-invariant. That property
-is not an accident, it is the entire argument for the identity spine, and it is
-worth stating because it is the first place the spine has paid for itself
-without anybody writing code to collect.
+``BirlingBracket`` saves complete bracket documents, while ability rankings
+only changes pre-seeds. Keeping those writers here makes both paths validate
+the same competitor identity rules without making either route responsible for
+the other's state.
 
 Why the planner is copied from the migration instead of shared with it
 ======================================================================
@@ -58,31 +38,16 @@ and would be the only thing in the system holding an opinion about which parts
 of a bracket changed. Replacing the event's rows is the same shape as the write
 it mirrors, and it is the only shape that cannot drift.
 
-Why a document that will not project leaves NO rows rather than stale ones
-==========================================================================
-Two of the brackets on the production mirror carry references to college
-competitors by their pre-reseed ids, which now resolve to different people on
-the pro side. A1 skipped both. The reference gate forgives a bad id that was
-already there, by design, so those documents can still be saved, which means
-this projector will meet them. When a document cannot be projected the event's
-rows are deleted and a warning is logged. Absent rows say "there is nothing
-here"; stale rows say "this is the bracket", and one of those two statements
-can be wrong in a way nobody notices. A3, which is where the readers move, can
-tell the two apart without a marker column: a document that claims a bracket
-and an event with no seed rows is exactly the case it has to refuse.
+Why a document that will not project leaves existing rows alone
+===============================================================
+A failed projection is validated before any row is deleted. This preserves the
+last valid bracket and makes the route's rollback safe: the judge sees a failed
+save instead of an apparently successful update whose state no reader can use.
 
-The forward half never raises on a bad document. A bracket is live judge state
-on race day and there is no sitting in which it can be unavailable. It does not
-catch ``BadReferenceWrite`` either, which is the reference gate refusing a
-genuinely new bad reference; that one is the caller's to handle and rolling
-back is the caller's job.
-
-Inverse half, D13-C commit A3a
-==============================
-``load_document`` reads the five tables and returns the same document shape
-``BirlingBracket`` has always worked in. Nothing calls it yet. A3b points
-``BirlingBracket._load_bracket_data`` and the display readers at it, and that
-is where an unprojected bracket stops being harmless; A4 drops the column.
+Inverse half
+============
+``load_document`` reads the five tables and returns the document shape
+``BirlingBracket`` uses for bracket progression and rendering.
 
 Why an inverse and not a rewrite of ``BirlingBracket`` onto rows
 ----------------------------------------------------------------
@@ -539,21 +504,8 @@ def write_plan(plan):
 class ProjectionRefused(Exception):
     """A document could not be turned into rows, and the caller must know.
 
-    D13-C commit A3c. Through A3b a refusal was a log line and an empty
-    ``Plan``, which was right while nothing read the rows. A3b made the rows
-    what the bracket pages read, so a refusal now means the event has quietly
-    fallen back to its JSON, and the only record of that is a warning in a log
-    nobody watches during a show. A4 removes the fallback. Between here and
-    there the refusal has to reach a human.
-
-    Raising rather than returning is the whole point: a return value can be
-    ignored by a caller that never thought about it, and every caller of
-    ``project`` is a write path where being ignored is the failure mode.
-
-    What raising must never mean is that the judge loses the write.
-    ``BirlingBracket._save_bracket_data`` catches this and commits the JSON
-    anyway, because the JSON is still what the fallback reads and a scored
-    result is not something to trade for a table. See its docstring.
+    The write path validates before replacing rows, so callers can roll back
+    their in-memory change and keep the last valid bracket available.
     """
 
     def __init__(self, event_id, reasons):
@@ -563,23 +515,18 @@ class ProjectionRefused(Exception):
                          % (event_id, '; '.join(self.reasons)))
 
 
-def project(event):
-    """Rebuild one event's projected rows from its current document.
-
-    Call this after assigning to ``event.payouts`` and before committing, so
-    the rows and the document that produced them land in one transaction.
+def project_document(event, doc):
+    """Validate and atomically replace an event's table-native bracket state.
 
     Returns the ``Plan`` on a projection that was written. A document that is
     not a bracket at all also returns an empty plan, having cleared any rows
     the event used to have, because an event that stopped being a bracket has
     no bracket.
 
-    Raises ``ProjectionRefused`` when the document cannot be resolved. The
-    event's rows have already been cleared and flushed by the time it raises,
-    so a caller that commits anyway leaves the event with no rows, which is the
-    honest state and is the state the A3b fallback is built to survive.
+    Raises ``ProjectionRefused`` before mutating rows when the document cannot
+    be resolved. A failed save therefore leaves the last valid bracket in
+    place, which is the only safe behavior after removing the JSON fallback.
     """
-    doc = parse_document(event.payouts)
     is_bracket = any(key in doc for key in BRACKET_KEYS)
 
     pool = pool_for(event.event_type) if is_bracket else {}
@@ -591,23 +538,56 @@ def project(event):
     else:
         plan = Plan(event.id, {})
 
+    if plan.reasons:
+        logger.warning(
+            'birling rows: event %s was not projected. Existing rows were '
+            'left untouched. Reasons: %s.',
+            event.id, '; '.join(sorted(plan.reasons)))
+        raise ProjectionRefused(event.id, plan.reasons)
+
     clear_event(event.id)
     # The deletes must reach the database before the inserts do. Within one
     # flush SQLAlchemy emits a mapper's inserts before its deletes, so a
     # re-save that reuses a seed number would collide with the row it is
     # replacing on ``uq_birling_seeds_event_seed``.
     db.session.flush()
+    write_plan(plan)
+    return plan
+
+
+def project(event):
+    """Project a legacy JSON document for a migration or repair command.
+
+    New application code must use ``project_document`` instead. Keeping this
+    adapter lets the already-shipped repair tooling validate old documents
+    without making ``events.payouts`` a live source of truth again.
+    """
+    return project_document(event, parse_document(event.payouts))
+
+
+def replace_pre_seedings(event, pre_seedings):
+    """Validate and replace only an event's ability-ranking pre-seeds.
+
+    Ability rankings can change before or after a bracket is generated. This
+    narrow writer must therefore not rebuild the bracket tables around it.
+    """
+    pool = pool_for(event.event_type)
+    plan = Plan(event.id, pool or {})
+    if pool is None:
+        plan.fail(NO_POOL)
+    else:
+        plan_pre_seeds(plan, {'pre_seedings': pre_seedings})
 
     if plan.reasons:
-        logger.warning(
-            'birling rows: event %s was not projected and now has no rows. '
-            'Its JSON is untouched and is what the bracket pages will fall '
-            'back to. Reasons: %s. Run scripts/repair_era1_references.py '
-            '--check.',
-            event.id, '; '.join(sorted(plan.reasons)))
         raise ProjectionRefused(event.id, plan.reasons)
 
-    write_plan(plan)
+    BirlingPreSeed.query.filter_by(event_id=event.id).delete(
+        synchronize_session=False)
+    db.session.flush()
+    for pre in plan.pre_seeds:
+        db.session.add(BirlingPreSeed(event_id=event.id,
+                                      uid=pre['uid'],
+                                      seed_number=pre['seed_number']))
     return plan
 
 
@@ -658,9 +638,7 @@ SINGLE_SIDES = ('finals', 'true_finals')
 def empty_document():
     """The skeleton ``BirlingBracket`` builds when an event has no bracket.
 
-    Byte for byte the same shape as ``_load_bracket_data``'s fallback, because
-    A3b makes this its replacement and a reader must not be able to tell which
-    of the two it got.
+    Used for a new or reset event before any bracket rows exist.
     """
     return {
         'bracket': {

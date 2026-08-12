@@ -457,12 +457,12 @@ class TestARealSaveWritesRows:
                 named.add(doc[side]["match_id"])
         assert {m.match_id for m in _rows_for(event.id)["matches"]} == named
 
-    def test_the_json_is_still_the_truth(self, generated):
-        """A2 projects. It does not take the document away from anybody."""
+    def test_payouts_stays_available_for_payout_configuration(self, generated):
+        """A4 stores bracket state only in rows and leaves payouts untouched."""
         event, _people, bracket = generated
         stored = json.loads(event.payouts)
-        assert stored["seeding"] == bracket.bracket_data["seeding"]
-        assert "bracket" in stored
+        assert stored == {}
+        assert rows.load_document(event)["seeding"] == bracket.bracket_data["seeding"]
 
     def test_a_fall_becomes_a_fall_row(self, generated):
         event, people, bracket = generated
@@ -490,7 +490,7 @@ class TestARealSaveWritesRows:
         assert row.winner_uid == by_id[winner]
         assert row.loser_uid == by_id[loser]
 
-        placements = json.loads(event.payouts).get("placements", {})
+        placements = bracket.bracket_data["placements"]
         rowed = {p.uid: p.position for p in _rows_for(event.id)["placements"]}
         assert rowed == {by_id[int(k)]: v for k, v in placements.items()}
 
@@ -579,28 +579,26 @@ class TestADocumentThatWillNotProject:
     what it does about them is a decision, not an accident.
     """
 
-    def test_it_leaves_no_rows_at_all(self, db_session, reference_gate_disarmed,
+    def test_it_leaves_existing_rows_intact(self, db_session, reference_gate_disarmed,
                                       birling_logger_awake, caplog):
         _tour, event, people = _world(db_session, "Ghosted")
         BirlingBracket(event).generate_bracket(_entrants(people[:4]))
         assert _counts(event.id)["seeds"] == 4
 
         ghost = max(p.id for p in people) + 5000
-        doc = json.loads(event.payouts)
+        doc = BirlingBracket(event).bracket_data
         doc["seeding"][0] = ghost
         doc["competitors"][0]["id"] = ghost
-        event.payouts = json.dumps(doc)
 
         with caplog.at_level(logging.WARNING, logger="services.birling_rows"):
             with pytest.raises(rows.ProjectionRefused) as caught:
-                rows.project(event)
+                rows.project_document(event, doc)
         db.session.flush()
 
         assert caught.value.reasons
         assert caught.value.event_id == event.id
-        assert _counts(event.id) == {"seeds": 0, "pre_seeds": 0, "matches": 0,
-                                     "falls": 0, "placements": 0}
-        assert "was not projected" in caplog.text
+        assert _counts(event.id)["seeds"] == 4
+        assert "Existing rows were left untouched" in caplog.text
 
     def test_it_raises_and_still_does_not_touch_the_json(
             self, db_session, reference_gate_disarmed):
@@ -621,14 +619,12 @@ class TestADocumentThatWillNotProject:
         _tour, event, people = _world(db_session, "Untouched")
         BirlingBracket(event).generate_bracket(_entrants(people[:4]))
 
-        doc = json.loads(event.payouts)
+        doc = BirlingBracket(event).bracket_data
         doc["seeding"][0] = max(p.id for p in people) + 5000
-        blob = json.dumps(doc)
-        event.payouts = blob
 
         with pytest.raises(rows.ProjectionRefused):
-            rows.project(event)
-        assert event.payouts == blob
+            rows.project_document(event, doc)
+        assert json.loads(event.payouts) == {}
 
     def test_an_event_that_stops_being_a_bracket_loses_its_rows(self, db_session):
         """``payouts`` is still named for prize money and still sometimes holds
@@ -698,7 +694,7 @@ class TestPreSeedsComeFromTheRankingsPage:
             follow_redirects=True)
         assert response.status_code == 200
 
-        stored = json.loads(event.payouts)["pre_seedings"]
+        stored = rows.load_pre_seedings(event)
         rowed = {p.uid: p.seed_number
                  for p in _rows_for(event.id)["pre_seeds"]}
         by_id = {p.id: p.uid for p in people}
@@ -713,9 +709,8 @@ class TestPreSeedsComeFromTheRankingsPage:
         its own table rather than a nullable column on ``birling_seeds``."""
         _tour, event, people = _world(db_session, "PreSeeded")
         by_id = {p.id: p.uid for p in people}
-        event.payouts = json.dumps(
-            {"pre_seedings": {str(people[0].id): 1, str(people[1].id): 2}})
-        rows.project(event)
+        rows.replace_pre_seedings(
+            event, {str(people[0].id): 1, str(people[1].id): 2})
         db.session.flush()
 
         counts = _counts(event.id)
@@ -729,14 +724,13 @@ class TestPreSeedsComeFromTheRankingsPage:
         """Projected pre-seeds survive the first bracket generation."""
         _tour, event, people = _world(db_session, "Clobbered")
         pre = {str(people[0].id): 1, str(people[1].id): 2}
-        event.payouts = json.dumps({"pre_seedings": pre})
-        rows.project(event)
+        rows.replace_pre_seedings(event, pre)
         db.session.flush()
         assert _counts(event.id)["pre_seeds"] == 2
 
         BirlingBracket(event).generate_bracket(_entrants(people[:4]))
 
-        assert json.loads(event.payouts)["pre_seedings"] == pre
+        assert rows.load_pre_seedings(event) == pre
         counts = _counts(event.id)
         assert counts["pre_seeds"] == 2
         assert counts["seeds"] == 4
@@ -746,13 +740,10 @@ class TestPreSeedsComeFromTheRankingsPage:
         """Fallback generation keeps a pre-seeding-only payload intact."""
         _tour, event, people = _world(db_session, "FallbackPreSeeds")
         pre = {str(people[0].id): 1, str(people[1].id): 2}
-        event.payouts = json.dumps({"pre_seedings": pre})
-        db.session.flush()
-        assert _counts(event.id)["pre_seeds"] == 0
-
+        rows.replace_pre_seedings(event, pre)
         BirlingBracket(event).generate_bracket(_entrants(people[:4]))
 
-        assert json.loads(event.payouts)["pre_seedings"] == pre
+        assert rows.load_pre_seedings(event) == pre
         counts = _counts(event.id)
         assert counts["pre_seeds"] == 2
         assert counts["seeds"] == 4
@@ -771,16 +762,46 @@ class TestPreSeedsComeFromTheRankingsPage:
         entrants = _entrants(people[:4])
         BirlingBracket(event).generate_bracket(entrants)
 
-        doc = json.loads(event.payouts)
-        doc["pre_seedings"] = {str(people[0].id): 1, str(people[1].id): 2}
-        event.payouts = json.dumps(doc)
-        rows.project(event)
+        rows.replace_pre_seedings(
+            event, {str(people[0].id): 1, str(people[1].id): 2})
         db.session.flush()
         assert _counts(event.id)["pre_seeds"] == 2
 
         BirlingBracket(event).generate_bracket(entrants)
 
-        assert "pre_seedings" in json.loads(event.payouts)
         rowed = {p.uid: p.seed_number for p in _rows_for(event.id)["pre_seeds"]}
         assert rowed == {by_id[people[0].id]: 1, by_id[people[1].id]: 2}
         assert _counts(event.id)["seeds"] == 4
+
+
+def test_rankings_route_commits_an_empty_pre_seed_map(app, db_session):
+    """Clearing a school order must remove persisted pre-seeds too."""
+    from flask import url_for
+
+    tournament = make_tournament(db_session)
+    team = make_team(db_session, tournament)
+    person = make_college_competitor(db_session, tournament, team, "Chopper")
+    event = make_event(db_session, tournament, "College Birling",
+                       event_type="college", scoring_type="bracket")
+    db_session.flush()
+    rows.replace_pre_seedings(event, {str(person.id): 1})
+    db.session.commit()
+
+    from models.user import User
+
+    user = User(username=f"birling_clear_{tournament.id}", role="admin")
+    user.set_password("testpass")
+    db.session.add(user)
+    db.session.commit()
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["_user_id"] = str(user.id)
+
+    with app.test_request_context():
+        url = url_for("scheduling.ability_rankings", tournament_id=tournament.id)
+    response = client.post(
+        url, data={f"birling_schools_{event.id}": json.dumps({"Alpha": []})},
+        follow_redirects=True)
+
+    assert response.status_code == 200
+    assert rows.load_pre_seedings(event) == {}

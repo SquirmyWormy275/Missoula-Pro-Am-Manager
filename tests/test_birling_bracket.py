@@ -1,13 +1,11 @@
 """
 Unit tests for services/birling_bracket.py
 
-The BirlingBracket class stores state in event.payouts (a JSON TEXT field) and
-calls db.session.commit() to persist.  Both are mocked here so no database is
-needed.
+The BirlingBracket class persists state through the Birling row adapter. Both
+the adapter and database session are mocked here so no database is needed.
 
 Run:  pytest tests/test_birling_bracket.py -v
 """
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -36,28 +34,6 @@ def _bracket(num_competitors=4, seeding=None, event_type='college'):
         comps = [{'id': i, 'name': f'Comp{i}'} for i in range(1, num_competitors + 1)]
         b.generate_bracket(comps, seeding)
     return b
-
-
-class TestStoredDocument:
-    def test_malformed_json_is_treated_as_no_fallback_document(self):
-        bracket = object.__new__(BirlingBracket)
-        bracket.event = _mock_event('{')
-
-        assert bracket._stored_document() is None
-
-    def test_json_list_is_not_a_fallback_document(self):
-        bracket = object.__new__(BirlingBracket)
-        bracket.event = _mock_event('[]')
-
-        assert bracket._stored_document() is None
-
-    def test_unexpected_json_loader_failure_is_not_silenced(self):
-        bracket = object.__new__(BirlingBracket)
-        bracket.event = _mock_event('{"bracket": {}}')
-
-        with patch('services.birling_bracket.json.loads', side_effect=RuntimeError('broken loader')):
-            with pytest.raises(RuntimeError, match='broken loader'):
-                bracket._stored_document()
 
 
 # ---------------------------------------------------------------------------

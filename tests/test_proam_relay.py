@@ -288,9 +288,9 @@ class TestUsesPayoutsForState:
         ev = self._make_event(name='Pro-Am Relay', scoring_type='time')
         assert ev.uses_payouts_for_state is False
 
-    def test_bracket_returns_true(self):
+    def test_bracket_returns_false_after_table_authority_cutover(self):
         ev = self._make_event(scoring_type='bracket')
-        assert ev.uses_payouts_for_state is True
+        assert ev.uses_payouts_for_state is False
 
     def test_has_prelims_returns_false_after_state_migration(self):
         ev = self._make_event(has_prelims=True)

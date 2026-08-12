@@ -71,8 +71,7 @@ class Event(db.Model):
     payouts = db.Column(db.Text, nullable=False, default='{}')  # Dict: position -> amount
 
     # State-machine storage for Partnered Axe Throw and legacy Relay documents.
-    # Complete Relay state is authoritative in dedicated tables. Birling keeps
-    # its migration fallback document in payouts until the era-1 repair ends.
+    # Relay and Birling state live in their respective normalized tables.
     event_state = db.Column(db.Text, nullable=True)
 
     # Status
@@ -120,14 +119,8 @@ class Event(db.Model):
 
     @property
     def uses_payouts_for_state(self):
-        """True when the payouts column still stores state-machine data.
-
-        Partnered Axe Throw uses ``event_state`` and Relay uses its normalized
-        tables after a complete projection, so both can use payouts normally.
-        Birling remains guarded while its legacy bracket fallback can still be
-        read from that column.
-        """
-        return self.scoring_type == 'bracket'
+        """Whether ``payouts`` stores state rather than payout configuration."""
+        return False
 
     def get_payouts(self):
         """Return dict of position -> payout amount."""

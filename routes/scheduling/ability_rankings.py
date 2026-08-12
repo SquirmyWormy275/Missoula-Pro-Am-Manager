@@ -154,6 +154,7 @@ def ability_rankings(tournament_id):
 
         # ── College birling seedings ────────────────────────────────────
         birling_saved = 0
+        birling_changed = False
         birling_refused = []
         birling_events = tournament.events.filter_by(
             event_type='college', scoring_type='bracket'
@@ -181,34 +182,15 @@ def ability_rankings(tournament_id):
                             seed += 1
                         except (TypeError, ValueError):
                             continue
-            # Store in the Event.payouts JSON under 'pre_seedings'.
             try:
-                existing_data = json.loads(bev.payouts or '{}')
-            except (json.JSONDecodeError, TypeError):
-                existing_data = {}
-            existing_data['pre_seedings'] = pre_seedings
-            bev.payouts = json.dumps(existing_data)
-            # D13-C commit A2. ``pre_seedings`` is the one part of a birling
-            # document that BirlingBracket never writes, so this is the only
-            # place birling_pre_seeds can be kept current. The JSON above is
-            # still the truth; the rows are a projection of it and commit with
-            # it below.
-            #
-            # D13-C commit A3c. ``project`` raises now, and this call sits
-            # inside a loop over every birling event in the tournament. Letting
-            # it propagate would abandon the loop partway and roll back the
-            # events that projected cleanly along with the one that did not,
-            # so one unresolvable bracket would silently cost the judge the
-            # seedings they entered for every other bracket on the page. The
-            # refusal is collected instead and flashed once below, naming the
-            # events, and the commit proceeds for everything that worked.
-            try:
-                birling_rows.project(bev)
+                birling_rows.replace_pre_seedings(bev, pre_seedings)
             except birling_rows.ProjectionRefused as exc:
                 birling_refused.append((bev, exc))
-            birling_saved += len(pre_seedings)
+            else:
+                birling_saved += len(pre_seedings)
+                birling_changed = True
 
-        if birling_saved:
+        if birling_changed:
             db.session.commit()
             invalidate_tournament_caches(tournament_id)
 
@@ -216,14 +198,12 @@ def ability_rankings(tournament_id):
         flash(f'Rankings saved ({total_saved} set, {deleted_count} cleared).', 'success')
         if birling_refused:
             flash(
-                'Saved, but these brackets could not be written to the bracket '
-                'tables: '
+                'Some Birling seedings could not be saved: '
                 + '; '.join(
                     '%s (%s)' % (bev.display_name, ', '.join(exc.reasons))
                     for bev, exc in birling_refused
                 )
-                + '. Your seedings were kept. Send this message to whoever '
-                  'maintains the system before the next event.',
+                + '. Correct the listed issue and save again.',
                 'warning',
             )
         return redirect(url_for('scheduling.ability_rankings', tournament_id=tournament_id))
@@ -314,9 +294,7 @@ def ability_rankings(tournament_id):
         if not signed_up:
             continue
 
-        # Load existing pre-seedings. D13-C commit A3b: off the rows rather
-        # than out of the JSON document. This page is the only writer of them
-        # and has projected the rows alongside the JSON since A2.
+        # Pre-seeds are table-native Birling state; this page is their writer.
         pre_seedings = birling_rows.load_pre_seedings(bev)
         # pre_seedings is {comp_id_str: seed_number}
         seed_map = {int(k): v for k, v in pre_seedings.items()}

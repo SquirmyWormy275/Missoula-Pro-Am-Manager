@@ -15,12 +15,11 @@ different people on the pro side. Ten distinct ids across the two events, 55
 findings, every one of them a person the blob names correctly and identifies
 wrongly. That is the failure mode a foreign key exists to make impossible.
 
-These five tables are the same bracket with real references. Nothing reads them
-yet. Commit A1 creates and backfills them and leaves the JSON as the truth;
-A2 makes ``BirlingBracket`` write both; A3 moves the readers; A4 drops the
-container. That is the shape D12-C used for heat rosters and it is used again
-here for the same reason: a bracket is live judge state on race day and there
-is no sitting in which it can be unavailable.
+These five tables are the Birling bracket with real references. The bracket
+service reads and writes them as the sole persisted state. That is the shape
+D12-C used for heat rosters and it is used again here for the same reason: a
+bracket is live judge state on race day and there is no sitting in which it can
+be unavailable.
 
 Why there is no parent ``birling_brackets`` table
 =================================================

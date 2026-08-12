@@ -19,6 +19,7 @@ import uuid
 
 import pytest
 
+from services import birling_rows
 from tests.conftest import (
     make_college_competitor,
     make_event,
@@ -133,7 +134,8 @@ def _seed_generated_bracket(session, tournament, event):
         "seeding": [first, second],
         "placements": {},
     }
-    event.payouts = json.dumps(payload)
+    birling_rows.project_document(event, payload)
+    session.flush()
 
 
 # ---------------------------------------------------------------------------

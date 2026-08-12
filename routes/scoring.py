@@ -1536,9 +1536,9 @@ def tournament_payout_manager(tournament_id):
     total_purse = 0.0
     configured_count = 0
     for ev in pro_events:
-        # Events that store state-machine data in the payouts column
-        # (Pro-Am Relay, Partnered Axe Throw, Birling bracket) cannot
-        # be configured via the normal payout form.
+        # Keep the generic guard for any future event that stores state in
+        # ``payouts``. Current Relay, Partnered Axe, and Birling state use
+        # dedicated storage and can use payout configuration normally.
         if ev.uses_payouts_for_state:
             event_summaries.append({
                 'event': ev,

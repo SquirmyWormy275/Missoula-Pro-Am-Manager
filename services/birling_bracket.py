@@ -2,7 +2,6 @@
 Birling double-elimination bracket service.
 Handles bracket generation and match progression for Birling events.
 """
-import json
 import logging
 import math
 from datetime import datetime, timezone
@@ -23,102 +22,13 @@ class BirlingBracket:
         self.bracket_data = self._load_bracket_data()
 
     def _load_bracket_data(self) -> dict:
-        """The bracket document, from the row tables wherever they hold it.
-
-        D13-C commit A3b. The five birling tables are the truth for any event
-        that has rows. The JSON document in ``events.payouts`` is the fallback,
-        and stays the fallback until A4 takes it away.
-
-        Falling back rather than refusing is what lets this commit land on its
-        own. A reader with something else to consult cannot blank a bracket, so
-        a save that ``project`` declined shows the judge the document it
-        declined instead of an empty page, and the reader flip stops depending
-        on the write path changing in the same commit.
-
-        Both fallback paths log, and the log line is the instrument A4 needs.
-        If it never fires across a real event then dropping the JSON is safe.
-        If it fires, it is not, and we learn that from a race rather than from
-        an argument.
-        """
-        if birling_rows.is_projected(self.event.id):
-            try:
-                return birling_rows.load_document(self.event)
-            except birling_rows.UnloadableBracket as exc:
-                reason = 'its rows will not load (%s)' % exc
-        else:
-            reason = 'it has no projected rows'
-
-        stored = self._stored_document()
-        if stored is None:
-            return birling_rows.empty_document()
-
-        logger.warning(
-            'birling bracket: event %s fell back to its JSON document because '
-            '%s. The JSON is what this page is showing, and it is still what '
-            'every save writes. D13-C A4 removes this fallback, so this line '
-            'firing is a reason not to ship A4 yet.',
-            self.event.id, reason)
-        return stored
-
-    def _stored_document(self):
-        """The JSON document in ``events.payouts``, or None if there is none.
-
-        A pre-seeding can be saved before any bracket exists. Preserve that
-        input by merging it into the normal empty bracket skeleton, so fallback
-        generation cannot discard the school seed order before rows exist.
-        Other payout-shaped JSON remains non-bracket data and is ignored.
-
-        Malformed or non-string JSON is treated as an absent fallback document.
-        Other failures are allowed to surface so a programming or persistence
-        error cannot silently turn into an empty bracket on race day.
-        """
-        try:
-            data = json.loads(self.event.payouts or '{}')
-            if not isinstance(data, dict):
-                return None
-            if 'bracket' in data:
-                return data
-            pre_seedings = data.get('pre_seedings')
-            if isinstance(pre_seedings, dict):
-                document = birling_rows.empty_document()
-                document['pre_seedings'] = pre_seedings
-                return document
-        except (json.JSONDecodeError, TypeError):
-            return None
-        return None
+        """The bracket document rebuilt solely from the authoritative rows."""
+        return birling_rows.load_document(self.event)
 
     def _save_bracket_data(self):
-        """Save bracket data to event, and project it onto the row tables.
-
-        D13-C commit A3c. ``project`` now raises ``ProjectionRefused`` on a
-        document it cannot resolve, and this is the one place that raise is
-        swallowed on purpose.
-
-        The judge never loses a write to a projection failure. A refusal means
-        the event has no rows, and an event with no rows is exactly the case
-        the A3b reader falls back to the JSON for, so committing the JSON
-        anyway leaves the bracket readable and the show running. Rolling back
-        instead would take a scored result away from a judge on race day to
-        protect a table that the page is not even reading in that state. That
-        trade is never worth making.
-
-        What the refusal must not do is vanish. It is recorded on the instance
-        as ``projection_refused`` and every route that calls a write method
-        reads it afterwards and flashes it, so the operator learns during the
-        show rather than at A4 when the fallback is gone. ``project`` has
-        already logged the reasons by the time this catches.
-
-        The commit is unconditional and deliberate: ``project`` clears the
-        event's rows and flushes before it decides it cannot resolve the
-        document, so the state being committed is the JSON plus no rows. That
-        is the honest state, and it is the state the fallback is built for.
-        """
-        self.event.payouts = json.dumps(self.bracket_data)
-        try:
-            birling_rows.project(self.event)
-            self.projection_refused = None
-        except birling_rows.ProjectionRefused as exc:
-            self.projection_refused = exc
+        """Persist the in-memory document to the authoritative row tables."""
+        birling_rows.project_document(self.event, self.bracket_data)
+        self.projection_refused = None
         db.session.commit()
 
     def _expected_round_1_match_count(self, n: int) -> int:
