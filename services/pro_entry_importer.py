@@ -49,6 +49,7 @@ _EVENT_MAP = {
 # Maps lowercased stripped partner-column header -> canonical event name
 _PARTNER_COLS = {
     "men's double buck partner name": "Men's Double Buck",
+    "women's double buck partner name": "Women's Double Buck",
     "jack & jill partner name":       "Jack & Jill Sawing",
     "partnered axe throw 2":          "Partnered Axe Throw",
 }

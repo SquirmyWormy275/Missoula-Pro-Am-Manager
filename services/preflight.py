@@ -25,6 +25,7 @@ BLOCKING_CODES = frozenset({
     'unresolved_partner_name',
     'self_reference_partner',
     'non_reciprocal_partnership',
+    'invalid_partner_gender',
 })
 
 
@@ -133,6 +134,7 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
     unresolved_pairs: list[dict] = []
     non_reciprocal: list[dict] = []
     self_ref_partner: list[dict] = []
+    invalid_partner_gender: list[dict] = []
     for event in partnered_events:
         pool = _signed_up_competitors_for_event(event)
         if len(pool) <= 1:
@@ -179,6 +181,24 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                     'partner_name': partner_name,
                 })
                 continue
+            gender_requirement = getattr(event, 'partner_gender_requirement', None)
+            gender_valid = (
+                gender_requirement not in {'mixed', 'same'}
+                or (gender_requirement == 'mixed' and comp.gender != matched.gender)
+                or (gender_requirement == 'same' and comp.gender == matched.gender)
+            )
+            if not gender_valid:
+                invalid_partner_gender.append({
+                    'competitor_id': comp.id,
+                    'competitor_name': comp.display_name,
+                    'competitor_gender': comp.gender,
+                    'event_id': event.id,
+                    'event_name': event.display_name,
+                    'partner_id': matched.id,
+                    'partner_name': matched.display_name,
+                    'partner_gender': matched.gender,
+                    'requirement': gender_requirement,
+                })
             # Reciprocity: matched partner must list comp back.
             their_partners = (
                 matched.get_partners() if hasattr(matched, 'get_partners') else {}
@@ -273,6 +293,29 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
             ),
             'autofix': False,
             'non_reciprocal': non_reciprocal,
+        })
+    if invalid_partner_gender:
+        names = ', '.join(
+            f"{pair['competitor_name']} ({pair['competitor_gender']}) and "
+            f"{pair['partner_name']} ({pair['partner_gender']}) "
+            f"({pair['event_name']})"
+            for pair in invalid_partner_gender[:5]
+        )
+        suffix = (
+            f" (+{len(invalid_partner_gender) - 5} more)"
+            if len(invalid_partner_gender) > 5 else ''
+        )
+        issues.append({
+            'severity': 'high',
+            'code': 'invalid_partner_gender',
+            'title': 'Partner genders violate event rule',
+            'detail': (
+                f"{len(invalid_partner_gender)} partnership declaration(s) "
+                f"violate their event's mixed- or same-gender rule. These "
+                f"competitors are held back from heat generation. {names}{suffix}."
+            ),
+            'autofix': False,
+            'invalid_pairs': invalid_partner_gender,
         })
 
     # 2b) Gear-sharing integrity (college + pro)

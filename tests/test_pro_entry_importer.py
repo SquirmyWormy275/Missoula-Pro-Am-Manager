@@ -383,6 +383,9 @@ class TestPartnerCols:
     def test_double_buck_partner(self):
         assert _PARTNER_COLS["men's double buck partner name"] == "Men's Double Buck"
 
+    def test_womens_double_buck_partner(self):
+        assert _PARTNER_COLS["women's double buck partner name"] == "Women's Double Buck"
+
     def test_jack_and_jill_partner(self):
         assert _PARTNER_COLS["jack & jill partner name"] == "Jack & Jill Sawing"
 

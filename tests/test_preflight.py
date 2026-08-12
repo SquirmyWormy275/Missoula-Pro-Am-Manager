@@ -697,6 +697,7 @@ class TestBlockingCodes:
         assert 'unresolved_partner_name' in BLOCKING_CODES
         assert 'self_reference_partner' in BLOCKING_CODES
         assert 'non_reciprocal_partnership' in BLOCKING_CODES
+        assert 'invalid_partner_gender' in BLOCKING_CODES
         assert 'heat_sync_mismatch' not in BLOCKING_CODES
 
     def test_get_blocking_issues_filters_advisory(self):

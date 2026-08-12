@@ -554,3 +554,23 @@ class TestPreflightCollegePartnerChecks:
         assert "non_reciprocal_partnership" not in codes
         assert "self_reference_partner" not in codes
         assert "odd_partner_pool" not in codes
+
+    def test_same_gender_jack_jill_pair_blocks_preflight(self, db_session):
+        """Legacy/imported partner JSON must honor Jack & Jill's mixed rule."""
+        from services.preflight import build_preflight_report
+
+        t = _make_tournament(db_session)
+        team = _make_team(db_session, t)
+        first = _make_college_competitor(db_session, t, team, 'First Woman', 'F')
+        second = _make_college_competitor(db_session, t, team, 'Second Woman', 'F')
+        event = _make_partnered_event(db_session, t)
+        _enroll_pair(first, second, event)
+        db_session.flush()
+
+        report = build_preflight_report(t, saturday_college_event_ids=[])
+        issues = [
+            issue for issue in report['issues']
+            if issue['code'] == 'invalid_partner_gender'
+        ]
+        assert len(issues) == 1
+        assert len(issues[0]['invalid_pairs']) == 2
