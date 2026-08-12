@@ -14,6 +14,8 @@ import json
 import pytest
 
 from database import db as _db
+from models import EventResult
+from models.competitor import ProCompetitor
 from tests.conftest import make_event, make_pro_competitor, make_tournament
 
 
@@ -46,6 +48,29 @@ def _make_pair(db_session, tournament, name1, name2, event_id=None):
     c1 = make_pro_competitor(db_session, tournament, name1, 'M', events=events)
     c2 = make_pro_competitor(db_session, tournament, name2, 'F', events=events)
     return c1, c2
+
+
+def _complete_event(db_session, tournament, axe_event):
+    """Run the real state machine through a four-pair final."""
+    from services.partnered_axe import PartneredAxeThrow
+
+    pat = PartneredAxeThrow(axe_event)
+    pairs = []
+    for i in range(5):
+        c1, c2 = _make_pair(
+            db_session, tournament, f'Complete{i}A', f'Complete{i}B',
+            event_id=axe_event.id,
+        )
+        db_session.flush()
+        pairs.append(pat.register_pair(c1.id, c2.id))
+
+    for i, pair in enumerate(pairs):
+        pat.record_prelim_result(pair['pair_id'], hits=10 + i)
+
+    for i, finalist in enumerate(pat.advance_to_finals()):
+        pat.record_final_result(finalist['pair_id'], hits=20 + i)
+
+    return pat
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +176,34 @@ class TestPartneredAxeLifecycle:
 
         assert pat.get_stage() == 'completed'
 
+    def test_completion_finalizes_payout_ledger(self, db_session, tournament, axe_event):
+        """The state-machine finish must publish official pro payouts."""
+        axe_event.set_payouts({'1': 500, '2': 300, '3': 200, '4': 100})
+        db_session.commit()
+
+        _complete_event(db_session, tournament, axe_event)
+
+        results = sorted(
+            axe_event.results.all(),
+            key=lambda result: result.final_position or 999,
+        )
+        assert axe_event.status == 'completed'
+        assert axe_event.is_finalized is True
+        assert len(results) == 10
+        assert [r.final_position for r in results] == [
+            1, 1, 2, 2, 3, 3, 4, 4, 5, 5,
+        ]
+        assert [r.payout_amount for r in results] == [
+            500, 500, 300, 300, 200, 200, 100, 100, 0, 0,
+        ]
+
+        competitors = ProCompetitor.query.filter_by(
+            tournament_id=tournament.id
+        ).all()
+        assert sorted(comp.total_earnings for comp in competitors) == [
+            0, 0, 100, 100, 200, 200, 300, 300, 500, 500,
+        ]
+
     def test_full_standings_merge(self, db_session, tournament, axe_event):
         from services.partnered_axe import PartneredAxeThrow
         pat = PartneredAxeThrow(axe_event)
@@ -230,6 +283,40 @@ class TestPartneredAxeEdgeCases:
         pat.reset()
         assert pat.get_stage() == 'prelims'
         assert len(pat.get_pairs()) == 0
+
+    def test_reset_removes_unsettled_results_and_earnings(
+            self, db_session, tournament, axe_event):
+        axe_event.set_payouts({'1': 500, '2': 300, '3': 200, '4': 100})
+        db_session.commit()
+        pat = _complete_event(db_session, tournament, axe_event)
+
+        pat.reset()
+
+        assert axe_event.results.count() == 0
+        assert axe_event.status == 'pending'
+        assert axe_event.is_finalized is False
+        assert pat.get_stage() == 'prelims'
+        assert all(
+            comp.total_earnings == 0
+            for comp in ProCompetitor.query.filter_by(
+                tournament_id=tournament.id
+            ).all()
+        )
+
+    def test_reset_refuses_to_erase_settled_payouts(
+            self, db_session, tournament, axe_event):
+        axe_event.set_payouts({'1': 500})
+        db_session.commit()
+        pat = _complete_event(db_session, tournament, axe_event)
+        winning_result = axe_event.results.filter_by(final_position=1).first()
+        winning_result.payout_settled = True
+        db_session.commit()
+
+        with pytest.raises(ValueError, match='payouts are settled'):
+            pat.reset()
+
+        assert axe_event.results.count() == 10
+        assert axe_event.is_finalized is True
 
     def test_get_final_standings_empty_before_completion(self, db_session, tournament, axe_event):
         from services.partnered_axe import PartneredAxeThrow

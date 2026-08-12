@@ -280,7 +280,16 @@ def reset(tournament_id):
         flash('Partnered Axe Throw is not enabled for this tournament.', 'warning')
         return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))
 
-    pat.reset()
+    try:
+        pat.reset()
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))
+    except ValueError as e:
+        flash(str(e), 'danger')
+        return redirect(url_for('partnered_axe.dashboard', tournament_id=tournament_id))
+
     invalidate_tournament_caches(tournament_id)
     flash('Partnered Axe Throw has been reset', 'warning')
 

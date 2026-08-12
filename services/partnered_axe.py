@@ -381,8 +381,25 @@ class PartneredAxeThrow:
             self.state['final_results'] = sorted_finals
             self.state['stage'] = 'completed'
 
-            # Save results to EventResult table
-            self._save_event_results()
+            # Final state, result rows, positions, payouts, and earnings must
+            # publish together.  A split commit can leave the standings page
+            # claiming a winner while the payout ledger still reflects the
+            # prelims or a prior finals correction.
+            try:
+                self._save_event_results(commit=False)
+                self._save_state(commit=False)
+                db.session.flush()
+
+                # The scoring engine knows that this state machine owns the
+                # finishing order and reads it instead of mixing prelim and
+                # finals scores from result_value.
+                from services.scoring_engine import calculate_positions
+                calculate_positions(self.event)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                raise
+            return
 
         self._save_state()
 
@@ -421,7 +438,7 @@ class PartneredAxeThrow:
 
         db.session.commit()
 
-    def _save_event_results(self):
+    def _save_event_results(self, commit: bool = True):
         """Save final results to EventResult table.
 
         Updates existing records (created during prelim cross-populate) when
@@ -441,18 +458,30 @@ class PartneredAxeThrow:
                     existing.result_value = pair['final_score']
                     existing.final_position = pair['final_position']
                     existing.competitor_name = competitor['name']
+                    existing.partner_name = pair[
+                        'competitor2' if competitor_key == 'competitor1'
+                        else 'competitor1'
+                    ]['name']
+                    existing.status = 'completed'
                 else:
+                    partner = pair[
+                        'competitor2' if competitor_key == 'competitor1'
+                        else 'competitor1'
+                    ]
                     result = EventResult(
                         event_id=self.event.id,
                         competitor_type='pro',
                         competitor_id=competitor['id'],
                         competitor_name=competitor['name'],
+                        partner_name=partner['name'],
                         result_value=pair['final_score'],
                         final_position=pair['final_position'],
+                        status='completed',
                     )
                     db.session.add(result)
 
-        db.session.commit()
+        if commit:
+            db.session.commit()
 
     def get_final_standings(self) -> list:
         """Get final standings (only available after finals complete)."""
@@ -487,7 +516,46 @@ class PartneredAxeThrow:
         return results
 
     def reset(self):
-        """Reset the event to initial state."""
+        """Reset the event to initial state without leaving stale results.
+
+        A reset deliberately discards the current bracket.  It therefore also
+        removes its EventResult ledger rows and reverses their cached pro
+        earnings.  Paid entries are a financial record, so they must be
+        explicitly reopened by an administrator before the bracket can be
+        reset.
+        """
+        results = EventResult.query.filter_by(event_id=self.event.id).all()
+        if any(result.payout_settled for result in results):
+            raise ValueError(
+                'Cannot reset Partnered Axe Throw while payouts are settled. '
+                'Reopen the settled payouts first.'
+            )
+
+        try:
+            for result in results:
+                payout = float(result.payout_amount or 0.0)
+                if payout and result.competitor_type == 'pro':
+                    competitor = db.session.get(ProCompetitor, result.competitor_id)
+                    if competitor:
+                        competitor.total_earnings = max(
+                            0.0, float(competitor.total_earnings or 0.0) - payout
+                        )
+                db.session.delete(result)
+
+            self.event.status = 'pending'
+            self.event.is_finalized = False
+            self.state = {
+                'stage': 'prelims',
+                'prelim_results': [],
+                'finalists': [],
+                'final_results': [],
+                'pairs': []
+            }
+            self._save_state(commit=False)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
         self.state = {
             'stage': 'prelims',
             'prelim_results': [],
