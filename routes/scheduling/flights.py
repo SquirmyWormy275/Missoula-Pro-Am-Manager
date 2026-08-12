@@ -3,6 +3,7 @@ Flight management routes: flight_list, build_flights, start_flight, complete_fli
 reorder_flight_heats, and the SMS notification helper.
 """
 from flask import flash, jsonify, redirect, render_template, request, url_for
+from sqlalchemy.orm.exc import StaleDataError
 
 import strings as text
 from database import db
@@ -799,7 +800,18 @@ def drag_move_competitor(tournament_id, source_heat_id):
     except Exception:
         pass  # Rebalance must not block the move.
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except StaleDataError:
+        db.session.rollback()
+        return jsonify({
+            'ok': False,
+            'code': 'stale_heat',
+            'error': (
+                'Another judge updated this heat in parallel. Refresh the board '
+                'and try the move again; your change was not saved.'
+            ),
+        }), 409
     log_action('competitor_moved_between_heats', 'heat', target.id, {
         'tournament_id': tournament_id,
         'source_heat_id': source.id,

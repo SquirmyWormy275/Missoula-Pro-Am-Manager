@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from unittest.mock import patch
 
 import pytest
+from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
 
@@ -580,6 +582,35 @@ def test_move_competitor_rejects_shared_gear_target(app, auth_client):
         from models import Heat
         assert 1 in _db.session.get(Heat, h_a_id).get_competitors()
         assert 1 not in _db.session.get(Heat, h_b_id).get_competitors()
+
+
+def test_move_competitor_reports_stale_heat_conflict(app, auth_client):
+    """A concurrent heat update is a retryable conflict, not a server error."""
+    from database import db as _db
+    from models import Event
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        ev = Event(tournament_id=t.id, name="Underhand", event_type="pro",
+                   gender="M", scoring_type="time", stand_type="underhand",
+                   max_stands=5)
+        _db.session.add(ev); _db.session.flush()
+        source = _seed_heat(_db, ev, 1, competitors=[1], stand_assignments={"1": 1})
+        target = _seed_heat(_db, ev, 2, competitors=[], stand_assignments={})
+        _db.session.commit()
+        tid, source_id, target_id = t.id, source.id, target.id
+
+    with patch('routes.scheduling.flights.db.session.commit', side_effect=StaleDataError()):
+        resp = auth_client.post(
+            f"/scheduling/{tid}/heats/{source_id}/drag-move",
+            json={"competitor_ids": [1], "target_heat_id": target_id},
+        )
+
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert body["code"] == "stale_heat"
+    assert "refresh" in body["error"].lower()
 
 
 def test_move_competitor_rejects_cross_event(app, auth_client):

@@ -9,8 +9,10 @@ Run:  pytest tests/test_day_of_operations.py -v
 
 import json
 import os
+from unittest.mock import patch
 
 import pytest
+from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
 from database import db as _db
@@ -230,6 +232,25 @@ class TestScratchCompetitor:
         heat = _db.session.get(Heat, h.id)
         assert c1.id not in heat.get_competitors()
         assert c2.id in heat.get_competitors()
+
+    def test_scratch_reports_stale_heat_conflict(self, db_session, auth_client):
+        t = _make_tournament(db_session, name="Scratch Stale")
+        e = _make_event(db_session, t.id, name="Scratch Stale Event")
+        c = _make_pro(db_session, t.id, "Scratch_Stale", events=[e.id])
+        _make_result(db_session, e.id, c)
+        h = _make_heat(db_session, e.id, competitors=[c.id],
+                       stand_assignments={str(c.id): 1})
+        db_session.commit()
+
+        with patch('routes.scheduling.heats.db.session.commit', side_effect=StaleDataError()):
+            resp = auth_client.post(
+                f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
+                data={"competitor_id": c.id, "heat_id": h.id},
+                follow_redirects=True,
+            )
+
+        assert resp.status_code == 200
+        assert b"updated this heat in parallel" in resp.data.lower()
 
     def test_scratch_frees_stand(self, db_session, auth_client):
         t = _make_tournament(db_session)
@@ -609,6 +630,23 @@ class TestAddToHeat:
         heat = _db.session.get(Heat, h.id)
         assert c2.id in heat.get_competitors()
         assert str(c2.id) in heat.get_stand_assignments()
+
+    def test_add_reports_stale_heat_conflict(self, db_session, auth_client):
+        t = _make_tournament(db_session, name="Add Stale")
+        e = _make_event(db_session, t.id, name="Add Stale Event", max_stands=2)
+        c = _make_pro(db_session, t.id, "Add_Stale", events=[e.id])
+        h = _make_heat(db_session, e.id, competitors=[], stand_assignments={})
+        db_session.commit()
+
+        with patch('routes.scheduling.heats.db.session.commit', side_effect=StaleDataError()):
+            resp = auth_client.post(
+                f"/scheduling/{t.id}/event/{e.id}/add-to-heat",
+                data={"competitor_id": c.id, "heat_id": h.id},
+                follow_redirects=True,
+            )
+
+        assert resp.status_code == 200
+        assert b"updated this heat in parallel" in resp.data.lower()
 
     def test_add_to_full_heat_rejected(self, db_session, auth_client):
         t = _make_tournament(db_session)

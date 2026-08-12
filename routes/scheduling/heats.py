@@ -5,6 +5,7 @@ move_competitor_between_heats, scratch_competitor.
 
 from flask import abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user
+from sqlalchemy.orm.exc import StaleDataError
 
 import config
 import strings as text
@@ -22,6 +23,11 @@ from . import (
     _normalize_name,
     _signed_up_competitors,
     scheduling_bp,
+)
+
+_STALE_HEAT_DATA_FLASH = (
+    'Another judge updated this heat in parallel. Reload the page and try again; '
+    'your change was not saved.'
 )
 
 
@@ -451,7 +457,12 @@ def move_competitor_between_heats(tournament_id, event_id):
     except Exception:
         pass  # Rebalance failure must not block the move.
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_HEAT_DATA_FLASH, 'warning')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
     flash('Competitor moved successfully.', 'success')
     return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
@@ -615,6 +626,9 @@ def scratch_competitor(tournament_id, event_id):
                 flash(f'Heat {heat.heat_number} is now empty and marked complete.', 'info')
                 break
 
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_HEAT_DATA_FLASH, 'warning')
     except Exception as e:
         db.session.rollback()
         flash(f'Error scratching competitor: {e}', 'error')
@@ -808,6 +822,9 @@ def add_to_heat(tournament_id, event_id):
         db.session.commit()
         flash(f'{comp_name} added to {event.display_name} Heat {heat.heat_number}.', 'success')
 
+    except StaleDataError:
+        db.session.rollback()
+        flash(_STALE_HEAT_DATA_FLASH, 'warning')
     except Exception as e:
         db.session.rollback()
         flash(f'Error adding competitor: {e}', 'error')
