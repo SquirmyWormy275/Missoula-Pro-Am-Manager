@@ -18,6 +18,8 @@ import os
 import pytest
 
 from database import db
+from models.competitor import ProCompetitor
+from models.event import EventResult
 
 os.environ.setdefault("SECRET_KEY", "test-secret-partner-reassign")
 os.environ.setdefault("WTF_CSRF_ENABLED", "False")
@@ -93,7 +95,15 @@ def _make_partnered_event(session, tournament, gender_req="any"):
     return e
 
 
-def _make_pro(session, tournament, name, gender="M", status="active", partners=None):
+def _make_pro(
+    session,
+    tournament,
+    name,
+    gender="M",
+    status="active",
+    partners=None,
+    events_entered=None,
+):
     from models.competitor import ProCompetitor
 
     c = ProCompetitor(
@@ -102,6 +112,7 @@ def _make_pro(session, tournament, name, gender="M", status="active", partners=N
         gender=gender,
         status=status,
         partners=json.dumps(partners or {}),
+        events_entered=json.dumps(events_entered or []),
     )
     session.add(c)
     session.flush()
@@ -134,7 +145,14 @@ def _setup_orphan_scenario(db_session):
     t = _make_tournament(db_session)
     ev = _make_partnered_event(db_session, t, gender_req="any")
 
-    alice = _make_pro(db_session, t, "Alice", gender="F", partners={str(ev.id): "Bob"})
+    alice = _make_pro(
+        db_session,
+        t,
+        "Alice",
+        gender="F",
+        partners={str(ev.id): "Bob"},
+        events_entered=[ev.id],
+    )
     bob = _make_pro(
         db_session,
         t,
@@ -142,8 +160,11 @@ def _setup_orphan_scenario(db_session):
         gender="M",
         status="scratched",
         partners={str(ev.id): "Alice"},
+        events_entered=[ev.id],
     )
-    carol = _make_pro(db_session, t, "Carol", gender="F", status="active")
+    carol = _make_pro(
+        db_session, t, "Carol", gender="F", status="active", events_entered=[ev.id]
+    )
 
     # Alice has an EventResult; Bob's result scratched
     _make_result(db_session, ev, alice, partner_name="Bob")
@@ -499,3 +520,96 @@ class TestReassignPartnerRoute:
         ).first()
         assert r is not None
         assert r.partner_name == "Carol"
+
+    def test_rejects_available_competitor_not_entered_in_event(
+        self, app, db_session, auth_client
+    ):
+        """A submitted replacement must be entered in the partnered event."""
+        t, ev, alice, bob, _ = _setup_orphan_scenario(db_session)
+        dave = _make_pro(db_session, t, "Dave", gender="M")
+        db_session.commit()
+
+        response = auth_client.post(
+            f"/scheduling/{t.id}/events/{ev.id}/reassign-partner",
+            data={
+                "orphan_id": str(alice.id),
+                "orphan_type": "pro",
+                "new_partner_id": str(dave.id),
+                "new_partner_type": "pro",
+            },
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert b"entered in this event" in response.data
+        assert db.session.get(ProCompetitor, alice.id).get_partners()[str(ev.id)] == "Bob"
+
+    def test_rejects_cross_tournament_replacement(
+        self, app, db_session, auth_client
+    ):
+        """An ID from a different tournament cannot mutate this event roster."""
+        t, ev, alice, bob, _ = _setup_orphan_scenario(db_session)
+        other_tournament = _make_tournament(db_session)
+        outsider = _make_pro(
+            db_session, other_tournament, "Outsider", gender="M", events_entered=[ev.id]
+        )
+        db_session.commit()
+
+        response = auth_client.post(
+            f"/scheduling/{t.id}/events/{ev.id}/reassign-partner",
+            data={
+                "orphan_id": str(alice.id),
+                "orphan_type": "pro",
+                "new_partner_id": str(outsider.id),
+                "new_partner_type": "pro",
+            },
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert b"belong to this tournament" in response.data
+        assert db.session.get(ProCompetitor, alice.id).get_partners()[str(ev.id)] == "Bob"
+
+    def test_rejects_stale_orphan_submission(self, app, db_session, auth_client):
+        """A replacement cannot overwrite an orphan repaired by another judge."""
+        t, ev, alice, bob, carol = _setup_orphan_scenario(db_session)
+        dave = _make_pro(
+            db_session, t, "Dave", gender="M", events_entered=[ev.id]
+        )
+        alice.set_partner(ev.id, "Carol")
+        carol.set_partner(ev.id, "Alice")
+        EventResult.query.filter_by(
+            event_id=ev.id, competitor_id=alice.id, competitor_type="pro"
+        ).one().partner_name = "Carol"
+        db_session.commit()
+
+        response = auth_client.post(
+            f"/scheduling/{t.id}/events/{ev.id}/reassign-partner",
+            data={
+                "orphan_id": str(alice.id),
+                "orphan_type": "pro",
+                "new_partner_id": str(dave.id),
+                "new_partner_type": "pro",
+            },
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert b"no longer needs a partner" in response.data
+        assert db.session.get(ProCompetitor, alice.id).get_partners()[str(ev.id)] == "Carol"
+
+    def test_queue_excludes_active_competitor_not_entered_in_event(
+        self, app, db_session, auth_client
+    ):
+        """The dropdown only offers active entrants for the current event."""
+        t, ev, alice, bob, carol = _setup_orphan_scenario(db_session)
+        dave = _make_pro(db_session, t, "Dave", gender="M")
+        db_session.commit()
+
+        response = auth_client.get(
+            f"/scheduling/{t.id}/events/{ev.id}/partner-queue"
+        )
+
+        assert response.status_code == 200
+        assert b"Carol" in response.data
+        assert b"Dave" not in response.data
