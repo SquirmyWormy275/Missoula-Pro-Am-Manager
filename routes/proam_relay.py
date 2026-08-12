@@ -2,6 +2,7 @@
 Routes for Pro-Am Relay lottery and management.
 """
 from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import current_user
 from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
@@ -310,6 +311,9 @@ def save_relay_payouts(tournament_id):
 @bp.route('/team/<int:team_id>/toggle-settled', methods=['POST'])
 def toggle_relay_settlement(tournament_id, team_id):
     """Toggle payment status for one final, payable Relay team."""
+    if not getattr(current_user, 'is_admin', False):
+        abort(403)
+
     tournament = db.get_or_404(Tournament, tournament_id)
     payout_row = next(
         (

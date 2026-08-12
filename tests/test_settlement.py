@@ -286,6 +286,30 @@ class TestPayoutLedger:
 
 
 class TestToggleSettlementAuth:
+    def test_judge_cannot_toggle_settlement(self, app, db_session):
+        from models.user import User
+
+        tournament = _make_tournament(db_session)
+        competitor = _make_pro_competitor(db_session, tournament, name='Judge Guard Pro')
+        event = _make_event(db_session, tournament, name='Judge Guard Event')
+        result = _make_result(db_session, event, competitor)
+        judge = User(username='settlement_judge', role='judge')
+        judge.set_password('judge_pass')
+        db_session.add(judge)
+        db_session.commit()
+
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session['_user_id'] = str(judge.id)
+
+        response = client.post(
+            f'/scoring/tournament/{tournament.id}/result/{result.id}/toggle-settled',
+            headers={'X-Requested-With': 'XMLHttpRequest'},
+        )
+
+        assert response.status_code == 403
+        assert db.session.get(type(result), result.id).payout_settled is False
+
     def test_wrong_tournament_returns_404(self, app, auth_client, db_session):
         """Result that belongs to a different tournament → 404."""
         t1 = _make_tournament(db_session)

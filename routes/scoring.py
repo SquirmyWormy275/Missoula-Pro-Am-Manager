@@ -1590,6 +1590,9 @@ def toggle_settlement(tid, rid):
     AJAX callers (X-Requested-With: XMLHttpRequest) receive JSON
     ``{"ok": true, "settled": <bool>}``.  Plain-form callers are redirected.
     """
+    if not getattr(current_user, 'is_admin', False):
+        abort(403)
+
     result = db.get_or_404(EventResult, rid)
     # Ownership check — result must belong to an event in this tournament.
     event = db.get_or_404(Event, result.event_id)

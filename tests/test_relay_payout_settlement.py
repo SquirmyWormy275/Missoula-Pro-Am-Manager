@@ -195,3 +195,26 @@ def test_report_includes_relay_rows_and_toggle_settles_team(auth_client, db_sess
     )
 
     assert response.status_code == 404
+
+
+def test_judge_cannot_toggle_relay_settlement(app, db_session):
+    from models.user import User
+
+    tournament = make_tournament(db_session)
+    _, _, _, payable_team = _completed_relay(db_session, tournament)
+    judge = User(username='relay_settlement_judge', role='judge')
+    judge.set_password('judge_pass')
+    db_session.add(judge)
+    db_session.commit()
+
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session['_user_id'] = str(judge.id)
+
+    response = client.post(
+        f'/tournament/{tournament.id}/proam-relay/team/{payable_team.id}/toggle-settled',
+        headers={'X-Requested-With': 'XMLHttpRequest'},
+    )
+
+    assert response.status_code == 403
+    assert db.session.get(RelayTeam, payable_team.id).payout_settled is False
