@@ -420,7 +420,8 @@
                        data-event-id="{{ row.event.id }}"
                        data-event-name="{{ row.event.display_name|e }}"
                        data-max-stands="{{ row.event.max_stands or 4 }}"
-                       data-is-partnered="{{ 'true' if row.event.is_partnered else 'false' }}">
+                       data-is-partnered="{{ 'true' if row.event.is_partnered else 'false' }}"
+                       data-roster-editable="{{ 'true' if row.heat.status != 'completed' and not row.event.requires_dual_runs else 'false' }}">
                     {% for comp in row.competitors %}
                     <tr class="comp-row"
                         data-competitor-id="{{ comp.id }}"
@@ -656,7 +657,12 @@
 
     // Per-heat Sortable (per-event group so competitor can only be dropped into
     // heats of the same event). Includes the holding bin as a universal target.
+    function isRosterEditable(table) {
+        return table.dataset.rosterEditable === 'true';
+    }
+
     document.querySelectorAll('.comp-sortable').forEach(function (table) {
+        if (!isRosterEditable(table)) { return; }
         var eventId = table.dataset.eventId;
         new Sortable(table, {
             group: { name: 'event-' + eventId, put: ['event-' + eventId, 'bin'] },
@@ -669,7 +675,7 @@
                 // Visually mark same-event heats as valid targets, others as invalid.
                 document.querySelectorAll('.comp-sortable').forEach(function (t) {
                     if (t === evt.from) return;
-                    if (t.dataset.eventId === eventId) {
+                    if (t.dataset.eventId === eventId && isRosterEditable(t)) {
                         var max = parseInt(t.dataset.maxStands, 10) || 4;
                         var current = t.querySelectorAll('tr.comp-row').length;
                         if (current < max) t.classList.add('drag-valid-target');

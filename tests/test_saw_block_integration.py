@@ -516,6 +516,61 @@ def test_move_competitor_happy_path(app, auth_client):
         assert h_b.get_stand_assignments().get("2") == 3
 
 
+def test_move_competitor_rejects_completed_source_or_target(app, auth_client):
+    """Flight-board drag cannot rewrite a completed heat roster."""
+    from database import db as _db
+    from models import Event
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        ev = Event(tournament_id=t.id, name="Underhand", event_type="pro",
+                   gender="M", scoring_type="time", stand_type="underhand",
+                   max_stands=5)
+        _db.session.add(ev); _db.session.flush()
+        source = _seed_heat(_db, ev, 1, competitors=[1], stand_assignments={"1": 1})
+        target = _seed_heat(_db, ev, 2, competitors=[], stand_assignments={})
+        target.status = "completed"
+        _db.session.commit()
+        tid, source_id, target_id = t.id, source.id, target.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/heats/{source_id}/drag-move",
+        json={"competitor_ids": [1], "target_heat_id": target_id},
+    )
+
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "completed_heat"
+    with app.app_context():
+        from models import Heat
+        assert 1 in _db.session.get(Heat, source_id).get_competitors()
+        assert 1 not in _db.session.get(Heat, target_id).get_competitors()
+
+
+def test_move_competitor_rejects_dual_run_event(app, auth_client):
+    """A single-run drag request cannot desynchronize the matching second run."""
+    from database import db as _db
+    from models import Event
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        ev = Event(tournament_id=t.id, name="Chokerman", event_type="pro",
+                   gender="M", scoring_type="time", stand_type="chokerman",
+                   max_stands=5, requires_dual_runs=True)
+        _db.session.add(ev); _db.session.flush()
+        source = _seed_heat(_db, ev, 1, competitors=[1], stand_assignments={"1": 1})
+        target = _seed_heat(_db, ev, 2, competitors=[], stand_assignments={})
+        _db.session.commit()
+        tid, source_id, target_id = t.id, source.id, target.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/heats/{source_id}/drag-move",
+        json={"competitor_ids": [1], "target_heat_id": target_id},
+    )
+
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "dual_run_event"
+
+
 def test_move_competitor_rejects_full_target(app, auth_client):
     """Moving into a full heat returns 409 with target_full code."""
     from database import db as _db

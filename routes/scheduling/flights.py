@@ -673,6 +673,47 @@ def drag_move_competitor(tournament_id, source_heat_id):
     if event is None:
         return jsonify({'ok': False, 'error': 'Event not found for tournament'}), 404
 
+    if source.id == target.id:
+        return jsonify({
+            'ok': False,
+            'error': 'Select a different destination heat.',
+        }), 400
+
+    if source.status == 'completed' or target.status == 'completed':
+        return jsonify({
+            'ok': False,
+            'code': 'completed_heat',
+            'error': (
+                'Cannot move competitors into or out of a completed heat. '
+                'Completed heat rosters are preserved as scoring history.'
+            ),
+        }), 409
+
+    # This endpoint only knows about one heat at a time. Dual-run events must
+    # use the heat board, which moves matching Run 1 and Run 2 rosters together.
+    if event.requires_dual_runs:
+        return jsonify({
+            'ok': False,
+            'code': 'dual_run_event',
+            'error': (
+                'Dual-run heat changes must use the heat board so both runs '
+                'stay synchronized.'
+            ),
+        }), 409
+
+    from .heats import _current_user_id
+
+    user_id = _current_user_id()
+    if any(
+        heat.is_locked() and heat.locked_by_user_id != (user_id or -1)
+        for heat in (source, target)
+    ):
+        return jsonify({
+            'ok': False,
+            'code': 'locked_heat',
+            'error': 'A source or destination heat is currently being scored by another judge.',
+        }), 423
+
     # Every competitor in the payload must currently be in the source heat.
     source_comps = source.get_competitors()
     missing = [c for c in competitor_ids if c not in source_comps]
