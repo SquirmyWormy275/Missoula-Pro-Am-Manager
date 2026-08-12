@@ -450,6 +450,18 @@ def _apply_state_machine_ranking(event: Event, completed: list[EventResult],
     event.is_finalized = True
 
 
+def _clear_changed_payout_settlements(
+        results: list[EventResult], prior_payouts: dict[int, float]) -> None:
+    """Reopen only payouts whose owed amount changed during a correction."""
+    for result in results:
+        if not result.payout_settled:
+            continue
+        old_amount = round(float(prior_payouts.get(result.id, 0.0)), 2)
+        new_amount = round(float(result.payout_amount or 0.0), 2)
+        if old_amount != new_amount:
+            result.payout_settled = False
+
+
 # ---------------------------------------------------------------------------
 # Public: position calculation
 # ---------------------------------------------------------------------------
@@ -472,6 +484,10 @@ def calculate_positions(event: Event) -> None:
     logger.info('scoring_engine: calculate_positions event_id=%s name=%r type=%s',
                 event.id, event.name, event.event_type)
     all_results = event.results.all()
+    prior_payouts = {
+        result.id: float(result.payout_amount or 0.0)
+        for result in all_results
+    } if event.event_type != 'college' else {}
 
     # --- strip previous awards ---
     # College: just zero the result-row points + position.  The rebuild SUM at
@@ -513,6 +529,8 @@ def calculate_positions(event: Event) -> None:
                 team = db.session.get(Team, tid)
                 if team:
                     team.recalculate_points()
+        else:
+            _clear_changed_payout_settlements(all_results, prior_payouts)
         return
 
     # --- state-machine events: take the order from event_state, not from
@@ -520,6 +538,7 @@ def calculate_positions(event: Event) -> None:
     tiers = _state_machine_ranking(event)
     if tiers is not None:
         _apply_state_machine_ranking(event, completed, tiers)
+        _clear_changed_payout_settlements(all_results, prior_payouts)
         return
 
     # --- axe throw tie detection (before sorting) ---
@@ -644,6 +663,8 @@ def calculate_positions(event: Event) -> None:
             team = db.session.get(Team, team_id)
             if team:
                 team.recalculate_points()
+    else:
+        _clear_changed_payout_settlements(all_results, prior_payouts)
 
     # --- outlier flagging ---
     flag_score_outliers(completed, event)
@@ -977,6 +998,8 @@ def record_throwoff_result(event: Event, position_map: dict[int, int]) -> None:
             new_pay = event.get_payout_for_position(position)
             diff = new_pay - old_pay
             result.payout_amount = new_pay
+            if result.payout_settled and round(old_pay, 2) != round(new_pay, 2):
+                result.payout_settled = False
             comp = db.session.get(ProCompetitor, result.competitor_id)
             if comp:
                 comp.total_earnings = max(0.0, comp.total_earnings + diff)

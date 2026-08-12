@@ -651,3 +651,107 @@ class TestIdempotency:
         first = EventResult.query.filter_by(event_id=event.id, final_position=1).first()
         assert first.competitor_name == 'Idem1'
         assert first.payout_amount == 500
+
+
+class TestPayoutSettlementCorrections:
+    """Paid markers must not survive a change to the amount owed."""
+
+    def test_recalculation_reopens_only_changed_payout(self, db_session, tournament):
+        from services.scoring_engine import calculate_positions
+
+        event = make_event(
+            db_session, tournament, 'Payout Correction',
+            scoring_type='time', scoring_order='lowest_wins',
+            payouts={1: 500, 2: 200},
+        )
+        first = make_pro_competitor(db_session, tournament, 'Paid First', 'M', events=[event.id])
+        second = make_pro_competitor(db_session, tournament, 'Paid Second', 'M', events=[event.id])
+        first_result = make_event_result(
+            db_session, event, first, result_value=10.0, status='completed',
+        )
+        second_result = make_event_result(
+            db_session, event, second, result_value=12.0, status='completed',
+        )
+        db_session.flush()
+
+        calculate_positions(event)
+        first_result.payout_settled = True
+        db_session.flush()
+
+        # An unchanged recalculation must not reopen a payment already made.
+        calculate_positions(event)
+        assert first_result.payout_settled is True
+
+        # A corrected time reverses the order and changes the paid amount.
+        first_result.result_value = 15.0
+        calculate_positions(event)
+
+        assert first_result.final_position == 2
+        assert first_result.payout_amount == 200
+        assert first_result.payout_settled is False
+        assert second_result.final_position == 1
+        assert second_result.payout_amount == 500
+
+    def test_state_machine_recalculation_reopens_changed_payout(
+            self, db_session, tournament, monkeypatch):
+        import services.scoring_engine as scoring_engine
+
+        event = make_event(
+            db_session, tournament, 'Partnered Axe Final',
+            scoring_type='score', scoring_order='highest_wins',
+            payouts={1: 500, 2: 200},
+        )
+        first = make_pro_competitor(db_session, tournament, 'State First', 'M', events=[event.id])
+        second = make_pro_competitor(db_session, tournament, 'State Second', 'M', events=[event.id])
+        first_result = make_event_result(
+            db_session, event, first, result_value=20.0, status='completed',
+        )
+        second_result = make_event_result(
+            db_session, event, second, result_value=15.0, status='completed',
+        )
+        db_session.flush()
+
+        scoring_engine.calculate_positions(event)
+        first_result.payout_settled = True
+        db_session.flush()
+
+        monkeypatch.setattr(
+            scoring_engine, '_state_machine_ranking',
+            lambda _event: [[second.id], [first.id]],
+        )
+        scoring_engine.calculate_positions(event)
+
+        assert first_result.final_position == 2
+        assert first_result.payout_amount == 200
+        assert first_result.payout_settled is False
+
+    def test_throwoff_reopens_changed_payout(self, db_session, tournament):
+        from services.scoring_engine import calculate_positions, record_throwoff_result
+
+        event = make_event(
+            db_session, tournament, 'Axe Throw Payout',
+            scoring_type='score', scoring_order='highest_wins',
+            payouts={1: 500, 2: 200},
+        )
+        first = make_pro_competitor(db_session, tournament, 'Throwoff First', 'M', events=[event.id])
+        second = make_pro_competitor(db_session, tournament, 'Throwoff Second', 'M', events=[event.id])
+        first_result = make_event_result(
+            db_session, event, first, result_value=20.0, status='completed',
+        )
+        second_result = make_event_result(
+            db_session, event, second, result_value=15.0, status='completed',
+        )
+        db_session.flush()
+
+        calculate_positions(event)
+        first_result.payout_settled = True
+        db_session.flush()
+
+        record_throwoff_result(event, {
+            first_result.id: 2,
+            second_result.id: 1,
+        })
+
+        assert first_result.payout_amount == 200
+        assert first_result.payout_settled is False
+        assert second_result.payout_amount == 500
