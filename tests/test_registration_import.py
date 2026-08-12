@@ -423,6 +423,18 @@ class TestGenderEventValidation:
         assert result is not None
         assert "GENDER MISMATCH" in result
 
+    @pytest.mark.parametrize(
+        ('gender', 'event_name'),
+        [
+            ('F', "Men's Standing Block Speed"),
+            ('F', "Men's Standing Block Hard Hit"),
+            ('M', "Women's Standing Block Speed"),
+            ('M', "Women's Standing Block Hard Hit"),
+        ],
+    )
+    def test_standing_block_variants_enforce_gender(self, gender, event_name):
+        assert _check_gender_event(gender, event_name) is not None
+
     def test_neutral_event_male(self):
         assert _check_gender_event("M", "Hot Saw") is None
 

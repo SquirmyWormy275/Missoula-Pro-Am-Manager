@@ -253,6 +253,26 @@ def auto_assign_event_partners(event: Event) -> dict:
             continue
 
         # Reciprocal — write canonical names on both sides (heals typos).
+        if (
+            event.partner_gender_requirement == "mixed"
+            and comp.gender == partner.gender
+        ):
+            # A reciprocal name match is not enough for Jack & Jill. Keeping
+            # this pair would make an impossible heat after import succeeds.
+            needs_review.add(comp.id)
+            needs_review.add(partner.id)
+            one_sided.append(
+                {
+                    "competitor_id": comp.id,
+                    "competitor_name": comp.name,
+                    "claimed_partner_name": partner_name,
+                    "matched_partner_id": partner.id,
+                    "matched_partner_name": partner.name,
+                    "reason": "mixed_gender_required",
+                }
+            )
+            continue
+
         _set_partner_bidirectional(comp, partner, event)
         paired.add(comp.id)
         paired.add(partner.id)

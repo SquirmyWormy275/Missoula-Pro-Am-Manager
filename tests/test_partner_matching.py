@@ -17,6 +17,7 @@ from services.partner_matching import (
     _is_entered,
     _normalize_name,
     _read_partner_name,
+    auto_assign_event_partners,
 )
 
 # ---------------------------------------------------------------------------
@@ -181,3 +182,32 @@ class TestReadPartnerName:
         ev = _event(id=3, name='Stock Saw')
         comp = _competitor({'3': 'Partner A', 'Stock Saw': 'Partner B'})
         assert _read_partner_name(comp, ev) == 'Partner A'
+
+
+class TestPartnerGenderRequirements:
+    def test_reciprocal_same_gender_jack_jill_claim_needs_review(
+            self, db_session):
+        from tests.conftest import make_event, make_pro_competitor, make_tournament
+
+        tournament = make_tournament(db_session)
+        event = make_event(
+            db_session, tournament, 'Jack & Jill Sawing', event_type='pro',
+            is_partnered=True,
+        )
+        event.partner_gender_requirement = 'mixed'
+        first = make_pro_competitor(
+            db_session, tournament, 'First Woman', 'F', events=[event.id]
+        )
+        second = make_pro_competitor(
+            db_session, tournament, 'Second Woman', 'F', events=[event.id]
+        )
+        first.set_partner(str(event.id), second.name)
+        second.set_partner(str(event.id), first.name)
+        db_session.commit()
+
+        summary = auto_assign_event_partners(event)
+
+        assert summary['confirmed_pairs'] == 0
+        assert summary['assigned_pairs'] == 0
+        assert summary['unmatched'] == 2
+        assert summary['one_sided_claims'][0]['reason'] == 'mixed_gender_required'

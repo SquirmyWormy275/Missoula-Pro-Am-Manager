@@ -267,12 +267,17 @@ def _classify_partner_value(raw: str) -> tuple[str, str | None]:
 
 _MALE_ONLY_EVENTS = {
     "Men's Underhand",
+    "Men's Standing Block",
+    "Men's Standing Block Speed",
+    "Men's Standing Block Hard Hit",
     "Men's Single Buck",
     "Men's Double Buck",
 }
 _FEMALE_ONLY_EVENTS = {
     "Women's Underhand",
     "Women's Standing Block",
+    "Women's Standing Block Speed",
+    "Women's Standing Block Hard Hit",
     "Women's Single Buck",
 }
 # All other events are gender-neutral (springboard, hot saw, obstacle pole,
