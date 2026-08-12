@@ -172,6 +172,24 @@ class TestRecordTotalTime:
             relay.record_total_time(1, 88.0)
         mock_save.assert_called_once()
 
+    @pytest.mark.parametrize('value', [-1, float('inf'), float('nan')])
+    def test_invalid_time_does_not_change_or_save_relay(self, value):
+        relay = _relay(teams=[_make_team(1), _make_team(2)])
+        with patch.object(relay, '_save_relay_data') as mock_save:
+            with pytest.raises(ValueError, match='finite, non-negative'):
+                relay.record_total_time(1, value)
+        assert relay.get_status() == 'drawn'
+        assert relay.get_teams()[0]['total_time'] is None
+        mock_save.assert_not_called()
+
+    def test_unknown_team_does_not_change_or_save_relay(self):
+        relay = _relay(teams=[_make_team(1)])
+        with patch.object(relay, '_save_relay_data') as mock_save:
+            with pytest.raises(ValueError, match='Unknown relay team: 99'):
+                relay.record_total_time(99, 88.0)
+        assert relay.get_status() == 'drawn'
+        mock_save.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # record_event_result
@@ -255,6 +273,17 @@ class TestRecordEventResult:
         with patch.object(relay, '_save_relay_data') as mock_save:
             relay.record_event_result(1, 'partnered_sawing', 10.0)
         mock_save.assert_called_once()
+
+    def test_unknown_team_or_event_does_not_change_or_save_relay(self):
+        relay = _relay(teams=[_make_team(1)])
+        with patch.object(relay, '_save_relay_data') as mock_save:
+            with pytest.raises(ValueError, match='Unknown relay team: 99'):
+                relay.record_event_result(99, 'partnered_sawing', 20.0)
+            with pytest.raises(ValueError, match='Unknown relay event: made_up'):
+                relay.record_event_result(1, 'made_up', 20.0)
+        assert relay.get_status() == 'drawn'
+        assert relay.get_teams()[0]['events']['partnered_sawing']['result'] is None
+        mock_save.assert_not_called()
 
     def test_other_team_unaffected_by_result(self):
         teams = [_make_team(1), _make_team(2)]

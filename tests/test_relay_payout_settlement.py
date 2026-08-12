@@ -3,7 +3,7 @@
 import pytest
 
 from database import db
-from models.relay import RelayState, RelayTeam
+from models.relay import RelayState, RelayTeam, RelayTeamEvent
 from services.proam_relay import ProAmRelay, relay_payout_summary
 from tests.conftest import make_event, make_pro_competitor, make_tournament
 
@@ -35,6 +35,15 @@ def _completed_relay(session, tournament, payouts=None):
     )
     session.add_all([first, second])
     session.flush()
+    for team in (first, second):
+        for key in ProAmRelay.RELAY_EVENTS:
+            session.add(RelayTeamEvent(
+                relay_team_id=team.id,
+                event_key=key,
+                result=20.0,
+                status='completed',
+            ))
+    session.flush()
     return event, state, first, second
 
 
@@ -63,7 +72,7 @@ def test_relay_payout_summary_excludes_provisional_results(db_session):
     assert relay_payout_summary(tournament)['rows'] == []
 
 
-def test_relay_resave_keeps_settlement_for_same_team_number(db_session):
+def test_relay_resave_keeps_settlement_for_unchanged_final_result(db_session):
     tournament = make_tournament(db_session)
     _, state, first, _ = _completed_relay(db_session, tournament)
     first.payout_settled = True
@@ -81,13 +90,43 @@ def test_relay_resave_keeps_settlement_for_same_team_number(db_session):
                 key: {'result': 20.0, 'status': 'completed'}
                 for key in ProAmRelay.RELAY_EVENTS
             },
-            'total_time': 80.0,
+            'total_time': 85.2,
         }],
     }
     relay._save_relay_data()
 
     fresh = RelayTeam.query.filter_by(relay_state_id=state.id, team_number=1).one()
     assert fresh.payout_settled is True
+
+
+def test_relay_resave_resets_settlement_when_result_changes(db_session):
+    tournament = make_tournament(db_session)
+    _, state, first, _ = _completed_relay(db_session, tournament)
+    first.payout_settled = True
+    db_session.commit()
+
+    relay = ProAmRelay(tournament)
+    relay.relay_data = {
+        'status': 'completed',
+        'teams': [{
+            'team_number': 1,
+            'name': 'Team One',
+            'pro_members': [],
+            'college_members': [],
+            'events': {
+                **{
+                    key: {'result': 20.0, 'status': 'completed'}
+                    for key in ProAmRelay.RELAY_EVENTS
+                },
+                'team_axe_throw': {'result': 21.0, 'status': 'completed'},
+            },
+            'total_time': 86.2,
+        }],
+    }
+    relay._save_relay_data()
+
+    fresh = RelayTeam.query.filter_by(relay_state_id=state.id, team_number=1).one()
+    assert fresh.payout_settled is False
 
 
 def test_relay_resave_resets_settlement_when_roster_changes(db_session):

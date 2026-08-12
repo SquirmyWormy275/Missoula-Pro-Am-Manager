@@ -10,6 +10,7 @@ Each team has 8 members:
 """
 import copy
 import json
+import math
 import random
 
 from flask import has_app_context
@@ -326,8 +327,24 @@ class ProAmRelay:
             RelayTeamMember.relay_team_id.in_(existing_uids)
         ):
             existing_uids[member.relay_team_id].add(member.uid)
+        existing_events = {row.id: {} for row in existing_teams}
+        for event in RelayTeamEvent.query.filter(
+            RelayTeamEvent.relay_team_id.in_(existing_events)
+        ):
+            existing_events[event.relay_team_id][event.event_key] = {
+                'result': event.result,
+                'status': event.status,
+            }
         existing_settlements = {
-            row.team_number: (row.payout_settled, existing_uids[row.id])
+            row.team_number: (
+                row.payout_settled,
+                self._relay_team_fingerprint(
+                    row.name,
+                    existing_uids[row.id],
+                    row.total_time,
+                    existing_events[row.id],
+                ),
+            )
             for row in existing_teams
         }
         if existing_teams:
@@ -348,12 +365,18 @@ class ProAmRelay:
                         raise ValueError("Relay roster contains an unresolved competitor")
                     incoming_uids.add(uid)
             previous = existing_settlements.get(team_data["team_number"])
+            fingerprint = self._relay_team_fingerprint(
+                team_data["name"],
+                incoming_uids,
+                team_data.get("total_time"),
+                team_data["events"],
+            )
             team = RelayTeam(
                 relay_state_id=state.id,
                 team_number=team_data["team_number"],
                 name=team_data["name"],
                 total_time=team_data.get("total_time"),
-                payout_settled=bool(previous and previous[0] and previous[1] == incoming_uids),
+                payout_settled=bool(previous and previous[0] and previous[1] == fingerprint),
             )
             db.session.add(team)
             db.session.flush()
@@ -378,6 +401,29 @@ class ProAmRelay:
                     result=event_data.get("result"),
                     status=event_data.get("status", "pending"),
                 ))
+
+    def _relay_team_fingerprint(
+        self,
+        name: str,
+        member_uids: set[int],
+        total_time: float | None,
+        events: dict,
+    ) -> tuple:
+        """Return the immutable payment identity for one finalized relay team.
+
+        A settlement acknowledges a particular team and result, not merely a
+        team number. Correcting the roster, display name, aggregate time, or
+        any leg result must return the payout to pending review.
+        """
+        legs = tuple(
+            (
+                event_key,
+                (events.get(event_key) or {}).get('result'),
+                (events.get(event_key) or {}).get('status', 'pending'),
+            )
+            for event_key in self.RELAY_EVENTS
+        )
+        return (name, tuple(sorted(member_uids)), total_time, legs)
 
     def get_eligible_pro_competitors(self) -> list:
         """Get pro competitors who opted into the lottery."""
@@ -566,12 +612,13 @@ class ProAmRelay:
             total_time: Total relay time in seconds
         """
         teams = self.relay_data.get('teams', [])
+        total_time = self._validated_relay_time(total_time)
+        team = next((team for team in teams if team['team_number'] == team_number), None)
+        if team is None:
+            raise ValueError(f'Unknown relay team: {team_number}')
 
-        for team in teams:
-            if team['team_number'] == team_number:
-                team['total_time'] = total_time
-                self.relay_data['status'] = 'in_progress'
-                break
+        team['total_time'] = total_time
+        self.relay_data['status'] = 'in_progress'
 
         # Mark completed when all teams have a total time
         if teams and all(t.get('total_time') is not None for t in teams):
@@ -589,24 +636,31 @@ class ProAmRelay:
             time_seconds: Time in seconds
         """
         teams = self.relay_data.get('teams', [])
+        if event_name not in self.RELAY_EVENTS:
+            raise ValueError(f'Unknown relay event: {event_name}')
+        time_seconds = self._validated_relay_time(time_seconds)
+        team_found = False
 
         for team in teams:
             if team['team_number'] == team_number:
-                if event_name in team['events']:
-                    team['events'][event_name]['result'] = time_seconds
-                    team['events'][event_name]['status'] = 'completed'
+                team_found = True
+                team['events'][event_name]['result'] = time_seconds
+                team['events'][event_name]['status'] = 'completed'
 
-                    # Recalculate total time
-                    total = 0
-                    all_complete = True
-                    for evt in team['events'].values():
-                        if evt['result'] is not None:
-                            total += evt['result']
-                        else:
-                            all_complete = False
+                # Recalculate total time
+                total = 0
+                all_complete = True
+                for evt in team['events'].values():
+                    if evt['result'] is not None:
+                        total += evt['result']
+                    else:
+                        all_complete = False
 
-                    team['total_time'] = total if all_complete else None
-                    self.relay_data['status'] = 'in_progress'
+                team['total_time'] = total if all_complete else None
+                self.relay_data['status'] = 'in_progress'
+
+        if not team_found:
+            raise ValueError(f'Unknown relay team: {team_number}')
 
         # Check if relay is complete
         all_teams_complete = all(
@@ -618,6 +672,17 @@ class ProAmRelay:
             self.relay_data['status'] = 'completed'
 
         self._save_relay_data()
+
+    @staticmethod
+    def _validated_relay_time(value: float) -> float:
+        """Normalize a finite, non-negative relay time before mutation."""
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('Relay time must be a non-negative number') from exc
+        if not math.isfinite(parsed) or parsed < 0:
+            raise ValueError('Relay time must be a finite, non-negative number')
+        return parsed
 
     def get_results(self) -> list:
         """Get relay results sorted by total time."""
