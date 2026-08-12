@@ -735,6 +735,25 @@ def drag_move_competitor(tournament_id, source_heat_id):
             ),
         }), 409
 
+    # Drag-and-drop is another mutation path into a heat. Keep it under the
+    # same shared-equipment rule enforced by the manual heat editor.
+    from .heats import _gear_conflicts_for_heat_change
+
+    conflicts = sorted({
+        conflict_name
+        for competitor_id in competitor_ids
+        for conflict_name in _gear_conflicts_for_heat_change(event, competitor_id, [target])
+    })
+    if conflicts:
+        return jsonify({
+            'ok': False,
+            'code': 'gear_conflict',
+            'error': (
+                'Move blocked: the destination heat would put shared gear together '
+                f'({", ".join(conflicts)}).'
+            ),
+        }), 409
+
     # Perform the move.
     source_assignments = source.get_stand_assignments()
     target_assignments = target.get_stand_assignments()

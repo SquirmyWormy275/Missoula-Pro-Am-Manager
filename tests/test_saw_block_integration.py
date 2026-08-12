@@ -547,6 +547,41 @@ def test_move_competitor_rejects_full_target(app, auth_client):
         assert 1 not in h_b.get_competitors()
 
 
+def test_move_competitor_rejects_shared_gear_target(app, auth_client):
+    """Drag moves cannot create the same shared-gear conflict as manual edits."""
+    from database import db as _db
+    from models.competitor import ProCompetitor
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        ev = _seed_saw_event(_db, t, name="Underhand", event_type="pro")
+        h_a = _seed_heat(_db, ev, 1, competitors=[1], stand_assignments={"1": 1})
+        h_b = _seed_heat(_db, ev, 2, competitors=[5], stand_assignments={"5": 1})
+        mover = _db.session.get(ProCompetitor, 1)
+        resident = _db.session.get(ProCompetitor, 5)
+        mover.gear_sharing = json.dumps({str(ev.id): resident.name})
+        resident.gear_sharing = json.dumps({str(ev.id): mover.name})
+        resident_name = resident.name
+        _db.session.commit()
+        tid, h_a_id, h_b_id = t.id, h_a.id, h_b.id
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/heats/{h_a_id}/drag-move",
+        json={"competitor_ids": [1], "target_heat_id": h_b_id},
+    )
+
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert body["code"] == "gear_conflict"
+    assert resident_name in body["error"]
+
+    with app.app_context():
+        from models import Heat
+        assert 1 in _db.session.get(Heat, h_a_id).get_competitors()
+        assert 1 not in _db.session.get(Heat, h_b_id).get_competitors()
+
+
 def test_move_competitor_rejects_cross_event(app, auth_client):
     """Moving a competitor into a heat of a DIFFERENT event is refused."""
     from database import db as _db
