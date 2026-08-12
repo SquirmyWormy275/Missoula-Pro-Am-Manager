@@ -286,7 +286,7 @@ The only supported day-of competitor movement operation:
 
 1. **Regeneration destroys heat assignments but not results**: If heats are regenerated after scoring has begun, scored results could become orphaned. **Mitigated:** finalized and completed-result events are hard-blocked from regeneration.
 
-2. **Undo window race condition**: `undo_heat_save()` uses the current competitor list. If a scratch/add happens during the 30-second undo window, undo may affect the wrong competitors. **Documented limitation** — narrow window, low probability.
+2. **Undo window race condition**: result undo is revision-bound to the heat and result records. A concurrent change returns a conflict instead of clearing a later edit.
 
 3. **Dual storage creates drift risk**: The Heat.competitors JSON and HeatAssignment table can diverge on crash. Mitigated by sync-fix route.
 
