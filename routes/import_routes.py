@@ -82,6 +82,19 @@ def _temp_path(filename: str) -> str:
     return os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
 
 
+def _gender_mismatch_messages(entries: list[dict]) -> list[str]:
+    """Return impossible gender-specific entries from serialized review data."""
+    from services.registration_import import _check_gender_event
+
+    messages = []
+    for entry in entries:
+        for event_name in entry.get('events', []):
+            mismatch = _check_gender_event(entry.get('gender', ''), event_name)
+            if mismatch:
+                messages.append(f"{entry.get('name', 'Unknown')}: {mismatch}")
+    return messages
+
+
 # ---------------------------------------------------------------------------
 # GET /import/<id>/pro-entries  — show upload form
 # POST /import/<id>/pro-entries — process uploaded file, redirect to review
@@ -241,6 +254,15 @@ def confirm_pro_entries(tournament_id):
         flash('Import data is missing or corrupt. Please upload the file again.', 'error')
         session.pop(_session_key(tournament_id), None)
         return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
+
+    gender_mismatches = _gender_mismatch_messages(entries)
+    if gender_mismatches:
+        flash(
+            'Import blocked: correct gender-specific event entries before '
+            'confirming. ' + '; '.join(gender_mismatches[:5]),
+            'error',
+        )
+        return redirect(url_for('import_pro.review_pro_entries', tournament_id=tournament_id))
 
     # Build event name -> Event lookup for this tournament.
     # Index by both raw name ("Standing Block") and display_name ("Women's Standing Block")

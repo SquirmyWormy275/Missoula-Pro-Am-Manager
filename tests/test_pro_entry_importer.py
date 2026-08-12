@@ -428,6 +428,16 @@ class TestComputeReviewFlagsNoWaiver:
         result = compute_review_flags([entry])
         assert 'NO WAIVER' not in result[0]['flags']
 
+    def test_gender_mismatch_is_blocking_review_flag(self):
+        entry = _make_entry(
+            gender='F', events=["Men's Standing Block Hard Hit"]
+        )
+
+        result = compute_review_flags([entry])
+
+        assert any('GENDER MISMATCH' in flag for flag in result[0]['flags'])
+        assert result[0]['flag_class'] == 'table-danger'
+
 
 class TestComputeReviewFlagsPartnerNotFound:
     def test_partner_in_batch_no_flag(self):

@@ -170,7 +170,7 @@
 
                             <td>
                                 {% for flag in e.flags %}
-                                    <span class="badge {{ 'bg-danger' if 'WAIVER' in flag else 'bg-warning text-dark' }} d-block mb-1">
+                                    <span class="badge {{ 'bg-danger' if 'WAIVER' in flag or 'GENDER MISMATCH' in flag else 'bg-warning text-dark' }} d-block mb-1">
                                         {{ flag }}
                                     </span>
                                 {% endfor %}

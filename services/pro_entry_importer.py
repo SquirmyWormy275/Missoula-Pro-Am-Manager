@@ -299,6 +299,15 @@ def compute_review_flags(entries: list, existing_names: list = None) -> list:
         # Both Springboard (L) AND Springboard (R) boxes checked — physically
         # impossible, the admin needs to resolve which dummy this cutter uses.
         # Reads raw pre-dedup checkbox state, not the canonicalised events list.
+        # Gender-specific entries are unsafe to accept as informational
+        # warnings: no schedule can legally place them.
+        from services.registration_import import _check_gender_event
+        for event_name in entry.get('events', []):
+            mismatch = _check_gender_event(entry.get('gender', ''), event_name)
+            if mismatch:
+                flags.append(mismatch)
+                flag_class = 'table-danger'
+
         if entry.get('_raw_springboard_l') and entry.get('_raw_springboard_r'):
             flags.append('CONFLICT: BOTH L AND R SPRINGBOARD CHECKED')
             if not flag_class:
