@@ -123,6 +123,19 @@ class TestTheRosterIsNormalisedOnWrite:
 
         assert heat.version_id == version
 
+    def test_a_real_roster_change_advances_the_heat_version(self, heat_of_three,
+                                                             db_session):
+        """A roster rewrite must invalidate another editor's stale heat view."""
+        heat, (a, b, _c) = heat_of_three
+        heat.set_roster('pro', [a.id], {str(a.id): 1})
+        db_session.flush()
+        version = heat.version_id
+
+        assert heat.set_roster('pro', [a.id, b.id], {str(a.id): 1, str(b.id): 2})
+        db_session.flush()
+
+        assert heat.version_id == version + 1
+
 
 class TestSetRoster:
     """The write target itself, called the way phase 2 callers will call it."""

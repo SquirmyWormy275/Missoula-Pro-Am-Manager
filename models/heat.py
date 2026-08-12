@@ -268,6 +268,10 @@ class Heat(db.Model):
                 )
                 for cid, uid, stand in roster
             ], rows)
+            # The roster lives in child rows, while the optimistic-lock column
+            # lives on Heat. Advance the parent revision so a real roster edit
+            # invalidates a parallel editor's stale heat layout.
+            self.version_id = (self.version_id or 0) + 1
 
         return rows_changed
 
