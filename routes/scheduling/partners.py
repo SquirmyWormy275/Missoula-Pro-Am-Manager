@@ -14,6 +14,7 @@ from flask import abort, flash, redirect, render_template, request, url_for
 from database import db
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.event import Event, EventResult
+from services.audit import log_action
 
 from . import _competitor_entered_event, scheduling_bp
 
@@ -291,8 +292,24 @@ def reassign_partner(tid, eid):
         return redirect(url_for("scheduling.partner_queue", tid=tid, eid=eid))
 
     # Apply bidirectional update
+    previous_partner_name = orphan.get_partners().get(str(event.id))
     set_partner_bidirectional(orphan, new_partner, event)
     db.session.commit()
+    log_action(
+        "partner_reassigned",
+        "event",
+        event.id,
+        {
+            "tournament_id": tid,
+            "event_id": event.id,
+            "event_name": event.display_name,
+            "orphan_id": orphan.id,
+            "orphan_type": orphan_type,
+            "previous_partner_name": previous_partner_name,
+            "new_partner_id": new_partner.id,
+            "new_partner_type": new_partner_type,
+        },
+    )
 
     flash(f"Reassigned {orphan.name} with new partner {new_partner.name}.", "success")
     logger.info(

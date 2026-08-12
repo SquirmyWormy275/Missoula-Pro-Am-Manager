@@ -407,8 +407,15 @@ class TestPartnerQueueRoute:
 
 
 class TestReassignPartnerRoute:
-    def test_happy_path_reassigns_bidirectionally(self, app, db_session, auth_client):
+    def test_happy_path_reassigns_bidirectionally(
+        self, app, db_session, auth_client, monkeypatch
+    ):
         """POST reassign_partner updates both partners' JSON and redirects."""
+        audit_calls = []
+        monkeypatch.setattr(
+            "routes.scheduling.partners.log_action",
+            lambda *args, **kwargs: audit_calls.append((args, kwargs)),
+        )
         t, ev, alice, bob, carol = _setup_orphan_scenario(db_session)
         db_session.commit()
 
@@ -432,6 +439,26 @@ class TestReassignPartnerRoute:
         carol_fresh = db.session.get(ProCompetitor, carol.id)
         assert alice_fresh.get_partners().get(str(ev.id)) == "Carol"
         assert carol_fresh.get_partners().get(str(ev.id)) == "Alice"
+        assert audit_calls == [
+            (
+                (
+                    "partner_reassigned",
+                    "event",
+                    ev.id,
+                    {
+                        "tournament_id": t.id,
+                        "event_id": ev.id,
+                        "event_name": ev.display_name,
+                        "orphan_id": alice.id,
+                        "orphan_type": "pro",
+                        "previous_partner_name": "Bob",
+                        "new_partner_id": carol.id,
+                        "new_partner_type": "pro",
+                    },
+                ),
+                {},
+            )
+        ]
 
     def test_wrong_gender_flashes_error(self, app, db_session, auth_client):
         """POST reassign_partner with gender mismatch flashes error and does not update."""
