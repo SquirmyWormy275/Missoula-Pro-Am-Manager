@@ -601,6 +601,51 @@ class TestExecuteCascadeResultStatuses:
             assert updated.points_awarded == 0
             assert updated.payout_amount == 0
 
+    def test_scratching_paid_pro_result_reconciles_and_undo_restores_earnings(self, app):
+        from database import db
+        from models.competitor import ProCompetitor
+        from models.event import EventResult
+        from services.scratch_cascade import (
+            compute_scratch_effects,
+            execute_cascade,
+            reverse_cascade,
+        )
+
+        with app.app_context():
+            tournament = _seed_base(db)
+            competitor = _seed_pro(db, tournament, name='Paid Scratch')
+            competitor.total_earnings = 500.0
+            event = _seed_event(db, tournament, name='Paid Underhand', is_finalized=True)
+            result = _seed_result_with_points(
+                db, event, competitor, comp_type='pro', result_status='completed',
+                payout=500.0, final_position=1,
+            )
+            result.payout_settled = True
+            result_id = result.id
+            db.session.commit()
+
+            effects = compute_scratch_effects(competitor, tournament)
+            execute_cascade(competitor, effects, judge_user_id=1, tournament=tournament)
+            db.session.commit()
+
+            scratched_competitor = db.session.get(ProCompetitor, competitor.id)
+            scratched_result = db.session.get(EventResult, result_id)
+            assert scratched_competitor.total_earnings == 0.0
+            assert scratched_result.payout_amount == 0.0
+            assert scratched_result.payout_settled is False
+
+            undo = reverse_cascade(
+                competitor.id, judge_user_id=1, tournament=tournament,
+            )
+            db.session.commit()
+
+            restored_competitor = db.session.get(ProCompetitor, competitor.id)
+            restored_result = db.session.get(EventResult, result_id)
+            assert undo['success'] is True
+            assert restored_competitor.total_earnings == 500.0
+            assert restored_result.payout_amount == 500.0
+            assert restored_result.payout_settled is True
+
 
 class TestExecuteCascadeAuditLog:
     """execute_cascade() logs audit entry with scratch_snapshot."""

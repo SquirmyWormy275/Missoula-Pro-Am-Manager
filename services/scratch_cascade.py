@@ -311,6 +311,7 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                     "status": r.status,
                     "points_awarded": float(r.points_awarded) if r.points_awarded is not None else None,
                     "payout_amount": float(r.payout_amount) if r.payout_amount is not None else None,
+                    "payout_settled": bool(r.payout_settled),
                     "final_position": r.final_position,
                 }
             )
@@ -319,6 +320,10 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
     snapshot = {
         "competitor_type": "college" if isinstance(competitor, _CC) else "pro",
         "competitor_status": competitor.status,
+        "total_earnings": (
+            float(competitor.total_earnings or 0.0)
+            if not isinstance(competitor, _CC) else None
+        ),
         "results": snapshot_results,
         "partner_json": competitor.partners,
         # Populated inside the transaction below, by the heat-removal loop, at
@@ -360,9 +365,17 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
             if effect.effect_type == "event_result":
                 r = event_result_map.get(effect.affected_entity_id)
                 if r is not None:
+                    awarded = float(r.payout_amount or 0.0)
                     r.status = "scratched"
                     r.points_awarded = 0
                     r.payout_amount = 0
+                    r.payout_settled = False
+                    if awarded and r.competitor_type == "pro":
+                        pro_competitor = db.session.get(ProCompetitor, r.competitor_id)
+                        if pro_competitor is not None:
+                            pro_competitor.total_earnings = max(
+                                0.0, pro_competitor.total_earnings - awarded
+                            )
                     affected_event_ids.add(r.event_id)
                     if r.competitor_type == "college":
                         affected_college_competitor_ids.add(r.competitor_id)
@@ -741,6 +754,8 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
 
         if comp is not None:
             comp.status = snapshot.get("competitor_status", "active")
+            if isinstance(comp, ProCompetitor) and "total_earnings" in snapshot:
+                comp.total_earnings = float(snapshot["total_earnings"] or 0.0)
             # Restore partners JSON
             if "partner_json" in snapshot and snapshot["partner_json"] is not None:
                 comp.partners = snapshot["partner_json"]
@@ -791,6 +806,7 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                 r.status = r_snap["status"]
                 r.points_awarded = r_snap.get("points_awarded")
                 r.payout_amount = r_snap.get("payout_amount") or 0.0
+                r.payout_settled = bool(r_snap.get("payout_settled", False))
                 r.final_position = r_snap.get("final_position")
                 if r.competitor_type == "college":
                     affected_college_competitor_ids.add(r.competitor_id)
