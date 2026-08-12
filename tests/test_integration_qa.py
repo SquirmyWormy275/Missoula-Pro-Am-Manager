@@ -669,6 +669,27 @@ def test_day_of_operations_workflow(qa_env):
         follow_redirects=False,
     )
     assert scratch_response.status_code == 302
+    preview_response = client.get(f'{scratch_response.location}&format=json')
+    assert preview_response.status_code == 200
+    effects = preview_response.get_json()["effects"]
+    scratch_form = {
+        "competitor_type": "pro",
+        "return_event_id": str(seeded["event_id"]),
+        "effect_count": str(len(effects)),
+    }
+    for index, effect in enumerate(effects):
+        scratch_form.update({
+            f"effect_type_{index}": effect["effect_type"],
+            f"affected_entity_id_{index}": str(effect["affected_entity_id"]),
+            f"affected_entity_type_{index}": effect["affected_entity_type"],
+            f"effect_checked_{index}": "on",
+        })
+    confirm_response = client.post(
+        f"/scoring/{seeded['tournament_id']}/competitor/{scratch_id}/scratch-confirm",
+        data=scratch_form,
+        follow_redirects=False,
+    )
+    assert confirm_response.status_code == 302
 
     move_response = client.post(
         f"/scheduling/{seeded['tournament_id']}/event/{seeded['event_id']}/move-competitor",
