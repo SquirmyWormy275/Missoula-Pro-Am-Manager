@@ -1285,11 +1285,29 @@ def scratch_undo(tournament_id, competitor_id):
     judge_id = _current_user_id()
     # Pass the type: college and pro ids collide, so an audit lookup on the
     # bare id can find the twin's scratch and restore the wrong person.
-    result = reverse_cascade(comp.id, judge_id, tournament,
-                             competitor_type=_competitor_type_of(comp))
+    try:
+        result = reverse_cascade(
+            comp.id, judge_id, tournament,
+            competitor_type=_competitor_type_of(comp),
+        )
+        if result['success']:
+            db.session.commit()
+    except StaleDataError:
+        db.session.rollback()
+        message = (
+            'The schedule changed while this scratch undo was being applied. '
+            'Refresh the current schedule before trying again.'
+        )
+        if _is_async():
+            return jsonify({'ok': False, 'message': message}), 409
+        flash(message, 'warning')
+        return redirect(url_for(
+            'scoring.scratch_preview',
+            tournament_id=tournament_id,
+            competitor_id=competitor_id,
+        ))
 
     if result['success']:
-        db.session.commit()
         invalidate_tournament_caches(tournament_id)
         flash(f'Scratch reversed for {comp.name}.', 'success')
     else:
