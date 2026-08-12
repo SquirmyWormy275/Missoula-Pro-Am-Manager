@@ -25,6 +25,50 @@ from . import (
 )
 
 
+def _gear_conflicts_for_heat_change(event: Event, competitor_id: int, target_heats: list[Heat]) -> list[str]:
+    """Return pro competitors who would share gear with a pending heat change."""
+    if event.event_type != 'pro':
+        return []
+
+    mover = ProCompetitor.query.filter_by(
+        id=competitor_id,
+        tournament_id=event.tournament_id,
+        status='active',
+    ).first()
+    if mover is None:
+        return []
+
+    target_ids = {
+        competitor_id
+        for heat in target_heats
+        for competitor_id in heat.get_competitors()
+        if competitor_id != mover.id
+    }
+    if not target_ids:
+        return []
+
+    from services.gear_sharing import competitors_share_gear_for_event
+
+    all_events = Event.query.filter_by(tournament_id=event.tournament_id).all()
+    target_competitors = ProCompetitor.query.filter(
+        ProCompetitor.id.in_(target_ids),
+        ProCompetitor.tournament_id == event.tournament_id,
+        ProCompetitor.status == 'active',
+    ).all()
+    return [
+        competitor.name
+        for competitor in target_competitors
+        if competitors_share_gear_for_event(
+            mover.name,
+            mover.get_gear_sharing(),
+            competitor.name,
+            competitor.get_gear_sharing(),
+            event,
+            all_events=all_events,
+        )
+    ]
+
+
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/heats')
 def event_heats(tournament_id, event_id):
     """View and manage heats for an event."""
@@ -346,6 +390,24 @@ def move_competitor_between_heats(tournament_id, event_id):
         from_pairs.append(source)
         to_pairs.append(target)
 
+    for target in to_pairs:
+        if competitor_id not in target.get_competitors() and len(target.get_competitors()) >= max_cap:
+            flash(
+                f'Destination Heat {target.heat_number} Run {target.run_number} is full '
+                f'({max_cap} competitors max).',
+                'error',
+            )
+            return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
+    conflicts = _gear_conflicts_for_heat_change(event, competitor_id, to_pairs)
+    if conflicts:
+        flash(
+            f'Move blocked: the destination heat would put shared gear together '
+            f'({", ".join(conflicts)}).',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
     comp_type = event.event_type  # 'pro' or 'college'
     for source, target in zip(from_pairs, to_pairs):
         source_ids = source.get_competitors()
@@ -384,39 +446,6 @@ def move_competitor_between_heats(tournament_id, event_id):
         pass  # Rebalance failure must not block the move.
 
     db.session.commit()
-
-    # Check for gear-sharing conflicts created by this move (warn, don't block).
-    if event.event_type == 'pro':
-        try:
-            from models import Event as EventModel
-            from services.gear_sharing import competitors_share_gear_for_event
-            mover = db.session.get(ProCompetitor, competitor_id)
-            if mover:
-                mover_gear = mover.get_gear_sharing()
-                all_events = EventModel.query.filter_by(tournament_id=event.tournament_id).all()
-                final_to_heat = to_pairs[0] if to_pairs else to_heat
-                target_ids = final_to_heat.get_competitors()
-                target_comps = ProCompetitor.query.filter(
-                    ProCompetitor.id.in_([cid for cid in target_ids if cid != competitor_id])
-                ).all()
-                conflicts = []
-                for tc in target_comps:
-                    if competitors_share_gear_for_event(
-                        mover.name, mover_gear,
-                        tc.name, tc.get_gear_sharing(),
-                        event,
-                        all_events=all_events,
-                    ):
-                        conflicts.append(tc.name)
-                if conflicts:
-                    flash(
-                        f'Warning: {mover.name} shares gear with '
-                        f'{", ".join(conflicts)} who are already in the destination heat. '
-                        f'This may cause a scheduling conflict.',
-                        'warning',
-                    )
-        except Exception:
-            pass  # Gear check failure should not block the move
 
     flash('Competitor moved successfully.', 'success')
     return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
@@ -684,6 +713,31 @@ def add_to_heat(tournament_id, event_id):
 
     comp_name = comp.display_name
 
+    run_numbers = [1, 2] if event.requires_dual_runs else [heat.run_number]
+    target_heats = []
+    for run_number in run_numbers:
+        target = event.heats.filter_by(heat_number=heat.heat_number, run_number=run_number).first()
+        if target is None:
+            flash('Could not find the matching heat for this event run.', 'error')
+            return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+        if competitor_id not in target.get_competitors() and len(target.get_competitors()) >= max_cap:
+            flash(
+                f'Heat {target.heat_number} Run {target.run_number} is full '
+                f'({max_cap} competitors max).',
+                'error',
+            )
+            return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+        target_heats.append(target)
+
+    conflicts = _gear_conflicts_for_heat_change(event, competitor_id, target_heats)
+    if conflicts:
+        flash(
+            f'Add blocked: this heat would put {comp_name} with shared gear '
+            f'({", ".join(conflicts)}).',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
     try:
         comp_type = event.event_type
 
@@ -708,11 +762,7 @@ def add_to_heat(tournament_id, event_id):
             result.is_flagged = False
 
         # For dual-run events, add to both run heats
-        run_numbers = [1, 2] if event.requires_dual_runs else [heat.run_number]
-        for run_number in run_numbers:
-            target = event.heats.filter_by(heat_number=heat.heat_number, run_number=run_number).first()
-            if not target:
-                continue
+        for target in target_heats:
             if competitor_id in target.get_competitors():
                 continue
 
@@ -725,33 +775,6 @@ def add_to_heat(tournament_id, event_id):
             assignments[str(competitor_id)] = _next_open_stand(
                 target_ids, assignments, event)
             target.set_roster(comp_type, target_ids, assignments)
-
-        # Gear-sharing conflict check (warn, don't block)
-        if event.event_type == 'pro':
-            try:
-                from services.gear_sharing import competitors_share_gear_for_event
-                mover_gear = comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {}
-                all_events = Event.query.filter_by(tournament_id=tournament_id).all()
-                target_comps_ids = [cid for cid in heat.get_competitors() if cid != competitor_id]
-                target_comps = ProCompetitor.query.filter(
-                    ProCompetitor.id.in_(target_comps_ids)
-                ).all() if target_comps_ids else []
-                conflicts = [
-                    tc.name for tc in target_comps
-                    if competitors_share_gear_for_event(
-                        comp.name, mover_gear,
-                        tc.name, tc.get_gear_sharing(),
-                        event, all_events=all_events,
-                    )
-                ]
-                if conflicts:
-                    flash(
-                        f'Warning: {comp_name} shares gear with '
-                        f'{", ".join(conflicts)} in this heat.',
-                        'warning',
-                    )
-            except Exception:
-                pass
 
         # Stock Saw: adding a competitor can turn a solo heat into a pair or
         # vice versa — re-alternate 7/8 across remaining solos.

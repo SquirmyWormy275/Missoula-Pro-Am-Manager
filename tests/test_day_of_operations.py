@@ -466,6 +466,35 @@ class TestMoveCapacityGuard:
         source = _db.session.get(Heat, h1.id)
         assert c1.id in source.get_competitors()
 
+    def test_move_creating_gear_conflict_is_rejected(self, db_session, auth_client):
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Move Gear Guard", max_stands=2)
+        mover = _make_pro(db_session, t.id, "Move_Gear_A", events=[e.id])
+        resident = _make_pro(db_session, t.id, "Move_Gear_B", events=[e.id])
+        mover.gear_sharing = json.dumps({str(e.id): "Move_Gear_B"})
+        resident.gear_sharing = json.dumps({str(e.id): "Move_Gear_A"})
+        _make_result(db_session, e.id, mover)
+        _make_result(db_session, e.id, resident)
+        source = _make_heat(
+            db_session, e.id, heat_number=1,
+            competitors=[mover.id], stand_assignments={str(mover.id): 1},
+        )
+        target = _make_heat(
+            db_session, e.id, heat_number=2,
+            competitors=[resident.id], stand_assignments={str(resident.id): 1},
+        )
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/move-competitor",
+            data={"competitor_id": mover.id, "from_heat_id": source.id, "to_heat_id": target.id},
+            follow_redirects=True,
+        )
+
+        assert b"move blocked" in resp.data.lower()
+        assert _db.session.get(type(source), source.id).get_competitors() == [mover.id]
+        assert _db.session.get(type(target), target.id).get_competitors() == [resident.id]
+
 
 class TestFinalizationGuard:
     """Test that heat generation is blocked for finalized events."""
@@ -576,6 +605,29 @@ class TestAddToHeat:
             follow_redirects=True,
         )
         assert b"full" in resp.data.lower()
+
+    def test_add_creating_gear_conflict_is_rejected(self, db_session, auth_client):
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Add Gear Guard", max_stands=2)
+        resident = _make_pro(db_session, t.id, "Add_Gear_A", events=[e.id])
+        entrant = _make_pro(db_session, t.id, "Add_Gear_B", events=[e.id])
+        resident.gear_sharing = json.dumps({str(e.id): "Add_Gear_B"})
+        entrant.gear_sharing = json.dumps({str(e.id): "Add_Gear_A"})
+        _make_result(db_session, e.id, resident)
+        _make_result(db_session, e.id, entrant)
+        heat = _make_heat(
+            db_session, e.id, competitors=[resident.id], stand_assignments={str(resident.id): 1}
+        )
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/add-to-heat",
+            data={"competitor_id": entrant.id, "heat_id": heat.id},
+            follow_redirects=True,
+        )
+
+        assert b"add blocked" in resp.data.lower()
+        assert _db.session.get(type(heat), heat.id).get_competitors() == [resident.id]
 
     def test_add_creates_event_result_if_missing(self, db_session, auth_client):
         t = _make_tournament(db_session)
