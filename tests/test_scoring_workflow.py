@@ -93,6 +93,8 @@ def test_save_heat_results_submission_persists_results_and_undo_token(db_session
     assert outcome['redirect_kind'] == 'event_results'
     assert outcome['undo_heat_id'] == heat.id
     assert outcome['undo_token']['event_id'] == event.id
+    assert outcome['undo_token']['heat_version'] == heat.version_id
+    assert outcome['undo_token']['result_versions'] == {str(row.id): row.version_id}
     assert row.result_value == Decimal('9.00')
     assert heat.status == 'completed'
 

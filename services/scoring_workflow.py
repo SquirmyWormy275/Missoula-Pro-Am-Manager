@@ -465,6 +465,15 @@ def save_heat_results_submission(
     undo_token = {
         'heat_id': heat.id,
         'event_id': event.id,
+        'heat_version': heat.version_id,
+        'result_versions': {
+            str(result.id): result.version_id
+            for result in EventResult.query.filter(
+                EventResult.event_id == event.id,
+                EventResult.competitor_id.in_(competitor_ids),
+                EventResult.competitor_type == event.event_type,
+            ).all()
+        },
         'saved_at': datetime.now(timezone.utc).isoformat(),
     }
 

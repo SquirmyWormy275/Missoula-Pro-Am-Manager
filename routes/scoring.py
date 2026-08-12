@@ -444,6 +444,15 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
     session[f'undo_heat_{heat.id}'] = {
         'heat_id': heat.id,
         'event_id': event.id,
+        'heat_version': heat.version_id,
+        'result_versions': {
+            str(result.id): result.version_id
+            for result in EventResult.query.filter(
+                EventResult.event_id == event.id,
+                EventResult.competitor_id.in_(competitor_ids),
+                EventResult.competitor_type == event.event_type,
+            ).all()
+        },
         'saved_at': datetime.now(timezone.utc).isoformat(),
     }
 
@@ -841,6 +850,38 @@ def undo_heat_save(tournament_id, heat_id):
 
     heat = _heat_for_tournament_or_404(tournament_id, heat_id)
     event = heat.event
+    expected_heat_version = token.get('heat_version')
+    expected_result_versions = token.get('result_versions')
+    if expected_heat_version != heat.version_id or not isinstance(
+        expected_result_versions, dict
+    ):
+        session.pop(f'undo_heat_{heat_id}', None)
+        msg = 'Heat changed after this save. Reload before making another correction.'
+        if _is_async():
+            return jsonify({'ok': False, 'message': msg}), 409
+        flash(msg, 'warning')
+        return redirect(url_for('scoring.event_results', tournament_id=tournament_id,
+                                event_id=event.id))
+
+    expected_result_ids = {int(result_id) for result_id in expected_result_versions}
+    current_results = EventResult.query.filter(
+        EventResult.id.in_(expected_result_ids),
+    ).all() if expected_result_ids else []
+    if (
+        len(current_results) != len(expected_result_ids)
+        or any(
+            result.version_id != expected_result_versions.get(str(result.id))
+            for result in current_results
+        )
+    ):
+        session.pop(f'undo_heat_{heat_id}', None)
+        msg = 'Scores changed after this save. Reload before making another correction.'
+        if _is_async():
+            return jsonify({'ok': False, 'message': msg}), 409
+        flash(msg, 'warning')
+        return redirect(url_for('scoring.event_results', tournament_id=tournament_id,
+                                event_id=event.id))
+
     competitor_ids = _normalized_heat_competitor_ids(heat)
 
     # Phase 4 (V2.8.0) — strip points before delete (PLAN_REVIEW.md A6/C2/C7).

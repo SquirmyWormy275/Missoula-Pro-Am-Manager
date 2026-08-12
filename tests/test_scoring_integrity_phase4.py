@@ -194,6 +194,11 @@ class TestHeatUndoStripsPoints:
             sess[f'undo_heat_{heat.id}'] = {
                 'heat_id': heat.id,
                 'event_id': event.id,
+                'heat_version': heat.version_id,
+                'result_versions': {
+                    str(result.id): result.version_id
+                    for result in event.results.all()
+                },
                 'saved_at': datetime.now(timezone.utc).isoformat(),
             }
 
@@ -233,6 +238,11 @@ class TestHeatUndoStripsPoints:
             sess[f'undo_heat_{heat.id}'] = {
                 'heat_id': heat.id,
                 'event_id': event.id,
+                'heat_version': heat.version_id,
+                'result_versions': {
+                    str(result.id): result.version_id
+                    for result in event.results.all()
+                },
                 'saved_at': datetime.now(timezone.utc).isoformat(),
             }
 
@@ -264,12 +274,52 @@ class TestHeatUndoStripsPoints:
             sess[f'undo_heat_{heat.id}'] = {
                 'heat_id': heat.id,
                 'event_id': event_id,
+                'heat_version': heat.version_id,
+                'result_versions': {
+                    str(result.id): result.version_id
+                    for result in event.results.all()
+                },
                 'saved_at': datetime.now(timezone.utc).isoformat(),
             }
 
         r = judge_client.post(f'/scoring/{tid}/heat/{heat.id}/undo')
         assert r.status_code in (200, 302)
         assert EventResult.query.filter_by(event_id=event_id).count() == 0
+
+    def test_undo_rejects_scores_edited_after_save(self, db_session, judge_client, tid):
+        """Undo must not delete scores changed by another judge in its window."""
+        from datetime import datetime, timezone
+
+        from models.event import EventResult
+        team = _make_team(db_session, tid, code='UM-D')
+        competitor = _make_college(db_session, tid, team.id, 'Later Edit')
+        event = _make_event(db_session, tid, name='Undo Conflict')
+        heat = _make_heat(
+            db_session, event, competitors=[competitor.id], status='completed'
+        )
+        result = _make_result(db_session, event, competitor, 20.0)
+        db_session.commit()
+
+        with judge_client.session_transaction() as sess:
+            sess[f'undo_heat_{heat.id}'] = {
+                'heat_id': heat.id,
+                'event_id': event.id,
+                'heat_version': heat.version_id,
+                'result_versions': {str(result.id): result.version_id},
+                'saved_at': datetime.now(timezone.utc).isoformat(),
+            }
+
+        result.result_value = Decimal('18.00')
+        db_session.commit()
+
+        response = judge_client.post(
+            f'/scoring/{tid}/heat/{heat.id}/undo',
+            headers={'X-Requested-With': 'XMLHttpRequest'},
+        )
+
+        assert response.status_code == 409
+        assert response.get_json()['message'].startswith('Scores changed')
+        assert EventResult.query.filter_by(id=result.id).one().result_value == Decimal('18.00')
 
 
 # ===========================================================================
