@@ -10,6 +10,7 @@ Each pair consists of two competitors throwing at the same target,
 alternating throws. Score is total hits combined.
 """
 import json
+import math
 
 from database import db
 from models import Event, EventResult, Heat, HeatAssignment
@@ -92,6 +93,21 @@ class PartneredAxeThrow:
                     continue
                 holders.setdefault(cid, pair.get('pair_id'))
         return holders
+
+    @staticmethod
+    def _validated_hits(hits: int) -> int:
+        """Return a valid whole-number hit total before changing bracket state."""
+        if isinstance(hits, bool):
+            raise ValueError('Hit count must be a finite, non-negative whole number')
+        try:
+            parsed = float(hits)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                'Hit count must be a finite, non-negative whole number'
+            ) from exc
+        if not math.isfinite(parsed) or parsed < 0 or not parsed.is_integer():
+            raise ValueError('Hit count must be a finite, non-negative whole number')
+        return int(parsed)
 
     def register_pair(self, competitor1_id: int, competitor2_id: int) -> dict:
         """
@@ -189,6 +205,8 @@ class PartneredAxeThrow:
             ValueError: if the bracket has moved past prelims, or if no pair
                 carries this id.
         """
+        hits = self._validated_hits(hits)
+
         # Stage guard. This method ends by calling
         # _sync_prelim_to_event_results, which writes prelim_score straight
         # over EventResult.result_value. Once the bracket has been cut those
@@ -343,6 +361,8 @@ class PartneredAxeThrow:
         There is no stage guard here, and that asymmetry with
         record_prelim_result is deliberate. See the note in that method.
         """
+        hits = self._validated_hits(hits)
+
         recorded_pair = None
         for pair in self.state['finalists']:
             if pair['pair_id'] == pair_id:

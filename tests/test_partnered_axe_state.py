@@ -204,6 +204,33 @@ class TestPartneredAxeLifecycle:
             0, 0, 100, 100, 200, 200, 300, 300, 500, 500,
         ]
 
+    def test_final_correction_reopens_only_changed_payouts(
+            self, db_session, tournament, axe_event):
+        axe_event.set_payouts({'1': 500, '2': 300, '3': 200, '4': 100})
+        db_session.commit()
+        pat = _complete_event(db_session, tournament, axe_event)
+
+        original_winner = axe_event.results.filter_by(final_position=1).first()
+        unaffected_fifth = axe_event.results.filter_by(final_position=5).first()
+        original_winner.payout_settled = True
+        unaffected_fifth.payout_settled = True
+        db_session.commit()
+
+        corrected_pair = pat.get_finalists()[-1]
+        pat.record_final_result(corrected_pair['pair_id'], hits=100)
+
+        db_session.expire_all()
+        corrected = axe_event.results.filter_by(
+            competitor_id=corrected_pair['competitor1']['id']
+        ).one()
+        original_winner = db_session.get(EventResult, original_winner.id)
+        unaffected_fifth = db_session.get(EventResult, unaffected_fifth.id)
+        assert corrected.final_position == 1
+        assert corrected.payout_amount == 500
+        assert original_winner.final_position == 2
+        assert original_winner.payout_settled is False
+        assert unaffected_fifth.payout_settled is True
+
     def test_full_standings_merge(self, db_session, tournament, axe_event):
         from services.partnered_axe import PartneredAxeThrow
         pat = PartneredAxeThrow(axe_event)
@@ -270,6 +297,25 @@ class TestPartneredAxeEdgeCases:
             pat.record_prelim_result(pair['pair_id'], hits=10)
 
         assert pat.can_advance_to_finals() is False
+
+    @pytest.mark.parametrize('invalid_hits', [-1, float('inf'), float('nan'), 3.5, True])
+    def test_invalid_prelim_hits_do_not_change_state(
+            self, db_session, tournament, axe_event, invalid_hits):
+        from services.partnered_axe import PartneredAxeThrow
+
+        pat = PartneredAxeThrow(axe_event)
+        c1, c2 = _make_pair(
+            db_session, tournament, 'Invalid Hits A', 'Invalid Hits B',
+            event_id=axe_event.id,
+        )
+        db_session.flush()
+        pair = pat.register_pair(c1.id, c2.id)
+
+        with pytest.raises(ValueError, match='finite, non-negative whole number'):
+            pat.record_prelim_result(pair['pair_id'], invalid_hits)
+
+        assert pat.get_prelim_standings() == []
+        assert axe_event.results.count() == 0
 
     def test_reset_clears_state(self, db_session, tournament, axe_event):
         from services.partnered_axe import PartneredAxeThrow
