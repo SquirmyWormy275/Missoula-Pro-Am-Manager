@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from sqlalchemy import event as sa_event
 
 from database import db
 from database import db as _db
@@ -71,7 +72,7 @@ def test_postgresql_round_trip_insert_and_lookup(app):
         _db.session.commit()
 
 
-def test_scratch_cascade_row_lock_uses_postgresql_nowait(app, monkeypatch):
+def test_scratch_cascade_row_lock_uses_postgresql_nowait(app):
     """Race-day scratch locks must be real NOWAIT locks on PostgreSQL."""
     from models.competitor import ProCompetitor
     from models.tournament import Tournament
@@ -91,14 +92,15 @@ def test_scratch_cascade_row_lock_uses_postgresql_nowait(app, monkeypatch):
         _db.session.commit()
 
         statements = []
-        original_execute = _db.session.execute
 
-        def capture_execute(statement, *args, **kwargs):
-            statements.append(str(statement.compile(dialect=_db.engine.dialect)))
-            return original_execute(statement, *args, **kwargs)
+        def capture_statement(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
 
-        monkeypatch.setattr(_db.session, 'execute', capture_execute)
-        scratch_cascade._lock_cascade_rows(competitor, tournament, [])
+        sa_event.listen(_db.engine, 'before_cursor_execute', capture_statement)
+        try:
+            scratch_cascade._lock_cascade_rows(competitor, tournament, [])
+        finally:
+            sa_event.remove(_db.engine, 'before_cursor_execute', capture_statement)
 
         assert any('FOR UPDATE NOWAIT' in statement for statement in statements)
 
