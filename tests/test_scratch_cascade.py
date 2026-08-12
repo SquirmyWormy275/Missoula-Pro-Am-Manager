@@ -306,6 +306,119 @@ class TestHappyPathRelayTeam:
         )
 
 
+def test_normalized_relay_membership_is_scratched_and_undone(app):
+    from database import db
+    from models.relay import RelayState, RelayTeam, RelayTeamMember
+    from services.scratch_cascade import (
+        compute_scratch_effects,
+        execute_cascade,
+        reverse_cascade,
+    )
+
+    with app.app_context():
+        tournament = _seed_base(db)
+        competitor = _seed_pro(db, tournament, name="Normalized Relay Pro")
+        relay_event = _seed_event(db, tournament, name="Pro-Am Relay", event_type="pro")
+        relay_state = RelayState(event_id=relay_event.id, status="drawn")
+        db.session.add(relay_state)
+        db.session.flush()
+        relay_team = RelayTeam(
+            relay_state_id=relay_state.id, team_number=1, name="Team 1",
+        )
+        db.session.add(relay_team)
+        db.session.flush()
+        db.session.add(RelayTeamMember(
+            relay_state_id=relay_state.id,
+            relay_team_id=relay_team.id,
+            uid=competitor.uid,
+        ))
+        db.session.commit()
+
+        effects = compute_scratch_effects(competitor, tournament)
+        relay_effect = next(e for e in effects if e.effect_type == "relay_team")
+        assert relay_effect.metadata["source"] == "normalized"
+
+        execute_cascade(
+            competitor, [relay_effect], judge_user_id=1, tournament=tournament,
+        )
+        db.session.commit()
+        assert RelayTeamMember.query.filter_by(
+            relay_team_id=relay_team.id, uid=competitor.uid,
+        ).first() is None
+
+        undo = reverse_cascade(
+            competitor.id, judge_user_id=1, tournament=tournament,
+            competitor_type="pro",
+        )
+        db.session.commit()
+
+        assert undo["success"] is True
+        assert RelayTeamMember.query.filter_by(
+            relay_team_id=relay_team.id, uid=competitor.uid,
+        ).first() is not None
+
+
+def test_normalized_relay_undo_preserves_a_later_reassignment(app):
+    from database import db
+    from models.relay import RelayState, RelayTeam, RelayTeamMember
+    from services.scratch_cascade import (
+        compute_scratch_effects,
+        execute_cascade,
+        reverse_cascade,
+    )
+
+    with app.app_context():
+        tournament = _seed_base(db)
+        competitor = _seed_pro(db, tournament, name="Reassigned Relay Pro")
+        relay_event = _seed_event(db, tournament, name="Pro-Am Relay", event_type="pro")
+        relay_state = RelayState(event_id=relay_event.id, status="drawn")
+        db.session.add(relay_state)
+        db.session.flush()
+        original_team = RelayTeam(
+            relay_state_id=relay_state.id, team_number=1, name="Team 1",
+        )
+        replacement_team = RelayTeam(
+            relay_state_id=relay_state.id, team_number=2, name="Team 2",
+        )
+        db.session.add_all([original_team, replacement_team])
+        db.session.flush()
+        db.session.add(RelayTeamMember(
+            relay_state_id=relay_state.id,
+            relay_team_id=original_team.id,
+            uid=competitor.uid,
+        ))
+        db.session.commit()
+
+        relay_effect = next(
+            effect for effect in compute_scratch_effects(competitor, tournament)
+            if effect.effect_type == "relay_team"
+        )
+        execute_cascade(
+            competitor, [relay_effect], judge_user_id=1, tournament=tournament,
+        )
+        db.session.commit()
+        db.session.add(RelayTeamMember(
+            relay_state_id=relay_state.id,
+            relay_team_id=replacement_team.id,
+            uid=competitor.uid,
+        ))
+        db.session.commit()
+
+        undo = reverse_cascade(
+            competitor.id, judge_user_id=1, tournament=tournament,
+            competitor_type="pro",
+        )
+        db.session.commit()
+
+        assert undo["success"] is True
+        assert RelayTeamMember.query.filter_by(
+            relay_team_id=original_team.id, uid=competitor.uid,
+        ).first() is None
+        assert RelayTeamMember.query.filter_by(
+            relay_team_id=replacement_team.id, uid=competitor.uid,
+        ).first() is not None
+
+
 class TestHappyPathAllEffectTypes:
     """Competitor in 3 events + relay + partner → all effect types present."""
 

@@ -216,6 +216,43 @@ def compute_scratch_effects(competitor, tournament) -> list[CascadeEffect]:
         )
 
     # --- 3. Relay team effects -----------------------------------------------
+    # Normalized relay rows are authoritative whenever present. The legacy
+    # event_state reader remains only for incomplete historical projections.
+    from models.relay import RelayState, RelayTeam, RelayTeamMember
+    normalized_relay_event_ids: set[int] = set()
+    normalized_members = (
+        db.session.query(RelayTeamMember, RelayTeam, RelayState, Event)
+        .join(RelayTeam, RelayTeam.id == RelayTeamMember.relay_team_id)
+        .join(RelayState, RelayState.id == RelayTeam.relay_state_id)
+        .join(Event, Event.id == RelayState.event_id)
+        .filter(
+            Event.tournament_id == tournament.id,
+            RelayTeamMember.uid == competitor.uid,
+        )
+        .all()
+    )
+    for member, team, state, relay_event in normalized_members:
+        normalized_relay_event_ids.add(relay_event.id)
+        effects.append(
+            CascadeEffect(
+                effect_type="relay_team",
+                description=(
+                    f"Remove from Relay Team {team.team_number} "
+                    f"({relay_event.name})"
+                ),
+                affected_entity_id=relay_event.id,
+                affected_entity_type="event",
+                metadata={
+                    "relay_event_name": relay_event.name,
+                    "team_number": team.team_number,
+                    "relay_state_id": state.id,
+                    "relay_team_id": team.id,
+                    "relay_member_id": member.id,
+                    "source": "normalized",
+                },
+            )
+        )
+
     relay_events = (
         Event.query.filter_by(tournament_id=tournament.id)
         .filter(Event.event_state.isnot(None))
@@ -223,6 +260,8 @@ def compute_scratch_effects(competitor, tournament) -> list[CascadeEffect]:
     )
 
     for relay_ev in relay_events:
+        if relay_ev.id in normalized_relay_event_ids:
+            continue
         try:
             state = json.loads(relay_ev.event_state or "{}")
         except (json.JSONDecodeError, TypeError):
@@ -252,6 +291,7 @@ def compute_scratch_effects(competitor, tournament) -> list[CascadeEffect]:
                             metadata={
                                 "relay_event_name": relay_ev.name,
                                 "team_number": team_number,
+                                "source": "legacy",
                             },
                         )
                     )
@@ -339,11 +379,7 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
         # the undo restored the scratched competitor perfectly and left every
         # counterparty stripped, which reads on screen as a successful undo.
         "partners": [],
-        "relay_teams": [
-            e.metadata.get("team_number")
-            for e in effects
-            if e.effect_type == "relay_team"
-        ],
+        "relay_teams": [],
     }
 
     effects_applied = 0
@@ -448,9 +484,25 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                     effects_applied += 1
 
             elif effect.effect_type == "relay_team":
-                relay_event_id = effect.affected_entity_id
-                relay_event = db.session.get(Event, relay_event_id)
-                if relay_event is not None:
+                relay_member_id = effect.metadata.get("relay_member_id")
+                if relay_member_id is not None:
+                    from models.relay import RelayTeamMember
+
+                    relay_member = db.session.get(RelayTeamMember, relay_member_id)
+                    if relay_member is not None and relay_member.uid == competitor.uid:
+                        snapshot["relay_teams"].append({
+                            "source": "normalized",
+                            "relay_state_id": relay_member.relay_state_id,
+                            "relay_team_id": relay_member.relay_team_id,
+                            "uid": relay_member.uid,
+                        })
+                        db.session.delete(relay_member)
+                        effects_applied += 1
+                else:
+                    relay_event_id = effect.affected_entity_id
+                    relay_event = db.session.get(Event, relay_event_id)
+                    if relay_event is None:
+                        continue
                     relay = ProAmRelay(tournament)
                     # Remove the competitor from all member lists in all teams.
                     teams = relay.relay_data.get("teams", [])
@@ -460,6 +512,11 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                                 m for m in team.get(list_key, [])
                                 if m.get("id") != competitor.id
                             ]
+                    snapshot["relay_teams"].append({
+                        "source": "legacy",
+                        "relay_event_id": relay_event_id,
+                        "team_number": effect.metadata.get("team_number"),
+                    })
                     relay._save_relay_data(commit=False)
                     effects_applied += 1
 
@@ -841,8 +898,40 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                     affected_college_competitor_ids.add(r.competitor_id)
 
         # --- Restore relay team membership ----------------------------------
-        relay_team_numbers = snapshot.get("relay_teams", [])
-        if relay_team_numbers and comp is not None:
+        relay_team_snapshots = snapshot.get("relay_teams", [])
+        normalized_relay_snapshots = [
+            entry for entry in relay_team_snapshots
+            if isinstance(entry, dict) and entry.get("source") == "normalized"
+        ]
+        if normalized_relay_snapshots:
+            from models.relay import RelayTeamMember
+
+            for relay_snapshot in normalized_relay_snapshots:
+                team_id = relay_snapshot.get("relay_team_id")
+                uid = relay_snapshot.get("uid")
+                if team_id is None or uid is None:
+                    continue
+                exists = RelayTeamMember.query.filter_by(
+                    relay_state_id=relay_snapshot["relay_state_id"], uid=uid,
+                ).first()
+                if exists is None:
+                    db.session.add(RelayTeamMember(
+                        relay_state_id=relay_snapshot["relay_state_id"],
+                        relay_team_id=team_id,
+                        uid=uid,
+                    ))
+
+        legacy_relay_team_numbers = {
+            entry.get("team_number")
+            for entry in relay_team_snapshots
+            if isinstance(entry, dict) and entry.get("source") == "legacy"
+        }
+        # Audits written before normalized relay support stored bare team
+        # numbers. Keep their legacy undo path usable during the undo window.
+        legacy_relay_team_numbers.update(
+            entry for entry in relay_team_snapshots if isinstance(entry, int)
+        )
+        if legacy_relay_team_numbers and comp is not None:
             # Re-add competitor to relay teams they were removed from.
             # We need the original relay event state — reload from DB and re-add by
             # team_number.  We add back a minimal member dict.
@@ -858,7 +947,7 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                     continue
                 modified = False
                 for team in state.get("teams", []):
-                    if team.get("team_number") not in relay_team_numbers:
+                    if team.get("team_number") not in legacy_relay_team_numbers:
                         continue
                     # Determine member list key by competitor type.
                     is_college = isinstance(comp, CollegeCompetitor)
