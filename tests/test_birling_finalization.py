@@ -114,3 +114,43 @@ class TestBirlingFinalization:
             'college standings rebuild failed' in message
             for message in caplog.messages
         )
+
+
+class TestBirlingFinalizationRoute:
+    def test_incomplete_bracket_is_not_finalized(self, db_session, auth_client):
+        tournament = make_tournament(db_session, name='Birling Route Guard')
+        event = make_event(
+            db_session,
+            tournament,
+            'College Birling',
+            event_type='college',
+            scoring_type='bracket',
+        )
+
+        response = auth_client.post(
+            f'/scheduling/{tournament.id}/event/{event.id}/birling/finalize'
+        )
+
+        assert response.status_code == 302
+        assert EventResult.query.filter_by(event_id=event.id).count() == 0
+        assert event.status == 'pending'
+        with auth_client.session_transaction() as session:
+            assert ('error', 'No placements to finalize. Complete the bracket first.') in session['_flashes']
+
+    def test_completed_bracket_finalizes_through_route(self, db_session, auth_client):
+        event, team, _competitors, bracket = _completed_college_bracket(db_session)
+        bracket._save_bracket_data()
+
+        response = auth_client.post(
+            f'/scheduling/{event.tournament_id}/event/{event.id}/birling/finalize'
+        )
+
+        assert response.status_code == 302
+        db.session.expire_all()
+        assert EventResult.query.filter_by(event_id=event.id).count() == 4
+        assert db.session.get(Team, team.id).total_points == Decimal('25')
+        with auth_client.session_transaction() as session:
+            assert any(
+                category == 'success' and 'Bracket finalized with 4 placements.' in message
+                for category, message in session['_flashes']
+            )
