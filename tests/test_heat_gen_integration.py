@@ -241,6 +241,27 @@ class TestGenerateSimpleTimeEvent:
 
         assert ev.status == 'in_progress'
 
+    def test_unsafe_gear_conflict_preserves_existing_heats(self, db_session):
+        """A failed regeneration must not erase a schedule that was already safe."""
+        t = _make_tournament(db_session)
+        ev = _make_event(db_session, t, name='Underhand', stand_type='underhand',
+                         max_stands=2)
+        first = _make_pro(db_session, t, 'First', event_ids=[ev.id])
+        second = _make_pro(db_session, t, 'Second', event_ids=[ev.id])
+
+        from services.heat_generator import HeatGenerationSafetyError, generate_event_heats
+        generate_event_heats(ev)
+        original_heat_ids = [heat.id for heat in _all_heats_for_event(ev.id)]
+
+        first.gear_sharing = json.dumps({str(ev.id): 'Second'})
+        second.gear_sharing = json.dumps({str(ev.id): 'First'})
+        db_session.flush()
+
+        with pytest.raises(HeatGenerationSafetyError, match='gear-sharing conflict'):
+            generate_event_heats(ev)
+
+        assert [heat.id for heat in _all_heats_for_event(ev.id)] == original_heat_ids
+
 
 # ---------------------------------------------------------------------------
 # generate_event_heats — dual-run event (Speed Climb)
@@ -443,7 +464,7 @@ class TestGearSharingConflictAvoidance:
                 'Gear-sharing partners Alpha and Beta are in the same heat'
 
     def test_gear_sharing_fallback_when_unavoidable(self, db_session):
-        """When all competitors share gear and there is only 1 heat, fallback places them anyway."""
+        """Unsafe shared-gear layouts are blocked rather than forced into one heat."""
         t = _make_tournament(db_session)
         ev = _make_event(db_session, t, name='Underhand', stand_type='underhand',
                          max_stands=5)
@@ -456,13 +477,11 @@ class TestGearSharingConflictAvoidance:
                   event_ids=[ev.id],
                   gear_sharing={str(ev.id): 'Sharer A'})
 
-        from services.heat_generator import generate_event_heats
-        # Should not raise — fallback places despite conflict
-        num = generate_event_heats(ev)
+        from services.heat_generator import HeatGenerationSafetyError, generate_event_heats
+        with pytest.raises(HeatGenerationSafetyError, match='gear-sharing conflict'):
+            generate_event_heats(ev)
 
-        heats = _all_heats_for_event(ev.id)
-        total_assigned = sum(len(h.get_competitors()) for h in heats)
-        assert total_assigned == 2  # both placed
+        assert _all_heats_for_event(ev.id) == []
 
 
 # ---------------------------------------------------------------------------

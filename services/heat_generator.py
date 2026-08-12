@@ -56,6 +56,10 @@ _last_unpaired_partnered: dict[int, list[dict]] = {}
 _last_gender_excluded: dict[int, list[dict]] = {}
 
 
+class HeatGenerationSafetyError(ValueError):
+    """Raised when a requested heat layout cannot be run safely."""
+
+
 def get_last_gear_violations(event_id: int) -> list[dict]:
     """Return the gear-sharing violations recorded by the most recent
     generate_event_heats(event) call for this event_id, or an empty list."""
@@ -187,12 +191,9 @@ def generate_event_heats(event: Event) -> int:
     # Calculate number of heats needed
     num_heats = math.ceil(len(competitors) / max_per_heat)
 
-    # Clear existing heats
-    _delete_event_heats(event.id)
-
-    # Per-event gear-sharing fallback violations recorded by the snake-draft
-    # helpers.  Entries are dicts with keys: comp_id, comp_name, heat_index.
-    # Cleared on every generate_event_heats() call (gear audit fix G2/G3).
+    # The helpers identify constraints they cannot satisfy without placing two
+    # people who share gear in the same heat.  Do this before deleting an
+    # existing layout, so an unsafe regeneration leaves that layout intact.
     gear_violations: list[dict] = []
     _last_gear_violations.pop(event.id, None)
 
@@ -222,6 +223,26 @@ def generate_event_heats(event: Event) -> int:
         heats = _generate_standard_heats(competitors, num_heats, max_per_heat, event=event,
                                          gear_violations=gear_violations,
                                          unpaired_log=unpaired_log)
+
+    if gear_violations:
+        forced_conflicts = [v for v in gear_violations if not v.get('reason')]
+        unplaced = [v for v in gear_violations if v.get('reason')]
+        details: list[str] = []
+        if forced_conflicts:
+            names = ', '.join(v.get('comp_name', '') for v in forced_conflicts[:5])
+            extra = f' (+{len(forced_conflicts) - 5} more)' if len(forced_conflicts) > 5 else ''
+            details.append(f'gear-sharing conflict for {names}{extra}')
+        if unplaced:
+            names = ', '.join(v.get('comp_name', '') for v in unplaced[:5])
+            extra = f' (+{len(unplaced) - 5} more)' if len(unplaced) > 5 else ''
+            details.append(f'no safe springboard capacity for {names}{extra}')
+        raise HeatGenerationSafetyError(
+            f'Heat generation blocked for {event.display_name}: ' + '; '.join(details) +
+            '. Resolve the roster or gear-sharing records before regenerating.'
+        )
+
+    # No safety blocker remains, so replacing the current layout is safe.
+    _delete_event_heats(event.id)
 
     # Use actual heat count returned by the generator (saw events recalculate internally).
     actual_heat_count = len(heats)
@@ -416,31 +437,6 @@ def generate_event_heats(event: Event) -> int:
     # solos don't pile onto the same physical stand. Must run after the flush
     # above so the HeatAssignment rows reflect the final layout.
     rebalance_stock_saw_solo_stands(event)
-
-    # Promote any fallback gear-sharing violations recorded by the snake-draft
-    # helpers into the module-level lookup so the route layer can surface a
-    # WARNING flash to the judge (gear audit fix G2/G3 — 2026-04-07).  Each
-    # violation's heat_index is mapped to the freshly created Heat row's id.
-    if gear_violations:
-        resolved: list[dict] = []
-        for v in gear_violations:
-            idx = v.get('heat_index')
-            heat_id = None
-            heat_number = None
-            if isinstance(idx, int) and 0 <= idx < len(created_heats):
-                heat_id = created_heats[idx].id
-                heat_number = created_heats[idx].heat_number
-            resolved.append({
-                'comp_id': v.get('comp_id'),
-                'comp_name': v.get('comp_name', ''),
-                'heat_id': heat_id,
-                'heat_number': heat_number,
-            })
-            logger.warning(
-                'GEAR CONFLICT FORCED: %s placed in heat %s — manual review required',
-                v.get('comp_name', ''), heat_id,
-            )
-        _last_gear_violations[event.id] = resolved
 
     # Promote LH overflow warnings for springboard events, same pattern.
     if lh_warnings:

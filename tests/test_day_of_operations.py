@@ -500,6 +500,34 @@ class TestFinalizationGuard:
         assert resp.status_code == 200
         assert b"scored results" in resp.data.lower()
 
+    def test_regen_gear_conflict_is_blocked_without_replacing_existing_heats(
+        self, db_session, auth_client
+    ):
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Gear Guard", max_stands=2)
+        first = _make_pro(db_session, t.id, "Gear_A", events=[e.id])
+        second = _make_pro(db_session, t.id, "Gear_B", events=[e.id])
+        _make_result(db_session, e.id, first)
+        _make_result(db_session, e.id, second)
+        original = _make_heat(
+            db_session, e.id, competitors=[first.id], stand_assignments={str(first.id): 1}
+        )
+        first.gear_sharing = json.dumps({str(e.id): "Gear_B"})
+        second.gear_sharing = json.dumps({str(e.id): "Gear_A"})
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/generate-heats",
+            data={},
+            follow_redirects=True,
+        )
+
+        assert resp.status_code == 200
+        assert b"gear-sharing conflict" in resp.data.lower()
+        persisted = _db.session.get(type(original), original.id)
+        assert persisted is not None
+        assert persisted.get_competitors() == [first.id]
+
 
 # ---------------------------------------------------------------------------
 # Phase 3: Add late entry to heat

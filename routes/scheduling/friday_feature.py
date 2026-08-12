@@ -178,7 +178,8 @@ def friday_feature(tournament_id):
                 if not event:
                     continue
                 try:
-                    heat_count = generate_event_heats(event)
+                    with db.session.begin_nested():
+                        heat_count = generate_event_heats(event)
                     generated += heat_count
                 except Exception as exc:
                     errors.append(f'{event.display_name}: {exc}')

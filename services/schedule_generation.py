@@ -68,7 +68,8 @@ def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
     errors = []
     for event in tournament.events.order_by(Event.event_type, Event.name, Event.gender).all():
         try:
-            generate_event_heats(event)
+            with db.session.begin_nested():
+                generate_event_heats(event)
             generated += 1
         except Exception as exc:
             if 'No competitors entered' in str(exc):
