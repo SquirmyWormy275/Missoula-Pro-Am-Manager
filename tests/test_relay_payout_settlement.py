@@ -1,6 +1,9 @@
 """Relay payout ranking and team-level settlement coverage."""
 
+from unittest.mock import patch
+
 import pytest
+from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
 from models.relay import RelayState, RelayTeam, RelayTeamEvent
@@ -217,4 +220,32 @@ def test_judge_cannot_toggle_relay_settlement(app, db_session):
     )
 
     assert response.status_code == 403
+    assert db.session.get(RelayTeam, payable_team.id).payout_settled is False
+
+
+def test_relay_settlement_conflict_returns_retry_response(app, db_session):
+    from models.user import User
+
+    tournament = make_tournament(db_session)
+    _, _, _, payable_team = _completed_relay(db_session, tournament)
+    admin = User(username='relay_conflict_admin', role='admin')
+    admin.set_password('admin_pass')
+    db.session.add(admin)
+    db.session.commit()
+
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session['_user_id'] = str(admin.id)
+
+    with patch(
+        'routes.proam_relay.db.session.commit', side_effect=StaleDataError()
+    ):
+        response = client.post(
+            f'/tournament/{tournament.id}/proam-relay/team/'
+            f'{payable_team.id}/toggle-settled',
+            headers={'X-Requested-With': 'XMLHttpRequest'},
+        )
+
+    assert response.status_code == 409
+    assert response.get_json()['ok'] is False
     assert db.session.get(RelayTeam, payable_team.id).payout_settled is False

@@ -1599,8 +1599,21 @@ def toggle_settlement(tid, rid):
     if event.tournament_id != tid:
         abort(404)
 
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
     result.payout_settled = not result.payout_settled
-    db.session.commit()
+    try:
+        db.session.commit()
+    except StaleDataError:
+        db.session.rollback()
+        message = (
+            'This payout was updated by another administrator. Reload the '
+            'summary before trying again.'
+        )
+        if is_ajax:
+            return jsonify({'ok': False, 'message': message}), 409
+        flash(message, 'warning')
+        return redirect(url_for('reporting.pro_payout_summary', tournament_id=tid))
+
     log_action(
         'payout_settlement_toggled',
         'event_result',
@@ -1608,7 +1621,6 @@ def toggle_settlement(tid, rid):
         {'settled': result.payout_settled, 'competitor': result.competitor_name},
     )
 
-    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
     if is_ajax:
         return jsonify({'ok': True, 'settled': result.payout_settled})
 

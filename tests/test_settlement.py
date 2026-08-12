@@ -12,8 +12,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from unittest.mock import patch
 
 import pytest
+from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
 from database import db as _db
@@ -236,6 +238,25 @@ class TestToggleSettlementEdgeCases:
             )
 
         assert resp.status_code in (302, 303)
+
+    def test_ajax_conflict_reports_retry_without_toggling(self, app, auth_client, db_session):
+        t = _make_tournament(db_session)
+        comp = _make_pro_competitor(db_session, t, name='Concurrent Pro')
+        event = _make_event(db_session, t, name='Concurrent Event')
+        result = _make_result(db_session, event, comp, payout_settled=False)
+        _db.session.commit()
+
+        with patch(
+            'routes.scoring.db.session.commit', side_effect=StaleDataError()
+        ):
+            response = auth_client.post(
+                f'/scoring/tournament/{t.id}/result/{result.id}/toggle-settled',
+                headers={'X-Requested-With': 'XMLHttpRequest'},
+            )
+
+        assert response.status_code == 409
+        assert response.get_json()['ok'] is False
+        assert db.session.get(type(result), result.id).payout_settled is False
 
 
 class TestPayoutLedger:

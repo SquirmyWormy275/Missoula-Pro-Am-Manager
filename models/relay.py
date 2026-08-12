@@ -64,6 +64,16 @@ class RelayTeam(db.Model):
     payout_settled = db.Column(
         db.Boolean, nullable=False, default=False, server_default=sa.text("false")
     )
+    # Relay scoring and settlement are edited from separate live-show views.
+    # Keep a version counter so a stale browser cannot silently overwrite the
+    # latest team state.
+    version_id = db.Column(
+        db.Integer, nullable=False, default=1, server_default=sa.text("'1'")
+    )
+
+    __mapper_args__ = {
+        "version_id_col": version_id,
+    }
 
     relay_state = db.relationship("RelayState", back_populates="teams")
     members = db.relationship(

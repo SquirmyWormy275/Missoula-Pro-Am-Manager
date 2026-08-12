@@ -326,8 +326,17 @@ def toggle_relay_settlement(tournament_id, team_id):
         abort(404)
 
     team = db.get_or_404(RelayTeam, team_id)
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
     team.payout_settled = not team.payout_settled
-    db.session.commit()
+    try:
+        db.session.commit()
+    except StaleDataError:
+        db.session.rollback()
+        if is_ajax:
+            return jsonify({'ok': False, 'message': _STALE_DATA_FLASH}), 409
+        flash(_STALE_DATA_FLASH, 'warning')
+        return redirect(url_for('reporting.pro_payout_summary', tournament_id=tournament_id))
+
     invalidate_tournament_caches(tournament_id)
     log_action(
         'relay_payout_settlement_toggled',
@@ -341,7 +350,6 @@ def toggle_relay_settlement(tournament_id, team_id):
         },
     )
 
-    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
     if is_ajax:
         return jsonify({'ok': True, 'settled': team.payout_settled})
     return redirect(url_for('reporting.pro_payout_summary', tournament_id=tournament_id))
