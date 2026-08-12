@@ -38,6 +38,7 @@
                 action="{{ url_for('scoring.scratch_confirm', tournament_id=tournament.id, competitor_id=competitor.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="competitor_type" value="{{ competitor_type }}">
+            {% if return_event_id %}<input type="hidden" name="return_event_id" value="{{ return_event_id }}">{% endif %}
             <input type="hidden" name="effect_count" value="{{ effects|length }}">
 
             <div class="list-group mb-4">
@@ -90,6 +91,7 @@
                 action="{{ url_for('scoring.scratch_confirm', tournament_id=tournament.id, competitor_id=competitor.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="competitor_type" value="{{ competitor_type }}">
+            {% if return_event_id %}<input type="hidden" name="return_event_id" value="{{ return_event_id }}">{% endif %}
             <input type="hidden" name="effect_count" value="0">
             <div class="d-flex gap-2">
               <button type="submit" class="btn btn-warning">

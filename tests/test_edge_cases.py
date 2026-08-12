@@ -358,12 +358,34 @@ def test_unassigned_competitor_and_all_scratched_heat_render_cleanly(qa_env):
     assert "Idle Pro" in dashboard.get_data(as_text=True)
 
     for competitor_id in competitors:
-        response = client.post(
+        handoff = client.post(
             f"/scheduling/{tournament_id}/event/{event_id}/scratch-competitor",
             data={"competitor_id": str(competitor_id), "heat_id": str(heat_id)},
             follow_redirects=False,
         )
-        assert response.status_code == 302
+        assert handoff.status_code == 302
+
+        preview = client.get(f'{handoff.headers["Location"]}&format=json')
+        assert preview.status_code == 200
+        effects = preview.get_json()["effects"]
+        form = {
+            "competitor_type": "pro",
+            "return_event_id": str(event_id),
+            "effect_count": str(len(effects)),
+        }
+        for index, effect in enumerate(effects):
+            form.update({
+                f"effect_type_{index}": effect["effect_type"],
+                f"affected_entity_id_{index}": str(effect["affected_entity_id"]),
+                f"affected_entity_type_{index}": effect["affected_entity_type"],
+                f"effect_checked_{index}": "on",
+            })
+        confirm = client.post(
+            f"/scoring/{tournament_id}/competitor/{competitor_id}/scratch-confirm",
+            data=form,
+            follow_redirects=False,
+        )
+        assert confirm.status_code == 302
 
     heats_page = client.get(f"/scheduling/{tournament_id}/event/{event_id}/heats")
     assert heats_page.status_code == 200

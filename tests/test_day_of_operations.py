@@ -197,6 +197,38 @@ def _make_result(
     return r
 
 
+def _confirm_heat_scratch(client, tournament, event, competitor, heat):
+    """Follow the heat-board handoff through the reviewed scratch cascade."""
+    handoff = client.post(
+        f"/scheduling/{tournament.id}/event/{event.id}/scratch-competitor",
+        data={"competitor_id": competitor.id, "heat_id": heat.id},
+        follow_redirects=False,
+    )
+    assert handoff.status_code in (302, 303)
+    assert "scratch-preview" in handoff.headers["Location"]
+
+    preview = client.get(f'{handoff.headers["Location"]}&format=json')
+    assert preview.status_code == 200
+    effects = preview.get_json()["effects"]
+    data = {
+        "competitor_type": event.event_type,
+        "return_event_id": str(event.id),
+        "effect_count": str(len(effects)),
+    }
+    for index, effect in enumerate(effects):
+        data.update({
+            f"effect_type_{index}": effect["effect_type"],
+            f"affected_entity_id_{index}": str(effect["affected_entity_id"]),
+            f"affected_entity_type_{index}": effect["affected_entity_type"],
+            f"effect_checked_{index}": "on",
+        })
+    return client.post(
+        f"/scoring/{tournament.id}/competitor/{competitor.id}/scratch-confirm",
+        data=data,
+        follow_redirects=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Phase 1: Scratch from heat
 # ---------------------------------------------------------------------------
@@ -220,11 +252,7 @@ class TestScratchCompetitor:
         )
         db_session.commit()
 
-        resp = auth_client.post(
-            f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
-            data={"competitor_id": c1.id, "heat_id": h.id},
-            follow_redirects=True,
-        )
+        resp = _confirm_heat_scratch(auth_client, t, e, c1, h)
         assert resp.status_code == 200
 
         from models.heat import Heat
@@ -233,7 +261,7 @@ class TestScratchCompetitor:
         assert c1.id not in heat.get_competitors()
         assert c2.id in heat.get_competitors()
 
-    def test_scratch_reports_stale_heat_conflict(self, db_session, auth_client):
+    def test_scratch_handoff_does_not_mutate_until_confirmed(self, db_session, auth_client):
         t = _make_tournament(db_session, name="Scratch Stale")
         e = _make_event(db_session, t.id, name="Scratch Stale Event")
         c = _make_pro(db_session, t.id, "Scratch_Stale", events=[e.id])
@@ -242,15 +270,53 @@ class TestScratchCompetitor:
                        stand_assignments={str(c.id): 1})
         db_session.commit()
 
-        with patch('routes.scheduling.heats.db.session.commit', side_effect=StaleDataError()):
-            resp = auth_client.post(
-                f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
-                data={"competitor_id": c.id, "heat_id": h.id},
-                follow_redirects=True,
-            )
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
+            data={"competitor_id": c.id, "heat_id": h.id},
+            follow_redirects=True,
+        )
 
         assert resp.status_code == 200
-        assert b"updated this heat in parallel" in resp.data.lower()
+        assert resp.get_json()["competitor_name"] == c.name
+        assert _db.session.get(type(h), h.id).get_competitors() == [c.id]
+        assert _db.session.get(type(c), c.id).status == "active"
+
+    def test_scratch_handoff_returns_to_the_source_event(self, db_session, auth_client):
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id)
+        c = _make_pro(db_session, t.id, "Return_Target", events=[e.id])
+        _make_result(db_session, e.id, c)
+        h = _make_heat(db_session, e.id, competitors=[c.id],
+                       stand_assignments={str(c.id): 1})
+        db_session.commit()
+
+        handoff = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
+            data={"competitor_id": c.id, "heat_id": h.id},
+            follow_redirects=False,
+        )
+        preview = auth_client.get(f'{handoff.headers["Location"]}&format=json')
+        effects = preview.get_json()["effects"]
+        data = {
+            "competitor_type": "pro",
+            "return_event_id": str(e.id),
+            "effect_count": str(len(effects)),
+        }
+        for index, effect in enumerate(effects):
+            data.update({
+                f"effect_type_{index}": effect["effect_type"],
+                f"affected_entity_id_{index}": str(effect["affected_entity_id"]),
+                f"affected_entity_type_{index}": effect["affected_entity_type"],
+                f"effect_checked_{index}": "on",
+            })
+        confirm = auth_client.post(
+            f"/scoring/{t.id}/competitor/{c.id}/scratch-confirm",
+            data=data,
+            follow_redirects=False,
+        )
+
+        assert confirm.status_code in (302, 303)
+        assert confirm.location.endswith(f"/scheduling/{t.id}/event/{e.id}/heats")
 
     def test_scratch_frees_stand(self, db_session, auth_client):
         t = _make_tournament(db_session)
@@ -262,11 +328,7 @@ class TestScratchCompetitor:
         )
         db_session.commit()
 
-        auth_client.post(
-            f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
-            data={"competitor_id": c1.id, "heat_id": h.id},
-            follow_redirects=True,
-        )
+        _confirm_heat_scratch(auth_client, t, e, c1, h)
 
         from models.heat import Heat
 
@@ -283,11 +345,7 @@ class TestScratchCompetitor:
         )
         db_session.commit()
 
-        auth_client.post(
-            f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
-            data={"competitor_id": c1.id, "heat_id": h.id},
-            follow_redirects=True,
-        )
+        _confirm_heat_scratch(auth_client, t, e, c1, h)
 
         from models.event import EventResult
 
@@ -305,11 +363,7 @@ class TestScratchCompetitor:
         )
         db_session.commit()
 
-        auth_client.post(
-            f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
-            data={"competitor_id": c1.id, "heat_id": h.id},
-            follow_redirects=True,
-        )
+        _confirm_heat_scratch(auth_client, t, e, c1, h)
 
         from models.event import EventResult
 
@@ -332,11 +386,7 @@ class TestScratchCompetitor:
         )
         db_session.commit()
 
-        auth_client.post(
-            f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
-            data={"competitor_id": c1.id, "heat_id": h.id},
-            follow_redirects=True,
-        )
+        _confirm_heat_scratch(auth_client, t, e, c1, h)
 
         from models.heat import HeatAssignment
 
@@ -400,11 +450,7 @@ class TestScratchDualRun:
         )
         db_session.commit()
 
-        resp = auth_client.post(
-            f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
-            data={"competitor_id": c.id, "heat_id": h_r1.id},
-            follow_redirects=True,
-        )
+        resp = _confirm_heat_scratch(auth_client, t, e, c, h_r1)
         assert resp.status_code == 200
 
         from models.heat import Heat

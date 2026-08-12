@@ -397,7 +397,7 @@ class TestScratchConfirmPost:
             assert resp.status_code in (403, 404)
 
     def test_redirect_uses_post_redirect_get(self, app):
-        """Successful POST must redirect (not render a template)."""
+        """Direct pro scratches retain their established registration return."""
         from database import db
 
         with app.app_context():
@@ -414,7 +414,7 @@ class TestScratchConfirmPost:
                 follow_redirects=False,
             )
             assert resp.status_code in (302, 303)
-            assert resp.location  # must have Location header
+            assert resp.location.endswith(f"/registration/{t.id}/pro")
 
 
 # ===========================================================================

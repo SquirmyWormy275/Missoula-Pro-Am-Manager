@@ -500,15 +500,7 @@ def _current_user_id() -> int | None:
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/scratch-competitor', methods=['POST'])
 def scratch_competitor(tournament_id, event_id):
-    """Scratch a competitor from a heat (day-of no-show operation).
-
-    Removes the competitor from the heat's roster and stand map, which as of
-    D12-C commit E means rewriting the ``heat_assignments`` rows through
-    ``Heat.set_roster``; it used to mean editing the ``Heat.competitors`` JSON.
-    Sets their EventResult.status to 'scratched', cleans gear-sharing
-    references, and recalculates positions if the event has scored results.
-    For dual-run events, mirrors the scratch across both run heats.
-    """
+    """Validate a heat-board scratch then hand off to the canonical cascade."""
     event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
@@ -534,106 +526,28 @@ def scratch_competitor(tournament_id, event_id):
         flash('Competitor is not in the selected heat.', 'error')
         return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
-    # Look up competitor name for flash message
+    # The scoring blueprint owns scratch execution: its reviewed cascade applies
+    # partner, relay, payout, standings, audit, and undo rules together. The
+    # heat board remains a validated entry point, not a competing mutation path.
     if event.event_type == 'college':
-        comp = db.session.get(CollegeCompetitor, competitor_id)
-    else:
-        comp = db.session.get(ProCompetitor, competitor_id)
-    comp_name = comp.display_name if comp else f'Competitor #{competitor_id}'
-
-    try:
-        # For dual-run events, scratch from both run heats
-        run_numbers = [1, 2] if event.requires_dual_runs else [heat.run_number]
-        comp_type = event.event_type  # 'pro' or 'college'
-
-        for run_number in run_numbers:
-            target = event.heats.filter_by(heat_number=heat.heat_number, run_number=run_number).first()
-            if not target:
-                continue
-            if competitor_id not in target.get_competitors():
-                continue
-
-            # One roster write, membership and the freed stand together. The
-            # guard above has already established the competitor is in this
-            # heat, so the remove cannot miss.
-            comp_ids = target.get_competitors()
-            comp_ids.remove(competitor_id)
-            assignments = target.get_stand_assignments()
-            assignments.pop(str(competitor_id), None)
-            target.set_roster(comp_type, comp_ids, assignments)
-
-            # Auto-complete empty heats to prevent finalization block (Codex #7)
-            if not comp_ids:
-                target.status = 'completed'
-
-        # Set EventResult.status = 'scratched' (do NOT delete the row)
-        result = EventResult.query.filter_by(
-            event_id=event.id,
-            competitor_id=competitor_id,
-            competitor_type=comp_type,
+        comp = CollegeCompetitor.query.filter_by(
+            id=competitor_id, tournament_id=tournament_id, status='active',
         ).first()
-        if result:
-            result.status = 'scratched'
+    else:
+        comp = ProCompetitor.query.filter_by(
+            id=competitor_id, tournament_id=tournament_id, status='active',
+        ).first()
+    if comp is None:
+        flash('Competitor not found in this tournament or not active.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
-        # Clean gear-sharing references on other active competitors
-        if comp:
-            try:
-                from services.gear_sharing import cleanup_scratched_gear_entries
-                tournament = db.session.get(Tournament, tournament_id)
-                cleanup_scratched_gear_entries(tournament, scratched_competitor=comp)
-            except Exception:
-                pass  # Gear cleanup failure should not block the scratch
-
-        # Recalculate positions if event has scored results (Codex #1)
-        has_scored = EventResult.query.filter_by(event_id=event.id, status='completed').first() is not None
-        if has_scored:
-            if event.is_finalized:
-                event.is_finalized = False
-                event.status = 'in_progress'
-            try:
-                import services.scoring_engine as engine
-                engine.calculate_positions(event)
-            except Exception:
-                pass  # Position recalc failure should not block the scratch
-
-        # Stock Saw: a scratch can leave a solo on the same stand as the
-        # previous solo — rebalance so consecutive solos alternate 7/8.
-        try:
-            from services.heat_generator import rebalance_stock_saw_solo_stands
-            rebalance_stock_saw_solo_stands(event)
-        except Exception:
-            pass  # Rebalance failure must not block the scratch.
-
-        invalidate_tournament_caches(tournament_id)
-        log_action('heat_scratch', 'event', event.id, {
-            'competitor_id': competitor_id,
-            'competitor_name': comp_name,
-            'heat_number': heat.heat_number,
-            'event_name': event.display_name,
-            'user_id': user_id,
-        })
-
-        db.session.commit()
-
-        # Flash messages
-        flash(f'{comp_name} scratched from {event.display_name} Heat {heat.heat_number}.', 'success')
-        if event.is_partnered:
-            flash(f'Warning: This is a partnered event. {comp_name}\'s partner may need to be scratched too.', 'warning')
-        # Check if any heat became empty
-        for run_number in run_numbers:
-            target = event.heats.filter_by(heat_number=heat.heat_number, run_number=run_number).first()
-            if target and len(target.get_competitors()) == 0:
-                flash(f'Heat {heat.heat_number} is now empty and marked complete.', 'info')
-                break
-
-    except StaleDataError:
-        db.session.rollback()
-        flash(_STALE_HEAT_DATA_FLASH, 'warning')
-    except Exception as e:
-        db.session.rollback()
-        flash(f'Error scratching competitor: {e}', 'error')
-
-    return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+    return redirect(url_for(
+        'scoring.scratch_preview',
+        tournament_id=tournament_id,
+        competitor_id=comp.id,
+        competitor_type=event.event_type,
+        return_event_id=event.id,
+    ))
 
 
 # ---------------------------------------------------------------------------

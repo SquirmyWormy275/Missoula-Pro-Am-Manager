@@ -1060,6 +1060,34 @@ def _competitor_type_of(comp) -> str:
     return 'college' if isinstance(comp, CollegeCompetitor) else 'pro'
 
 
+def _scratch_return_url(
+    tournament_id: int,
+    competitor,
+    event_id_value,
+    *,
+    pro_fallback_endpoint: str = 'main.pro_dashboard',
+) -> tuple[str, int | None]:
+    """Resolve a same-tournament heat-board return target, if one was supplied."""
+    try:
+        event_id = int(event_id_value)
+    except (TypeError, ValueError):
+        event_id = None
+    if event_id is not None:
+        event = db.session.get(Event, event_id)
+        if event is not None and event.tournament_id == tournament_id:
+            return (
+                url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event.id),
+                event.id,
+            )
+
+    if _competitor_type_of(competitor) == 'college':
+        return (
+            url_for('registration.team_detail', tournament_id=tournament_id, team_id=competitor.team_id),
+            None,
+        )
+    return url_for(pro_fallback_endpoint, tournament_id=tournament_id), None
+
+
 def _scratch_preview_wants_json() -> bool:
     """Whether this scratch-preview request should get JSON instead of a page.
 
@@ -1103,14 +1131,11 @@ def scratch_preview(tournament_id, competitor_id):
     comp_type = _competitor_type_of(comp)
 
     if not _scratch_preview_wants_json():
-        # Cancel goes back to the page the Scratch button lives on. Computed
-        # from the competitor rather than taken from Referer so a crafted
-        # link cannot turn Cancel into an open redirect.
-        if comp_type == 'college':
-            cancel_url = url_for('registration.team_detail',
-                                 tournament_id=tournament_id, team_id=comp.team_id)
-        else:
-            cancel_url = url_for('main.pro_dashboard', tournament_id=tournament_id)
+        # Resolve an explicit heat-board return target from its event id, never
+        # from a URL supplied by the browser, so Cancel cannot become an open redirect.
+        cancel_url, return_event_id = _scratch_return_url(
+            tournament_id, comp, request.args.get('return_event_id'),
+        )
 
         return render_template(
             'scoring/scratch_preview.html',
@@ -1119,6 +1144,7 @@ def scratch_preview(tournament_id, competitor_id):
             competitor_type=comp_type,
             effects=effects,
             cancel_url=cancel_url,
+            return_event_id=return_event_id,
             undo_available=find_undoable_scratch(comp.id, comp_type) is not None,
         )
 
@@ -1218,16 +1244,13 @@ def scratch_confirm(tournament_id, competitor_id):
             'info',
         )
 
-    # Redirect back to the competitor's registration page (pro or college).
-    from models.competitor import CollegeCompetitor as _CC
-    if isinstance(comp, _CC):
-        return redirect(
-            url_for('registration.team_detail',
-                    tournament_id=tournament_id, team_id=comp.team_id)
-        )
-    return redirect(
-        url_for('registration.pro_registration', tournament_id=tournament_id)
+    return_url, _return_event_id = _scratch_return_url(
+        tournament_id,
+        comp,
+        request.form.get('return_event_id'),
+        pro_fallback_endpoint='registration.pro_registration',
     )
+    return redirect(return_url)
 
 
 @scoring_bp.route(
