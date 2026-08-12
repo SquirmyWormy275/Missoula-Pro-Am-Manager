@@ -585,6 +585,33 @@ class TestMoveCapacityGuard:
         assert first.id in _db.session.get(type(source), source.id).get_competitors()
 
 
+    def test_move_completed_heat_is_rejected(self, db_session, auth_client):
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Completed Move", max_stands=2)
+        mover = _make_pro(db_session, t.id, "Completed_Mover", events=[e.id])
+        resident = _make_pro(db_session, t.id, "Completed_Resident", events=[e.id])
+        _make_result(db_session, e.id, mover, status="completed", result_value=11.0)
+        source = _make_heat(
+            db_session, e.id, heat_number=1, status="completed",
+            competitors=[mover.id], stand_assignments={str(mover.id): 1},
+        )
+        target = _make_heat(
+            db_session, e.id, heat_number=2,
+            competitors=[resident.id], stand_assignments={str(resident.id): 1},
+        )
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/move-competitor",
+            data={"competitor_id": mover.id, "from_heat_id": source.id, "to_heat_id": target.id},
+            follow_redirects=True,
+        )
+
+        assert b"completed heat" in resp.data.lower()
+        assert mover.id in _db.session.get(type(source), source.id).get_competitors()
+        assert mover.id not in _db.session.get(type(target), target.id).get_competitors()
+
+
 class TestFinalizationGuard:
     """Test that heat generation is blocked for finalized events."""
 
@@ -728,6 +755,27 @@ class TestAddToHeat:
         )
         assert b"full" in resp.data.lower()
 
+    def test_add_to_completed_heat_is_rejected(self, db_session, auth_client):
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Completed Add", max_stands=2)
+        resident = _make_pro(db_session, t.id, "Completed_Resident", events=[e.id])
+        entrant = _make_pro(db_session, t.id, "Completed_Entrant", events=[e.id])
+        _make_result(db_session, e.id, resident, status="completed", result_value=11.0)
+        heat = _make_heat(
+            db_session, e.id, status="completed", competitors=[resident.id],
+            stand_assignments={str(resident.id): 1},
+        )
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/add-to-heat",
+            data={"competitor_id": entrant.id, "heat_id": heat.id},
+            follow_redirects=True,
+        )
+
+        assert b"completed heat" in resp.data.lower()
+        assert entrant.id not in _db.session.get(type(heat), heat.id).get_competitors()
+
     def test_add_creating_gear_conflict_is_rejected(self, db_session, auth_client):
         t = _make_tournament(db_session)
         e = _make_event(db_session, t.id, name="Add Gear Guard", max_stands=2)
@@ -860,3 +908,19 @@ class TestDeleteEmptyHeat:
 
         from models.heat import Heat
         assert _db.session.get(Heat, h.id) is not None
+
+    def test_delete_heat_after_scoring_is_rejected(self, db_session, auth_client):
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Scored Delete")
+        empty_heat = _make_heat(db_session, e.id, heat_number=1, competitors=[])
+        scored_heat = _make_heat(db_session, e.id, heat_number=2, status="completed", competitors=[])
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/delete-heat/{empty_heat.id}",
+            follow_redirects=True,
+        )
+
+        assert b"after scoring has started" in resp.data.lower()
+        assert _db.session.get(type(empty_heat), empty_heat.id) is not None
+        assert _db.session.get(type(scored_heat), scored_heat.id) is not None

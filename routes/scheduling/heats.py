@@ -153,6 +153,7 @@ def event_heats(tournament_id, event_id):
                            spacing_data=spacing_data,
                            comp_lookup=comp_lookup,
                            result_status_map=result_status_map,
+                           has_completed_heat=any(heat.status == 'completed' for heat in heats),
                            unassigned_competitors=unassigned_competitors)
 
 
@@ -389,9 +390,6 @@ def move_competitor_between_heats(tournament_id, event_id):
 
     # Lock check — don't move into a heat that's being scored by another judge
     user_id = _current_user_id()
-    if to_heat.is_locked() and to_heat.locked_by_user_id != (user_id or -1):
-        flash('Destination heat is being scored by another judge.', 'error')
-        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
     # Capacity check — don't overfill the destination heat
     max_cap = _max_per_heat(event)
@@ -410,6 +408,19 @@ def move_competitor_between_heats(tournament_id, event_id):
             return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
         from_pairs.append(source)
         to_pairs.append(target)
+
+    affected_heats = from_pairs + to_pairs
+    if any(heat.status == 'completed' for heat in affected_heats):
+        flash(
+            'Cannot move competitors into or out of a completed heat. '
+            'Completed heat rosters are preserved as scoring history.',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+    if any(heat.is_locked() and heat.locked_by_user_id != (user_id or -1)
+           for heat in affected_heats):
+        flash('A source or destination heat is currently being scored by another judge.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
     for target in to_pairs:
         if competitor_id not in target.get_competitors() and len(target.get_competitors()) >= max_cap:
@@ -678,6 +689,18 @@ def add_to_heat(tournament_id, event_id):
             return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
         target_heats.append(target)
 
+    if any(target.status == 'completed' for target in target_heats):
+        flash(
+            'Cannot add a competitor to a completed heat. Completed heat rosters '
+            'are preserved as scoring history.',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+    if any(target.is_locked() and target.locked_by_user_id != (user_id or -1)
+           for target in target_heats):
+        flash('A matching heat is currently being scored by another judge.', 'error')
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
+
     conflicts = _gear_conflicts_for_heat_change(event, competitor_id, target_heats)
     if conflicts:
         flash(
@@ -769,6 +792,14 @@ def delete_heat(tournament_id, event_id, heat_id):
     heat = db.get_or_404(Heat, heat_id)
     if heat.event_id != event.id:
         abort(404)
+
+    if Heat.query.filter_by(event_id=event.id, status='completed').first() is not None:
+        flash(
+            'Cannot delete or renumber heats after scoring has started. '
+            'Completed heat history is preserved.',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_heats', tournament_id=tournament_id, event_id=event_id))
 
     # Lock check
     user_id = _current_user_id()

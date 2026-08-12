@@ -150,6 +150,8 @@ Preflight reports unreviewed handicap entrants. Heat scoring enforces the same
 rule and redirects the judge to the mark-review page before any score is
 written. Heat regeneration preserves scored heat history by refusing to
 regenerate events with completed results, including bulk and Friday workflows.
+Once a heat is completed, its roster cannot be moved, expanded, deleted, or
+renumbered through heat-board scheduling controls.
 
 ## Production Parity
 
