@@ -203,7 +203,11 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None, commit: b
 
     batched_heats = (
         Heat.query
-        .filter(Heat.event_id.in_(non_axe_event_ids), Heat.run_number == 1)
+        .filter(
+            Heat.event_id.in_(non_axe_event_ids),
+            Heat.run_number == 1,
+            Heat.status != 'completed',
+        )
         .order_by(Heat.event_id, Heat.heat_number)
         .all()
     ) if non_axe_event_ids else []

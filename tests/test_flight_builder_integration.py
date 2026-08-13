@@ -619,6 +619,34 @@ class TestBuildProFlights:
 
         assert first_assigned == second_assigned
 
+    def test_initial_build_leaves_completed_unflighted_heat_unchanged(self, db_session):
+        """Initial flight building must not retroactively schedule scored work."""
+        from models import Heat
+        from services.flight_builder import build_pro_flights
+
+        data = _seed_standard_show(db_session)
+        tournament = data['tournament']
+        event_ids = [event.id for event in data['events'].values()]
+        completed = Heat.query.filter(Heat.event_id.in_(event_ids)).first()
+        assert completed is not None
+        assert completed.flight_id is None
+        completed.status = 'completed'
+        completed_id = completed.id
+        db_session.flush()
+
+        flights_created = build_pro_flights(tournament)
+
+        preserved = db_session.get(Heat, completed_id)
+        assert flights_created > 0
+        assert preserved.status == 'completed'
+        assert preserved.flight_id is None
+        assert preserved.flight_position is None
+        assert Heat.query.filter(
+            Heat.event_id.in_(event_ids),
+            Heat.id != completed_id,
+            Heat.flight_id.isnot(None),
+        ).count() > 0
+
     def test_rebuild_refuses_to_rewrite_completed_flight_history(self, db_session):
         """No rebuild may clear or replace a scored heat's published location."""
         from models import Flight, Heat
