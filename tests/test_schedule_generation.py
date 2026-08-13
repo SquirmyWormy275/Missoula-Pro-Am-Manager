@@ -211,3 +211,26 @@ def test_generate_event_heats_refuses_to_delete_completed_heat_without_score_row
         generate_event_heats(event)
 
     assert _db.session.get(Heat, heat.id) is heat
+
+
+def test_generate_event_heats_refuses_completed_score_rows_without_completed_heat(
+    db_session,
+):
+    """A legacy stale heat status cannot make completed scores disposable."""
+    from models import EventResult
+    from services.heat_generator import HeatGenerationSafetyError, generate_event_heats
+
+    tournament = _make_tournament(db_session)
+    event = _make_event(db_session, tournament, 'Stale Heat Status')
+    _db.session.add(EventResult(
+        event_id=event.id,
+        competitor_id=1,
+        competitor_type='pro',
+        competitor_name='Historical Result',
+        status='completed',
+        result_value=10.0,
+    ))
+    _db.session.flush()
+
+    with pytest.raises(HeatGenerationSafetyError, match='scored results'):
+        generate_event_heats(event)

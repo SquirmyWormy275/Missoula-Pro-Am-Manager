@@ -150,10 +150,17 @@ def generate_event_heats(event: Event) -> int:
                 event.id, event.name, event.event_type)
 
     # The routes normally reject regeneration after scoring, but this service
-    # is also used by bulk and background workflows. Completed heat rows are
-    # the historical record even when every entrant was scratched and no
-    # EventResult reached ``completed``; deleting them would erase the roster
-    # that explains the completed heat.
+    # is also used by bulk and background workflows. Keep every caller from
+    # deleting completed score or heat history, including an all-scratch heat
+    # that has no completed EventResult.
+    if event.is_finalized:
+        raise HeatGenerationSafetyError(
+            f'{event.display_name} is finalized. Heat regeneration is blocked.'
+        )
+    if EventResult.query.filter_by(event_id=event.id, status='completed').first() is not None:
+        raise HeatGenerationSafetyError(
+            f'{event.display_name} has scored results. Heat regeneration is blocked.'
+        )
     if Heat.query.filter_by(event_id=event.id, status='completed').first() is not None:
         raise HeatGenerationSafetyError(
             f'{event.display_name} has completed heat history. Heat regeneration is blocked.'
