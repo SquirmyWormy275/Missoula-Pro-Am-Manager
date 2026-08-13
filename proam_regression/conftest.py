@@ -72,6 +72,7 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session", autouse=True)
 def _require_real_data():
+    keep_clones = os.environ.get("PROAM_KEEP_CLONES", "") == "1"
     # Hold our liveness lock before inspecting clone databases. A concurrent
     # lane sees this token as active and will not reap our per-test copies.
     with rig.hold_run_lock():
@@ -88,6 +89,13 @@ def _require_real_data():
                 returncode=3,
             )
         yield
+        # Fixture cleanup should remove each clone, but the final sweep is the
+        # ownership-bound backstop for interrupted teardown. It cannot touch a
+        # concurrent lane because it only sees this session's token.
+        if not keep_clones:
+            leftovers = rig.drop_run_clones()
+            if leftovers:
+                print(f"\nreaped {len(leftovers)} leftover clone(s) from this run")
 
 
 @pytest.fixture()
@@ -97,8 +105,7 @@ def dburl():
     try:
         yield url
     finally:
-        drop = os.environ.get("PROAM_KEEP_CLONES", "") != "1"
-        if drop:
+        if os.environ.get("PROAM_KEEP_CLONES", "") != "1":
             rig.drop_clone(name)
 
 

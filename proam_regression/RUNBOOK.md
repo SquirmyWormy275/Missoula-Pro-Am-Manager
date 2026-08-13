@@ -64,6 +64,8 @@ lock and names its clones `proam_rt_<run-token>_<clone-token>`. Startup cleanup
 only drops clones from a token that has no live lock, so a second lane cannot
 reap another live lane's databases. Pre-token legacy `proam_rt_*` names are
 never deleted automatically because their owner cannot be proven dead.
+Each session also makes one checked, token-scoped cleanup pass at the end; a
+failed database drop fails the run rather than leaving a false-green rig.
 
 **`rig.py` does not migrate its template.** After any new Alembic revision,
 every template above has to be upgraded by hand before its lane will run:

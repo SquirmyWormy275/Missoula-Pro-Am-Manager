@@ -129,7 +129,12 @@ def clone_production():
 
 
 def drop_clone(name):
-    _psql("postgres", f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE);')
+    result = _psql("postgres", f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE);')
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"could not drop disposable regression clone {name}: "
+            f"{result.stderr.strip()}"
+        )
 
 
 def orphan_clones():
@@ -139,6 +144,24 @@ def orphan_clones():
     if r.returncode != 0:
         return []
     return [line for line in r.stdout.split() if line]
+
+
+def run_clones(run_token=RUN_TOKEN):
+    """Return only safely named clones owned by one harness run token."""
+    _validate_run_token(run_token)
+    return [
+        name for name in orphan_clones()
+        if (match := _CLONE_NAME_RE.fullmatch(name)) and match.group(1) == run_token
+    ]
+
+
+def drop_run_clones(run_token=RUN_TOKEN):
+    """Drop every clone owned by this session after its tests finish."""
+    dropped = []
+    for name in run_clones(run_token):
+        drop_clone(name)
+        dropped.append(name)
+    return dropped
 
 
 def drop_orphans():

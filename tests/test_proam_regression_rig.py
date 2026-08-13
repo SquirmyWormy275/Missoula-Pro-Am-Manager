@@ -47,3 +47,27 @@ def test_cleanup_skips_live_and_legacy_clones(monkeypatch, rig_module):
 
     assert rig_module.drop_orphans() == [dead_clone]
     assert dropped == [dead_clone]
+
+
+def test_session_cleanup_drops_only_its_own_tokenized_clones(monkeypatch, rig_module):
+    ours = "a" * 12
+    other = "b" * 12
+    own_clone = f"proam_rt_{ours}_{'c' * 10}"
+    other_clone = f"proam_rt_{other}_{'d' * 10}"
+    dropped = []
+    monkeypatch.setattr(rig_module, "orphan_clones", lambda: [own_clone, other_clone])
+    monkeypatch.setattr(rig_module, "drop_clone", dropped.append)
+
+    assert rig_module.drop_run_clones(ours) == [own_clone]
+    assert dropped == [own_clone]
+
+
+def test_drop_clone_raises_when_postgres_rejects_cleanup(monkeypatch, rig_module):
+    monkeypatch.setattr(
+        rig_module,
+        "_psql",
+        lambda *_args: SimpleNamespace(returncode=1, stderr="database is busy"),
+    )
+
+    with pytest.raises(RuntimeError, match="database is busy"):
+        rig_module.drop_clone("proam_rt_aaaaaaaaaaaa_bbbbbbbbbb")
