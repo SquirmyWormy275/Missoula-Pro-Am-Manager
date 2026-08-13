@@ -72,18 +72,22 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session", autouse=True)
 def _require_real_data():
-    # A killed run (Ctrl-C, CI timeout, SIGKILL) never reaches the per-test
-    # finally, so clones survive. Reap them before starting.
-    orphans = rig.drop_orphans()
-    if orphans:
-        print(f"\nreaped {len(orphans)} orphan clone(s) from a previous run")
-    if not rig.template_is_loaded():
-        pytest.exit(
-            f"Template database '{rig.TEMPLATE_DB}' is missing or holds no "
-            f"production rows. This suite refuses to run against synthetic "
-            f"data. Load the production dump first.",
-            returncode=3,
-        )
+    # Hold our liveness lock before inspecting clone databases. A concurrent
+    # lane sees this token as active and will not reap our per-test copies.
+    with rig.hold_run_lock():
+        # A killed run (Ctrl-C, CI timeout, SIGKILL) never reaches the per-test
+        # finally, so clones survive. Reap only proven-dead tokenized runs.
+        orphans = rig.drop_orphans()
+        if orphans:
+            print(f"\nreaped {len(orphans)} orphan clone(s) from a previous run")
+        if not rig.template_is_loaded():
+            pytest.exit(
+                f"Template database '{rig.TEMPLATE_DB}' is missing or holds no "
+                f"production rows. This suite refuses to run against synthetic "
+                f"data. Load the production dump first.",
+                returncode=3,
+            )
+        yield
 
 
 @pytest.fixture()

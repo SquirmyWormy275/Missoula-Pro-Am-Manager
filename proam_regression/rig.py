@@ -25,8 +25,12 @@ state and never mutate the reference copy.
 """
 
 import os
+import re
 import subprocess
 import uuid
+from contextlib import contextmanager
+
+import psycopg2
 
 PG_USER = os.environ.get("PROAM_RIG_USER", "proam")
 PG_PASS = os.environ.get("PROAM_RIG_PASS", "proam")
@@ -44,9 +48,62 @@ APP_ROOT = os.environ.get("PROAM_APP_ROOT", "/tmp/proam")
 TOURNAMENT_ID = 2
 ADMIN_USER_ID = 1
 
+# One pytest process owns one run token.  A session-level advisory lock keeps
+# cleanup from mistaking another live process's per-test databases for debris.
+RUN_TOKEN = os.environ.get("PROAM_RIG_RUN_TOKEN", uuid.uuid4().hex[:12])
+_RUN_TOKEN_RE = re.compile(r"^[a-f0-9]{12}$")
+_CLONE_NAME_RE = re.compile(r"^proam_rt_([a-f0-9]{12})_([a-f0-9]{10})$")
+
 
 def _url(dbname):
     return f"postgresql://{PG_USER}:{PG_PASS}@{PG_HOST}:{PG_PORT}/{dbname}"
+
+
+def _lock_key(run_token):
+    return f"proam-regression:{run_token}"
+
+
+def _validate_run_token(run_token):
+    if not _RUN_TOKEN_RE.fullmatch(run_token):
+        raise RuntimeError(
+            "PROAM_RIG_RUN_TOKEN must be exactly 12 lowercase hexadecimal "
+            "characters. Leave it unset to generate a safe token automatically.")
+
+
+@contextmanager
+def hold_run_lock():
+    """Hold this process's PostgreSQL advisory lock for the test session."""
+    _validate_run_token(RUN_TOKEN)
+    connection = psycopg2.connect(_url("postgres"))
+    connection.autocommit = True
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_lock(hashtext(%s))", (_lock_key(RUN_TOKEN),))
+        yield
+    finally:
+        connection.close()
+
+
+def run_is_active(run_token):
+    """Whether a token is locked by a live harness process.
+
+    Failure to inspect the lock is deliberately treated as active. Cleanup must
+    leak a disposable clone rather than force-drop a database it cannot prove
+    abandoned.
+    """
+    connection = None
+    try:
+        connection = psycopg2.connect(_url("postgres"))
+        connection.autocommit = True
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (_lock_key(run_token),))
+            acquired = bool(cursor.fetchone()[0])
+        return not acquired
+    except psycopg2.Error:
+        return True
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def _psql(dbname, sql):
@@ -60,7 +117,8 @@ def _psql(dbname, sql):
 
 def clone_production():
     """Create a private copy of the production mirror. Returns (dbname, url)."""
-    name = "proam_rt_" + uuid.uuid4().hex[:10]
+    _validate_run_token(RUN_TOKEN)
+    name = f"proam_rt_{RUN_TOKEN}_{uuid.uuid4().hex[:10]}"
     r = _psql("postgres", f'CREATE DATABASE "{name}" TEMPLATE {TEMPLATE_DB};')
     if r.returncode != 0:
         raise RuntimeError(
@@ -75,7 +133,7 @@ def drop_clone(name):
 
 
 def orphan_clones():
-    """Clone databases left behind by a killed run."""
+    """All clone-looking databases, including legacy untagged clones."""
     r = _psql("postgres",
               "SELECT datname FROM pg_database WHERE datname LIKE 'proam_rt_%';")
     if r.returncode != 0:
@@ -84,11 +142,23 @@ def orphan_clones():
 
 
 def drop_orphans():
-    """Reap clones from previous runs. A SIGKILLed pytest never runs its finally."""
+    """Reap only tokenized clones whose owning session is no longer live.
+
+    A pre-token clone cannot be tied to an owning process, so it is not safe to
+    drop automatically. Leave it for an operator's explicit local cleanup.
+    """
     dropped = []
+    candidates = {}
     for name in orphan_clones():
-        drop_clone(name)
-        dropped.append(name)
+        match = _CLONE_NAME_RE.fullmatch(name)
+        if match:
+            candidates.setdefault(match.group(1), []).append(name)
+    for run_token, names in candidates.items():
+        if run_is_active(run_token):
+            continue
+        for name in names:
+            drop_clone(name)
+            dropped.append(name)
     return dropped
 
 

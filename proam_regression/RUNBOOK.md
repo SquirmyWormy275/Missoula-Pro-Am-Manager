@@ -59,10 +59,11 @@ the operator-facing stand-conflict count or the 2026 show-order snapshot.
 
 ## Two traps that have each cost a cycle
 
-**The lanes cannot be run in parallel.** `rig.py::drop_orphans()` drops every
-database matching `proam_rt_%` with no ownership filter and no age filter, so a
-second lane starting up will reap the first lane's live clone out from under it.
-Serialize them. (Guarding this is open question 10.)
+**Lanes may run in parallel.** Each pytest session holds a PostgreSQL advisory
+lock and names its clones `proam_rt_<run-token>_<clone-token>`. Startup cleanup
+only drops clones from a token that has no live lock, so a second lane cannot
+reap another live lane's databases. Pre-token legacy `proam_rt_*` names are
+never deleted automatically because their owner cannot be proven dead.
 
 **`rig.py` does not migrate its template.** After any new Alembic revision,
 every template above has to be upgraded by hand before its lane will run:

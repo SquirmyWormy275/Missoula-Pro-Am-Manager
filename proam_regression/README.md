@@ -143,10 +143,12 @@ Keep the per-test clones for post-mortem inspection instead of dropping them:
 it. On Linux, `pg_ctlcluster 16 main start`. Symptom is every test erroring in
 the `dburl` fixture.
 
-**Orphan clones get reaped automatically.** A killed run (Ctrl-C, CI timeout,
-SIGKILL) never reaches the per-test `finally`, so `proam_rt_*` databases
-survive. The session fixture drops them at startup and prints how many. If you
-are using `PROAM_KEEP_CLONES=1`, note that the next run reaps them.
+**Orphan clones get reaped without disrupting a live lane.** A killed run
+(Ctrl-C, CI timeout, SIGKILL) never reaches the per-test `finally`, so its
+tokenized `proam_rt_<run-token>_*` databases survive. The next session reaps
+only tokens without a live PostgreSQL advisory lock. Lanes may run in parallel.
+Pre-token legacy `proam_rt_*` names are left untouched because the rig cannot
+prove their owner is dead.
 
 **Each test is fully isolated.** Its own database, its own `create_app()`.
 Test order does not matter and a test that corrupts data cannot poison the
