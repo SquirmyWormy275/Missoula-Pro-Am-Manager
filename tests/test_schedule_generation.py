@@ -234,3 +234,18 @@ def test_generate_event_heats_refuses_completed_score_rows_without_completed_hea
 
     with pytest.raises(HeatGenerationSafetyError, match='scored results'):
         generate_event_heats(event)
+
+
+def test_generate_event_heats_refuses_completed_event_without_history_rows(
+    db_session,
+):
+    """A legacy completed event row is immutable even when child rows are missing."""
+    from services.heat_generator import HeatGenerationSafetyError, generate_event_heats
+
+    tournament = _make_tournament(db_session)
+    event = _make_event(db_session, tournament, 'Completed Event')
+    event.status = 'completed'
+    _db.session.flush()
+
+    with pytest.raises(HeatGenerationSafetyError, match='is completed'):
+        generate_event_heats(event)

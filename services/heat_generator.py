@@ -157,6 +157,10 @@ def generate_event_heats(event: Event) -> int:
         raise HeatGenerationSafetyError(
             f'{event.display_name} is finalized. Heat regeneration is blocked.'
         )
+    if getattr(event, 'status', None) == 'completed':
+        raise HeatGenerationSafetyError(
+            f'{event.display_name} is completed. Heat regeneration is blocked.'
+        )
     if EventResult.query.filter_by(event_id=event.id, status='completed').first() is not None:
         raise HeatGenerationSafetyError(
             f'{event.display_name} has scored results. Heat regeneration is blocked.'
