@@ -212,7 +212,15 @@ def app(prepared_dburl):
         0, _drop_cached_login_user)
 
     with application.app_context():
-        yield application
+        try:
+            yield application
+        finally:
+            # The clone fixture drops this database immediately after the app
+            # fixture unwinds. Dispose every app-owned connection first so the
+            # rig never depends on PostgreSQL FORCE privileges to clean up.
+            from database import db
+            db.session.remove()
+            db.engine.dispose()
 
 
 @pytest.fixture()
