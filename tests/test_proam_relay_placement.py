@@ -13,8 +13,10 @@ Run:  pytest tests/test_proam_relay_placement.py -v
 from __future__ import annotations
 
 import json
+import warnings
 
 import pytest
+from sqlalchemy.exc import SAWarning
 
 from database import db
 from database import db as _db
@@ -255,8 +257,10 @@ class TestRelayPlacement:
         from services.flight_builder import integrate_proam_relay_into_final_flight
 
         t, _ = _seed_with_flights(db_session, with_relay_event=True, with_teams=True)
-        integrate_proam_relay_into_final_flight(t, commit=False)
-        integrate_proam_relay_into_final_flight(t, commit=False)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', SAWarning)
+            integrate_proam_relay_into_final_flight(t, commit=False)
+            integrate_proam_relay_into_final_flight(t, commit=False)
 
         relay_event = Event.query.filter_by(
             tournament_id=t.id, name="Pro-Am Relay"

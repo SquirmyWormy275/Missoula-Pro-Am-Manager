@@ -1482,9 +1482,9 @@ def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool
     if existing_heat_ids:
         HeatAssignment.query.filter(
             HeatAssignment.heat_id.in_(existing_heat_ids),
-        ).delete(synchronize_session=False)
+        ).delete(synchronize_session='fetch')
         Heat.query.filter(Heat.id.in_(existing_heat_ids)).delete(
-            synchronize_session=False,
+            synchronize_session='fetch',
         )
         db.session.flush()
 
