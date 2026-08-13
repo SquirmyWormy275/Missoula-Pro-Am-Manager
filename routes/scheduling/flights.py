@@ -31,6 +31,7 @@ def one_click_generate(tournament_id):
     flights regardless of what the operator picked.
     """
     from services.flight_builder import (
+        FlightRebuildSafetyError,
         build_pro_flights,
         integrate_college_spillover_into_flights,
         integrate_proam_relay_into_final_flight,
@@ -71,6 +72,13 @@ def one_click_generate(tournament_id):
         log_action('one_click_generate', 'tournament', tournament_id, {
             'flights_built': flights_built,
         })
+    except FlightRebuildSafetyError:
+        db.session.rollback()
+        flash(
+            'Flights cannot be rebuilt after scoring begins because completed '
+            'heat placements are historical records.',
+            'warning',
+        )
     except Exception:
         db.session.rollback()
         from flask import current_app
@@ -260,7 +268,7 @@ def build_flights(tournament_id):
     tournament = db.get_or_404(Tournament, tournament_id)
 
     if request.method == 'POST':
-        from services.flight_builder import build_pro_flights
+        from services.flight_builder import FlightRebuildSafetyError, build_pro_flights
 
         # Phase 3: accept either 'minutes' (duration-driven) or 'count'
         # (operator-specified). Persist choices to schedule_config so the
@@ -487,6 +495,13 @@ def build_flights(tournament_id):
 
             from services.saw_block_assignment import trigger_saw_block_recompute
             trigger_saw_block_recompute(tournament)
+        except FlightRebuildSafetyError:
+            db.session.rollback()
+            flash(
+                'Flights cannot be rebuilt after scoring begins because completed '
+                'heat placements are historical records.',
+                'warning',
+            )
         except Exception as e:
             db.session.rollback()
             from flask import current_app

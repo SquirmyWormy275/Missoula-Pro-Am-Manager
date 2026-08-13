@@ -593,6 +593,46 @@ class TestBuildProFlights:
 
         assert first_assigned == second_assigned
 
+    def test_rebuild_refuses_to_rewrite_completed_flight_history(self, db_session):
+        """No rebuild may clear or replace a scored heat's published location."""
+        from models import Flight, Heat
+        from services.flight_builder import FlightRebuildSafetyError, build_pro_flights
+
+        data = _seed_standard_show(db_session)
+        tournament = data['tournament']
+        build_pro_flights(tournament)
+
+        event_ids = [event.id for event in data['events'].values()]
+        completed = Heat.query.filter(
+            Heat.event_id.in_(event_ids),
+            Heat.flight_id.isnot(None),
+        ).first()
+        assert completed is not None
+        completed.status = 'completed'
+        db_session.commit()
+        db_session.expire_all()
+        assert Heat.query.filter_by(id=completed.id).one().status == 'completed'
+
+        before = [
+            (heat.id, heat.flight_id, heat.flight_position)
+            for heat in Heat.query.join(Flight).filter(
+                Flight.tournament_id == tournament.id,
+                Heat.event_id.in_(event_ids),
+            ).order_by(Heat.id).all()
+        ]
+
+        with pytest.raises(FlightRebuildSafetyError, match='completed heat placements'):
+            build_pro_flights(tournament)
+
+        after = [
+            (heat.id, heat.flight_id, heat.flight_position)
+            for heat in Heat.query.join(Flight).filter(
+                Flight.tournament_id == tournament.id,
+                Heat.event_id.in_(event_ids),
+            ).order_by(Heat.id).all()
+        ]
+        assert after == before
+
 
 # ---------------------------------------------------------------------------
 # FlightBuilder.spacing() tests

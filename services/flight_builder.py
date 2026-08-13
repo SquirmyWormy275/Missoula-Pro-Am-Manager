@@ -112,6 +112,10 @@ EVENT_FLIGHT_CAP_PENALTY = 2000.0
 EVENT_FLIGHT_CAP_SCORE_PENALTY = 500.0
 
 
+class FlightRebuildSafetyError(RuntimeError):
+    """Raised when a rebuild would rewrite published scoring history."""
+
+
 def _get_spacing(event: Event | None) -> tuple[int, int]:
     """Return (min_spacing, target_spacing) for this event's stand type."""
     st = getattr(event, 'stand_type', None) or ''
@@ -142,10 +146,24 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None, commit: b
     Returns:
         Number of flights created
     """
-    # Clear existing flights (null out Heat.flight_id first to satisfy FK constraints)
+    # A completed heat's flight and position are the published show record.
+    # Reject before clearing any relationship so every caller, including async
+    # and one-click paths, preserves exactly the same schedule snapshot.
     existing_flight_ids = [
         f.id for f in Flight.query.filter_by(tournament_id=tournament.id).with_entities(Flight.id).all()
     ]
+    if existing_flight_ids:
+        completed_heat_count = Heat.query.filter(
+            Heat.flight_id.in_(existing_flight_ids),
+            Heat.status == 'completed',
+        ).count()
+        if completed_heat_count:
+            raise FlightRebuildSafetyError(
+                'Cannot rebuild flights after scoring begins because completed '
+                'heat placements are historical records.'
+            )
+
+    # Clear existing flights (null out Heat.flight_id first to satisfy FK constraints)
     if existing_flight_ids:
         Heat.query.filter(Heat.flight_id.in_(existing_flight_ids)).update(
             {'flight_id': None, 'flight_position': None}, synchronize_session=False

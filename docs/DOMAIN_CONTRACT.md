@@ -84,8 +84,9 @@ One-click generation must not resolve minutes-mode flight count before fresh
 heats are generated. A saved minutes-mode config is only meaningful against the
 generated heat count.
 
-Every flight rebuild clears existing flight assignments. Therefore every rebuild
-path must immediately rerun:
+Every flight rebuild clears existing flight assignments and is forbidden once
+any flighted heat is completed. Before scoring begins, every rebuild path must
+immediately rerun:
 
 1. Pro-Am Relay final-flight placement.
 2. College spillover integration.

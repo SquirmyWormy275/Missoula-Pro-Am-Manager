@@ -350,6 +350,61 @@ def test_build_flights_triggers_block_assignment(app, auth_client):
         assert _used_stands(ordered_by_flight[1]) == BLOCK_B
 
 
+def test_build_flights_refuses_to_rewrite_completed_heat_history(app, auth_client):
+    """The build route preserves published flight placements after scoring."""
+    from database import db as _db
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        sb = _seed_saw_event(_db, t, name="Single Buck", event_type="pro")
+        h1 = _seed_heat(
+            _db, sb, 1, competitors=[1, 2],
+            stand_assignments={"1": 1, "2": 2},
+        )
+        h2 = _seed_heat(
+            _db, sb, 2, competitors=[3, 4],
+            stand_assignments={"3": 1, "4": 2},
+        )
+        _db.session.commit()
+        tid, h1_id, h2_id = t.id, h1.id, h2.id
+
+    first = auth_client.post(
+        f"/scheduling/{tid}/flights/build",
+        data={"num_flights": "1"},
+        follow_redirects=False,
+    )
+    assert first.status_code in (302, 303)
+
+    with app.app_context():
+        from models import Heat
+
+        _db.session.expire_all()
+        completed = _db.session.get(Heat, h1_id)
+        completed.status = "completed"
+        _db.session.commit()
+        before = [
+            (heat.id, heat.flight_id, heat.flight_position)
+            for heat in (_db.session.get(Heat, h1_id), _db.session.get(Heat, h2_id))
+        ]
+
+    second = auth_client.post(
+        f"/scheduling/{tid}/flights/build",
+        data={"num_flights": "1"},
+        follow_redirects=True,
+    )
+    assert second.status_code == 200
+    assert b"cannot be rebuilt after scoring begins" in second.data.lower()
+
+    with app.app_context():
+        from models import Heat
+
+        after = [
+            (heat.id, heat.flight_id, heat.flight_position)
+            for heat in (_db.session.get(Heat, h1_id), _db.session.get(Heat, h2_id))
+        ]
+    assert after == before
+
+
 def test_reorder_flight_heats_triggers_recompute(app, auth_client):
     """Reordering heats within a flight recomputes blocks per new run order."""
     from database import db as _db
