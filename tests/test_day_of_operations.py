@@ -645,6 +645,32 @@ class TestFinalizationGuard:
         assert resp.status_code == 200
         assert b"scored results" in resp.data.lower()
 
+    def test_regen_completed_heat_without_completed_results_is_blocked(
+        self, db_session, auth_client
+    ):
+        """The direct route cannot erase a completed all-scratch heat."""
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="All Scratch History")
+        c = _make_pro(db_session, t.id, "All_Scratched", events=[e.id])
+        _make_result(db_session, e.id, c, status="scratched")
+        heat = _make_heat(
+            db_session, e.id, status="completed", competitors=[c.id],
+            stand_assignments={str(c.id): 1},
+        )
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/generate-heats",
+            data={},
+            follow_redirects=True,
+        )
+
+        assert resp.status_code == 200
+        assert b"completed heat history" in resp.data.lower()
+        preserved = _db.session.get(type(heat), heat.id)
+        assert preserved.status == "completed"
+        assert preserved.get_competitors() == [c.id]
+
     def test_bulk_regeneration_skips_scored_event(self, app, db_session):
         """The one-click helper cannot bypass the scored-event guard."""
         t = _make_tournament(db_session)

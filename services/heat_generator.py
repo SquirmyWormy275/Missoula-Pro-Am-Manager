@@ -148,6 +148,17 @@ def generate_event_heats(event: Event) -> int:
     """
     logger.info('heat_generator: generate_event_heats event_id=%s name=%r type=%s',
                 event.id, event.name, event.event_type)
+
+    # The routes normally reject regeneration after scoring, but this service
+    # is also used by bulk and background workflows. Completed heat rows are
+    # the historical record even when every entrant was scratched and no
+    # EventResult reached ``completed``; deleting them would erase the roster
+    # that explains the completed heat.
+    if Heat.query.filter_by(event_id=event.id, status='completed').first() is not None:
+        raise HeatGenerationSafetyError(
+            f'{event.display_name} has completed heat history. Heat regeneration is blocked.'
+        )
+
     # Clear the per-tournament event cache so it refreshes each generate call.
     _get_tournament_events._cache = {}
     # This clear is NOT down with its three siblings below. They are cleared

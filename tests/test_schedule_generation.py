@@ -192,3 +192,22 @@ def test_generate_tournament_schedule_rolls_back_partial_failed_event(
     assert result['generated'] == 0
     assert result['errors'] == ['forced failure after flush']
     assert Heat.query.filter_by(event_id=failed_event.id).count() == 0
+
+
+def test_generate_event_heats_refuses_to_delete_completed_heat_without_score_rows(
+    db_session,
+):
+    """A fully scratched heat is still race-day history, not disposable layout."""
+    from models import Heat
+    from services.heat_generator import HeatGenerationSafetyError, generate_event_heats
+
+    tournament = _make_tournament(db_session)
+    event = _make_event(db_session, tournament, 'All Scratched')
+    heat = Heat(event_id=event.id, heat_number=1, run_number=1, status='completed')
+    _db.session.add(heat)
+    _db.session.flush()
+
+    with pytest.raises(HeatGenerationSafetyError, match='completed heat history'):
+        generate_event_heats(event)
+
+    assert _db.session.get(Heat, heat.id) is heat
