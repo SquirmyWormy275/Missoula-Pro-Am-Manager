@@ -91,7 +91,7 @@ def test_run_preflight_autofix_reports_its_summary_numbers(db_session, monkeypat
         lambda _tournament: {'completed': 1},
     )
     monkeypatch.setattr(
-        'services.partner_matching.auto_assign_pro_partners',
+        'services.partner_matching.auto_assign_partners',
         lambda _tournament: {'assigned_pairs': 3},
     )
     # MOCK FIDELITY: real signature is integrate_college_spillover_into_flights(

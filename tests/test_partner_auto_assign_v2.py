@@ -55,13 +55,15 @@ def _make_tournament(session):
     return t
 
 
-def _make_event(session, tournament, name="Pulp Toss", gender_req="mixed"):
+def _make_event(
+    session, tournament, name="Pulp Toss", gender_req="mixed", event_type="pro"
+):
     from models import Event
 
     ev = Event(
         tournament_id=tournament.id,
         name=name,
-        event_type="pro",
+        event_type=event_type,
         gender=None,
         scoring_type="time",
         is_partnered=True,
@@ -77,6 +79,34 @@ def _make_pro(session, tournament, name, gender, event, partner_name=None):
 
     comp = ProCompetitor(
         tournament_id=tournament.id,
+        name=name,
+        gender=gender,
+        status="active",
+    )
+    comp.events_entered = json.dumps([str(event.id)])
+    if partner_name:
+        comp.partners = json.dumps({str(event.id): partner_name})
+    session.add(comp)
+    session.flush()
+    return comp
+
+
+def _make_college(session, tournament, name, gender, event, partner_name=None):
+    from models import CollegeCompetitor, Team
+
+    team = Team.query.filter_by(tournament_id=tournament.id).first()
+    if team is None:
+        team = Team(
+            tournament_id=tournament.id,
+            team_code="Partner Test",
+            school_name="Partner Test",
+            school_abbreviation="PT",
+        )
+        session.add(team)
+        session.flush()
+    comp = CollegeCompetitor(
+        tournament_id=tournament.id,
+        team_id=team.id,
         name=name,
         gender=gender,
         status="active",
@@ -214,3 +244,48 @@ def test_idempotent_on_already_paired_roster(db_session):
 
     assert second["assigned_pairs"] == 0
     assert second["unmatched"] == 0
+
+
+def test_college_pairing_updates_pending_results_but_preserves_completed_history(db_session):
+    """College repair follows the same contract without rewriting scores."""
+    from models import EventResult
+    from services.partner_matching import auto_assign_event_partners
+
+    tournament = _make_tournament(db_session)
+    event = _make_event(db_session, tournament, event_type="college")
+    alice = _make_college(
+        db_session, tournament, "Alice Arbor", "F", event, partner_name="Frank Forest"
+    )
+    frank = _make_college(
+        db_session, tournament, "Frank Forest", "M", event, partner_name="Alice Arbor"
+    )
+    pending = EventResult(
+        event_id=event.id,
+        competitor_id=alice.id,
+        competitor_type="college",
+        competitor_name=alice.name,
+        partner_name="stale pending label",
+        status="pending",
+    )
+    completed = EventResult(
+        event_id=event.id,
+        competitor_id=frank.id,
+        competitor_type="college",
+        competitor_name=frank.name,
+        partner_name="historic partner label",
+        status="completed",
+    )
+    db_session.add_all([pending, completed])
+    db_session.flush()
+
+    summary = auto_assign_event_partners(event)
+
+    db_session.refresh(alice)
+    db_session.refresh(frank)
+    db_session.refresh(pending)
+    db_session.refresh(completed)
+    assert summary["confirmed_pairs"] == 1
+    assert alice.get_partners()[str(event.id)] == "Frank Forest"
+    assert frank.get_partners()[str(event.id)] == "Alice Arbor"
+    assert pending.partner_name == "Frank Forest"
+    assert completed.partner_name == "historic partner label"

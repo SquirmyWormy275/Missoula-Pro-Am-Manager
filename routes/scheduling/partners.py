@@ -15,6 +15,13 @@ from database import db
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.event import Event, EventResult
 from services.audit import log_action
+from services.partner_matching import (
+    get_partner_repair_cases,
+    get_unclaimed_partner_candidates,
+)
+from services.partner_matching import (
+    set_partner_bidirectional as _set_partner_bidirectional,
+)
 
 from . import _competitor_entered_event, scheduling_bp
 
@@ -112,6 +119,16 @@ def _is_current_orphan(event, competitor, competitor_type):
     return bool(previous_partner and previous_partner.status == "scratched")
 
 
+def _is_current_partner_repair(event, competitor, competitor_type):
+    """Whether this competitor still needs the repair being submitted."""
+    if _is_current_orphan(event, competitor, competitor_type):
+        return True
+    return any(
+        case['competitor'].id == competitor.id
+        for case in get_partner_repair_cases(event)
+    )
+
+
 def validate_reassignment_context(event, orphan, new_partner):
     """Validate current roster eligibility for a reassignment submission."""
     expected_type = event.event_type
@@ -132,7 +149,7 @@ def validate_reassignment_context(event, orphan, new_partner):
         new_partner, event
     ):
         return False, "Both competitors must be entered in this event."
-    if not _is_current_orphan(event, orphan, orphan_type):
+    if not _is_current_partner_repair(event, orphan, orphan_type):
         return False, "This competitor no longer needs a partner for this event."
 
     return True, None
@@ -178,32 +195,8 @@ def validate_reassignment(event, orphan, new_partner):
 
 
 def set_partner_bidirectional(orphan, new_partner, event):
-    """
-    Set partner JSON on both competitors and update EventResult.partner_name.
-    """
-    # Update partner JSON on both sides
-    orphan.set_partner(event.id, new_partner.name)
-    new_partner.set_partner(event.id, orphan.name)
-
-    # Update EventResult.partner_name for the orphan
-    orphan_type = "pro" if isinstance(orphan, ProCompetitor) else "college"
-    result = EventResult.query.filter_by(
-        event_id=event.id,
-        competitor_id=orphan.id,
-        competitor_type=orphan_type,
-    ).first()
-    if result:
-        result.partner_name = new_partner.name
-
-    # Update or create EventResult.partner_name for the new partner
-    new_type = "pro" if isinstance(new_partner, ProCompetitor) else "college"
-    new_result = EventResult.query.filter_by(
-        event_id=event.id,
-        competitor_id=new_partner.id,
-        competitor_type=new_type,
-    ).first()
-    if new_result:
-        new_result.partner_name = orphan.name
+    """Write a reciprocal repair without rewriting completed result history."""
+    _set_partner_bidirectional(orphan, new_partner, event)
 
 
 # ---------------------------------------------------------------------------
@@ -221,33 +214,29 @@ def partner_queue(tid, eid):
         abort(404)
 
     tournament = event.tournament
-    orphans = get_orphaned_competitors(event)
-
-    # Build list of available partners (active, not already partnered for this event)
-    comp_type = event.event_type  # 'pro' or 'college'
-    Model = ProCompetitor if comp_type == "pro" else CollegeCompetitor
-    all_active = Model.query.filter_by(
-        tournament_id=tid,
-        status="active",
-    ).all()
-
-    # Filter to those not already partnered for this event
-    available = []
-    orphan_ids = {o["competitor"].id for o in orphans}
-    for c in all_active:
-        if c.id in orphan_ids or not _is_entered_in_event(c, event):
-            continue
-        partners = c.get_partners()
-        existing = partners.get(str(eid))
-        if existing:
-            continue
-        available.append(c)
+    repairs_by_id = {}
+    for orphan in get_orphaned_competitors(event):
+        repairs_by_id[orphan['competitor'].id] = {
+            'competitor': orphan['competitor'],
+            'competitor_type': orphan['competitor_type'],
+            'partner_name': orphan['old_partner_name'],
+            'reason': 'scratched_partner',
+            'suggested_partner': None,
+        }
+    for case in get_partner_repair_cases(event):
+        repairs_by_id.setdefault(case['competitor'].id, case)
+    repairs = sorted(
+        repairs_by_id.values(), key=lambda case: case['competitor'].name.lower()
+    )
+    available = get_unclaimed_partner_candidates(
+        event, {case['competitor'].id for case in repairs}
+    )
 
     return render_template(
         "scheduling/partner_queue.html",
         tournament=tournament,
         event=event,
-        orphans=orphans,
+        repairs=repairs,
         available=available,
     )
 
@@ -289,6 +278,27 @@ def reassign_partner(tid, eid):
     ok, error = validate_reassignment_context(event, orphan, new_partner)
     if not ok:
         flash(error, "error")
+        return redirect(url_for("scheduling.partner_queue", tid=tid, eid=eid))
+
+    repair_cases = {
+        case['competitor'].id: case for case in get_partner_repair_cases(event)
+    }
+    repair_ids = set(repair_cases)
+    unclaimed_ids = {
+        competitor.id
+        for competitor in get_unclaimed_partner_candidates(event, repair_ids)
+    }
+    case = repair_cases.get(orphan.id)
+    suggested_id = (
+        case['suggested_partner'].id
+        if case and case.get('suggested_partner') is not None else None
+    )
+    if new_partner.id not in unclaimed_ids and new_partner.id != suggested_id:
+        flash(
+            "That competitor is already claimed by another partner declaration. "
+            "Resolve that claim before reassigning them.",
+            "error",
+        )
         return redirect(url_for("scheduling.partner_queue", tid=tid, eid=eid))
 
     # Apply bidirectional update

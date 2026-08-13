@@ -364,7 +364,72 @@ class TestPartnerQueueRoute:
 
         resp = auth_client.get(f"/scheduling/{t.id}/events/{ev.id}/partner-queue")
         assert resp.status_code == 200
-        assert b"No orphaned partners" in resp.data
+        assert b"No partner repairs are needed" in resp.data
+
+    def test_queue_shows_one_sided_claim_and_its_safe_confirmation(self, app, db_session, auth_client):
+        """A declared-but-blank pair gets an explicit, reviewable repair path."""
+        tournament = _make_tournament(db_session)
+        event = _make_partnered_event(db_session, tournament, gender_req="mixed")
+        alice = _make_pro(
+            db_session,
+            tournament,
+            "Alice",
+            gender="F",
+            partners={str(event.id): "Frank"},
+            events_entered=[event.id],
+        )
+        frank = _make_pro(
+            db_session,
+            tournament,
+            "Frank",
+            gender="M",
+            events_entered=[event.id],
+        )
+        db_session.commit()
+
+        response = auth_client.get(
+            f"/scheduling/{tournament.id}/events/{event.id}/partner-queue"
+        )
+
+        assert response.status_code == 200
+        assert b"One-sided claim" in response.data
+        assert f'value="{frank.id}"'.encode() in response.data
+
+        response = auth_client.post(
+            f"/scheduling/{tournament.id}/events/{event.id}/reassign-partner",
+            data={
+                "orphan_id": str(alice.id),
+                "orphan_type": "pro",
+                "new_partner_id": str(frank.id),
+                "new_partner_type": "pro",
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code in (302, 303)
+        assert db.session.get(ProCompetitor, alice.id).get_partners()[str(event.id)] == "Frank"
+        assert db.session.get(ProCompetitor, frank.id).get_partners()[str(event.id)] == "Alice"
+
+    def test_preflight_links_unresolved_partner_to_repair_queue(
+        self, app, db_session, auth_client
+    ):
+        """A blocking preflight finding leads directly to a safe repair form."""
+        tournament = _make_tournament(db_session)
+        event = _make_partnered_event(db_session, tournament)
+        _make_pro(
+            db_session,
+            tournament,
+            "Alice",
+            partners={str(event.id): "Unknown Person"},
+            events_entered=[event.id],
+        )
+        _make_pro(db_session, tournament, "Frank", events_entered=[event.id])
+        db_session.commit()
+
+        response = auth_client.get(f"/scheduling/{tournament.id}/preflight")
+
+        assert response.status_code == 200
+        assert f"/scheduling/{tournament.id}/events/{event.id}/partner-queue".encode() in response.data
 
     def test_ops_dashboard_surfaces_orphans_from_partnered_events(
         self, app, db_session, auth_client
@@ -536,6 +601,49 @@ class TestReassignPartnerRoute:
 
         alice_fresh = db.session.get(ProCompetitor, alice.id)
         assert alice_fresh.get_partners().get(str(ev.id)) == "Bob"
+
+    def test_rejects_candidate_claimed_by_another_declaration(
+        self, app, db_session, auth_client
+    ):
+        """A manual repair cannot silently override a one-sided claimant."""
+        tournament = _make_tournament(db_session)
+        event = _make_partnered_event(db_session, tournament, gender_req="any")
+        alice = _make_pro(
+            db_session,
+            tournament,
+            "Alice",
+            partners={str(event.id): "Ghost"},
+            events_entered=[event.id],
+        )
+        bob = _make_pro(
+            db_session,
+            tournament,
+            "Bob",
+            events_entered=[event.id],
+        )
+        _make_pro(
+            db_session,
+            tournament,
+            "Carol",
+            partners={str(event.id): "Bob"},
+            events_entered=[event.id],
+        )
+        db_session.commit()
+
+        response = auth_client.post(
+            f"/scheduling/{tournament.id}/events/{event.id}/reassign-partner",
+            data={
+                "orphan_id": str(alice.id),
+                "orphan_type": "pro",
+                "new_partner_id": str(bob.id),
+                "new_partner_type": "pro",
+            },
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert b"already claimed" in response.data
+        assert db.session.get(ProCompetitor, alice.id).get_partners()[str(event.id)] == "Ghost"
 
     def test_result_partner_name_updated(self, app, db_session, auth_client):
         """POST reassign_partner updates EventResult.partner_name for the orphan."""

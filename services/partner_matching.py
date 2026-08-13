@@ -31,7 +31,8 @@ import re
 
 from database import db
 from models import Event, Tournament
-from models.competitor import ProCompetitor
+from models.competitor import CollegeCompetitor, ProCompetitor
+from models.event import EventResult
 from services.name_match import find_partner_match, normalize_alphanum
 
 
@@ -56,7 +57,7 @@ def _is_entered(event: Event, entered_events: list) -> bool:
     return False
 
 
-def _read_partner_name(comp: ProCompetitor, event: Event) -> str:
+def _read_partner_name(comp, event: Event) -> str:
     partners = comp.get_partners()
     if not isinstance(partners, dict):
         return ""
@@ -73,22 +74,40 @@ def _read_partner_name(comp: ProCompetitor, event: Event) -> str:
     return ""
 
 
-def _set_partner_bidirectional(
-    a: ProCompetitor, b: ProCompetitor, event: Event
-) -> None:
+def set_partner_bidirectional(a, b, event: Event) -> None:
+    """Write a reciprocal pair and keep pending result labels current.
+
+    Partner repair is a pre-scoring operation. Pending EventResult rows mirror
+    the repaired names for prints and scoring; completed rows are historical
+    records and must not be rewritten by a repair pass.
+    """
     # Store by event id and names to stay compatible with existing readers/imports.
     for key in [str(event.id), event.name, event.display_name]:
         a.set_partner(key, b.name)
         b.set_partner(key, a.name)
 
+    EventResult.query.filter_by(
+        event_id=event.id,
+        competitor_id=a.id,
+        competitor_type=event.event_type,
+        status='pending',
+    ).update({'partner_name': b.name}, synchronize_session='fetch')
+    EventResult.query.filter_by(
+        event_id=event.id,
+        competitor_id=b.id,
+        competitor_type=event.event_type,
+        status='pending',
+    ).update({'partner_name': a.name}, synchronize_session='fetch')
 
-def _event_pool(event: Event) -> list[ProCompetitor]:
+
+def _event_pool(event: Event) -> list:
+    model = ProCompetitor if event.event_type == 'pro' else CollegeCompetitor
     competitors = (
-        ProCompetitor.query.filter_by(
+        model.query.filter_by(
             tournament_id=event.tournament_id,
             status="active",
         )
-        .order_by(ProCompetitor.name)
+        .order_by(model.name)
         .all()
     )
 
@@ -98,7 +117,7 @@ def _event_pool(event: Event) -> list[ProCompetitor]:
     return [c for c in competitors if _is_entered(event, c.get_events_entered())]
 
 
-def _resolve_partner(partner_name: str, pool: list, exclude_id) -> ProCompetitor | None:
+def _resolve_partner(partner_name: str, pool: list, exclude_id):
     """Fuzzy-resolve a partner name against the event pool.
 
     Wraps services.name_match.find_partner_match with the ProCompetitor
@@ -113,8 +132,100 @@ def _resolve_partner(partner_name: str, pool: list, exclude_id) -> ProCompetitor
     )
 
 
+def _gender_pair_is_valid(event: Event, a, b) -> bool:
+    requirement = getattr(event, 'partner_gender_requirement', None)
+    return (
+        requirement not in {'mixed', 'same'}
+        or (requirement == 'mixed' and a.gender != b.gender)
+        or (requirement == 'same' and a.gender == b.gender)
+    )
+
+
+def get_partner_repair_cases(event: Event) -> list[dict]:
+    """Return current malformed pair declarations that require a decision.
+
+    This is intentionally read-only. Automatic pairing handles only entrants
+    with no inbound or outbound claim; every declaration that names somebody
+    stays visible for an operator to repair or confirm.
+    """
+    if event.event_type not in {'pro', 'college'} or not event.is_partnered:
+        return []
+
+    pool = _event_pool(event)
+    cases_by_id: dict[int, dict] = {}
+    for competitor in pool:
+        partner_name = _read_partner_name(competitor, event)
+        if not partner_name:
+            continue
+        if normalize_alphanum(partner_name) == normalize_alphanum(competitor.name):
+            cases_by_id[competitor.id] = {
+                'competitor': competitor,
+                'competitor_type': event.event_type,
+                'partner_name': partner_name,
+                'reason': 'self_reference',
+                'suggested_partner': None,
+            }
+            continue
+
+        partner = _resolve_partner(partner_name, pool, exclude_id=competitor.id)
+        if partner is None:
+            cases_by_id[competitor.id] = {
+                'competitor': competitor,
+                'competitor_type': event.event_type,
+                'partner_name': partner_name,
+                'reason': 'unresolved',
+                'suggested_partner': None,
+            }
+            continue
+        if not _gender_pair_is_valid(event, competitor, partner):
+            cases_by_id[competitor.id] = {
+                'competitor': competitor,
+                'competitor_type': event.event_type,
+                'partner_name': partner_name,
+                'reason': 'invalid_gender',
+                'suggested_partner': None,
+            }
+            continue
+
+        their_partner_name = _read_partner_name(partner, event)
+        their_match = (
+            _resolve_partner(their_partner_name, pool, exclude_id=partner.id)
+            if their_partner_name else None
+        )
+        if their_match is None or their_match.id != competitor.id:
+            cases_by_id[competitor.id] = {
+                'competitor': competitor,
+                'competitor_type': event.event_type,
+                'partner_name': partner_name,
+                'reason': 'one_sided_claim' if not their_partner_name else 'non_reciprocal',
+                'suggested_partner': partner if not their_partner_name else None,
+            }
+
+    return sorted(cases_by_id.values(), key=lambda case: case['competitor'].name.lower())
+
+
+def get_unclaimed_partner_candidates(event: Event, exclude_ids: set[int] | None = None) -> list:
+    """Return entrants safe to select manually without stealing a claim."""
+    pool = _event_pool(event)
+    excluded = exclude_ids or set()
+    inbound_claims: set[int] = set()
+    for competitor in pool:
+        partner_name = _read_partner_name(competitor, event)
+        if partner_name:
+            partner = _resolve_partner(partner_name, pool, exclude_id=competitor.id)
+            if partner is not None:
+                inbound_claims.add(partner.id)
+
+    return [
+        competitor for competitor in pool
+        if competitor.id not in excluded
+        and competitor.id not in inbound_claims
+        and not _read_partner_name(competitor, event)
+    ]
+
+
 def auto_assign_event_partners(event: Event) -> dict:
-    """Resolve and auto-pair partners for one partnered pro event.
+    """Resolve and auto-pair partners for one partnered event.
 
     Three-phase resolver:
       Phase 1 (CONFIRM): walk the pool, fuzzy-resolve each comp's partner
@@ -148,7 +259,7 @@ def auto_assign_event_partners(event: Event) -> dict:
         "one_sided_claims": [],
         "unmatched": 0,
     }
-    if event.event_type != "pro" or not event.is_partnered:
+    if event.event_type not in {'pro', 'college'} or not event.is_partnered:
         return summary
 
     pool = _event_pool(event)
@@ -273,7 +384,7 @@ def auto_assign_event_partners(event: Event) -> dict:
             )
             continue
 
-        _set_partner_bidirectional(comp, partner, event)
+        set_partner_bidirectional(comp, partner, event)
         paired.add(comp.id)
         paired.add(partner.id)
         summary["confirmed_pairs"] += 1
@@ -287,7 +398,7 @@ def auto_assign_event_partners(event: Event) -> dict:
         while men and women:
             a = men.pop(0)
             b = women.pop(0)
-            _set_partner_bidirectional(a, b, event)
+            set_partner_bidirectional(a, b, event)
             paired.add(a.id)
             paired.add(b.id)
             summary["assigned_pairs"] += 1
@@ -297,7 +408,7 @@ def auto_assign_event_partners(event: Event) -> dict:
         while len(leftover) >= 2:
             a = leftover.pop(0)
             b = leftover.pop(0)
-            _set_partner_bidirectional(a, b, event)
+            set_partner_bidirectional(a, b, event)
             paired.add(a.id)
             paired.add(b.id)
             summary["assigned_pairs"] += 1
@@ -309,8 +420,26 @@ def auto_assign_event_partners(event: Event) -> dict:
     return summary
 
 
+def auto_assign_partners(tournament: Tournament) -> dict:
+    """Auto assign partners across all partnered events in a tournament."""
+    events = (
+        tournament.events.filter_by(is_partnered=True)
+        .order_by(Event.event_type, Event.name, Event.gender)
+        .all()
+    )
+    summaries = [auto_assign_event_partners(event) for event in events]
+    return {
+        "event_count": len(summaries),
+        "confirmed_pairs": sum(s["confirmed_pairs"] for s in summaries),
+        "assigned_pairs": sum(s["assigned_pairs"] for s in summaries),
+        "one_sided_claims": sum(len(s["one_sided_claims"]) for s in summaries),
+        "unmatched": sum(s["unmatched"] for s in summaries),
+        "events": summaries,
+    }
+
+
 def auto_assign_pro_partners(tournament: Tournament) -> dict:
-    """Auto assign partners across all partnered pro events in a tournament."""
+    """Compatibility wrapper for the legacy pro-only registration action."""
     events = (
         tournament.events.filter_by(event_type="pro", is_partnered=True)
         .order_by(Event.name, Event.gender)

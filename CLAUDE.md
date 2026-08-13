@@ -115,7 +115,7 @@ services/
     backup.py           # S3 or local SQLite backup; triggered from reporting route
     woodboss.py         # Virtual Woodboss: block/saw calculations, lottery view, history, share token, wood presets
     handicap_export.py  # Chopping-event Excel export helpers (underhand, springboard, standing)
-    partner_matching.py # Auto-partner matching for pro partnered events (bidirectional validation)
+    partner_matching.py # Claim-aware partner matching for pro and college partnered events
     preflight.py        # Pre-scheduling validation: heat/table sync, odd partner pools, Saturday overflow
     gear_sharing.py     # Comprehensive gear-sharing service: parse/match/audit, bidirectional sync, group gear,
                         #   free-text parser, parse review, heat conflict detection + auto-fix, batch operations
@@ -443,7 +443,7 @@ PayoutTemplate  (tournament-independent, standalone)
 - Team validation framework: `Team.validation_errors` JSON column; `_validate_college_entry_constraints()` in excel_io returns structured errors; partial success import (valid teams commit, invalid teams tracked); fix forms in `team_detail.html` per error type
 - Virtual Woodboss (`routes/woodboss.py`, `services/woodboss.py`, `models/wood_config.py`): complete material planning — block counts, saw log linear footage, Pro-Am Relay blocks + double buck, lottery view, cross-tournament history, HMAC share link
 - Preflight checks service (`services/preflight.py`, `templates/scheduling/preflight.html`): pre-scheduling validation — heat/table sync, odd partner pools, Saturday overflow
-- Partner matching service (`services/partner_matching.py`): auto-partner assignment logic for pro partnered events; bidirectional validation and gender matching (service exists; no UI route yet)
+- Partner matching service (`services/partner_matching.py`): claim-aware auto-pairing for genuinely unclaimed pro and college entrants, plus a preflight-linked partner repair queue for named, malformed, or scratched declarations. Pending result labels stay synchronized; completed result history is preserved.
 - Handicap export helpers (`services/handicap_export.py`): chopping-event Excel export utilities
 - Gear Sharing Manager (`routes/registration.py`, `services/gear_sharing.py`, `templates/pro/gear_sharing.html`): comprehensive pro gear-sharing audit — verified pairs, unresolved entries, heat conflicts; free-text parse with review workflow; gear groups (multiple pairs sharing one saw); bidirectional sync; heat conflict auto-fix; auto-populate partners; cleanup scratched; college gear constraints view/edit; printable report
 - Fee Tracker (`routes/reporting.py`, `templates/reporting/fee_tracker.html`): entry fee collection checklist per pro competitor; per-event breakdown expandable rows; mark/unmark paid; outstanding-only filter; summary cards

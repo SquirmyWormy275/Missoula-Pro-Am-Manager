@@ -46,6 +46,12 @@ A valid generated pair requires:
 Preflight should report partner problems, but heat generation must also enforce
 them. Reporting a partner problem is not enough.
 
+Preflight recovery may normalize reciprocal typo matches and pair only entrants
+with neither an outbound declaration nor an inbound claim. Every named,
+one-sided, ambiguous, self-referential, or gender-invalid declaration requires
+an operator decision in the partner repair queue. Completed result records are
+never rewritten during partner repair.
+
 Allowed partner-event shapes:
 
 - Jack and Jill: mixed-gender saw pair.

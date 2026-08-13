@@ -318,6 +318,7 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                 f'their partner. Held back from heats. {names}{suffix}.'
             ),
             'autofix': False,
+            'self_references': self_ref_partner,
         })
     if non_reciprocal:
         names = ', '.join(

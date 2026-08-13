@@ -12,7 +12,7 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
         integrate_proam_relay_into_final_flight,
     )
     from services.gear_sharing import complete_one_sided_pairs, parse_all_gear_details
-    from services.partner_matching import auto_assign_pro_partners
+    from services.partner_matching import auto_assign_partners
 
     # D12-C commit F2: the heat-sync sweep is gone, and with it the
     # `heats_fixed` / `heats_checked` counters this function used to return.
@@ -25,7 +25,7 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
 
     gear_parse_result = parse_all_gear_details(tournament)
     pairs_result = complete_one_sided_pairs(tournament)
-    partner_summary = auto_assign_pro_partners(tournament)
+    partner_summary = auto_assign_partners(tournament)
     # Phase 4: relay BEFORE spillover so Chokerman Run 2 still closes the show.
     relay_result = integrate_proam_relay_into_final_flight(tournament)
     integration = integrate_college_spillover_into_flights(tournament, saturday_ids or [])
