@@ -1319,6 +1319,7 @@ def integrate_college_spillover_into_flights(
 
     last_flight = flights[-1]
     integrated = 0
+    skipped_completed = 0
     per_event = 0
     flight_idx = 0
 
@@ -1359,6 +1360,9 @@ def integrate_college_spillover_into_flights(
             continue
         per_event += 1
         for heat in heats:
+            if heat.status == 'completed':
+                skipped_completed += 1
+                continue
             # Keep preexisting placement if already integrated.
             if heat.flight_id is not None:
                 continue
@@ -1425,10 +1429,14 @@ def integrate_college_spillover_into_flights(
     db.session.flush()
     if commit:
         db.session.commit()
+    message = 'College spillover heats integrated into flights.'
+    if skipped_completed:
+        message += f' {skipped_completed} completed heat(s) left unchanged.'
     return {
         'integrated_heats': integrated,
+        'skipped_completed': skipped_completed,
         'events': per_event,
-        'message': 'College spillover heats integrated into flights.',
+        'message': message,
     }
 
 

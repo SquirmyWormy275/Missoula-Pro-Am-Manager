@@ -511,6 +511,32 @@ class TestFlightBuilderSpillover:
 
         assert result['integrated_heats'] == 0
 
+    def test_spillover_does_not_attach_completed_unflighted_heat(self, db_session):
+        """A Friday heat that already ran cannot be introduced to Saturday."""
+        from models import Heat
+        from services.flight_builder import FlightBuilder
+
+        data = _seed_standard_show(db_session)
+        tournament = data['tournament']
+        FlightBuilder(tournament).build(num_flights=2)
+
+        event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block', gender='M',
+        )
+        heat = _make_heat(db_session, event, 1, [901, 902])
+        heat.status = 'completed'
+        heat_id = heat.id
+        db_session.flush()
+
+        result = FlightBuilder(tournament).integrate_spillover([event.id])
+
+        assert result['integrated_heats'] == 0
+        assert result['skipped_completed'] == 1
+        preserved = _db.session.get(Heat, heat_id)
+        assert preserved.status == 'completed'
+        assert preserved.flight_id is None
+        assert preserved.flight_position is None
+
 
 # ---------------------------------------------------------------------------
 # build_pro_flights() module-level tests
