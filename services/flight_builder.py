@@ -367,6 +367,18 @@ def _prepare_partnered_axe_show_heats(event: Event | None) -> list[Heat]:
     if not qualifier_pairs:
         return event.heats.filter_by(run_number=1).order_by(Heat.heat_number).all()
 
+    # Partnered Axe owns its prelim/finals state machine, so its prelim
+    # EventResult rows are not enough to distinguish a safe first show build
+    # from a final already underway. Once a final score exists, reseeding from
+    # prelim standings would discard the live final card and its score state.
+    state = _partnered_axe_state(event)
+    finalists = state.get('finalists') if isinstance(state, dict) else []
+    if (
+        (isinstance(state, dict) and state.get('stage') == 'completed')
+        or any(pair.get('final_score') is not None for pair in finalists if isinstance(pair, dict))
+    ):
+        return event.heats.filter_by(run_number=1).order_by(Heat.heat_number).all()
+
     heat_ids = [h.id for h in Heat.query.filter_by(event_id=event.id).with_entities(Heat.id).all()]
     if heat_ids:
         HeatAssignment.query.filter(HeatAssignment.heat_id.in_(heat_ids)).delete(synchronize_session=False)
@@ -401,13 +413,19 @@ def _prepare_partnered_axe_show_heats(event: Event | None) -> list[Heat]:
     return created
 
 
-def _get_partnered_axe_qualifier_pairs(event: Event, count: int) -> list[dict]:
-    """Read prelim standings from partnered axe event state and return top N pairs."""
+def _partnered_axe_state(event: Event) -> dict:
+    """Return the dedicated Partnered Axe state document, or an empty dict."""
     raw_state = getattr(event, 'event_state', None) or event.payouts
     try:
         state = json.loads(raw_state or '{}')
     except (json.JSONDecodeError, TypeError):
-        return []
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _get_partnered_axe_qualifier_pairs(event: Event, count: int) -> list[dict]:
+    """Read prelim standings from partnered axe event state and return top N pairs."""
+    state = _partnered_axe_state(event)
 
     prelim_results = state.get('prelim_results')
     if not isinstance(prelim_results, list):

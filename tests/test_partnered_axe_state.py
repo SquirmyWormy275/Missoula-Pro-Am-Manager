@@ -73,6 +73,19 @@ def _complete_event(db_session, tournament, axe_event):
     return pat
 
 
+def _add_final_heat(db_session, axe_event, pair):
+    """Create the show card a flight build must preserve after final scoring."""
+    from models import Heat
+
+    heat = Heat(event_id=axe_event.id, heat_number=1, run_number=1)
+    db_session.add(heat)
+    db_session.flush()
+    competitor_ids = [pair['competitor1']['id'], pair['competitor2']['id']]
+    heat.set_roster('pro', competitor_ids, {competitor_id: 1 for competitor_id in competitor_ids})
+    db_session.flush()
+    return heat
+
+
 # ---------------------------------------------------------------------------
 # Basic lifecycle
 # ---------------------------------------------------------------------------
@@ -203,6 +216,54 @@ class TestPartneredAxeLifecycle:
         assert sorted(comp.total_earnings for comp in competitors) == [
             0, 0, 100, 100, 200, 200, 300, 300, 500, 500,
         ]
+
+    def test_show_rebuild_preserves_completed_final_card(
+            self, db_session, tournament, axe_event):
+        """A later flight build cannot replace a completed Partnered Axe final."""
+        from models import Heat
+        from services.flight_builder import _prepare_partnered_axe_show_heats
+
+        pat = _complete_event(db_session, tournament, axe_event)
+        heat = _add_final_heat(db_session, axe_event, pat.get_finalists()[0])
+        heat.status = 'completed'
+        heat_id = heat.id
+        roster = heat.get_competitors()
+        db_session.flush()
+
+        prepared = _prepare_partnered_axe_show_heats(axe_event)
+
+        assert [prepared_heat.id for prepared_heat in prepared] == [heat_id]
+        preserved = db_session.get(Heat, heat_id)
+        assert preserved.status == 'completed'
+        assert preserved.get_competitors() == roster
+
+    def test_show_rebuild_preserves_partially_scored_final_card(
+            self, db_session, tournament, axe_event):
+        """A live finals score is enough to make the show card immutable."""
+        from models import Heat
+        from services.flight_builder import _prepare_partnered_axe_show_heats
+        from services.partnered_axe import PartneredAxeThrow
+
+        pat = PartneredAxeThrow(axe_event)
+        pairs = []
+        for i in range(4):
+            first, second = _make_pair(
+                db_session, tournament, f'Live{i}A', f'Live{i}B', event_id=axe_event.id,
+            )
+            db_session.flush()
+            pairs.append(pat.register_pair(first.id, second.id))
+        for i, pair in enumerate(pairs):
+            pat.record_prelim_result(pair['pair_id'], hits=10 + i)
+        finalists = pat.advance_to_finals()
+        heat = _add_final_heat(db_session, axe_event, finalists[0])
+        pat.record_final_result(finalists[0]['pair_id'], hits=20)
+        heat_id = heat.id
+        db_session.flush()
+
+        prepared = _prepare_partnered_axe_show_heats(axe_event)
+
+        assert [prepared_heat.id for prepared_heat in prepared] == [heat_id]
+        assert db_session.get(Heat, heat_id).get_competitors() == heat.get_competitors()
 
     def test_final_correction_reopens_only_changed_payouts(
             self, db_session, tournament, axe_event):
