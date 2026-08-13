@@ -178,6 +178,32 @@ def test_heat_generation_rejects_zero_max_stands(app):
             generate_event_heats(event)
 
 
+def test_heat_generation_history_guard_accepts_lightweight_event_stubs(app):
+    """Validation-only callers need no persisted-event-only attributes."""
+    from types import SimpleNamespace
+
+    from services.heat_generator import generate_event_heats
+
+    event = SimpleNamespace(
+        id=998,
+        name='Underhand',
+        display_name='Underhand',
+        tournament_id=1,
+        event_type='pro',
+        stand_type='underhand',
+        max_stands=0,
+        has_prelims=False,
+    )
+
+    with app.app_context(), pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            'services.heat_generator._get_event_competitors',
+            lambda _event: [{'id': 1, 'name': 'A'}],
+        )
+        with pytest.raises(ValueError, match='invalid max_stands'):
+            generate_event_heats(event)
+
+
 def test_restore_rejects_schema_mismatch(app, admin_client):
     # D14-B: the restore route refuses outright on any non-SQLite engine
     # (routes/reporting.py), so on the Postgres twin this posts a file the

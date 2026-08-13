@@ -153,7 +153,7 @@ def generate_event_heats(event: Event) -> int:
     # is also used by bulk and background workflows. Keep every caller from
     # deleting completed score or heat history, including an all-scratch heat
     # that has no completed EventResult.
-    if event.is_finalized:
+    if getattr(event, 'is_finalized', False):
         raise HeatGenerationSafetyError(
             f'{event.display_name} is finalized. Heat regeneration is blocked.'
         )
