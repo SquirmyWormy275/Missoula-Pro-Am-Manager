@@ -2055,15 +2055,16 @@ def test_a_college_competitor_is_still_routed_by_her_own_gender(app):
 
 
 def _flight_ordered_heats(sql):
-    """The built show order: every flighted heat, in the order it runs."""
+    """The tournament's built show order: every flighted heat in run order."""
     return sql("""
         SELECT f.flight_number, h.flight_position, h.id, e.stand_type, e.name
           FROM heats h
           JOIN flights f ON f.id = h.flight_id
           JOIN events e ON e.id = h.event_id
          WHERE h.flight_id IS NOT NULL
+           AND f.tournament_id = :t
          ORDER BY f.flight_number, h.flight_position, h.id
-    """)
+    """, t=TID)
 
 
 def _status(app):

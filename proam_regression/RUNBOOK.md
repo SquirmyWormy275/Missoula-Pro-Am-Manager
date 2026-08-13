@@ -39,30 +39,23 @@ the pristine template explicitly:
 
 ## Standing numbers
 
-Measured at `971d5f0` (G2-C commit B). A lane that comes back different from
-this is telling you something, and the something is usually yours.
+Measured locally on 2026-08-12 after the normalized-roster and gear-conflict
+work. A lane that comes back different from this is telling you something,
+and the something is usually yours.
 
 | lane      | passed | skipped | xfailed | failed |
 |-----------|--------|---------|---------|--------|
-| normal    | 218    | 6       | 2       | 0      |
-| reversed  | 218    | 6       | 2       | 0      |
-| oracle    | 222    | 0       | 2       | 2      |
+| normal    | 205    | 6       | 2       | 0      |
+| reversed  | 205    | 6       | 2       | 0      |
+| oracle    | 211    | 0       | 2       | 0      |
 | pristine  | 3      | 0       | 0       | 0      |
 
 The 2 xfails on every lane are the blocked gear-parser tests, which die with
 register decision G3/D2.
 
-The 2 oracle failures are **known and pre-existing**, proven against baseline
-`184667e` by running them from a detached worktree at that sha:
-
-  - `test_the_schedule_panel_tells_the_operator_the_stands_are_double_booked`
-  - `test_the_show_order_is_not_touched`
-
-Root cause is `_flight_ordered_heats` in `test_sev3_confirmed.py`, which is not
-scoped to a tournament and therefore counts both tournaments' heats on a
-two-tournament template (150 where it expects 75). It is a defect in the test,
-not in the app, and it is open question 8 awaiting the operator's approval to
-scope. Do not "fix" it by changing the expected number.
+The oracle lane must be clean. Its flight-order assertions are explicitly
+scoped to the real 2026 tournament, so the staged 2027 heats cannot inflate
+the operator-facing stand-conflict count or the 2026 show-order snapshot.
 
 ## Two traps that have each cost a cycle
 
