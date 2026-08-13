@@ -103,8 +103,10 @@ travels privately to the operator and lives wherever he keeps it. Anything in
 this suite that compares real contact data prints digests or counts, never the
 values themselves; keep it that way.
 
-Template build and rebuild procedures: see the C32 recovery doc and the
-docstrings in `stage_multitournament.py` and `test_o3_ordering.py`.
+`scripts/rig_bootstrap.sh` builds the normal template as a frozen historical
+snapshot. It repairs and migrates only the derived reversed and oracle
+templates before reversing physical order or staging 2027, with a test-only
+secret supplied through `RIG_SECRET_KEY` when needed.
 
 ## Rebuilding after a container swap (c56, third occurrence)
 

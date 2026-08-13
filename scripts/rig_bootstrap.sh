@@ -27,8 +27,54 @@ PGHOST="${PGHOST:-localhost}"
 export PGPASSWORD="${PGPASSWORD:-proam}"
 PSQL="psql -h $PGHOST -U proam"
 PY="${RIG_PYTHON:-python3}"
+RIG_SECRET_KEY="${RIG_SECRET_KEY:-$(printf 'x%.0s' {1..64})}"
 
 say() { printf '\n== %s ==\n' "$*"; }
+
+db_url() { printf 'postgresql://proam:proam@%s:5432/%s' "$PGHOST" "$1"; }
+
+prepare_current_schema() {
+  # The normal template remains an untouched historical snapshot. Derived
+  # templates need current schema because staging and physical-order probes
+  # read normalized roster and bracket tables.
+  local db="$1"
+  local url
+  url="$(db_url "$db")"
+  DATABASE_URL="$url" SECRET_KEY="$RIG_SECRET_KEY" \
+    "$PY" "$REPO/scripts/repair_era1_references.py" --apply
+  DATABASE_URL="$url" SECRET_KEY="$RIG_SECRET_KEY" PYTHONPATH="$REPO" \
+    "$PY" -m flask db upgrade
+  DATABASE_URL="$url" SECRET_KEY="$RIG_SECRET_KEY" PYTHONPATH="$REPO" \
+    "$PY" -m scripts.reproject_birling --database-url "$url" 28 29
+}
+
+reverse_physical_order() {
+  local db="$1"
+  local statements
+  statements="$($PSQL -d "$db" -Atc "
+SELECT format(
+  'CREATE INDEX %I ON %I (%s); CLUSTER %I USING %I; DROP INDEX %I;',
+  '_rev_idx_' || c.relname,
+  c.relname,
+  (SELECT string_agg(format('%I DESC', a.attname), ', ' ORDER BY x.n)
+     FROM unnest(i.indkey) WITH ORDINALITY AS x(attnum, n)
+     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = x.attnum),
+  c.relname,
+  '_rev_idx_' || c.relname,
+  '_rev_idx_' || c.relname
+)
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'
+  AND c.relname <> 'alembic_version'
+ORDER BY c.relname;")"
+  while IFS= read -r statement; do
+    [ -n "$statement" ] || continue
+    $PSQL -d "$db" -v ON_ERROR_STOP=1 -c "$statement"
+  done <<< "$statements"
+}
 
 say "role + prerequisites"
 if ! $PSQL -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
@@ -63,27 +109,17 @@ fi
 say "3/4 p0rev = p0 with physical row order reversed (CLUSTER on DESC pk)"
 if guard proam_prod_mirror_p0rev; then
   createdb -h "$PGHOST" -U proam -T proam_prod_mirror_p0 -O proam proam_prod_mirror_p0rev
-  $PSQL -d proam_prod_mirror_p0rev -tA <<'SQL' | while IFS='|' read -r t pk; do
-SELECT c.relname, (SELECT string_agg(a.attname, ',' ORDER BY x.n)
-  FROM unnest(i.indkey) WITH ORDINALITY AS x(attnum,n)
-  JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=x.attnum)
-FROM pg_class c
-JOIN pg_namespace n ON n.oid=c.relnamespace
-LEFT JOIN pg_index i ON i.indrelid=c.oid AND i.indisprimary
-WHERE n.nspname='public' AND c.relkind='r' AND c.relname <> 'alembic_version';
-SQL
-    [ -z "$pk" ] && continue
-    cols=$(echo "$pk" | sed 's/\([^,][^,]*\)/\1 DESC/g')
-    $PSQL -d proam_prod_mirror_p0rev -q -c "CREATE INDEX _rev_idx_$t ON $t ($cols);" \
-      -c "CLUSTER $t USING _rev_idx_$t;" -c "DROP INDEX _rev_idx_$t;"
-  done
+  prepare_current_schema proam_prod_mirror_p0rev
+  reverse_physical_order proam_prod_mirror_p0rev
 fi
 
 say "4/4 mt = p0 + staged 2027 oracle"
 if guard proam_prod_mirror_mt; then
   createdb -h "$PGHOST" -U proam -T proam_prod_mirror_p0 -O proam proam_prod_mirror_mt
-  PYTHONPATH="$REPO" PROAM_MT_URL="postgresql://proam:proam@$PGHOST:5432/proam_prod_mirror_mt" \
-    "$PY" "$REPO/proam_regression/stage_multitournament.py"
+  prepare_current_schema proam_prod_mirror_mt
+  PYTHONPATH="$REPO" SECRET_KEY="$RIG_SECRET_KEY" \
+    PROAM_MT_URL="$(db_url proam_prod_mirror_mt)" \
+    "$PY" -m proam_regression.stage_multitournament
 fi
 
 say "done. run the suite:"
