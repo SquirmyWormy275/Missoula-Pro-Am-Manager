@@ -27,6 +27,7 @@ state and never mutate the reference copy.
 import os
 import re
 import subprocess
+import time
 import uuid
 from contextlib import contextmanager
 
@@ -53,6 +54,8 @@ ADMIN_USER_ID = 1
 RUN_TOKEN = os.environ.get("PROAM_RIG_RUN_TOKEN", uuid.uuid4().hex[:12])
 _RUN_TOKEN_RE = re.compile(r"^[a-f0-9]{12}$")
 _CLONE_NAME_RE = re.compile(r"^proam_rt_([a-f0-9]{12})_([a-f0-9]{10})$")
+_CLONE_DROP_RETRY_ATTEMPTS = 20
+_CLONE_DROP_RETRY_SECONDS = 0.25
 
 
 def _url(dbname):
@@ -130,11 +133,23 @@ def clone_production():
 
 def drop_clone(name):
     result = _psql("postgres", f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE);')
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"could not drop disposable regression clone {name}: "
-            f"{result.stderr.strip()}"
-        )
+    if result.returncode == 0:
+        return
+
+    # The clone is ours, but an out-of-process probe can finish just after its
+    # parent test reaches teardown. PostgreSQL correctly refuses FORCE when
+    # that connection has a different local role. Give it a short chance to
+    # exit on its own, then still fail closed rather than leaking the clone.
+    for _ in range(_CLONE_DROP_RETRY_ATTEMPTS):
+        time.sleep(_CLONE_DROP_RETRY_SECONDS)
+        result = _psql("postgres", f'DROP DATABASE IF EXISTS "{name}";')
+        if result.returncode == 0:
+            return
+
+    raise RuntimeError(
+        f"could not drop disposable regression clone {name}: "
+        f"{result.stderr.strip()}"
+    )
 
 
 def orphan_clones():

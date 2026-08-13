@@ -63,6 +63,8 @@ def test_session_cleanup_drops_only_its_own_tokenized_clones(monkeypatch, rig_mo
 
 
 def test_drop_clone_raises_when_postgres_rejects_cleanup(monkeypatch, rig_module):
+    monkeypatch.setattr(rig_module, "_CLONE_DROP_RETRY_ATTEMPTS", 1)
+    monkeypatch.setattr(rig_module.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         rig_module,
         "_psql",
@@ -71,3 +73,24 @@ def test_drop_clone_raises_when_postgres_rejects_cleanup(monkeypatch, rig_module
 
     with pytest.raises(RuntimeError, match="database is busy"):
         rig_module.drop_clone("proam_rt_aaaaaaaaaaaa_bbbbbbbbbb")
+
+
+def test_drop_clone_retries_a_transient_foreign_connection(monkeypatch, rig_module):
+    outcomes = iter([
+        SimpleNamespace(returncode=1, stderr="permission denied to terminate process"),
+        SimpleNamespace(returncode=1, stderr="database is being accessed by other users"),
+        SimpleNamespace(returncode=0, stderr=""),
+    ])
+    calls = []
+    monkeypatch.setattr(rig_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        rig_module,
+        "_psql",
+        lambda *args: (calls.append(args), next(outcomes))[1],
+    )
+
+    rig_module.drop_clone("proam_rt_aaaaaaaaaaaa_bbbbbbbbbb")
+
+    assert len(calls) == 3
+    assert "WITH (FORCE)" in calls[0][1]
+    assert "WITH (FORCE)" not in calls[1][1]
