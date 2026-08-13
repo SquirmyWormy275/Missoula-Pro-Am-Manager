@@ -1465,12 +1465,20 @@ def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool
 
     # Idempotency: wipe any existing relay Heat rows + their HeatAssignments
     # so repeated rebuilds don't duplicate the pseudo-heat.
-    existing_heat_ids = [
-        h.id for h in Heat.query
-        .filter_by(event_id=relay_event.id)
-        .with_entities(Heat.id)
-        .all()
-    ]
+    existing_heats = Heat.query.filter_by(event_id=relay_event.id).order_by(Heat.id).all()
+    completed_heat = next((heat for heat in existing_heats if heat.status == 'completed'), None)
+    if completed_heat is not None:
+        # The pseudo-heat is still a heat-sheet record. Re-integrating
+        # spillover after the relay ran must not erase its published position.
+        return {
+            'placed': True,
+            'heat_id': completed_heat.id,
+            'flight_id': completed_heat.flight_id,
+            'team_count': len(teams),
+            'preserved_history': True,
+        }
+
+    existing_heat_ids = [heat.id for heat in existing_heats]
     if existing_heat_ids:
         HeatAssignment.query.filter(
             HeatAssignment.heat_id.in_(existing_heat_ids),

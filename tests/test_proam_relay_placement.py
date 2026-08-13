@@ -267,6 +267,31 @@ class TestRelayPlacement:
             "2 invocations"
         )
 
+    def test_completed_relay_heat_is_preserved_in_place(self, db_session):
+        """Spillover integration cannot replace an already-run relay card."""
+        from models import Event, Heat
+        from services.flight_builder import integrate_proam_relay_into_final_flight
+
+        t, _ = _seed_with_flights(db_session, with_relay_event=True, with_teams=True)
+        first = integrate_proam_relay_into_final_flight(t, commit=False)
+        relay_heat = db.session.get(Heat, first['heat_id'])
+        relay_heat.status = 'completed'
+        heat_id = relay_heat.id
+        flight_id = relay_heat.flight_id
+        flight_position = relay_heat.flight_position
+        db_session.flush()
+
+        result = integrate_proam_relay_into_final_flight(t, commit=False)
+
+        assert result['placed'] is True
+        assert result['preserved_history'] is True
+        preserved = db.session.get(Heat, heat_id)
+        assert preserved.status == 'completed'
+        assert preserved.flight_id == flight_id
+        assert preserved.flight_position == flight_position
+        relay_event = Event.query.filter_by(tournament_id=t.id, name='Pro-Am Relay').one()
+        assert Heat.query.filter_by(event_id=relay_event.id).count() == 1
+
 
 # ---------------------------------------------------------------------------
 # Chain ordering — relay lands BEFORE Chokerman (locked decision #4)
