@@ -11,7 +11,6 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from database import db
 from models import Event, EventResult, Tournament
-from models.competitor import CollegeCompetitor, ProCompetitor
 from services import birling_rows
 from services.audit import log_action
 from services.birling_print import build_birling_print_context
@@ -40,13 +39,23 @@ def _handle_projection_refusal(exc):
     )
 
 
+def _college_birling_event_or_404(tournament_id: int, event_id: int) -> Event:
+    """Load the college-only bracket event authorized by the tournament rule."""
+    event = db.get_or_404(Event, event_id)
+    if (
+        event.tournament_id != tournament_id
+        or event.event_type != 'college'
+        or event.scoring_type != 'bracket'
+    ):
+        abort(404)
+    return event
+
+
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling', methods=['GET'])
 def birling_manage(tournament_id, event_id):
     """Birling bracket management page — seeding, generation, and match recording."""
     tournament = db.get_or_404(Tournament, tournament_id)
-    event = db.get_or_404(Event, event_id)
-    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
-        abort(404)
+    event = _college_birling_event_or_404(tournament_id, event_id)
 
     from services.birling_bracket import BirlingBracket
     bb = BirlingBracket(event)
@@ -136,9 +145,7 @@ def birling_manage(tournament_id, event_id):
 def birling_generate(tournament_id, event_id):
     """Generate a new birling bracket using seeded order from form."""
     tournament = db.get_or_404(Tournament, tournament_id)
-    event = db.get_or_404(Event, event_id)
-    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
-        abort(404)
+    event = _college_birling_event_or_404(tournament_id, event_id)
 
     competitors = _signed_up_competitors(event)
     if len(competitors) < 2:
@@ -222,9 +229,7 @@ def birling_generate(tournament_id, event_id):
 def birling_record_match(tournament_id, event_id):
     """Record the result of a birling match."""
     tournament = db.get_or_404(Tournament, tournament_id)
-    event = db.get_or_404(Event, event_id)
-    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
-        abort(404)
+    event = _college_birling_event_or_404(tournament_id, event_id)
 
     match_id = request.form.get('match_id', '').strip()
     winner_id_raw = request.form.get('winner_id', '').strip()
@@ -279,9 +284,7 @@ def birling_record_match(tournament_id, event_id):
 def birling_record_fall(tournament_id, event_id):
     """Record a single fall in a best-of-3 birling match."""
     tournament = db.get_or_404(Tournament, tournament_id)
-    event = db.get_or_404(Event, event_id)
-    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
-        abort(404)
+    event = _college_birling_event_or_404(tournament_id, event_id)
 
     match_id = request.form.get('match_id', '').strip()
     fall_winner_raw = request.form.get('fall_winner_id', '').strip()
@@ -358,9 +361,7 @@ def _fall_loser_count(result):
 def birling_undo_match(tournament_id, event_id):
     """Undo a birling match result — return both competitors to the match."""
     tournament = db.get_or_404(Tournament, tournament_id)
-    event = db.get_or_404(Event, event_id)
-    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
-        abort(404)
+    event = _college_birling_event_or_404(tournament_id, event_id)
 
     match_id = request.form.get('match_id', '').strip()
     if not match_id:
@@ -411,9 +412,7 @@ def birling_undo_match(tournament_id, event_id):
 def birling_reset(tournament_id, event_id):
     """Reset the birling bracket (clear all data)."""
     tournament = db.get_or_404(Tournament, tournament_id)
-    event = db.get_or_404(Event, event_id)
-    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
-        abort(404)
+    event = _college_birling_event_or_404(tournament_id, event_id)
 
     # Payouts are independent configuration. Resetting a bracket must not
     # discard the event's prize schedule.
@@ -433,9 +432,7 @@ def birling_reset(tournament_id, event_id):
 def birling_finalize(tournament_id, event_id):
     """Finalize birling bracket — write placements to EventResult records."""
     tournament = db.get_or_404(Tournament, tournament_id)
-    event = db.get_or_404(Event, event_id)
-    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
-        abort(404)
+    event = _college_birling_event_or_404(tournament_id, event_id)
 
     from services.birling_bracket import BirlingBracket
     bb = BirlingBracket(event)
@@ -481,7 +478,7 @@ def birling_index(tournament_id):
     tournament = db.get_or_404(Tournament, tournament_id)
     events = (
         Event.query
-        .filter_by(tournament_id=tournament_id)
+        .filter_by(tournament_id=tournament_id, event_type='college')
         .filter(Event.scoring_type == 'bracket')
         .order_by(Event.event_type, Event.name, Event.gender)
         .all()
@@ -554,9 +551,7 @@ def birling_print_blank(tournament_id, event_id):
     a redirect back to the seeding page.
     """
     tournament = db.get_or_404(Tournament, tournament_id)
-    event = db.get_or_404(Event, event_id)
-    if event.tournament_id != tournament_id or event.scoring_type != 'bracket':
-        abort(404)
+    event = _college_birling_event_or_404(tournament_id, event_id)
 
     ctx = build_birling_print_context(event)
     if ctx is None:
@@ -590,7 +585,7 @@ def birling_print_all(tournament_id):
     tournament = db.get_or_404(Tournament, tournament_id)
     events = (
         Event.query
-        .filter_by(tournament_id=tournament_id)
+        .filter_by(tournament_id=tournament_id, event_type='college')
         .filter(Event.scoring_type == 'bracket')
         .order_by(Event.event_type, Event.name, Event.gender)
         .all()

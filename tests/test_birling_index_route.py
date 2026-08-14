@@ -59,6 +59,18 @@ def _make_birling(session, tournament, gender):
     )
 
 
+def _make_pro_bracket(session, tournament):
+    """Model an invalid manual Pro Birling row that routes must refuse."""
+    return make_event(
+        session,
+        tournament,
+        name="Pro Birling",
+        event_type="pro",
+        scoring_type="bracket",
+        stand_type="birling",
+    )
+
+
 def _real_pair(session, tournament):
     """Two live college competitors for the bracket blob to cite.
 
@@ -182,6 +194,70 @@ class TestBirlingIndex:
     def test_missing_tournament_404(self, bi_auth_client):
         resp = bi_auth_client.get("/scheduling/99999/birling")
         assert resp.status_code == 404
+
+    def test_index_excludes_manually_created_pro_bracket(self, bi_auth_client, db_session):
+        """The college-only Birling index must not surface prohibited Pro events."""
+        tournament = make_tournament(db_session)
+        college_event = _make_birling(db_session, tournament, gender="M")
+        pro_event = _make_pro_bracket(db_session, tournament)
+        db_session.flush()
+
+        response = bi_auth_client.get(f"/scheduling/{tournament.id}/birling")
+
+        assert response.status_code == 200
+        assert f"/event/{college_event.id}/birling".encode() in response.data
+        assert f"/event/{pro_event.id}/birling".encode() not in response.data
+
+
+class TestProBirlingRouteGuards:
+    @pytest.mark.parametrize(
+        ("method", "suffix"),
+        [
+            ("get", ""),
+            ("post", "/generate"),
+            ("post", "/record"),
+            ("post", "/fall"),
+            ("post", "/undo"),
+            ("post", "/reset"),
+            ("post", "/finalize"),
+            ("get", "/print-blank"),
+        ],
+    )
+    def test_pro_bracket_event_is_rejected_everywhere(
+        self, bi_auth_client, db_session, method, suffix
+    ):
+        """No Birling endpoint may create or mutate a prohibited Pro bracket."""
+        tournament = make_tournament(db_session)
+        event = _make_pro_bracket(db_session, tournament)
+        db_session.flush()
+
+        response = getattr(bi_auth_client, method)(
+            f"/scheduling/{tournament.id}/event/{event.id}/birling{suffix}",
+            data={},
+        )
+
+        assert response.status_code == 404
+
+    def test_heat_sheets_do_not_render_a_pro_bracket(
+        self,
+        bi_auth_client,
+        db_session,
+        monkeypatch,
+    ):
+        """The aggregate operational print is college-only too."""
+        tournament = make_tournament(db_session)
+        _make_pro_bracket(db_session, tournament)
+        db_session.flush()
+
+        class UnexpectedBracket:
+            def __init__(self, _event):
+                raise AssertionError("Pro brackets must not reach the Birling renderer")
+
+        monkeypatch.setattr(
+            "services.birling_bracket.BirlingBracket", UnexpectedBracket
+        )
+        response = bi_auth_client.get(f"/scheduling/{tournament.id}/heat-sheets")
+        assert response.status_code == 200
 
 
 class TestSidebarLink:

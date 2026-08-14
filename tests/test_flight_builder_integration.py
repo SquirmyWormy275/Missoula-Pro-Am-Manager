@@ -545,6 +545,47 @@ class TestFlightBuilderSpillover:
 class TestBuildProFlights:
     """End-to-end tests for the module-level build_pro_flights() function."""
 
+    def test_shared_stands_are_separated_when_other_heats_are_available(
+        self, db_session
+    ):
+        """The greedy builder reserves the shared block field for eight heats."""
+        from models import Flight, Heat
+        from services.flight_builder import _STAND_CONFLICT_GAP, build_pro_flights
+
+        tournament = _make_tournament(db_session)
+        competitors = [
+            _make_pro_competitor(db_session, tournament, f"Resource {number}")
+            for number in range(1, 11)
+        ]
+        cookie = _make_pro_event(
+            db_session, tournament, "Cookie Stack", "cookie_stack", max_stands=5
+        )
+        standing = _make_pro_event(
+            db_session, tournament, "Standing Block", "standing_block", max_stands=5
+        )
+        underhand = _make_pro_event(
+            db_session, tournament, "Underhand", "underhand", max_stands=5
+        )
+        _make_heat(db_session, cookie, 1, [competitors[0].id])
+        _make_heat(db_session, standing, 1, [competitors[1].id])
+        for heat_number, competitor in enumerate(competitors[2:], start=1):
+            _make_heat(db_session, underhand, heat_number, [competitor.id])
+
+        build_pro_flights(tournament, num_flights=1)
+        ordered = (
+            Heat.query.join(Flight)
+            .filter(Flight.tournament_id == tournament.id)
+            .order_by(Flight.flight_number, Heat.flight_position)
+            .all()
+        )
+        positions = {
+            heat.event.stand_type: index
+            for index, heat in enumerate(ordered)
+            if heat.event.stand_type in {"cookie_stack", "standing_block"}
+        }
+
+        assert abs(positions["cookie_stack"] - positions["standing_block"]) >= _STAND_CONFLICT_GAP
+
     def test_end_to_end_creates_flights(self, db_session):
         """build_pro_flights creates Flight records and assigns heats."""
         from models import Flight, Heat

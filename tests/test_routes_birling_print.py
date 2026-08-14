@@ -58,6 +58,19 @@ def _make_bracket_event(session, tournament, name="Birling", gender="M"):
     )
 
 
+def _make_pro_bracket_event(session, tournament):
+    """Model an invalid manual Pro Birling row that print routes must ignore."""
+    return make_event(
+        session,
+        tournament,
+        name="Pro Birling",
+        event_type="pro",
+        scoring_type="bracket",
+        stand_type="birling",
+        gender="M",
+    )
+
+
 def _real_pair(session, tournament):
     """Two live college competitors for the bracket blob to cite.
 
@@ -256,6 +269,23 @@ class TestPrintAll:
             assert b"Men" in resp.data and b"Birling" in resp.data
             # Alice+Bob from the seeded bracket show up too.
             assert b"Alice" in resp.data
+
+    def test_ignores_manually_created_pro_bracket(
+        self,
+        bp_auth_client,
+        db_session,
+    ):
+        t = make_tournament(db_session)
+        college = _make_bracket_event(db_session, t)
+        pro = _make_pro_bracket_event(db_session, t)
+        _seed_generated_bracket(db_session, t, college)
+        db_session.flush()
+
+        resp = bp_auth_client.get(f"/scheduling/{t.id}/birling/print-all")
+        assert resp.status_code == 200
+        if resp.mimetype == "text/html":
+            assert b"Birling" in resp.data
+            assert b"Pro Birling" not in resp.data
 
     def test_all_generated_renders_all(self, bp_auth_client, db_session):
         t = make_tournament(db_session)

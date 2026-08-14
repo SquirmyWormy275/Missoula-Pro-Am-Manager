@@ -12,6 +12,12 @@ tags:
 
 # Cookie Stack and Standing Block share physical stands — mutual exclusion required
 
+**Status: resolved.** `services/flight_builder.py` reserves an eight-heat
+separation through `_CONFLICTING_STANDS` whenever another heat is available.
+If only conflicting heats remain, they run sequentially because a flight has
+one heat per slot. This note is retained as the rationale for that constraint,
+not as an open heat-generator task.
+
 ## Context
 These two events share the same 5 physical stands at the venue. Scheduling heats from both events simultaneously — or within the same flight slot — is physically impossible.
 
@@ -26,4 +32,5 @@ Domain rule from the physical venue. Not derivable from the code — must be har
 ## Examples
 - `_CONFLICTING_STANDS = {('cookie_stack', 'standing_block'), ...}` in flight builder.
 - Heat sheet templates render conflict warning badges when a flight contains both.
-- Known gap: `heat_generator.py` does NOT currently enforce this — it's a documented open gap in CLAUDE.md Section 5. New heat-gen code must add the check.
+- Heat generation is event-local; cross-event conflicts are enforced when
+  flights are constructed and must remain covered by flight-builder tests.

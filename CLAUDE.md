@@ -252,20 +252,20 @@ Pro competitors register individually with contact info, shirt size, ALA members
 
 **Flight format:** Pro competition runs on a flight system. Heats from different events are interleaved into flights to maintain crowd variety. The flight builder uses a greedy algorithm to maximize event variety and ensure competitors have at least 4 heats between their own appearances (target: 5). Default is 8 heats per flight.
 
-**Ability grouping:** Especially important for springboard. Slow cutters (4+ minute times) should be grouped together to avoid diluting heats. The `optimize_flight_for_ability` function in `flight_builder.py` is a stub — currently a no-op — that is the designated integration point for STRATHMARK predictions.
+**Ability grouping:** Especially important for springboard. Slow cutters (4+ minute times) are grouped into dedicated slow heats by `optimize_flight_for_ability()` in `flight_builder.py`. Predicted-time grouping from STRATHMARK remains a future extension of that function.
 
 **Gear sharing:** Competitors who share expensive equipment (springboards, hotsaws, single saws) with a partner cannot be placed in the same heat. The heat generator and validation service check for gear-sharing conflicts.
 
 **Left-handed springboard cutters:** Require assignment to the same dummy. The `is_left_handed_springboard` flag on `ProCompetitor` and corresponding logic in `_generate_springboard_heats()` handle this.
 
-**Pro Birling:** Pro Birling has been removed from the pro events list entirely (per the 2026-01-25 changelog). It does not appear in `config.py` PRO_EVENTS. Unlike college Birling — which is gender segregated and runs as a double-elimination bracket — Pro Birling would not be gender segregated, but it is not hosted at this event. `services/birling_bracket.py` remains in the codebase for college Birling use.
+**Pro Birling:** Pro Birling has been removed from the pro events list entirely (per the 2026-01-25 changelog). It does not appear in `config.py` PRO_EVENTS. Unlike college Birling — which is gender segregated and runs as a double-elimination bracket — Pro Birling is not hosted at this event. Birling routes and combined prints reject non-college bracket events; `services/birling_bracket.py` remains in the codebase for college Birling use.
 
 **Stand constraints (from `config.STAND_CONFIGS`):**
 - Springboard: 4 dummies, 3 uses each, supports handedness
 - Underhand: 5 stands
-- Standing Block and Cookie Stack: 5 stands, shared between the two events. These two events are mutually exclusive — they cannot have heats running simultaneously. Neither `heat_generator.py` nor `flight_builder.py` currently enforces this constraint; it is a known gap (see Section 5)
+- Standing Block and Cookie Stack: 5 stands, shared between the two events. The flight builder holds one type for an eight-heat separation through `_CONFLICTING_STANDS` whenever other heats are available; if only those events remain, it schedules them sequentially because a flight has one heat per slot.
 - Hand sawing (Single Buck, Double Buck, Jack & Jill): 8 stands in two groups of 4; heats of 4 go while the other group sets up
-- Stock Saw: stands 1-2 only
+- Stock Saw: stands 7-8 only for both pro and college events
 - Hot Saw: stands 1-4 only
 - Obstacle Pole: 2 sides (Pole 1/Pole 2)
 - Speed Climb: Pole 2 and Pole 4

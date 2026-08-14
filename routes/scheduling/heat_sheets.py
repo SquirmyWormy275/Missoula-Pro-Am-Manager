@@ -263,7 +263,7 @@ def heat_sheets(tournament_id):
     birling_brackets = []
     for event in tournament.events.order_by(Event.event_type, Event.name).all():
         # Birling bracket events get special treatment -- show bracket, not heat cards.
-        if event.scoring_type == "bracket":
+        if event.event_type == "college" and event.scoring_type == "bracket":
             from services.birling_bracket import BirlingBracket
 
             bb = BirlingBracket(event)
