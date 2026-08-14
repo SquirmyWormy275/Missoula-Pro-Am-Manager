@@ -13,10 +13,13 @@ This application exists within the **STRATHEX ecosystem**, built by Alex Kaper. 
 **Ecosystem components:**
 
 - **Missoula Pro-Am Manager** (this repo): Tournament logistics — registration, heats, flights, results, payouts.
-- **STRATHMARK** (separate STRATHEX repo): Handicap Calculator add-on. Python CLI, uses XGBoost + Ollama LLM. Live integration as of V2.3.0 — competitor enrollment, SB/UH result push, college result resolution, sync status page, handicap scoring math in `_metric()`, and mark assignment route wired. Full end-to-end pipeline requires `strathmark` package installed + env vars. See Section 7.
+- **STRATHMARK** (separate STRATHEX repo): Versioned handicap prediction and evidence service. The retained legacy official path still has enrollment/result sync and direct mark assignment. The 2027 V2 integration is a separately authenticated, receipt-first, scoring-inert shadow workflow. See Section 7.
 - **KYTHEREX**: Predictive Engine add-on. Planned but not yet detailed in this codebase.
 
-STRATHMARK has active live-data integration (enrollment + result push to Supabase global DB). Handicap scoring math and mark assignment route are wired (V2.3.0). Full end-to-end pipeline requires the `strathmark` package installed + env vars. See Section 7.
+STRATHMARK's legacy Supabase integration remains for backward compatibility.
+Shadow V2 uses a dedicated service URL, stable pseudonymous identities, immutable
+whole-field receipts, and a durable numeric settlement outbox. It never writes
+official mark fields. See Section 7.
 
 ---
 
@@ -721,13 +724,17 @@ When the user references a business name, feature, or prior decision (e.g., 'Pyr
 
 ## 7. RELATIONSHIP TO STRATHEX ECOSYSTEM
 
-This app handles tournament logistics only: registration, heats, flights, results, payouts. It does not yet perform full handicap calculation.
+This app handles tournament logistics and the operational lifecycle around a
+separately versioned handicap service. STRATHMARK owns prediction numerics;
+Missoula owns field snapshots, operator decisions, and official results.
 
-**STRATHMARK** (partially integrated) handles handicap calculation and AI-powered predictions. It is a Python CLI tool using XGBoost and an Ollama LLM, living in the separate STRATHEX repository.
+**STRATHMARK** provides the V2 statistical prediction engine and immutable local
+ledger. The new contract is shadow recommendation only; any official authority
+change is a separate future decision.
 
 **KYTHEREX** (not yet integrated) is described as a Predictive Engine add-on.
 
-### What Is Already Integrated (V2.3.0)
+### Legacy official integration retained
 
 1. **`Event.is_handicap` (Boolean):** Stores the format choice — Championship (False) or Handicap (True) — per event. Added via migration `j7k8l9m0n1o2`. Default False (Championship).
 
@@ -743,7 +750,25 @@ This app handles tournament logistics only: registration, heats, flights, result
 
 7. **Hook points in existing routes:** `routes/registration.py` `new_pro_competitor` calls `enroll_pro_competitor()` after `db.session.commit()`. `routes/scoring.py` `finalize_event` calls `_push_strathmark_results()` after `invalidate_tournament_caches()` on the success path. `_push_strathmark_results()` dispatches to pro or college push based on `event.event_type` and `event.stand_type`/name.
 
-### Remaining Integration Points
+### V2 shadow integration
+
+The additive shadow integration is implemented on the feature branch:
+
+- stable namespaced tournament, event, field, run, operator, and competitor identities;
+- immutable prepare/preflight input with an exclusive UTC prediction cutoff;
+- receipt lookup before calculate and exact restart/timeout recovery;
+- whole-field judge/admin review and checksummed non-importable issue export;
+- official scoring isolation (`handicap_factor`, `predicted_time`, and
+  `mark_assigned_at` stay unchanged);
+- append-only operational outcomes with numeric settle/correction/void delivery;
+- durable retryable outbox and advisory cloud mirror state;
+- structured known/unknown deferred context, corrections, and redacted export;
+- release-level isolated dress rehearsal and installed STRATHMARK contract gate.
+
+See `docs/MARK_ASSIGNMENT_WORKFLOW.md` and
+`docs/STRATHMARK_SHADOW_OPERATIONS.md`.
+
+### Remaining integration points
 
 8. **`services/flight_builder.py` — `optimize_flight_for_ability()`:** Has springboard reorder logic but is not called by the normal flight-build workflow. It remains a possible hook for a future, legitimate STRATHMARK predicted-time grouping extension.
 
@@ -751,9 +776,13 @@ This app handles tournament logistics only: registration, heats, flights, result
 
 10. **`EventResult.handicap_factor` (Float, default 0.0):** Column active. Scoring engine applies this in `_metric()` when `event.is_handicap` is True — subtracts start mark from raw time before position calculation. Default `0.0` = scratch (no mark).
 
-11. **Mark assignment pipeline:** When `event.is_handicap` is True, STRATHMARK's `HandicapCalculator` must be called at heat sheet print time (or pre-event) to compute each competitor's start mark from historical data and store it on `EventResult.handicap_factor` (or a new `start_mark_seconds` field on EventResult or HeatAssignment).
+11. **Official mark authority:** The legacy non-shadow workflow may populate
+official marks. Shadow events must not write `EventResult.handicap_factor` or
+any equivalent official start field. Promoting recommendations to official
+authority is intentionally deferred.
 
-The broader vision: STRATHMARK calculates start marks and predicted times, feeds them into this app's heat generation step to group competitors by predicted ability, and marks are printed on heat sheets so competitors know their start times.
+The current near-term goal is dependable 2027 shadow evidence and operator
+rehearsal, not automatic heat grouping or silent official mark application.
 
 ---
 
@@ -784,7 +813,9 @@ The following features remain as planned or implied by the codebase and requirem
 - Import fix in `mark_assignment.py` (`strathmark.calculator` path) (V2.4.0) ✓
 - STRATHMARK logo on assign marks page (V2.4.0) ✓
 - Batched `HandicapCalculator.calculate()` pipeline with `wood_df` + `results_df` + per-competitor `CompetitorRecord` history; `predicted_time` now populated end-to-end (V2.7.0, PR #6) ✓
-- Offline CSV upload/preview + manual/bulk-paste mark entry paths for Railway deployments without Ollama reach (V2.7.0, PR #6) ✓
+- Legacy offline CSV upload/preview + manual/bulk-paste official mark entry paths (V2.7.0, PR #6) ✓
+- Scoring-inert STRATHMARK V2 shadow lifecycle, receipt recovery, whole-field
+  review/issue, settlement/void outbox, and prospective context capture ✓
 - `optimize_flight_for_ability()` has an unwired springboard reorder implementation and remains a possible hook for predicted-time grouping
 - `_generate_event_heats()` uses local ProEventRank ordering; predicted-time ordering remains an optional future extension
 

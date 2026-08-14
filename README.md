@@ -35,9 +35,10 @@ Welcome! This guide will help you use the Missoula Pro Am Tournament Manager sof
 3. [Friday: College Competition](#friday-college-competition)
 4. [Saturday: Pro Competition](#saturday-pro-competition)
 5. [Entering Scores](#entering-scores)
-6. [Viewing Results & Reports](#viewing-results--reports)
-7. [Special Events](#special-events)
-8. [Troubleshooting](#troubleshooting)
+6. [STRATHMARK Shadow Recommendations](#strathmark-shadow-recommendations)
+7. [Viewing Results & Reports](#viewing-results--reports)
+8. [Special Events](#special-events)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -234,6 +235,25 @@ After all heats are complete:
    - Calculate final positions
    - Award points (college) or payouts (pro)
    - Update standings
+
+---
+
+## STRATHMARK Shadow Recommendations
+
+An event explicitly configured with **Shadow** handicap authority has a separate
+judge/admin workflow under **Scheduling → Event → Shadow marks**. It prepares an
+exact field, looks up or calculates one STRATHMARK V2 receipt, requires review
+of the entire recommendation sheet, and produces a checksummed non-importable
+export.
+
+Shadow recommendations never populate official mark fields and never change
+championship results. Official scoring remains in the normal scoring pages.
+After results are final, the app separately records append-only outcome evidence
+and eligible numeric settlement/void revisions for model monitoring.
+
+See [Handicap Marks and STRATHMARK Shadow Recommendations](docs/MARK_ASSIGNMENT_WORKFLOW.md)
+for the operator procedure and [STRATHMARK Shadow Operations](docs/STRATHMARK_SHADOW_OPERATIONS.md)
+for release and recovery gates.
 
 ---
 

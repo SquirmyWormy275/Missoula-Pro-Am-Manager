@@ -16,8 +16,10 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table("shadow_settlement_outbox", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("actor_id", sa.Integer(), nullable=True))
+    op.add_column(
+        "shadow_settlement_outbox",
+        sa.Column("actor_id", sa.Integer(), nullable=True),
+    )
 
     op.execute(
         """

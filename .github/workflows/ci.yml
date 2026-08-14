@@ -54,6 +54,14 @@ jobs:
           pytest -x -q --tb=short \
             --ignore=tests/test_migration_integrity.py
 
+      # Fail closed until requirements.txt points at the reviewed, published
+      # STRATHMARK V2 contract. This uses only temporary SQLite files and the
+      # installed distribution; it never contacts STRATHMARK over a network.
+      - name: Rehearse installed STRATHMARK shadow contract
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python scripts/verify_strathmark_shadow_contract.py
+
   postgres-smoke:
     runs-on: ubuntu-latest
 

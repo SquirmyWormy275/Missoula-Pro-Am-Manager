@@ -43,14 +43,15 @@ reportlab==4.5.1
 # Monitoring
 sentry-sdk==2.22.0
 
-# STRATHMARK handicap engine — pinned to a specific commit for reproducible
-# Railway deploys.  Until STRATHMARK ships a PyPI release, pin via git URL.
-# When upgrading, bump the SHA after this fragment.  Extras enabled:
-#   [db] — supabase client used by services/strathmark_sync.py
-#   [ml] — XGBoost / LightGBM / scikit-learn for the prediction cascade's
-#          ML layer; without it predictions fall through to the
-#          weighted-baseline / panel-mark fallback only.  Adds ~80 MB to
-#          the deploy image but is necessary for accurate handicap marks.
+# STRATHMARK legacy official-mark dependency — pinned to a specific commit for
+# reproducible Railway deploys.  The new V2 shadow workflow does not import this
+# package on its request path: it talks to a separately deployed, authenticated
+# STRATHMARK service and keeps all recommendations out of official mark fields.
+# Keep this existing pin until the reviewed V2 contract commit is published and
+# deliberately promoted; never point production at an unlanded local commit.
+# Extras enabled only for the retained legacy official workflow:
+#   [db] — Supabase client used by services/strathmark_sync.py
+#   [ml] — historical official mark-assignment dependencies
 strathmark[db,ml] @ git+https://github.com/SquirmyWormy275/STRATHMARK@a101c8e444f4096f0e321ca03b69632a91640c7c
 
 # Optional: SMS notifications (install to enable Twilio SMS features)

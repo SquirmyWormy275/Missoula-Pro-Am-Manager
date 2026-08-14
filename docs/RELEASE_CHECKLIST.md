@@ -29,6 +29,12 @@ These are GitHub settings, not repo code:
   - run migration integrity checks
   - run PostgreSQL migration safety checks
   - confirm rollback plan exists
+- For a STRATHMARK shadow change:
+  - confirm the reviewed STRATHMARK contract commit is published and pinned
+  - run `tests/test_shadow_release_readiness.py`
+  - run the installed-artifact contract rehearsal
+  - confirm shadow authority remains recommendation-only
+  - confirm official mark fields are unchanged by the rehearsal
 
 ## Before Merging to `main`
 
@@ -67,6 +73,15 @@ After merge to `main` and Railway deploy start:
    - `db` is `true`
 5. Confirm one authenticated judge page loads
 6. Confirm one public spectator/API page loads
+
+For a deliberately enabled STRATHMARK shadow deployment, also confirm:
+
+1. the service reports durable single-writer readiness and current offline evidence
+2. a new request performs receipt lookup before calculate
+3. restart recovery returns the identical receipt core
+4. the whole-field export is checksummed and reports `importable: false`
+5. cloud mirror failure is advisory after local persistence
+6. numeric settlement/void stays separate from official scoring
 
 ## Race-Day Hotfix Rules
 

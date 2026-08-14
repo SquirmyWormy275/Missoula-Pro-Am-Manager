@@ -169,6 +169,14 @@ renumbered through heat-board scheduling controls. Its flight placement and
 stand assignments are also historical record: manual reorder and saw-block
 recompute must preserve them.
 
+For events with `handicap_authority_mode = shadow`, STRATHMARK V2 output is a
+separate recommendation-only record. The field is prepared and issued
+atomically; per-row selection or applying the recommendation to
+`EventResult.handicap_factor`, `predicted_time`, or `mark_assigned_at` is
+forbidden. Missoula owns official scoring. STRATHMARK receives only stable
+pseudonymous identities and eligible numeric settlement/void evidence through
+the separately authenticated shadow contract.
+
 ## Production Parity
 
 Local SQLite success does not prove Railway/PostgreSQL behavior. Local Python
