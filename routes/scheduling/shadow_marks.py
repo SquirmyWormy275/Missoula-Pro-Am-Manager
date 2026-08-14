@@ -23,6 +23,13 @@ from services.shadow_operator import (
     review_shadow_sheet,
     verify_shadow_export,
 )
+from services.shadow_settlement import (
+    CORRECTION_REASON_CODES,
+    build_shadow_standings,
+    deliver_shadow_settlement_outbox,
+    outcome_state_token,
+    reconcile_shadow_outcomes,
+)
 from services.strathmark_shadow import (
     OBSERVATION_SCHEMA_VERSION,
     ShadowAdapterError,
@@ -49,6 +56,20 @@ def _shadow_client() -> StrathmarkShadowClient:
 
 def _remote_status(run: ShadowHandicapRun):
     return _shadow_client().status(run, current_user)
+
+
+def _deliver_pending_outcomes() -> None:
+    """Best-effort delivery after local commit; local evidence remains authoritative."""
+
+    try:
+        from services.strathmark_shadow import shadow_configuration_status
+
+        if shadow_configuration_status(current_app.config) == "configured":
+            deliver_shadow_settlement_outbox(client=_shadow_client(), limit=25, commit=True)
+    except Exception:
+        current_app.logger.exception(
+            "STRATHMARK shadow settlement delivery failed; durable outbox retained"
+        )
 
 
 def _latest_run(event_id: int):
@@ -157,6 +178,25 @@ def shadow_marks(tournament_id: int, event_id: int):
                 )
                 db.session.commit()
                 flash("Entire shadow sheet issued and checksummed.", "success")
+            elif action == "reconcile_outcomes":
+                if request.form.get("confirm_outcome_reconciliation") != "yes":
+                    raise ValueError("Confirm the outcome reconciliation before recording it.")
+                result = reconcile_shadow_outcomes(
+                    run,
+                    event=event,
+                    actor=current_user,
+                    expected_outcome_token=request.form.get("expected_outcome_token", ""),
+                    reason_code=request.form.get("reason_code", ""),
+                )
+                db.session.commit()
+                _deliver_pending_outcomes()
+                flash(
+                    (
+                        f"Recorded {result.outcome_count} outcome correction(s); "
+                        f"{result.numeric_action_count} numeric settle/void action(s) queued."
+                    ),
+                    "success",
+                )
             else:
                 raise ValueError("Unknown shadow workflow action.")
         except (
@@ -183,12 +223,16 @@ def shadow_marks(tournament_id: int, event_id: int):
         except ShadowAdapterError:
             remote_status = None
     view = build_shadow_operator_view(run, remote_status=remote_status) if run else None
+    outcomes = build_shadow_standings(run) if run and run.receipts else ()
     return render_template(
         "scheduling/shadow_marks.html",
         tournament=tournament,
         event=event,
         run=run,
         view=view,
+        outcomes=outcomes,
+        outcome_state_token=outcome_state_token(run) if run else "",
+        correction_reason_codes=tuple(sorted(CORRECTION_REASON_CODES)),
     )
 
 

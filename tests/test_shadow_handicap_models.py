@@ -369,6 +369,7 @@ def test_latest_outcome_revision_drives_derived_outcome_axis_and_outbox(
         action="settle",
         payload_json=payload,
         payload_sha256=_sha256(payload),
+        actor_id=admin_user.id,
         delivery_status="pending",
     )
     db_session.add_all([outcome, outbox])

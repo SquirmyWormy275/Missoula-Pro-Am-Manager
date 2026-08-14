@@ -95,6 +95,85 @@
       </div>
     </section>
 
+    {% if run.lifecycle in ['shadow-issued', 'outcomes-complete'] %}
+      <section aria-labelledby="shadow-standings-heading" class="card mb-3" id="shadow-outcomes">
+        <div class="card-body">
+          <h2 id="shadow-standings-heading" class="h4">Shadow comparison standings</h2>
+          <p><strong>Read-only official context:</strong> these comparisons are recommendation evidence only. They do not determine championship position, points, or payout.</p>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <caption>Separate shadow comparison metric beside the current official result and immutable outcome evidence.</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Competitor</th>
+                  <th scope="col">Official</th>
+                  <th scope="col">Outcome</th>
+                  <th scope="col">Recommended start</th>
+                  <th scope="col">Shadow elapsed</th>
+                  <th scope="col">Prediction residual</th>
+                  <th scope="col">Shadow rank</th>
+                  <th scope="col">Evidence status</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for outcome in outcomes %}
+                <tr>
+                  <th scope="row">{{ outcome.display_name }}<br><code>{{ outcome.competitor_id }}</code></th>
+                  <td>
+                    {{ outcome.official_status }}
+                    {% if outcome.official_value is not none %} — {{ outcome.official_value }}{% endif %}
+                    {% if outcome.official_position is not none %}<br>Place {{ outcome.official_position }}{% endif %}
+                  </td>
+                  <td>{{ outcome.classification }}</td>
+                  <td>{{ outcome.recommended_start_seconds }} s</td>
+                  <td>{% if outcome.shadow_elapsed_seconds is not none %}{{ outcome.shadow_elapsed_seconds }} s{% else %}—{% endif %}</td>
+                  <td>{% if outcome.residual_seconds is not none %}{{ outcome.residual_seconds }} s{% else %}—{% endif %}</td>
+                  <td>{{ outcome.shadow_rank or '—' }}</td>
+                  <td>
+                    {{ outcome.settlement_effect }}<br>
+                    Delivery: {{ outcome.delivery_status }}
+                    <details class="mt-1">
+                      <summary>Prior immutable evidence</summary>
+                      {% if outcome.history %}
+                        <ol class="mb-0">
+                        {% for revision in outcome.history %}
+                          <li>Revision {{ revision.revision }}: {{ revision.classification }}{% if revision.raw_elapsed_seconds is not none %}, {{ revision.raw_elapsed_seconds }} s{% endif %} — {{ revision.reason_code }}</li>
+                        {% endfor %}
+                        </ol>
+                      {% else %}
+                        <p class="mb-0">No operational outcome has been recorded.</p>
+                      {% endif %}
+                    </details>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="8">No current outcome rows are available.</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <form method="post" class="border-top pt-3" aria-describedby="reconcile-help">
+            <input type="hidden" name="action" value="reconcile_outcomes">
+            <input type="hidden" name="expected_outcome_token" value="{{ outcome_state_token }}">
+            <label for="outcome-reason" class="form-label">Reason for reconciliation</label>
+            <select id="outcome-reason" class="form-select mb-2" name="reason_code" required>
+              <option value="">Choose a reason</option>
+              {% for reason in correction_reason_codes %}
+                <option value="{{ reason }}">{{ reason.replace('_', ' ')|title }}</option>
+              {% endfor %}
+            </select>
+            <p id="reconcile-help" class="form-text">Review changed official results above. Eligible positive raw time queues settlement; replacing valid numeric evidence with DNF/DQ queues a void. This never changes official results.</p>
+            <div class="form-check mb-3">
+              <input id="confirm-outcome-reconciliation" class="form-check-input" type="checkbox" name="confirm_outcome_reconciliation" value="yes" required>
+              <label class="form-check-label" for="confirm-outcome-reconciliation">I confirm the current official context and the settle/void preview.</label>
+            </div>
+            <button class="btn btn-outline-primary shadow-touch-target" type="submit">Record outcome reconciliation</button>
+          </form>
+        </div>
+      </section>
+    {% endif %}
+
     <section aria-labelledby="shadow-audit" class="card mb-3">
       <div class="card-body">
         <h2 id="shadow-audit" class="h4">{{ view.lifecycle_heading }}</h2>

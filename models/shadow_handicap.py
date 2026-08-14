@@ -450,6 +450,7 @@ class ShadowSettlementOutbox(db.Model):
     action = db.Column(db.String(16), nullable=False)
     payload_json = db.Column(db.Text, nullable=False)
     payload_sha256 = db.Column(db.CHAR(64), nullable=False)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     delivery_status = db.Column(
         db.String(24),
         nullable=False,
@@ -463,6 +464,7 @@ class ShadowSettlementOutbox(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
 
     run = db.relationship("ShadowHandicapRun", back_populates="settlement_outbox")
+    actor = db.relationship("User")
 
     @validates("outbox_id", "outcome_revision_id")
     def _validate_namespaced_ids(self, key, value):

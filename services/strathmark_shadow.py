@@ -277,6 +277,21 @@ class StrathmarkShadowClient:
             raise ShadowRemoteError("STRATHMARK status response is invalid")
         return status
 
+    def apply_outcome(
+        self,
+        run: ShadowHandicapRun,
+        actor: User,
+        payload: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        return self._post(
+            path="/v1/shadow/outcomes/apply",
+            action="shadow.outcome.apply",
+            subject_revision=run.run_revision,
+            actor=actor,
+            payload=payload,
+            timeout_ms=int(payload.get("timeout_ms", 5000)),
+        )
+
     def _post(
         self,
         *,
