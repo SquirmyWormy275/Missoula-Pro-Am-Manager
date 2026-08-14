@@ -452,7 +452,7 @@ These are confirmed gaps. Do not assume the system handles these automatically.
 
 | Item | Notes |
 |------|-------|
-| Ability-based heat grouping | `optimize_flight_for_ability()` exists but is a no-op stub. Planned STRATHMARK integration point. |
+| Ability-based flight grouping | The normal flight-build workflow does not call `optimize_flight_for_ability()`. Local ProEventRank ordering and springboard slow-heat clustering occur during heat generation; predicted-time grouping remains a future STRATHMARK extension. |
 | Gear sharing re-check at flight time | Assumed clean from heat generation. A gear-conflict heat that slipped through will not be caught here. |
 | College-to-Saturday competitor spacing | No minimum spacing check is applied when college overflow heats are placed into pro flights. |
 | Stand conflict check in heat generator | `_CONFLICTING_STANDS` is only enforced in flight ordering, not during initial heat generation. |

@@ -1100,6 +1100,36 @@ def validate_competitor_spacing(tournament: Tournament) -> dict:
     }
 
 
+def find_stand_conflicts(ordered_heats: list[Heat]) -> list[dict]:
+    """Return physical-stand conflicts in one proposed global heat order.
+
+    ``ordered_heats`` must be in the actual show sequence, spanning every
+    flight. The result deliberately identifies the heat pair, rather than only
+    the stand types, so a mutation route can distinguish a pre-existing
+    unavoidable fallback from a newly introduced conflict.
+    """
+    last_seen: dict[str, tuple[int, Heat]] = {}
+    conflicts: list[dict] = []
+    for position, heat in enumerate(ordered_heats):
+        stand_type = getattr(heat.event, 'stand_type', None)
+        if not stand_type:
+            continue
+        for conflict_type in _CONFLICTING_STANDS.get(stand_type, ()):
+            previous = last_seen.get(conflict_type)
+            if previous is None:
+                continue
+            previous_position, previous_heat = previous
+            gap = position - previous_position
+            if gap < _STAND_CONFLICT_GAP:
+                conflicts.append({
+                    'heat_ids': (previous_heat.id, heat.id),
+                    'stand_types': (conflict_type, stand_type),
+                    'gap': gap,
+                })
+        last_seen[stand_type] = (position, heat)
+    return conflicts
+
+
 def build_flight_audit_report(tournament: Tournament) -> dict:
     """
     Build a post-flight-construction audit report.
@@ -1111,6 +1141,7 @@ def build_flight_audit_report(tournament: Tournament) -> dict:
     3. Per-competitor spacing statistics (min, avg, max actual gaps).
     4. Event variety per flight (distinct events per flight block).
     5. Gear sharing adjacency conflicts (gear partners in back-to-back heats).
+    6. Physical stand conflicts in the global show order.
 
     Returns a dict suitable for display in the scheduling UI and for storage
     as a JSON audit record.
@@ -1149,6 +1180,8 @@ def build_flight_audit_report(tournament: Tournament) -> dict:
                 'flight_position': heat.flight_position,
                 'competitors': list(heat.get_competitors()),
             })
+
+    stand_conflicts = find_stand_conflicts([hd['heat'] for hd in all_heat_data])
 
     # 1. Sequential order check (#15)
     event_last_heat_num: dict[int, int] = {}
@@ -1245,6 +1278,8 @@ def build_flight_audit_report(tournament: Tournament) -> dict:
         'competitor_stats': sorted(competitor_stats, key=lambda x: x['min_spacing']),
         'variety_per_flight': variety_report,
         'gear_adjacency_warnings': gear_adjacency_warnings,
+        'stand_conflicts': stand_conflicts,
+        'passes_stand_conflicts': len(stand_conflicts) == 0,
     }
 
 

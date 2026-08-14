@@ -572,6 +572,75 @@ def _reject_invalid_flight_sequence(tournament: Tournament):
     }), 409
 
 
+def _reject_new_stand_conflicts(
+    tournament: Tournament,
+    placements: list[tuple[Heat, int, int]],
+):
+    """Reject a manual change that introduces a new physical-stand conflict.
+
+    Automatic flight construction may retain one conflict when every remaining
+    candidate uses the same shared field. A manual reorder must not create a
+    new pair, but it may leave an already unavoidable pair in place.
+    """
+    from services.flight_builder import find_stand_conflicts
+
+    rows = (
+        db.session.query(Heat, Flight.flight_number)
+        .join(Flight, Flight.id == Heat.flight_id)
+        .filter(Flight.tournament_id == tournament.id)
+        .order_by(Flight.flight_number, Heat.flight_position, Heat.id)
+        .all()
+    )
+    current_order = [heat for heat, _flight_number in rows]
+    current_locations = {
+        heat.id: (flight_number, heat.flight_position or 0)
+        for heat, flight_number in rows
+    }
+    flight_numbers = {
+        flight.id: flight.flight_number
+        for flight in Flight.query.filter_by(tournament_id=tournament.id).all()
+    }
+    projected_locations = dict(current_locations)
+    for heat, flight_id, position in placements:
+        projected_locations[heat.id] = (flight_numbers[flight_id], position)
+    projected_order = sorted(
+        current_order,
+        key=lambda heat: (*projected_locations[heat.id], heat.id),
+    )
+
+    def identities(conflicts):
+        return {frozenset(conflict['heat_ids']) for conflict in conflicts}
+
+    current_conflicts = identities(find_stand_conflicts(current_order))
+    introduced = [
+        conflict for conflict in find_stand_conflicts(projected_order)
+        if frozenset(conflict['heat_ids']) not in current_conflicts
+    ]
+    if not introduced:
+        return None
+
+    conflict = introduced[0]
+    first_type, second_type = conflict['stand_types']
+    return jsonify({
+        'ok': False,
+        'code': 'stand_conflict',
+        'error': (
+            f"{first_type.replace('_', ' ').title()} and "
+            f"{second_type.replace('_', ' ').title()} require "
+            f"{_stand_conflict_gap()} heats of separation."
+        ),
+        'gap': conflict['gap'],
+        'required_gap': _stand_conflict_gap(),
+    }), 409
+
+
+def _stand_conflict_gap() -> int:
+    """Keep the route response aligned with the builder's shared-field rule."""
+    from services.flight_builder import _STAND_CONFLICT_GAP
+
+    return _STAND_CONFLICT_GAP
+
+
 def _reject_completed_heat_placement_change(placements: list[tuple[Heat, int, int]]):
     """Keep the published schedule location of a scored heat immutable."""
     for heat, flight_id, flight_position in placements:
@@ -611,6 +680,9 @@ def reorder_flight_heats(tournament_id, flight_id):
     completed_heat_conflict = _reject_completed_heat_placement_change(placements)
     if completed_heat_conflict:
         return completed_heat_conflict
+    stand_conflict = _reject_new_stand_conflicts(tournament, placements)
+    if stand_conflict:
+        return stand_conflict
 
     for position, hid in enumerate(heat_ids, start=1):
         existing[hid].flight_position = position
@@ -686,6 +758,9 @@ def bulk_reorder_flights(tournament_id):
     completed_heat_conflict = _reject_completed_heat_placement_change(placements)
     if completed_heat_conflict:
         return completed_heat_conflict
+    stand_conflict = _reject_new_stand_conflicts(tournament, placements)
+    if stand_conflict:
+        return stand_conflict
 
     for fid, hids in payload:
         for position, hid in enumerate(hids, start=1):

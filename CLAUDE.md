@@ -252,7 +252,7 @@ Pro competitors register individually with contact info, shirt size, ALA members
 
 **Flight format:** Pro competition runs on a flight system. Heats from different events are interleaved into flights to maintain crowd variety. The flight builder uses a greedy algorithm to maximize event variety and ensure competitors have at least 4 heats between their own appearances (target: 5). Default is 8 heats per flight.
 
-**Ability grouping:** Especially important for springboard. Slow cutters (4+ minute times) are grouped into dedicated slow heats by `optimize_flight_for_ability()` in `flight_builder.py`. Predicted-time grouping from STRATHMARK remains a future extension of that function.
+**Ability grouping:** Especially important for springboard. Competitors explicitly flagged `springboard_slow_heat` are clustered into the final dedicated slow heat(s) by `_generate_springboard_heats()` during heat generation; no numeric time cutoff is applied in this repository. The separately implemented `optimize_flight_for_ability()` helper is not wired into the normal flight-build path. Predicted-time grouping from STRATHMARK remains a future extension after legitimate input data is available.
 
 **Gear sharing:** Competitors who share expensive equipment (springboards, hotsaws, single saws) with a partner cannot be placed in the same heat. The heat generator and validation service check for gear-sharing conflicts.
 
@@ -524,9 +524,9 @@ PayoutTemplate  (tournament-independent, standalone)
 
 **Friday Night Feature schedule view (V2.11.0):** The Friday Night Feature now has a heat-by-heat schedule view on the Friday Showcase page plus a printable view at `/scheduling/<tid>/friday-night/print`. FNF events selected into `schedule_config['friday_pro_event_ids']` are excluded from Saturday pro flights (their heats exist in the DB with `flight_id=NULL`). Heats are ordered Springboard → Pro 1-Board → 3-Board Jigger via `_fnf_event_order()` in `routes/scheduling/friday_feature.py`. FNF still runs as a straight heat-by-heat schedule, not flights — intentional, matching college day format.
 
-**Pro birling references:** `config.py` PRO_EVENTS correctly excludes birling. Verify that no templates, database records, or service code contain hardcoded references to a pro birling event that could create phantom data.
+**Pro Birling:** Resolved. `config.py` PRO_EVENTS excludes Birling, and Birling routes, combined prints, heat sheets, and navigation accept only college bracket events. A manually created Pro bracket row is treated as invalid operational data and is not surfaced or mutable through Birling workflows.
 
-**STRATHMARK integration:** Live data push wired (V2.2.0); handicap scoring math + mark assignment route wired (V2.3.0); prediction residuals infrastructure + `predicted_time` column added (V2.4.0); batched pipeline with full data context + CSV/manual offline paths wired (V2.7.0 via PR #6). Remaining gap: heat ability-weighting via STRATHMARK predictions — `optimize_flight_for_ability()` in `flight_builder.py` and ability-weighted input to `_generate_event_heats()` in `heat_generator.py` are still stubs. See Section 7.
+**STRATHMARK integration:** Live data push wired (V2.2.0); handicap scoring math + mark assignment route wired (V2.3.0); prediction residuals infrastructure + `predicted_time` column added (V2.4.0); batched pipeline with full data context + CSV/manual offline paths wired (V2.7.0 via PR #6). Heat generation already uses local ProEventRank ordering and the explicit springboard slow-heat flag. The remaining optional extension is predicted-time-based grouping after a legitimate STRATHMARK data source is available; the currently unwired `optimize_flight_for_ability()` helper is a possible integration point. See Section 7.
 
 **Pro entry form redesign:** Scope pending. Current import flow handled by `services/pro_entry_importer.py` (basic parsing) and `services/registration_import.py` (enhanced pipeline with dirty-file support, fuzzy matching, cross-validation, and structured report). See `routes/import_routes.py` for the upload → review → confirm workflow.
 
@@ -745,9 +745,9 @@ This app handles tournament logistics only: registration, heats, flights, result
 
 ### Remaining Integration Points
 
-8. **`services/flight_builder.py` — `optimize_flight_for_ability()`:** Stub function (lines 196–213) — the designed hook for STRATHMARK predicted completion times to enable ability-grouped heats for springboard and other time-based events.
+8. **`services/flight_builder.py` — `optimize_flight_for_ability()`:** Has springboard reorder logic but is not called by the normal flight-build workflow. It remains a possible hook for a future, legitimate STRATHMARK predicted-time grouping extension.
 
-9. **`services/heat_generator.py` — `_generate_event_heats()`:** Current snake-draft distribution has no ability-weighting. STRATHMARK predictions should feed a pre-sorted competitor list here.
+9. **`services/heat_generator.py` — `_generate_event_heats()`:** Current snake-draft distribution receives local ProEventRank ordering where configured. STRATHMARK predictions may later supply a separately validated ordering source.
 
 10. **`EventResult.handicap_factor` (Float, default 0.0):** Column active. Scoring engine applies this in `_metric()` when `event.is_handicap` is True — subtracts start mark from raw time before position calculation. Default `0.0` = scratch (no mark).
 
@@ -785,8 +785,8 @@ The following features remain as planned or implied by the codebase and requirem
 - STRATHMARK logo on assign marks page (V2.4.0) ✓
 - Batched `HandicapCalculator.calculate()` pipeline with `wood_df` + `results_df` + per-competitor `CompetitorRecord` history; `predicted_time` now populated end-to-end (V2.7.0, PR #6) ✓
 - Offline CSV upload/preview + manual/bulk-paste mark entry paths for Railway deployments without Ollama reach (V2.7.0, PR #6) ✓
-- `optimize_flight_for_ability()` stub in `flight_builder.py` is the designed hook for predicted times
-- `_generate_event_heats()` in `heat_generator.py` needs ability-weighting input
+- `optimize_flight_for_ability()` has an unwired springboard reorder implementation and remains a possible hook for predicted-time grouping
+- `_generate_event_heats()` uses local ProEventRank ordering; predicted-time ordering remains an optional future extension
 
 **Generalization vision:** The current app is hardcoded to the Missoula Pro Am's specific event list and format. The event list lives in `config.py` (`COLLEGE_OPEN_EVENTS`, `COLLEGE_CLOSED_EVENTS`, `PRO_EVENTS`) and the UI strings in `strings.py`. The long-term STRATHEX platform vision is to make these event lists configurable per-tournament rather than hardcoded, enabling this application to serve any timbersports event, not just Missoula. The `is_open` flag on Event, the configurable payouts system, and the per-tournament event setup flow are all steps in this direction.
 

@@ -124,4 +124,4 @@ No regression for tournaments that haven't configured rankings.
 - `docs/solutions/best-practices/flight-builder-per-event-stacking-2026-04-21.md` — the V2.11.0 fix that introduced the "each event's heats spread evenly" first principle; this doc is the per-competitor analog
 - `tests/test_lh_ability_ordering.py` — regression guards for this specific application
 - `models/pro_event_rank.py` — the data model backing ability ranks
-- `CLAUDE.md` §5.2 "Known Gaps" — `optimize_flight_for_ability()` in `flight_builder.py` remains a no-op stub; this doc is a partial resolution at the heat-generator layer. Flight-builder-level ability weighting across all event categories is still outstanding and remains the designated STRATHMARK integration point
+- `CLAUDE.md` §5.2 "Known Gaps" — local ability ordering is implemented at the heat-generator layer. `optimize_flight_for_ability()` has an unwired springboard reorder implementation; prediction-based flight grouping across event categories remains a future STRATHMARK extension

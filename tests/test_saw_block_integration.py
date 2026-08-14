@@ -184,6 +184,22 @@ def _seed_saw_event(
     return e
 
 
+def _seed_stand_event(db, tournament, name, stand_type, event_type="pro"):
+    from models import Event
+
+    event = Event(
+        tournament_id=tournament.id,
+        name=name,
+        event_type=event_type,
+        gender="M",
+        scoring_type="time",
+        stand_type=stand_type,
+    )
+    db.session.add(event)
+    db.session.flush()
+    return event
+
+
 def _seed_event_results(db, event, competitors, comp_type="college"):
     from models.event import EventResult
 
@@ -756,6 +772,136 @@ def test_bulk_reorder_rejects_mismatched_heat_set(app, auth_client):
     assert resp.status_code == 400
     body = resp.get_json()
     assert body and body.get("ok") is False
+
+
+def test_reorder_rejects_new_shared_stand_conflict(app, auth_client):
+    """A within-flight drag cannot break the builder's eight-heat field gap."""
+    from database import db as _db
+
+    with app.app_context():
+        tournament = _seed_tournament(_db)
+        flight = _seed_flight(_db, tournament, flight_number=1)
+        cookie = _seed_stand_event(_db, tournament, "Cookie Stack", "cookie_stack")
+        standing = _seed_stand_event(_db, tournament, "Standing Block", "standing_block")
+        neutral = _seed_stand_event(_db, tournament, "Underhand", "underhand")
+        cookie_heat = _seed_heat(
+            _db, cookie, 1, [1], {"1": 1}, flight=flight, flight_position=1,
+        )
+        neutral_heats = [
+            _seed_heat(
+                _db, neutral, number, [number + 1], {str(number + 1): 1},
+                flight=flight, flight_position=number + 1,
+            )
+            for number in range(1, 9)
+        ]
+        standing_heat = _seed_heat(
+            _db, standing, 1, [10], {"10": 1}, flight=flight, flight_position=10,
+        )
+        _db.session.commit()
+        tournament_id, flight_id = tournament.id, flight.id
+        cookie_heat_id = cookie_heat.id
+        neutral_heat_ids = [heat.id for heat in neutral_heats]
+        standing_heat_id = standing_heat.id
+        original_ids = [cookie_heat_id, *neutral_heat_ids, standing_heat_id]
+
+    response = auth_client.post(
+        f"/scheduling/{tournament_id}/flights/{flight_id}/reorder",
+        json={"heat_ids": [cookie_heat_id, standing_heat_id, *neutral_heat_ids]},
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "stand_conflict"
+    with app.app_context():
+        from models import Heat
+
+        actual_ids = [
+            heat.id for heat in Heat.query.filter_by(flight_id=flight_id)
+            .order_by(Heat.flight_position).all()
+        ]
+        assert actual_ids == original_ids
+
+
+def test_bulk_reorder_rejects_new_shared_stand_conflict(app, auth_client):
+    """A full flight-board snapshot gets the same shared-field protection."""
+    from database import db as _db
+
+    with app.app_context():
+        tournament = _seed_tournament(_db)
+        flight = _seed_flight(_db, tournament, flight_number=1)
+        cookie = _seed_stand_event(_db, tournament, "Cookie Stack", "cookie_stack")
+        standing = _seed_stand_event(_db, tournament, "Standing Block", "standing_block")
+        neutral = _seed_stand_event(_db, tournament, "Underhand", "underhand")
+        cookie_heat = _seed_heat(
+            _db, cookie, 1, [1], {"1": 1}, flight=flight, flight_position=1,
+        )
+        neutral_heats = [
+            _seed_heat(
+                _db, neutral, number, [number + 1], {str(number + 1): 1},
+                flight=flight, flight_position=number + 1,
+            )
+            for number in range(1, 9)
+        ]
+        standing_heat = _seed_heat(
+            _db, standing, 1, [10], {"10": 1}, flight=flight, flight_position=10,
+        )
+        _db.session.commit()
+        tournament_id, flight_id = tournament.id, flight.id
+        cookie_heat_id = cookie_heat.id
+        neutral_heat_ids = [heat.id for heat in neutral_heats]
+        standing_heat_id = standing_heat.id
+        original_ids = [cookie_heat_id, *neutral_heat_ids, standing_heat_id]
+
+    response = auth_client.post(
+        f"/scheduling/{tournament_id}/flights/bulk-reorder",
+        json={
+            "flights": [{
+                "flight_id": flight_id,
+                "heat_ids": [
+                    cookie_heat_id,
+                    standing_heat_id,
+                    *neutral_heat_ids,
+                ],
+            }],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "stand_conflict"
+    with app.app_context():
+        from models import Heat
+
+        actual_ids = [
+            heat.id for heat in Heat.query.filter_by(flight_id=flight_id)
+            .order_by(Heat.flight_position).all()
+        ]
+        assert actual_ids == original_ids
+
+
+def test_reorder_keeps_preexisting_unavoidable_shared_stand_conflict(app, auth_client):
+    """The guard must not reject the builder's no-alternative fallback case."""
+    from database import db as _db
+
+    with app.app_context():
+        tournament = _seed_tournament(_db)
+        flight = _seed_flight(_db, tournament, flight_number=1)
+        cookie = _seed_stand_event(_db, tournament, "Cookie Stack", "cookie_stack")
+        standing = _seed_stand_event(_db, tournament, "Standing Block", "standing_block")
+        cookie_heat = _seed_heat(
+            _db, cookie, 1, [1], {"1": 1}, flight=flight, flight_position=1,
+        )
+        standing_heat = _seed_heat(
+            _db, standing, 1, [2], {"2": 1}, flight=flight, flight_position=2,
+        )
+        _db.session.commit()
+        tournament_id, flight_id = tournament.id, flight.id
+        cookie_heat_id, standing_heat_id = cookie_heat.id, standing_heat.id
+
+    response = auth_client.post(
+        f"/scheduling/{tournament_id}/flights/{flight_id}/reorder",
+        json={"heat_ids": [standing_heat_id, cookie_heat_id]},
+    )
+
+    assert response.status_code == 200, response.data
 
 
 def test_move_competitor_happy_path(app, auth_client):

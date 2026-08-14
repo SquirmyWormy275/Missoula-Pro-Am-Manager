@@ -80,7 +80,7 @@
 | `config.STAND_CONFIGS[stand_type]['total']` | Fallback when `max_stands` is None | `heat_generator.py:106` |
 | Hard default | 4 | When neither is set |
 | Saw events | Max 4 regardless of config | `_generate_saw_heats` line 545 |
-| College Stock Saw | Stands 7 and 8 only (max 2 per heat) | `_stand_numbers_for_event` line 604-606 |
+| All Stock Saw (pro and college) | Stands 7 and 8 only (max 2 per heat) | `_stand_numbers_for_event` |
 
 **No minimum heat size is enforced.** A heat can have 1 competitor. The last heat in any snake draft will have fewer if competitors don't divide evenly. Empty heats are never created (the competitor list must be non-empty or `ValueError` is raised).
 
@@ -274,7 +274,7 @@ The only supported day-of competitor movement operation:
 |------|--------|--------------------|
 | **Heat size maximum** | Competitors per heat ≤ max_stands | Enforced during generation AND on move/add operations via `_max_per_heat()`. |
 | **Gear conflict in destination** | Moving/adding a competitor must not create a shared-gear conflict | **ENFORCED.** Manual move, add, and flight-board drag reject the conflict. |
-| **Cookie Stack / Standing Block mutual exclusion** | Never schedule both in the same flight window | Enforced in flight builder scoring (-1 within 8 heats). NOT enforced during heat generation. |
+| **Cookie Stack / Standing Block shared stands** | Keep an eight-heat separation whenever another heat is available | The flight builder blocks the close placement while alternatives remain; if only conflicts remain, it deliberately schedules sequentially because a flight has one heat per slot. Heat generation is event-local. |
 | **Event.is_finalized guard on regeneration** | Finalized or scored events should not have heats regenerated | **ENFORCED.** Finalized and completed-result events are hard blocks. |
 | **Heat lock on mutations** | Locked heats should not be mutated by other judges | **ENFORCED** on scratch, add, delete, manual move, and flight-board drag operations. |
 | **Heat.competitors ↔ HeatAssignment sync** | Always consistent | Sync is called after generation, moves, scratch, add. Manual sync-fix route exists. |
