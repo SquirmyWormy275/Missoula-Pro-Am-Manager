@@ -59,7 +59,11 @@ def _require_shadow_operator():
 
 
 def _shadow_client() -> StrathmarkShadowClient:
-    return StrathmarkShadowClient(ShadowClientConfig.from_mapping(current_app.config))
+    try:
+        config = ShadowClientConfig.from_mapping(current_app.config)
+    except ValueError as exc:
+        raise ShadowAdapterError(str(exc)) from exc
+    return StrathmarkShadowClient(config)
 
 
 def _remote_status(run: ShadowHandicapRun):
