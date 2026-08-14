@@ -174,6 +174,113 @@
       </section>
     {% endif %}
 
+    <section aria-labelledby="shadow-context-heading" class="card mb-3" id="shadow-context">
+      <div class="card-body">
+        <h2 id="shadow-context-heading" class="h4">Prospective context for future seasons</h2>
+        <p><strong>Numerically inactive:</strong> these structured observations are stored for later multi-season research. They do not change this sheet, its V2 hash, or training eligibility.</p>
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <caption>Deferred-factor coverage, provenance stage, and explicit unknown state.</caption>
+            <thead><tr><th scope="col">Factor</th><th scope="col">Capture stage</th><th scope="col">State</th><th scope="col">Latest provenance</th></tr></thead>
+            <tbody>
+            {% for factor in context_audit.factors %}
+              <tr>
+                <th scope="row">{{ factor.factor.replace('_', ' ')|title }}</th>
+                <td>{{ factor.stage.replace('_', ' ') }}</td>
+                <td>{{ factor.state }}</td>
+                <td>
+                  {% if factor.latest %}
+                    {% for item in factor.latest %}
+                      <div><code>{{ item.subject_id }}</code>: {{ item.value_state }} / {{ item.source }}</div>
+                    {% endfor %}
+                  {% else %}
+                    Not recorded
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <details class="mb-3">
+          <summary>Record an Explicit unknown</summary>
+          <form method="post" class="pt-3">
+            <input type="hidden" name="action" value="record_context_unknown">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <label class="form-label" for="unknown-context-factor">Factor</label>
+            <select class="form-select mb-2" id="unknown-context-factor" name="factor" required>
+              <option value="">Choose a factor</option>
+              {% for factor in manual_unknown_factors %}
+                <option value="{{ factor }}">{{ factor.replace('_', ' ')|title }}</option>
+              {% endfor %}
+            </select>
+            <label class="form-label" for="unknown-context-subject-type">Scope type</label>
+            <input class="form-control mb-2" id="unknown-context-subject-type" name="subject_type" maxlength="40" placeholder="material, run, time_window…" required>
+            <label class="form-label" for="unknown-context-subject-id">Stable scope ID</label>
+            <input class="form-control mb-2" id="unknown-context-subject-id" name="subject_id" maxlength="224" placeholder="missoula:material:…" required>
+            <p class="form-text">Missing is recorded as unknown—not false or zero. Do not enter names, medical notes, contact details, or free text.</p>
+            <button class="btn btn-outline-primary shadow-touch-target" type="submit">Record explicit unknown</button>
+          </form>
+        </details>
+
+        <details class="mb-3">
+          <summary>Record venue</summary>
+          <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="action" value="record_context_venue">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <div class="col-md-6"><label class="form-label" for="venue-subject-id">Tournament-day ID</label><input class="form-control" id="venue-subject-id" name="subject_id" placeholder="missoula:tournament-day:…" maxlength="224" required></div>
+            <div class="col-md-6"><label class="form-label" for="venue-code">Venue ID</label><input class="form-control" id="venue-code" name="venue_code" placeholder="missoula:venue:…" maxlength="224" required></div>
+            <div class="col-12"><button class="btn btn-outline-primary shadow-touch-target" type="submit">Record venue</button></div>
+          </form>
+        </details>
+
+        <details class="mb-3">
+          <summary>Record material preparation</summary>
+          <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="action" value="record_context_material">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <div class="col-md-6"><label class="form-label" for="material-id">Material ID</label><input class="form-control" id="material-id" name="material_id" placeholder="missoula:material:…" maxlength="224" required></div>
+            <div class="col-md-6"><label class="form-label" for="batch-id">Batch ID</label><input class="form-control" id="batch-id" name="batch_id" placeholder="missoula:batch:…" maxlength="224" required></div>
+            <div class="col-md-4"><label class="form-label" for="identity-source">Identity source</label><select class="form-select" id="identity-source" name="identity_source"><option value="scanned">Scanned</option><option value="operator_entered">Entered</option></select></div>
+            <div class="col-md-4"><label class="form-label" for="quality-code">Quality</label><select class="form-select" id="quality-code" name="quality_code" required><option value="">Choose</option><option value="ungraded">Ungraded</option><option value="select">Select</option><option value="standard">Standard</option><option value="reject">Reject</option></select></div>
+            <div class="col-md-4"><label class="form-label" for="moisture-percent">Moisture percent</label><input class="form-control" id="moisture-percent" name="moisture_percent" type="number" min="0" max="100" step="0.1" required></div>
+            <div class="col-12"><button class="btn btn-outline-primary shadow-touch-target" type="submit">Record material</button></div>
+          </form>
+        </details>
+
+        <details class="mb-3">
+          <summary>Record weather window</summary>
+          <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="action" value="record_context_weather">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <div class="col-12"><label class="form-label" for="weather-subject-id">Time-window ID</label><input class="form-control" id="weather-subject-id" name="subject_id" placeholder="missoula:time-window:…" maxlength="224" required></div>
+            <div class="col-md-3"><label class="form-label" for="temperature-f">Temperature °F</label><input class="form-control" id="temperature-f" name="temperature_f" type="number" min="-80" max="150" step="0.1" required></div>
+            <div class="col-md-3"><label class="form-label" for="humidity-percent">Humidity %</label><input class="form-control" id="humidity-percent" name="humidity_percent" type="number" min="0" max="100" step="0.1" required></div>
+            <div class="col-md-3"><label class="form-label" for="wind-mph">Wind mph</label><input class="form-control" id="wind-mph" name="wind_mph" type="number" min="0" max="200" step="0.1" required></div>
+            <div class="col-md-3"><label class="form-label" for="precipitation-code">Precipitation</label><select class="form-select" id="precipitation-code" name="precipitation_code" required><option value="none">None</option><option value="rain">Rain</option><option value="snow">Snow</option><option value="mixed">Mixed</option></select></div>
+            <div class="col-12"><button class="btn btn-outline-primary shadow-touch-target" type="submit">Record weather</button></div>
+          </form>
+        </details>
+
+        <details class="mb-3">
+          <summary>Record equipment and structured rest observation</summary>
+          <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="action" value="record_context_run_observation">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <div class="col-md-6"><label class="form-label" for="run-subject-id">Run ID</label><input class="form-control" id="run-subject-id" name="subject_id" placeholder="missoula:run:…" maxlength="224" required></div>
+            <div class="col-md-6"><label class="form-label" for="entrant-run-id">Entrant-run ID</label><input class="form-control" id="entrant-run-id" name="entrant_run_id" placeholder="missoula:entrant-run:…" maxlength="224" required></div>
+            <div class="col-md-4"><label class="form-label" for="equipment-code">Equipment code</label><input class="form-control" id="equipment-code" name="equipment_code" maxlength="80" required></div>
+            <div class="col-md-4"><label class="form-label" for="rest-minutes">Rest minutes</label><input class="form-control" id="rest-minutes" name="rest_minutes" type="number" min="0" max="10080" required></div>
+            <div class="col-md-4"><label class="form-label" for="observation-code">Structured observation</label><select class="form-select" id="observation-code" name="observation_code" required><option value="rested">Rested</option><option value="typical">Typical</option><option value="fatigued">Fatigued</option></select></div>
+            <div class="col-12"><p class="form-text">No medical notes or free text are accepted.</p><button class="btn btn-outline-primary shadow-touch-target" type="submit">Record run context</button></div>
+          </form>
+        </details>
+
+        <a class="btn btn-outline-secondary shadow-touch-target" href="{{ url_for('scheduling.shadow_context_export', tournament_id=tournament.id, event_id=event.id, run_pk=run.id) }}">Download redacted context audit</a>
+      </div>
+    </section>
+
     <section aria-labelledby="shadow-audit" class="card mb-3">
       <div class="card-body">
         <h2 id="shadow-audit" class="h4">{{ view.lifecycle_heading }}</h2>

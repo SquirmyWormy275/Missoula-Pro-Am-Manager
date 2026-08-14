@@ -21,6 +21,7 @@ from models import (
     ShadowSettlementOutbox,
     User,
 )
+from services.shadow_context import capture_outcome_context
 from services.shadow_handicap_state import transition_shadow_run
 from services.strathmark_shadow import (
     ShadowRemoteError,
@@ -91,7 +92,8 @@ def capture_shadow_outcome_revisions(
     if run is None or not run.receipts:
         return OutcomeCaptureResult(None, 0, 0, None)
     actor_id = actor_id or run.issued_by_id
-    if actor_id is None or db.session.get(User, actor_id) is None:
+    actor = db.session.get(User, actor_id) if actor_id is not None else None
+    if actor is None:
         return OutcomeCaptureResult(run.id, 0, 0, None)
     receipt = load_local_shadow_receipt(run)
     if receipt is None:
@@ -136,6 +138,7 @@ def capture_shadow_outcome_revisions(
         outcome.event_result_id = result.id
         run.outcome_revisions.append(outcome)
         created.append(outcome)
+        capture_outcome_context(run, outcome=outcome, actor=actor)
 
         prior = [row for row in run.outcome_revisions if row.event_result_id == result.id][:-1]
         expected_revision, numeric_active = _numeric_state(prior)

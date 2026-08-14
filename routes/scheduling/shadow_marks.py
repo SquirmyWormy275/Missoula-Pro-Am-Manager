@@ -13,6 +13,14 @@ from sqlalchemy.orm.exc import StaleDataError
 from database import db
 from models import Event, ShadowHandicapRun, Tournament, User
 from services.audit import log_action
+from services.shadow_context import (
+    FACTOR_MATRIX,
+    build_context_audit_export,
+    capture_event_context,
+    capture_preflight_context,
+    context_state_token,
+    record_context_observation,
+)
 from services.shadow_handicap_state import ShadowConcurrencyError, transition_shadow_run
 from services.shadow_operator import (
     ShadowIssueBlocked,
@@ -96,6 +104,102 @@ def _load_event(tournament_id: int, event_id: int):
     return tournament, event
 
 
+def _record_known_context_task(run: ShadowHandicapRun, action: str) -> int:
+    token = request.form.get("expected_context_token", "")
+    if action == "record_context_venue":
+        record_context_observation(
+            run,
+            factor="venue",
+            subject_type="tournament_day",
+            subject_id=request.form.get("subject_id", ""),
+            value_state="known",
+            value={"venue_code": request.form.get("venue_code", "")},
+            source="operator_entered",
+            actor=current_user,
+            expected_context_token=token,
+        )
+        return 1
+    if action == "record_context_weather":
+        record_context_observation(
+            run,
+            factor="weather",
+            subject_type="time_window",
+            subject_id=request.form.get("subject_id", ""),
+            value_state="known",
+            value={
+                "temperature_f": float(request.form["temperature_f"]),
+                "humidity_percent": float(request.form["humidity_percent"]),
+                "wind_mph": float(request.form["wind_mph"]),
+                "precipitation_code": request.form.get("precipitation_code", ""),
+            },
+            source="measured",
+            actor=current_user,
+            expected_context_token=token,
+        )
+        return 1
+    if action == "record_context_material":
+        subject_id = request.form.get("material_id", "")
+        record_context_observation(
+            run,
+            factor="material_identity",
+            subject_type="material",
+            subject_id=subject_id,
+            value_state="known",
+            value={
+                "material_id": subject_id,
+                "batch_id": request.form.get("batch_id", ""),
+            },
+            source="scanned" if request.form.get("identity_source") == "scanned" else "operator_entered",
+            actor=current_user,
+            expected_context_token=token,
+        )
+        record_context_observation(
+            run,
+            factor="material_quality_moisture",
+            subject_type="material",
+            subject_id=subject_id,
+            value_state="known",
+            value={
+                "quality_code": request.form.get("quality_code", ""),
+                "moisture_percent": float(request.form["moisture_percent"]),
+            },
+            source="measured",
+            actor=current_user,
+            expected_context_token=context_state_token(run),
+        )
+        return 2
+    if action == "record_context_run_observation":
+        subject_id = request.form.get("subject_id", "")
+        record_context_observation(
+            run,
+            factor="equipment_used",
+            subject_type="run",
+            subject_id=subject_id,
+            value_state="known",
+            value={"equipment_code": request.form.get("equipment_code", "")},
+            source="operator_entered",
+            actor=current_user,
+            expected_context_token=token,
+        )
+        entrant_run_id = request.form.get("entrant_run_id", "")
+        record_context_observation(
+            run,
+            factor="rest_fatigue",
+            subject_type="entrant_run",
+            subject_id=entrant_run_id,
+            value_state="known",
+            value={
+                "rest_minutes": int(request.form["rest_minutes"]),
+                "observation_code": request.form.get("observation_code", ""),
+            },
+            source="operator_entered",
+            actor=current_user,
+            expected_context_token=context_state_token(run),
+        )
+        return 2
+    raise ValueError("unknown context capture task")
+
+
 @scheduling_bp.route(
     "/<int:tournament_id>/events/<int:event_id>/shadow-marks",
     methods=["GET", "POST"],
@@ -124,6 +228,7 @@ def shadow_marks(tournament_id: int, event_id: int):
                     observation_fingerprint=_unknown_observation_fingerprint(),
                     supersedes_run=previous_run,
                 )
+                capture_event_context(run, event=event, actor=current_user)
                 if previous_run is not None and previous_run.lifecycle not in {
                     "superseded",
                     "cancelled",
@@ -153,6 +258,7 @@ def shadow_marks(tournament_id: int, event_id: int):
                     actor_id=current_user.id,
                     reason_code="operator_preflight_approved",
                 )
+                capture_preflight_context(run, event=event, actor=current_user)
                 db.session.commit()
                 flash("Preflight approved for this exact field revision.", "success")
             elif action == "calculate":
@@ -197,6 +303,45 @@ def shadow_marks(tournament_id: int, event_id: int):
                     ),
                     "success",
                 )
+            elif action == "record_context_unknown":
+                factor = request.form.get("factor", "")
+                record_context_observation(
+                    run,
+                    factor=factor,
+                    subject_type=request.form.get("subject_type", ""),
+                    subject_id=request.form.get("subject_id", ""),
+                    value_state="unknown",
+                    value=None,
+                    source="operator_entered",
+                    actor=current_user,
+                    expected_context_token=request.form.get("expected_context_token", ""),
+                )
+                db.session.commit()
+                log_action(
+                    "shadow_context_recorded",
+                    "event",
+                    event.id,
+                    {"run_id": run.run_id, "factor": factor, "value_state": "unknown"},
+                )
+                flash("Explicit unknown context recorded without changing V2 numbers.", "success")
+            elif action in {
+                "record_context_venue",
+                "record_context_weather",
+                "record_context_material",
+                "record_context_run_observation",
+            }:
+                recorded_count = _record_known_context_task(run, action)
+                db.session.commit()
+                log_action(
+                    "shadow_context_recorded",
+                    "event",
+                    event.id,
+                    {"run_id": run.run_id, "task": action, "observation_count": recorded_count},
+                )
+                flash(
+                    f"Recorded {recorded_count} structured context observation(s).",
+                    "success",
+                )
             else:
                 raise ValueError("Unknown shadow workflow action.")
         except (
@@ -224,6 +369,7 @@ def shadow_marks(tournament_id: int, event_id: int):
             remote_status = None
     view = build_shadow_operator_view(run, remote_status=remote_status) if run else None
     outcomes = build_shadow_standings(run) if run and run.receipts else ()
+    context_audit = build_context_audit_export(run, actor=current_user) if run else None
     return render_template(
         "scheduling/shadow_marks.html",
         tournament=tournament,
@@ -233,6 +379,13 @@ def shadow_marks(tournament_id: int, event_id: int):
         outcomes=outcomes,
         outcome_state_token=outcome_state_token(run) if run else "",
         correction_reason_codes=tuple(sorted(CORRECTION_REASON_CODES)),
+        context_audit=context_audit.payload if context_audit else None,
+        context_state_token=context_state_token(run) if run else "",
+        manual_unknown_factors=tuple(
+            factor
+            for factor, spec in FACTOR_MATRIX.items()
+            if "operator_entered" in spec.allowed_sources
+        ),
     )
 
 
@@ -263,5 +416,43 @@ def shadow_marks_export(tournament_id: int, event_id: int, run_pk: int):
             "Content-Disposition": f'attachment; filename="shadow-sheet-{run.id}.json"',
             "X-Content-SHA256": artifact.export_sha256,
             "X-Shadow-Importable": "false",
+        },
+    )
+
+
+@scheduling_bp.route(
+    "/<int:tournament_id>/events/<int:event_id>/shadow-marks/<int:run_pk>/context-export"
+)
+def shadow_context_export(tournament_id: int, event_id: int, run_pk: int):
+    """Download redacted prospective context with provenance and no numeric authority."""
+
+    _require_shadow_operator()
+    _tournament, _event = _load_event(tournament_id, event_id)
+    run = ShadowHandicapRun.query.filter_by(id=run_pk, event_id=event_id).first_or_404()
+    try:
+        cursor = int(request.args.get("cursor", "0"))
+        limit = int(request.args.get("limit", "500"))
+        export = build_context_audit_export(
+            run,
+            actor=current_user,
+            cursor=cursor,
+            limit=limit,
+        )
+    except ValueError as exc:
+        abort(400, str(exc))
+    log_action(
+        "shadow_context_export_downloaded",
+        "event",
+        event_id,
+        {"run_id": run.run_id, "context_export_sha256": export.sha256},
+    )
+    return Response(
+        export.payload_json + "\n",
+        mimetype="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="shadow-context-{run.id}.json"',
+            "X-Content-SHA256": export.sha256,
+            "X-Context-Numeric-Active": "false",
+            "X-Next-Cursor": str(export.payload["page"]["next_cursor"] or ""),
         },
     )

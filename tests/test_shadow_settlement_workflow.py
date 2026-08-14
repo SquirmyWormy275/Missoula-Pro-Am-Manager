@@ -171,6 +171,13 @@ def test_finalization_captures_all_outcomes_and_only_eligible_numeric_evidence(
     assert [row.classification for row in latest] == ["valid_finish", "dnf"]
     assert latest[0].raw_elapsed_seconds == 42.5
     assert latest[1].raw_elapsed_seconds is None
+    outcome_context = [
+        row for row in run.context_observations if row.factor == "penalty_nonfinish"
+    ]
+    assert [json.loads(row.value_json)["classification"] for row in outcome_context] == [
+        "none",
+        "dnf",
+    ]
     assert len(run.settlement_outbox) == 1
     payload = json.loads(run.settlement_outbox[0].payload_json)
     assert payload["schema_version"] == "strathmark.shadow-numeric-outcome.v1"
