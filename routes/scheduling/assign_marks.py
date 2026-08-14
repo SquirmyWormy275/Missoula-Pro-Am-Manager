@@ -329,6 +329,21 @@ def assign_marks(tournament_id: int, event_id: int):
     tournament = db.get_or_404(Tournament, tournament_id)
     event = Event.query.filter_by(id=event_id, tournament_id=tournament_id).first_or_404()
 
+    if event.handicap_authority_mode == 'shadow':
+        if request.method == 'POST':
+            flash(
+                'This event is shadow-only. Official mark fields cannot be changed from '
+                'the shadow recommendation workflow.',
+                'warning',
+            )
+        return redirect(
+            url_for(
+                'scheduling.shadow_marks',
+                tournament_id=tournament_id,
+                event_id=event_id,
+            )
+        )
+
     eligible = is_mark_assignment_eligible(event)
     configured = strathmark_is_configured()
 

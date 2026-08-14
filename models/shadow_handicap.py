@@ -188,6 +188,18 @@ class ShadowHandicapRun(db.Model):
         order_by="ShadowSettlementOutbox.id",
         cascade="all, delete-orphan",
     )
+    field_reviews = db.relationship(
+        "ShadowFieldReview",
+        back_populates="run",
+        order_by="ShadowFieldReview.id",
+        cascade="all, delete-orphan",
+    )
+    issue_artifacts = db.relationship(
+        "ShadowIssueArtifact",
+        back_populates="run",
+        order_by="ShadowIssueArtifact.id",
+        cascade="all, delete-orphan",
+    )
 
     __mapper_args__ = {
         "version_id_col": lifecycle_version,
@@ -461,11 +473,88 @@ class ShadowSettlementOutbox(db.Model):
         return _require_sha256(value, "payload_sha256")
 
 
+class ShadowFieldReview(db.Model):
+    """Immutable proof that an operator reviewed every receipt prediction."""
+
+    __tablename__ = "shadow_field_reviews"
+    __table_args__ = (
+        db.UniqueConstraint("review_id", name="uq_shadow_field_review_id"),
+        db.UniqueConstraint("run_id", name="uq_shadow_field_review_run"),
+        db.CheckConstraint("prediction_count > 0", name="ck_shadow_field_review_count"),
+    )
+
+    id = db.Column(BIG_ID, primary_key=True, autoincrement=True)
+    review_id = db.Column(db.String(224), nullable=False)
+    run_id = db.Column(
+        BIG_ID,
+        db.ForeignKey("shadow_handicap_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    schema_version = db.Column(db.String(80), nullable=False)
+    receipt_core_sha256 = db.Column(db.CHAR(64), nullable=False)
+    decision_json = db.Column(db.Text, nullable=False)
+    decision_sha256 = db.Column(db.CHAR(64), nullable=False)
+    prediction_count = db.Column(db.Integer, nullable=False)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+
+    run = db.relationship("ShadowHandicapRun", back_populates="field_reviews")
+    actor = db.relationship("User")
+
+    @validates("review_id")
+    def _validate_review_id(self, _key, value):
+        return _require_namespaced(value, "review_id")
+
+    @validates("receipt_core_sha256", "decision_sha256")
+    def _validate_review_sha256(self, key, value):
+        return _require_sha256(value, key)
+
+
+class ShadowIssueArtifact(db.Model):
+    """Immutable, checksummed, non-importable whole-field operator export."""
+
+    __tablename__ = "shadow_issue_artifacts"
+    __table_args__ = (
+        db.UniqueConstraint("issue_id", name="uq_shadow_issue_artifact_id"),
+        db.UniqueConstraint("run_id", name="uq_shadow_issue_artifact_run"),
+        db.CheckConstraint("prediction_count > 0", name="ck_shadow_issue_artifact_count"),
+    )
+
+    id = db.Column(BIG_ID, primary_key=True, autoincrement=True)
+    issue_id = db.Column(db.String(224), nullable=False)
+    run_id = db.Column(
+        BIG_ID,
+        db.ForeignKey("shadow_handicap_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    schema_version = db.Column(db.String(80), nullable=False)
+    receipt_core_sha256 = db.Column(db.CHAR(64), nullable=False)
+    review_decision_sha256 = db.Column(db.CHAR(64), nullable=False)
+    export_json = db.Column(db.Text, nullable=False)
+    export_sha256 = db.Column(db.CHAR(64), nullable=False)
+    prediction_count = db.Column(db.Integer, nullable=False)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+
+    run = db.relationship("ShadowHandicapRun", back_populates="issue_artifacts")
+    actor = db.relationship("User")
+
+    @validates("issue_id")
+    def _validate_issue_id(self, _key, value):
+        return _require_namespaced(value, "issue_id")
+
+    @validates("receipt_core_sha256", "review_decision_sha256", "export_sha256")
+    def _validate_issue_sha256(self, key, value):
+        return _require_sha256(value, key)
+
+
 _APPEND_ONLY_MODELS = (
     ShadowLifecycleTransition,
     ShadowReceiptRevision,
     ShadowContextObservation,
     ShadowOutcomeRevision,
+    ShadowFieldReview,
+    ShadowIssueArtifact,
 )
 
 

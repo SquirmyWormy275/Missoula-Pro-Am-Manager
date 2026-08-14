@@ -14,6 +14,7 @@ Sub-module layout:
   ability_rankings.py — ability_rankings
   preflight.py       — preflight_check, preflight_json, generate_async, generation_job_status
   assign_marks.py    — assign_marks (handicap start-mark assignment via STRATHMARK)
+  shadow_marks.py    — complete scoring-inert V2 shadow workflow
   birling.py         — birling_manage, birling_generate, birling_record_match, birling_reset, birling_finalize
 """
 import json
@@ -404,6 +405,7 @@ from . import (
     preflight,  # noqa: F401, E402
     print_hub,  # noqa: F401, E402
     pro_checkout_roster,  # noqa: F401, E402
+    shadow_marks,  # noqa: F401, E402
     show_day,  # noqa: F401, E402
 )
 

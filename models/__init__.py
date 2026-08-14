@@ -23,7 +23,9 @@ from .school_captain import SchoolCaptain
 from .shadow_handicap import (
     CompetitorExternalIdentity,
     ShadowContextObservation,
+    ShadowFieldReview,
     ShadowHandicapRun,
+    ShadowIssueArtifact,
     ShadowLifecycleTransition,
     ShadowOutcomeRevision,
     ShadowReceiptRevision,
@@ -70,6 +72,8 @@ __all__ = [
     'ShadowLifecycleTransition',
     'ShadowReceiptRevision',
     'ShadowContextObservation',
+    'ShadowFieldReview',
+    'ShadowIssueArtifact',
     'ShadowOutcomeRevision',
     'ShadowSettlementOutbox',
 ]

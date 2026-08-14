@@ -40,6 +40,7 @@ from services.shadow_handicap_state import transition_shadow_run
 DEFAULT_CONSUMER_ID = "missoula:service:shadow"
 CALCULATE_SCHEMA_VERSION = "strathmark.shadow-calculate.v1"
 LOOKUP_SCHEMA_VERSION = "strathmark.shadow-receipt-lookup.v1"
+STATUS_SCHEMA_VERSION = "strathmark.shadow-status.v1"
 ATTESTATION_SCHEMA_VERSION = "strathmark.actor-attestation.v2"
 REQUEST_DIGEST_SCHEMA_VERSION = "strathmark.shadow-request-digest.v1"
 ATTESTATION_AUDIENCE = "strathmark.shadow.v1"
@@ -253,6 +254,29 @@ class StrathmarkShadowClient:
             timeout_ms=int(payload.get("timeout_ms", 5000)),
         )
 
+    def status(self, run: ShadowHandicapRun, actor: User) -> Mapping[str, Any]:
+        payload = {
+            "schema_version": STATUS_SCHEMA_VERSION,
+            "consumer_id": run.consumer_id,
+            "request_id": run.request_id,
+            "run_revision": run.run_revision,
+            "current_active_fingerprint": None,
+            "model_version": None,
+            "timeout_ms": 2000,
+        }
+        response = self._post(
+            path="/v1/shadow/status",
+            action="shadow.status.read",
+            subject_revision=run.run_revision,
+            actor=actor,
+            payload=payload,
+            timeout_ms=2000,
+        )
+        status = response.get("status")
+        if not isinstance(status, dict):
+            raise ShadowRemoteError("STRATHMARK status response is invalid")
+        return status
+
     def _post(
         self,
         *,
@@ -315,6 +339,7 @@ def prepare_shadow_run(
     observation_fingerprint: str,
     consumer_id: str = DEFAULT_CONSUMER_ID,
     seed: int = 20260811,
+    supersedes_run: ShadowHandicapRun | None = None,
 ) -> ShadowHandicapRun:
     """Freeze one scoring-inert whole-field request from reviewed local state."""
 
@@ -328,6 +353,10 @@ def prepare_shadow_run(
         raise ValueError("unsupported observation fingerprint schema")
     if not isinstance(prediction_as_of, date):
         raise ValueError("prediction_as_of must be an explicit date")
+    if supersedes_run is not None and (
+        supersedes_run.event_id != event.id or supersedes_run.consumer_id != consumer_id
+    ):
+        raise ShadowIdentityError("a superseding run must belong to the same event and consumer")
 
     results = (
         EventResult.query.filter_by(event_id=event.id)
@@ -388,6 +417,7 @@ def prepare_shadow_run(
         event_occurrence_id=event.shadow_event_occurrence_id,
         field_run_id=field_run_id,
         run_revision=run_revision,
+        supersedes_run_id=supersedes_run.id if supersedes_run is not None else None,
         authority="shadow",
         lifecycle="prepared",
         lifecycle_version=1,
@@ -466,6 +496,12 @@ def _local_receipt(run: ShadowHandicapRun) -> StoredShadowReceipt | None:
             ),
         },
     )
+
+
+def load_local_shadow_receipt(run: ShadowHandicapRun) -> StoredShadowReceipt | None:
+    """Return a digest- and identity-verified local receipt, if one exists."""
+
+    return _local_receipt(run)
 
 
 def _persist_remote_receipt(
@@ -727,6 +763,7 @@ __all__ = [
     "StrathmarkShadowClient",
     "calculate_or_recover_shadow_run",
     "canonical_shadow_request_digest",
+    "load_local_shadow_receipt",
     "prepare_shadow_run",
     "shadow_configuration_status",
 ]

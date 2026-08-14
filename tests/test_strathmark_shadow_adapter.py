@@ -14,6 +14,7 @@ from models import (
     CompetitorExternalIdentity,
     ShadowHandicapRun,
     ShadowReceiptRevision,
+    User,
     WoodConfig,
 )
 from services.shadow_handicap_state import transition_shadow_run
@@ -363,7 +364,6 @@ def test_shadow_configuration_is_local_service_not_supabase(monkeypatch):
             "STRATHMARK_SHADOW_ATTESTATION_KEY": "attestation-key-123456789",
         }
     )
-
     assert config.base_url == "http://127.0.0.1:8000"
     assert config.consumer_id == "missoula:service:shadow"
     assert (
@@ -377,3 +377,41 @@ def test_shadow_configuration_is_local_service_not_supabase(monkeypatch):
         )
         == "configured"
     )
+
+
+def test_status_request_is_actor_and_run_bound(prepared_shadow):
+    _event, _results, run, _external_ids = prepared_shadow
+    transport = FakeTransport()
+    transport.queue(
+        "/v1/shadow/status",
+        {
+            "schema_version": "strathmark.shadow-status-response.v1",
+            "status": {
+                "local_trust": "recorded",
+                "receipt_freshness": "current",
+                "receipt_readiness": "ready",
+                "mirror": "pending",
+            },
+        },
+    )
+
+    status = _client(transport).status(run, User.query.filter_by(id=run.created_by_id).one())
+
+    assert status["receipt_readiness"] == "ready"
+    call = transport.calls[0]
+    assert call["path"] == "/v1/shadow/status"
+    assert call["payload"] == {
+        "schema_version": "strathmark.shadow-status.v1",
+        "consumer_id": run.consumer_id,
+        "request_id": run.request_id,
+        "run_revision": run.run_revision,
+        "current_active_fingerprint": None,
+        "model_version": None,
+        "timeout_ms": 2000,
+    }
+    claims, _signature, _encoded = _decode_attestation(
+        call["headers"]["X-STRATHMARK-Actor-Attestation"]
+    )
+    assert claims["action"] == "shadow.status.read"
+    assert claims["subject_revision"] == run.run_revision
+    assert claims["request_digest"] == canonical_shadow_request_digest(call["payload"])

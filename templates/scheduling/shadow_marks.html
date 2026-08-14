@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Shadow Handicap Sheet{% endblock %}
+
+{% block content %}
+<main class="container py-3" id="shadow-sheet-main">
+  <nav aria-label="Breadcrumb">
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Shadow handicap</li>
+    </ol>
+  </nav>
+
+  <h1>Shadow handicap sheet</h1>
+  <p class="lead">{{ event.name }} — recommendation only. This page never changes official championship marks.</p>
+
+  {% if not run %}
+    <section aria-labelledby="prepare-heading" class="card mb-3">
+      <div class="card-body">
+        <h2 id="prepare-heading" class="h4">Prepare field snapshot</h2>
+        <p>Freeze the current roster, run order, wood specification, and exclusive UTC evidence cutoff.</p>
+        <form method="post">
+          <input type="hidden" name="action" value="prepare">
+          <label for="prediction-as-of" class="form-label">Prediction cutoff (exclusive UTC date)</label>
+          <input id="prediction-as-of" class="form-control mb-1" type="date" name="prediction_as_of" required>
+          <p class="form-text mb-3">Choose deliberately. Same-day, undated, and future evidence are excluded, and changing this date creates a new request.</p>
+          <button class="btn btn-primary shadow-touch-target" type="submit">Prepare whole field</button>
+        </form>
+      </div>
+    </section>
+  {% else %}
+    <div role="status" aria-live="polite" class="alert {% if view.blockers %}alert-danger{% else %}alert-success{% endif %}">
+      <strong>{{ view.primary_summary }}</strong> — {{ view.primary_action }}
+    </div>
+
+      <section aria-labelledby="shadow-blockers" class="card {% if view.blockers %}border-danger{% else %}border-success{% endif %} mb-3">
+        <div class="card-body">
+          <h2 id="shadow-blockers" class="h4">{{ view.blocker_heading }}</h2>
+          {% if view.blockers %}
+            <ul>{% for item in view.blockers %}<li>{{ item }}</li>{% endfor %}</ul>
+          {% else %}
+            <p class="mb-0">No blocking issues.</p>
+          {% endif %}
+        </div>
+      </section>
+
+    {% if view.advisories %}
+      <section aria-labelledby="shadow-advisories" class="card border-warning mb-3">
+        <div class="card-body">
+          <h2 id="shadow-advisories" class="h4">{{ view.advisory_heading }}</h2>
+          <ul>{% for item in view.advisories %}<li>{{ item }}</li>{% endfor %}</ul>
+        </div>
+      </section>
+    {% endif %}
+
+    <section aria-labelledby="shadow-field" class="card mb-3">
+      <div class="card-body">
+        <h2 id="shadow-field" class="h4">Whole-field recommendations</h2>
+        <form method="post">
+          <input type="hidden" name="expected_version" value="{{ run.lifecycle_version }}">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <caption>Every row must be reviewed together. A zero-second recommendation is explicit and valid.</caption>
+              <thead><tr><th scope="col">Reviewed</th><th scope="col">Order</th><th scope="col">Competitor ID</th><th scope="col">Recommended start</th><th scope="col">Median elapsed</th><th scope="col">90% interval</th></tr></thead>
+              <tbody>
+              {% for prediction in view.predictions %}
+                <tr>
+                  <td><input class="form-check-input shadow-review-check" type="checkbox" name="review_prediction" value="{{ prediction.prediction_id }}" aria-label="Review recommendation {{ prediction.ordinal + 1 }}"></td>
+                  <td>{{ prediction.ordinal + 1 }}</td>
+                  <td><code>{{ prediction.competitor_id }}</code></td>
+                  <td>{{ prediction.assigned_mark }} s</td>
+                  <td>{{ prediction.median_seconds }} s</td>
+                  <td>{% if prediction.interval %}{{ prediction.interval.lower }}–{{ prediction.interval.upper }} s{% else %}Unavailable{% endif %}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="6">No trusted recommendations recorded yet.</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          {% if run.lifecycle == 'prepared' %}
+            <button class="btn btn-primary shadow-touch-target" name="action" value="approve_preflight" type="submit">Approve exact preflight revision</button>
+          {% elif run.lifecycle == 'preflight-approved' %}
+            <button class="btn btn-primary shadow-touch-target" name="action" value="calculate" type="submit">Calculate or recover receipt</button>
+          {% elif run.lifecycle == 'calculated' %}
+            <button class="btn btn-primary shadow-touch-target" name="action" value="review" type="submit" {% if view.blockers %}disabled{% endif %}>Review entire sheet</button>
+          {% elif run.lifecycle == 'reviewed' %}
+            <button class="btn btn-warning shadow-touch-target" name="action" value="issue" type="submit" {% if view.blockers %}disabled{% endif %}>Issue entire shadow sheet</button>
+          {% endif %}
+        </form>
+        {% if run.issue_artifacts %}
+          <a class="btn btn-outline-secondary shadow-touch-target mt-2" href="{{ url_for('scheduling.shadow_marks_export', tournament_id=tournament.id, event_id=event.id, run_pk=run.id) }}">Download checksummed export</a>
+        {% endif %}
+      </div>
+    </section>
+
+    <section aria-labelledby="shadow-audit" class="card mb-3">
+      <div class="card-body">
+        <h2 id="shadow-audit" class="h4">{{ view.lifecycle_heading }}</h2>
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Lifecycle</dt><dd class="col-sm-8">{{ run.lifecycle }}</dd>
+          <dt class="col-sm-4">Run revision</dt><dd class="col-sm-8"><code>{{ run.run_revision }}</code></dd>
+          <dt class="col-sm-4">Prediction cutoff</dt><dd class="col-sm-8">{{ run.prediction_as_of }} (exclusive UTC)</dd>
+          <dt class="col-sm-4">Authority</dt><dd class="col-sm-8">Shadow recommendation only</dd>
+        </dl>
+      </div>
+    </section>
+
+    {% if view.blockers and run.lifecycle not in ['superseded', 'cancelled'] %}
+      <section aria-labelledby="supersede-heading" class="card mb-3">
+        <div class="card-body">
+          <h2 id="supersede-heading" class="h4">Prepare a corrected field revision</h2>
+          <p>This preserves the current receipt and audit history and links a new request to the superseded run.</p>
+          <form method="post">
+            <input type="hidden" name="action" value="prepare">
+            <label for="superseding-prediction-as-of" class="form-label">Prediction cutoff (exclusive UTC date)</label>
+            <input id="superseding-prediction-as-of" class="form-control mb-3" type="date" name="prediction_as_of" value="{{ run.prediction_as_of }}" required>
+            <button class="btn btn-outline-primary shadow-touch-target" type="submit">Prepare superseding whole-field run</button>
+          </form>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+</main>
+
+<style nonce="{{ csp_nonce }}">
+  .shadow-touch-target { min-height: 44px; }
+  .shadow-review-check { min-width: 24px; min-height: 24px; }
+  @media (max-width: 576px) {
+    #shadow-sheet-main table { min-width: 760px; }
+  }
+</style>
+{% endblock %}
