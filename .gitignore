@@ -42,6 +42,7 @@ build/
 .ruff_cache/
 .coverage
 htmlcov/
+/.tmp/
 
 # gstack skill artifacts (retros, QA reports, checkpoints — local tooling output)
 .context/
