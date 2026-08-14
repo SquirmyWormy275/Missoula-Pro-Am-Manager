@@ -70,6 +70,22 @@ class BaseConfig:
     TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '').strip()
     # How many flights ahead to notify competitors (default 3)
     SMS_NOTIFY_FLIGHTS_AHEAD = int(os.environ.get('SMS_NOTIFY_FLIGHTS_AHEAD', '3'))
+    # Local STRATHMARK V2 shadow service.  These are deliberately separate
+    # from the legacy Supabase sync variables; shadow calculation uses only
+    # the frozen authenticated HTTP consumer contract.
+    STRATHMARK_SHADOW_URL = os.environ.get('STRATHMARK_SHADOW_URL', '').strip()
+    STRATHMARK_SHADOW_CONSUMER_ID = os.environ.get(
+        'STRATHMARK_SHADOW_CONSUMER_ID',
+        'missoula:service:shadow',
+    ).strip()
+    STRATHMARK_SHADOW_SERVICE_TOKEN = os.environ.get(
+        'STRATHMARK_SHADOW_SERVICE_TOKEN',
+        '',
+    ).strip()
+    STRATHMARK_SHADOW_ATTESTATION_KEY = os.environ.get(
+        'STRATHMARK_SHADOW_ATTESTATION_KEY',
+        '',
+    ).strip()
 
 
 class DevelopmentConfig(BaseConfig):
