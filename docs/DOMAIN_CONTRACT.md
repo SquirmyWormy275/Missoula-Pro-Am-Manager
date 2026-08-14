@@ -50,7 +50,9 @@ Preflight recovery may normalize reciprocal typo matches and pair only entrants
 with neither an outbound declaration nor an inbound claim. Every named,
 one-sided, ambiguous, self-referential, or gender-invalid declaration requires
 an operator decision in the partner repair queue. Completed result records are
-never rewritten during partner repair.
+never rewritten during partner repair. Partner repair is locked once any result
+is completed or the event is finalized; pairing declarations must not diverge
+from scored history.
 
 Allowed partner-event shapes:
 

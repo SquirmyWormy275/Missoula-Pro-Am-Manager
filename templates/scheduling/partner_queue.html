@@ -13,7 +13,13 @@
   </nav>
 
   <h2>Partner Repair Queue</h2>
-  <p class="text-muted">{{ event.name }} — Competitors whose partners have been scratched.</p>
+  <p class="text-muted">{{ event.name }} - Resolve scratched, incomplete, or conflicting pair declarations before scoring.</p>
+
+  {% if partner_repairs_locked %}
+  <div class="alert alert-warning">
+    Partner repair is locked because this event has completed results or is finalized.
+  </div>
+  {% endif %}
 
   {% if repairs %}
   <div class="table-responsive">
@@ -48,6 +54,9 @@
             {% endif %}
           </td>
           <td>
+            {% if partner_repairs_locked %}
+            <span class="text-muted">Locked after scoring</span>
+            {% else %}
             <form method="POST" action="{{ url_for('scheduling.reassign_partner', tid=tournament.id, eid=event.id) }}" class="d-flex gap-2">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="orphan_id" value="{{ repair.competitor.id }}">
@@ -64,6 +73,7 @@
               </select>
               <button type="submit" class="btn btn-sm btn-primary">Reassign</button>
             </form>
+            {% endif %}
           </td>
           <td></td>
         </tr>

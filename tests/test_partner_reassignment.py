@@ -224,6 +224,20 @@ class TestOrphanDetection:
         orphans = get_orphaned_competitors(ev)
         assert orphans == []
 
+    def test_completed_result_is_not_an_actionable_orphan(self, app, db_session):
+        """A scored partnership is historical, even if its partner scratches later."""
+        from routes.scheduling.partners import get_orphaned_competitors
+
+        _, event, alice, _, _ = _setup_orphan_scenario(db_session)
+        EventResult.query.filter_by(
+            event_id=event.id,
+            competitor_id=alice.id,
+            competitor_type="pro",
+        ).one().status = "completed"
+        db_session.flush()
+
+        assert get_orphaned_competitors(event) == []
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: gender validation helper
@@ -669,6 +683,43 @@ class TestReassignPartnerRoute:
         ).first()
         assert r is not None
         assert r.partner_name == "Carol"
+
+    def test_completed_result_locks_partner_repair(self, app, db_session, auth_client):
+        """A stale repair form cannot split pairing declarations from scored history."""
+        t, event, alice, _, carol = _setup_orphan_scenario(db_session)
+        result = EventResult.query.filter_by(
+            event_id=event.id,
+            competitor_id=alice.id,
+            competitor_type="pro",
+        ).one()
+        result.status = "completed"
+        db_session.commit()
+
+        queue = auth_client.get(
+            f"/scheduling/{t.id}/events/{event.id}/partner-queue"
+        )
+        assert queue.status_code == 200
+        assert b"locked because this event has completed results" in queue.data
+        assert b"Locked after scoring" in queue.data
+        assert b"Reassign</button>" not in queue.data
+
+        response = auth_client.post(
+            f"/scheduling/{t.id}/events/{event.id}/reassign-partner",
+            data={
+                "orphan_id": str(alice.id),
+                "orphan_type": "pro",
+                "new_partner_id": str(carol.id),
+                "new_partner_type": "pro",
+            },
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert b"locked after scoring has started" in response.data
+        db.session.refresh(alice)
+        db.session.refresh(result)
+        assert alice.get_partners()[str(event.id)] == "Bob"
+        assert result.partner_name == "Bob"
 
     def test_rejects_available_competitor_not_entered_in_event(
         self, app, db_session, auth_client

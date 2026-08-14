@@ -53,7 +53,7 @@ def get_orphaned_competitors(event):
         EventResult.event_id == event.id,
         EventResult.partner_name.isnot(None),
         EventResult.partner_name != "",
-        EventResult.status.in_(["pending", "completed"]),
+        EventResult.status == "pending",
     ).all()
 
     orphans = []
@@ -107,7 +107,7 @@ def _is_current_orphan(event, competitor, competitor_type):
         event_id=event.id,
         competitor_id=competitor.id,
         competitor_type=competitor_type,
-    ).filter(EventResult.status.in_(["pending", "completed"])).first()
+    ).filter(EventResult.status == "pending").first()
     if not result or not result.partner_name:
         return False
 
@@ -129,8 +129,24 @@ def _is_current_partner_repair(event, competitor, competitor_type):
     )
 
 
+def _partner_repair_is_locked(event):
+    """Return whether scoring or finalization has made pairs historical."""
+    return (
+        event.status == "completed"
+        or event.is_finalized
+        or EventResult.query.filter_by(event_id=event.id, status="completed").first()
+        is not None
+    )
+
+
 def validate_reassignment_context(event, orphan, new_partner):
     """Validate current roster eligibility for a reassignment submission."""
+    if _partner_repair_is_locked(event):
+        return (
+            False,
+            "Partner repair is locked after scoring has started. "
+            "Completed event results are immutable.",
+        )
     expected_type = event.event_type
     orphan_type = "pro" if isinstance(orphan, ProCompetitor) else "college"
     new_type = "pro" if isinstance(new_partner, ProCompetitor) else "college"
@@ -238,6 +254,7 @@ def partner_queue(tid, eid):
         event=event,
         repairs=repairs,
         available=available,
+        partner_repairs_locked=_partner_repair_is_locked(event),
     )
 
 
