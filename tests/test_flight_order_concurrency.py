@@ -406,7 +406,7 @@ def test_uniqueness_race_returns_retryable_409(
 def test_migration_resequences_existing_assigned_heats_deterministically():
     from flask_migrate import downgrade, upgrade
 
-    migration_app, handle = create_test_app()
+    migration_app, handle = create_test_app(use_migrations=True)
     try:
         with migration_app.app_context():
             downgrade(revision='y4c5d6e7f8a9')
@@ -528,7 +528,7 @@ def test_migration_resequences_existing_assigned_heats_deterministically():
 def test_migration_refuses_to_resequence_historical_duplicate_positions(capfd):
     from flask_migrate import downgrade, upgrade
 
-    migration_app, handle = create_test_app()
+    migration_app, handle = create_test_app(use_migrations=True)
     try:
         with migration_app.app_context():
             downgrade(revision='y4c5d6e7f8a9')
@@ -608,7 +608,7 @@ def test_migration_refuses_to_resequence_historical_duplicate_positions(capfd):
 def test_migration_refuses_duplicate_flight_numbers_without_partial_upgrade(capfd):
     from flask_migrate import downgrade, upgrade
 
-    migration_app, handle = create_test_app()
+    migration_app, handle = create_test_app(use_migrations=True)
     try:
         with migration_app.app_context():
             downgrade(revision='y4c5d6e7f8a9')

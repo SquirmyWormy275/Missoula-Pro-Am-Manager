@@ -228,12 +228,14 @@ def drop_test_db(handle):
         _pg_run(f'DROP DATABASE IF EXISTS {handle} (FORCE)')
 
 
-def create_test_app():
+def create_test_app(*, use_migrations=False):
     """Create a Flask app backed by a temp-file SQLite DB built via migrations.
 
     Returns ``(app, db_path)`` — caller must delete ``db_path`` when done.
     Alembic cannot run against ``:memory:`` (it opens its own connection),
     so we use a temp file that survives the full test module lifetime.
+    ``use_migrations=True`` bypasses the CI create-all shortcut for tests that
+    exercise a schema transition itself.
 
     IMPORTANT: We set DATABASE_URL env var BEFORE importing/calling create_app()
     so that config.py resolves to the temp DB, not the production one.  The env
@@ -279,7 +281,7 @@ def create_test_app():
 
         with _app.app_context():
             _db.engine.dispose()
-            if os.environ.get('TEST_USE_CREATE_ALL') == '1':
+            if os.environ.get('TEST_USE_CREATE_ALL') == '1' and not use_migrations:
                 _db.create_all()
             else:
                 upgrade(directory=migrations_dir)
