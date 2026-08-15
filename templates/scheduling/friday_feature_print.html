@@ -3,13 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Friday Night Feature Schedule - {{ tournament.name }} {{ tournament.year }}</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Inter:wght@400;500;600;700&display=swap">
     <style>
-        /* Brand-consistent fonts for the printable schedule.
-           Fraunces for headings (warmth), Inter for body.
-           Design review F-003 (2026-04-21). */
+        /* System fallbacks keep the printable schedule usable without a network. */
         body {
             font-family: "Inter", "Segoe UI", Arial, sans-serif;
             font-size: 11pt;
