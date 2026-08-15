@@ -61,6 +61,14 @@ python -m pytest tests/test_migration_integrity.py::TestMigrationIntegrity -q
 
 Plus subsystem-specific tests for the changed area.
 
+For a service-worker/offline-scoring change, also verify on a demo database:
+
+1. `/sw.js` returns JavaScript with `Cache-Control: no-cache`
+2. `/static/offline.html` returns the self-contained operator fallback
+3. a successful, non-redirected heat-entry page is available by its exact URL after the local server is stopped
+4. an uncached heat-entry URL shows the offline fallback rather than a browser network-error page
+5. queued POST evidence stays in the same browser profile and is reconciled through Offline Operations after reconnect
+
 ## Deploy Verification
 
 After merge to `main` and Railway deploy start:

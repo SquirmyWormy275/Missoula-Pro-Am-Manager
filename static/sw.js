@@ -4,22 +4,30 @@
  * Replays the queue via Background Sync when connectivity is restored.
  */
 
-const CACHE_NAME = 'proam-scoring-v1';
+const CACHE_PREFIX = 'proam-scoring-';
+const CACHE_NAME = 'proam-scoring-v2';
+const OFFLINE_FALLBACK = '/static/offline.html';
 const SCORE_ENTRY_PATTERN = /\/scoring\/\d+\/heat\/\d+\/enter/;
 
 // ── Install: cache the offline fallback ─────────────────────────────────────
 self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE_NAME).then(cache =>
-            cache.addAll(['/static/offline.html'])
-                 .catch(() => {/* offline.html optional */})
-        )
+            cache.addAll([OFFLINE_FALLBACK])
+        ).then(() => self.skipWaiting())
     );
-    self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-    event.waitUntil(self.clients.claim());
+    event.waitUntil(
+        caches.keys()
+            .then(keys => Promise.all(
+                keys
+                    .filter(key => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+                    .map(key => caches.delete(key))
+            ))
+            .then(() => self.clients.claim())
+    );
 });
 
 // ── IndexedDB helpers ────────────────────────────────────────────────────────
@@ -61,35 +69,75 @@ function removeEntry(db, id) {
     });
 }
 
+function isSameOriginScoreEntryUrl(rawUrl) {
+    try {
+        const url = new URL(rawUrl, self.location.origin);
+        return url.origin === self.location.origin
+            && SCORE_ENTRY_PATTERN.test(url.pathname);
+    } catch (_invalidUrl) {
+        return false;
+    }
+}
+
+function isScoreEntryRequest(request) {
+    return isSameOriginScoreEntryUrl(request.url);
+}
+
 // ── Fetch handler ────────────────────────────────────────────────────────────
 self.addEventListener('fetch', (event) => {
     const req = event.request;
 
     // Intercept POST to score entry when offline
-    if (req.method === 'POST' && SCORE_ENTRY_PATTERN.test(req.url)) {
+    if (req.method === 'POST' && isScoreEntryRequest(req)) {
         event.respondWith(handleScorePost(req));
         return;
     }
 
     // Network-first for GET score entry pages (cache for offline fallback)
-    if (req.method === 'GET' && SCORE_ENTRY_PATTERN.test(req.url)) {
-        event.respondWith(
-            fetch(req).then((resp) => {
-                const clone = resp.clone();
-                caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
-                return resp;
-            }).catch(() => caches.match(req))
-        );
+    if (req.method === 'GET' && isScoreEntryRequest(req)) {
+        event.respondWith(loadScorePage(req));
         return;
     }
     // All other requests: default browser handling
 });
 
-function generateReplayToken() {
-    // Cryptographically random token for CSRF-exempt replay
-    const arr = new Uint8Array(24);
-    crypto.getRandomValues(arr);
-    return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+function isCacheableScorePage(response, request) {
+    const contentType = response.headers.get('content-type') || '';
+    return response.ok
+        && !response.redirected
+        && response.url === request.url
+        && contentType.includes('text/html');
+}
+
+async function loadScorePage(req) {
+    try {
+        const resp = await fetch(req);
+        if (isCacheableScorePage(resp, req)) {
+            try {
+                const cache = await caches.open(CACHE_NAME);
+                await cache.put(req, resp.clone());
+            } catch (_cacheErr) {
+                // A quota/cache failure must never replace a valid live page.
+            }
+        }
+        return resp;
+    } catch (_networkErr) {
+        try {
+            const cache = await caches.open(CACHE_NAME);
+            const cachedPage = await cache.match(req);
+            if (cachedPage) return cachedPage;
+
+            const fallback = await cache.match(OFFLINE_FALLBACK);
+            if (fallback) return fallback;
+        } catch (_cacheReadErr) {
+            // Fall through to an explicit bounded response.
+        }
+
+        return new Response('Offline score page unavailable', {
+            status: 503,
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
+    }
 }
 
 async function handleScorePost(request) {
@@ -99,10 +147,12 @@ async function handleScorePost(request) {
     } catch (_networkErr) {
         // Offline — queue the submission with a replay token
         const body = await request.text();
-        const replay_token = generateReplayToken();
+        const replay_token = new URLSearchParams(body).get('replay_token') || '';
         // Extract tournament_id and heat_id from the URL pattern:
         // /scoring/{tournament_id}/heat/{heat_id}/enter
-        const urlMatch = request.url.match(/\/scoring\/(\d+)\/heat\/(\d+)\/enter/);
+        const urlMatch = new URL(request.url).pathname.match(
+            /\/scoring\/(\d+)\/heat\/(\d+)\/enter/
+        );
         const tournament_id = urlMatch ? urlMatch[1] : '';
         const heat_id = urlMatch ? urlMatch[2] : '';
         const db = await openDB();
@@ -160,6 +210,11 @@ async function replayQueue() {
     const failReasons = [];
 
     for (const entry of entries) {
+        if (!isSameOriginScoreEntryUrl(entry.url)) {
+            failedCount++;
+            failReasons.push('invalid_queue_target');
+            continue;
+        }
         try {
             const resp = await fetch(entry.url, {
                 method: entry.method,
