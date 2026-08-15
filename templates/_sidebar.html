@@ -21,7 +21,7 @@
         <!-- Tournament label (hidden when collapsed) -->
         <div class="sb-text flex-grow-1 overflow-hidden">
             <div class="fw-bold text-truncate"
-                 style="font-size:0.82rem; color:var(--sx-text); font-family:'Fraunces',serif; line-height:1.2; letter-spacing:0.01em;">
+                 style="font-size:0.82rem; color:var(--sx-text); font-family:'Inter',sans-serif; line-height:1.2;">
                 {{ tournament.name }} {{ tournament.year }}
             </div>
             <div class="mt-1">
@@ -49,7 +49,7 @@
         <!-- Collapse toggle button -->
         <button id="sbToggleBtn" class="btn btn-link p-1 flex-shrink-0"
                 style="color:var(--sx-text-3); font-size:1rem; line-height:1; text-decoration:none;"
-                title="Collapse sidebar">
+                aria-label="Collapse sidebar" title="Collapse sidebar">
             <i class="bi bi-chevron-double-left" id="sbToggleIcon"></i>
         </button>
     </div>
@@ -317,12 +317,6 @@
             <i class="bi bi-arrow-left sb-icon" style="color:var(--sx-text-3);"></i>
             <span class="sb-text ms-2">All Tournaments</span>
         </a>
-        <div class="sb-text px-2 pb-1" style="overflow:hidden;">
-            <div style="font-family:'Orbitron',sans-serif; font-size:0.42rem; letter-spacing:0.14em;
-                        text-transform:uppercase; color:var(--sx-text-3); opacity:0.5; text-align:center; margin-top:3px;">
-                A STRATHEX Platform
-            </div>
-        </div>
     </div>
 
 </nav>
@@ -348,6 +342,7 @@
     transition: background 0.12s, color 0.12s;
     white-space: nowrap;
     overflow: hidden;
+    min-height: 40px;
 }
 .sb-group-toggle:hover {
     background: rgba(255,255,255,0.04);
