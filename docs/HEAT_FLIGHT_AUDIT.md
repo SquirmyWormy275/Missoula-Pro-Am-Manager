@@ -38,7 +38,7 @@
 | `routes/scheduling/birling.py` (262 lines) | Birling bracket generation and match recording (no heats/flights) |
 | `routes/scheduling/events.py` | Event list, setup_events, day_schedule |
 | `routes/scheduling/preflight.py` | Preflight validation |
-| `routes/scoring.py` | Heat result entry (reads Heat.competitors for scoring) |
+| `routes/scoring.py` | Heat result entry (reads normalized HeatAssignment rosters) |
 
 ### Documentation
 | File | Role |
@@ -86,20 +86,16 @@
 
 #### C. Competitor removal after generation
 
-The `Heat` model provides `remove_competitor(competitor_id)` (line 87-91) which edits the JSON list. The route `move_competitor_between_heats` (heats.py:185-279) is the only UI path that moves a competitor between heats:
+The route `move_competitor_between_heats` moves a competitor between normalized heat rosters:
 
-- Removes from source heat JSON + stand_assignments
-- Adds to target heat JSON + assigns next open stand
-- Calls `sync_assignments()` on both heats
+- Removes the source `HeatAssignment` row
+- Writes the destination `HeatAssignment` row with the next open stand
 - For dual-run events, mirrors the move across both run_number=1 and run_number=2 heats
 - Commits in a single transaction
 - Checks for gear-sharing conflicts in the destination (warns but does not block)
 
-**There is no scratch/drop mechanism at the heat level.** If a competitor is removed entirely (not moved), you must either:
-1. Manually edit the heat (no UI for "remove without destination")
-2. Regenerate heats for the entire event
-
-**EventResult.status can be set to 'scratched' or 'dnf'** but this does NOT automatically remove the competitor from their heat. The heat JSON and the result status are completely decoupled.
+Scratch and late-entry routes update the normalized roster and `EventResult` together. DNF/DQ
+remain scoring statuses and do not imply a roster removal unless the operator uses Scratch.
 
 #### D. SB/UH alternation logic
 
@@ -134,9 +130,11 @@ See the Flight Builder section below.
 4. Generates new heats from scratch.
 5. Calls `flush()` — does NOT commit. The calling route owns the transaction.
 
-**Important:** Regeneration preserves EventResult data (scores, marks, positions) but destroys all heat assignments. It is safe pre-scoring. Every
-single-event, bulk, and Friday regeneration path now refuses events with
-completed results, so scored rows cannot be orphaned from their heat history.
+**Important:** Regeneration preserves EventResult data (scores, marks, positions) but replaces heat assignments. Every generation call joins the
+tournament schedule-writer lock. Standalone and bulk regeneration refuse any
+event whose heats are already assigned to flights; operators must use Generate
+All / One-Click Generate so heat replacement and flight rebuilding commit as a
+single transaction. Finalized, completed, and scored history is always blocked.
 
 The route (`heats.py:71-135`) wraps this in try/except with `db.session.rollback()` on failure and `db.session.commit()` on success.
 
@@ -145,20 +143,16 @@ The route (`heats.py:71-135`) wraps this in try/except with `db.session.rollback
 | Operation | Safety |
 |-----------|--------|
 | `generate_event_heats()` | `flush()` only — caller commits. Good. |
-| `_generate_all_heats()` in `__init__.py` | Uses `db.session.begin_nested()` per event — savepoint isolation. Excellent. |
-| `generate_heats` route | Single `db.session.commit()` after success, `rollback()` on exception. Good. |
-| `generate_college_heats` route | Single `commit()` after ALL events. If event 15/20 fails, events 1-14 are committed but 15-20 are lost. **Gap:** no per-event savepoint here (unlike `_generate_all_heats`). |
+| `_generate_all_heats()` in `__init__.py` | Uses one savepoint per event, then raises on any non-skippable failure so the owning schedule transaction rolls every generated event back. |
+| `generate_heats` route | Locks the Tournament row, refuses flighted heats, commits once after success, and rolls back on exception. |
+| `generate_college_heats` route | Locks the Tournament row, rejects the entire bulk request before mutation if any selected event is already flighted, and uses one savepoint per event before the final commit. |
 | `move_competitor_between_heats` | Single `commit()` after all moves. Good. |
 
-#### I. Heat.competitors JSON vs HeatAssignment rows
+#### I. HeatAssignment authority
 
-**Heat.competitors (JSON) is the authoritative source.** All heat generation code writes to `Heat.competitors` via `set_competitors()`. After generation, `heat.sync_assignments(event.event_type)` is called to rebuild HeatAssignment rows from the JSON.
-
-`sync_assignments()` (heat.py:111-125):
-1. Deletes all existing HeatAssignment rows for the heat
-2. Creates new rows from `get_competitors()` + `get_stand_assignments()`
-
-**Known divergence risk:** Any code that modifies HeatAssignment directly (without updating Heat.competitors) will cause drift. The sync-check/sync-fix routes (heats.py:305-357) exist to detect and repair this. The validation service also reads HeatAssignment rows, so drift can cause phantom validation failures.
+`HeatAssignment` rows are the only roster store. Generation and all day-of mutations write them
+directly through `Heat.set_roster()` or row-level helpers. The former heat JSON roster columns and
+the sync-check/sync-fix repair path have been removed, so there is no second copy that can drift.
 
 ---
 
@@ -188,17 +182,21 @@ Partnered Axe Throw heats are inserted AFTER flight creation (one per flight, no
 
 #### C. College spillover integration
 
-`integrate_college_spillover_into_flights()` (lines 898-994):
+`integrate_college_spillover_into_flights()`:
 - Chokerman's Race Run 2: all heats placed at end of last flight (show climax).
-- Other spillover events: distributed round-robin across flights with MIN_HEAT_SPACING respect for cross-division competitors.
-- Fallback: if no flight has adequate spacing, place anyway.
+- Repeated integration inserts new spillover before an existing pending Chokerman closing block; completed flight history rejects new placement.
+- Other spillover events: selected only from the current tournament's college events and distributed using saved round-robin or earliest-flight cluster mode.
+- Every candidate is evaluated in the true projected global Saturday order, including both earlier and later appearances of the same namespaced assignment UID.
+- Candidate ranking preserves MIN_HEAT_SPACING first, then avoids new shared-stand conflicts; unavoidable fallbacks minimize conflict count and gap shortfall before applying the mode preference.
+- Newly introduced unavoidable shared-stand conflicts are returned explicitly and surfaced by preflight.
+- Flight rows are locked during integration, existing flight heats are batch-loaded once, and missing, non-positive, or duplicate positions are rejected before mutation.
 - Preserves existing placements (skips heats with non-null `flight_id`).
 
 #### D. Transaction safety
 
-`build_pro_flights()`: deletes all existing flights and heat flight assignments, rebuilds, then calls `db.session.commit()`. This is an all-or-nothing rebuild. **Good.**
+`build_pro_flights()` can still commit when invoked as a standalone service. Every active route that builds the complete Saturday show passes `commit=False` through flight build, relay placement, and college spillover, then commits once after all three phases succeed. A spillover or closer-invariant failure therefore restores the pre-request flight assignments instead of leaving a rebuilt show without mandatory closing heats.
 
-The route layer (`flights.py:91-98`) wraps in try/except but the commit is inside `build_pro_flights` itself — a partial failure after commit would leave inconsistent state. However, since the function deletes first and builds second, a failure mid-build would leave zero flights (not partial), which is recoverable by re-running.
+Background builds use the same single-commit sequence. Operator success messages and build-diff snapshots are emitted only after that commit; failure paths roll back and discard success flashes from the failed attempt.
 
 ---
 
@@ -211,30 +209,24 @@ The only supported day-of competitor movement operation:
 - Validates competitor is in source heat
 - For dual-run events, mirrors move across both runs
 - Assigns next available stand in destination
-- Syncs HeatAssignment rows
+- Writes the normalized HeatAssignment roster rows
 - Checks gear-sharing conflicts (warn only, doesn't block)
 - Single commit
-
-#### heat_sync_check / heat_sync_fix (lines 305-357)
-
-- `sync-check` (GET): returns JSON comparing Heat.competitors JSON against HeatAssignment rows
-- `sync-fix` (POST): rebuilds HeatAssignment from authoritative JSON
 
 ---
 
 ### `models/heat.py` — Data Model
 
 **Heat model** stores:
-- `competitors` (JSON TEXT): ordered list of competitor IDs — **authoritative**
-- `stand_assignments` (JSON TEXT): dict mapping competitor_id → stand_number
 - `flight_id` / `flight_position`: flight membership
 - `locked_by_user_id` / `locked_at`: scoring lock
 - `version_id`: optimistic locking for concurrent edits
 
-**HeatAssignment model** is a normalized mirror:
-- `heat_id`, `competitor_id`, `competitor_type`, `stand_number`
-- Used by validation service for relational queries
-- Must be synced manually via `sync_assignments()`
+**HeatAssignment model** is the authoritative roster:
+- `heat_id`, namespaced `uid`, legacy `competitor_id` / `competitor_type`, and `stand_number`
+- Row order is roster order; `Heat.get_competitors()` and `get_stand_assignments()` render directly from these rows
+- The former heat JSON roster columns have been dropped and are not a fallback store
+- No manual synchronization is required or available
 
 **Flight model** is lightweight:
 - `tournament_id`, `flight_number`, `name`, `status`, `notes`
@@ -249,14 +241,13 @@ The only supported day-of competitor movement operation:
 | Operation | Route/Method | Notes |
 |-----------|-------------|-------|
 | Move competitor between heats | `POST /scheduling/<tid>/event/<eid>/move-competitor` | Mirrors dual-run heats; blocks gear conflicts, completed rosters, capacity, and conflicting scoring locks. |
-| **Scratch competitor from heat** | `POST /scheduling/<tid>/event/<eid>/scratch-competitor` | Removes from heat JSON, frees stand, sets EventResult.status='scratched', cleans gear refs, recalcs positions if scored, mirrors dual-run. Lock check. Audit logged. |
+| **Scratch competitor from heat** | `POST /scheduling/<tid>/event/<eid>/scratch-competitor` | Removes the normalized roster row, frees stand, sets EventResult.status='scratched', cleans gear refs, recalcs positions if scored, mirrors dual-run. Lock check. Audit logged. |
 | **Add late entry to heat** | `POST /scheduling/<tid>/event/<eid>/add-to-heat` | Adds competitor, assigns stand, creates EventResult if missing, re-add of scratched resets to pending + clears derived fields. Blocks completed rosters, conflicting locks, and gear conflicts; mirrors dual-run. Audit logged. |
 | **Delete empty heat** | `POST /scheduling/<tid>/event/<eid>/delete-heat/<hid>` | Validates 0 competitors, blocks any event with a completed heat, then deletes and renumbers the remaining pending heats. Mirrors dual-run delete. Audit logged. |
-| Regenerate heats for one event | `POST /scheduling/<tid>/event/<eid>/generate-heats` | Destroys and rebuilds only an unscored, non-finalized event. Completed-result history is a hard block. |
-| Bulk regenerate college heats | `POST /scheduling/<tid>/generate-college-heats` | All non-completed, non-finalized college events. Per-event savepoint isolation. |
+| Regenerate heats for one event | `POST /scheduling/<tid>/event/<eid>/generate-heats` | Rebuilds only an unscored, non-finalized, unflighted event. Flighted heats require the atomic full-schedule workflow. |
+| Bulk regenerate college heats | `POST /scheduling/<tid>/generate-college-heats` | All non-completed, non-finalized college events. The entire request is rejected before mutation if any target event is flighted. |
 | Rebuild all flights | `POST /scheduling/<tid>/flights/build` | Destroys and rebuilds all flights |
-| Reorder heats within a flight | `POST /scheduling/<tid>/flights/<fid>/reorder` | Drag-and-drop via JSON; rejects an order that puts a later heat ahead of an earlier heat from the same event. |
-| Sync HeatAssignment drift | `POST /scheduling/<tid>/event/<eid>/heats/sync-fix` | Repairs JSON ↔ table divergence |
+| Reorder heats within a flight | `POST /scheduling/<tid>/flights/<fid>/reorder` | Drag-and-drop via JSON before operations start; rejects sequence, stand, closer, and active-flight violations. |
 | Mark flight started/completed | `POST /scheduling/<tid>/flights/<fid>/start` | Sends SMS to competitors in upcoming flights |
 
 ### Day-of Operations NOT Supported
@@ -277,18 +268,35 @@ The only supported day-of competitor movement operation:
 | **Cookie Stack / Standing Block shared stands** | Keep an eight-heat separation whenever another heat is available | The flight builder blocks the close placement while alternatives remain; if only conflicts remain, it deliberately schedules sequentially because a flight has one heat per slot. Heat generation is event-local. |
 | **Event.is_finalized guard on regeneration** | Finalized or scored events should not have heats regenerated | **ENFORCED.** Finalized and completed-result events are hard blocks. |
 | **Heat lock on mutations** | Locked heats should not be mutated by other judges | **ENFORCED** on scratch, add, delete, manual move, and flight-board drag operations. |
-| **Heat.competitors ↔ HeatAssignment sync** | Always consistent | Sync is called after generation, moves, scratch, add. Manual sync-fix route exists. |
+| **HeatAssignment roster authority** | One durable roster source | Generation, move, scratch, add, and scoring readers use normalized rows directly. |
 | **Competitor spacing in college overflow** | College overflow should respect spacing | Implemented in `integrate_college_spillover_into_flights` with MIN_HEAT_SPACING check and fallback. |
 | **Sequential heat order** | Heat 1 before Heat 2 within each event | Enforced in the builder and on both manual flight reorder APIs. |
 | **Show-start lockout on additions** | No late entries after show starts | **ENFORCED** on add-to-heat. Blocked when tournament.status is active for that division. Scratches always allowed. |
+| **Show-start schedule freeze** | Running order, rosters, and flight-generation inputs become race-day record when a flight starts | **ENFORCED** on single/bulk flight reorder, drag move, manual move, late add, empty-heat deletion, saw-block reassignment, gear-sharing heat synchronization, event setup, Friday Feature selection, and Saturday priority. Scratch cascade remains available. Display-order preferences remain separate serialized configuration. |
+| **Destructive registration history guard** | Hard delete must not erase scoring history | College competitor/team deletion locks the tournament and refuses any non-pending result or heat history, plus active operations; judges use scratch instead. |
+| **Birling publication integrity** | Final standings must represent the complete bracket | Publication requires exactly one contiguous placement for every entrant. Once non-pending Birling results exist, bracket reset and regeneration are blocked, and contradictory existing results cannot be overwritten. |
 
 ### Critical Day-of Risks
 
-1. **Regeneration destroys heat assignments but not results**: If heats are regenerated after scoring has begun, scored results could become orphaned. **Mitigated:** finalized and completed-result events are hard-blocked from regeneration.
+1. **Regeneration replaces heat assignments but not results**: Direct regeneration could otherwise detach a published flight or orphan scored history. **Mitigated:** flighted heats require the atomic full-schedule workflow, and finalized/completed/scored history remains immutable.
 
 2. **Undo window race condition**: result undo is revision-bound to the heat and result records. A concurrent change returns a conflict instead of clearing a later edit.
 
-3. **Dual storage creates drift risk**: The Heat.competitors JSON and HeatAssignment table can diverge on crash. Mitigated by sync-fix route.
+3. **Schedule writers are serialized**: SQLite uses a per-tournament process guard; PostgreSQL
+   writers lock and refresh the Tournament row first. Scoring then reloads the locked Heat and
+   Event before checking the posted revision. The form also carries the exact heat-lock instance
+   timestamp, so SQLite primary-key reuse cannot bind an old form to a replacement heat. Roster
+   moves, scratch/undo, CSV result import, throw-offs, event finalization, payout edits,
+   points-cache repair, Partnered Axe state, Birling bracket state, flight order, generation,
+   and event-order config writes use the same parent-first protocol. Birling result publication and
+   standings rebuild commit atomically only after the bracket has a complete placement set; published
+   Birling history blocks reset and regeneration. Generation inputs such as event setup, ability rankings,
+   registration event/partner edits, and college entry import hold that lock through final commit;
+   the Excel service supports caller-owned commit so it cannot release the route lock midway.
+   Direct heat generation refreshes its Event after locking. Background builds receive one immutable
+   flight-sizing and spillover-selection snapshot captured under that lock. Primary generation and
+   rebuild chains also assign saw blocks before their final commit, so a saw-assignment failure rolls
+   back the heat and flight schedule instead of leaving a partially usable show.
 
 ---
 
@@ -345,12 +353,9 @@ Need to completely redo heat assignments for an event?
 5. Remaining heats are renumbered sequentially
 6. **Reprint heat sheets if already distributed to judges**
 
-### Warning: Regeneration After Scoring
+### Regeneration After Scoring
 
-Regenerating heats for an event that has been partially or fully scored will:
-- Delete all existing heat assignments
-- Create new heats with potentially different competitor groupings
-- Leave scored EventResult rows intact but orphaned from the old heat structure
-- Reset `event.is_finalized` to False
-
-**Never regenerate a scored event unless absolutely necessary.** Use scratch, add, and move for day-of adjustments instead.
+Regeneration of a completed, finalized, or scored event is rejected by both the route and service.
+Completed heat placements and EventResult rows remain immutable. Use scratch for no-shows; before
+operations start, use add or move for roster corrections. After a flight starts, manual roster and
+running-order edits are also frozen.

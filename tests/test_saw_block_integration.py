@@ -1244,14 +1244,14 @@ def test_reorder_friday_events_triggers_recompute(app, auth_client):
         assert _used_stands(h_sb) == BLOCK_B
 
 
-def test_hook_failure_does_not_break_primary_mutation(app, auth_client, monkeypatch):
-    """An exception inside trigger_saw_block_recompute must not 500 the route."""
+def test_generation_saw_failure_rolls_back_primary_mutation(
+    app, auth_client, monkeypatch,
+):
+    """Mandatory saw assignment and flight generation are one transaction."""
     from database import db as _db
-
-    # Monkeypatch assign_saw_blocks to raise
     from services import saw_block_assignment as sba
 
-    def _boom(_t):
+    def _boom(_t, **_kwargs):
         raise RuntimeError("synthetic failure for test")
 
     monkeypatch.setattr(sba, "assign_saw_blocks", _boom)
@@ -1269,7 +1269,6 @@ def test_hook_failure_does_not_break_primary_mutation(app, auth_client, monkeypa
         _db.session.commit()
         tid = t.id
 
-    # Primary mutation (build_flights) must succeed despite hook failure
     resp = auth_client.post(
         f"/scheduling/{tid}/flights/build",
         data={"num_flights": "1"},
@@ -1281,4 +1280,46 @@ def test_hook_failure_does_not_break_primary_mutation(app, auth_client, monkeypa
         from models import Flight
 
         flights = Flight.query.filter_by(tournament_id=tid).all()
-        assert len(flights) == 1  # primary mutation committed
+        assert flights == []
+
+    with auth_client.session_transaction() as session:
+        flashes = list(session.get("_flashes", []))
+    assert not any(category == "success" for category, _message in flashes)
+    assert any(category == "error" for category, _message in flashes)
+
+
+def test_optional_hook_failure_does_not_break_event_reorder(
+    app, auth_client, monkeypatch,
+):
+    """A post-commit saw hook failure preserves an event-order mutation."""
+    from database import db as _db
+    from services import saw_block_assignment as sba
+
+    def _boom(_t, **_kwargs):
+        raise RuntimeError("synthetic failure for test")
+
+    monkeypatch.setattr(sba, "assign_saw_blocks", _boom)
+
+    with app.app_context():
+        t = _seed_tournament(_db)
+        first = _seed_saw_event(_db, t, name="Single Buck", event_type="college")
+        second = _seed_saw_event(_db, t, name="Double Buck", event_type="college")
+        _db.session.commit()
+        tid = t.id
+        expected_order = [second.id, first.id]
+
+    resp = auth_client.post(
+        f"/scheduling/{tid}/events/reorder-friday",
+        json={"event_ids": expected_order},
+    )
+    assert resp.status_code == 200
+
+    with app.app_context():
+        from models import Tournament
+
+        tournament = _db.session.get(Tournament, tid)
+        assert tournament.get_schedule_config()["friday_event_order"] == expected_order
+
+    with auth_client.session_transaction() as session:
+        flashes = list(session.get("_flashes", []))
+    assert any(category == "warning" for category, _message in flashes)

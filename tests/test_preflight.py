@@ -103,7 +103,8 @@ def _make_event_result(db_session, event, competitor, status='pending', reviewed
     return result
 
 
-def _make_heat(db_session, event, heat_number=1, run_number=1, flight_id=None):
+def _make_heat(db_session, event, heat_number=1, run_number=1, flight_id=None,
+               flight_position=None):
     """Create and return an empty Heat.
 
     It used to take a `competitor_ids` list and write it straight into the
@@ -125,6 +126,7 @@ def _make_heat(db_session, event, heat_number=1, run_number=1, flight_id=None):
         heat_number=heat_number,
         run_number=run_number,
         flight_id=flight_id,
+        flight_position=flight_position,
     )
     db_session.add(h)
     db_session.flush()
@@ -437,41 +439,659 @@ class TestSaturdayOverflow:
         assert spillover_codes == []
 
 
+class TestMandatoryDaySplitPreflight:
+    """Mandatory Saturday Run 2 participation is checked without UI selection."""
+
+    @pytest.mark.parametrize('empty_selection', (None, []))
+    def test_missing_chokerman_run2_heats_are_blocking_and_actionable(
+            self, db_session, tournament, empty_selection):
+        event = _make_event(
+            db_session, tournament, "Chokerman's Race",
+            event_type='college', gender='M', stand_type='chokerman',
+        )
+        _make_heat(db_session, event, run_number=1)
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(
+            tournament, saturday_college_event_ids=empty_selection,
+        )
+
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'chokerman_run2_missing_heats'
+        )
+        assert issue['severity'] == 'high'
+        assert issue in report['blocking']
+        assert issue['event_id'] == event.id
+        assert issue['expected_run_number'] == 2
+        assert 'Generate All Heats' in issue['detail']
+        assert 'Run 2' in issue['detail']
+        assert report['has_blockers'] is True
+
+    @pytest.mark.parametrize('empty_selection', (None, []))
+    def test_wholly_unassigned_chokerman_run2_is_a_participation_blocker(
+            self, db_session, tournament, empty_selection):
+        event = _make_event(
+            db_session, tournament, "Chokerman's Race",
+            event_type='college', gender='M', stand_type='chokerman',
+        )
+        first = _make_heat(db_session, event, heat_number=1, run_number=2)
+        second = _make_heat(db_session, event, heat_number=2, run_number=2)
+        _make_flight(db_session, tournament)
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(
+            tournament, saturday_college_event_ids=empty_selection,
+        )
+
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'chokerman_run2_not_in_flights'
+        )
+        assert issue in report['blocking']
+        assert issue['heat_ids'] == [first.id, second.id]
+        assert issue['assigned_heat_ids'] == []
+        assert issue['unassigned_heat_ids'] == [first.id, second.id]
+        assert 'Integrate College Spillover' in issue['detail']
+        assert not any(
+            item['code'] == 'chokerman_run2_invalid_closer'
+            for item in report['issues']
+        )
+
+    @pytest.mark.parametrize('empty_selection', (None, []))
+    def test_partially_assigned_chokerman_run2_has_distinct_blocker(
+            self, db_session, tournament, empty_selection):
+        event = _make_event(
+            db_session, tournament, "Chokerman's Race",
+            event_type='college', gender='M', stand_type='chokerman',
+        )
+        flight = _make_flight(db_session, tournament)
+        assigned = _make_heat(
+            db_session, event, heat_number=1, run_number=2,
+            flight_id=flight.id, flight_position=1,
+        )
+        unassigned = _make_heat(
+            db_session, event, heat_number=2, run_number=2,
+        )
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(
+            tournament, saturday_college_event_ids=empty_selection,
+        )
+
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'chokerman_run2_partially_in_flights'
+        )
+        assert issue in report['blocking']
+        assert issue['heat_ids'] == [assigned.id, unassigned.id]
+        assert issue['assigned_heat_ids'] == [assigned.id]
+        assert issue['unassigned_heat_ids'] == [unassigned.id]
+        assert '1 of 2' in issue['detail']
+        assert 'Integrate College Spillover' in issue['detail']
+        assert not any(
+            item['code'] == 'chokerman_run2_invalid_closer'
+            for item in report['issues']
+        )
+
+    @pytest.mark.parametrize('empty_selection', (None, []))
+    def test_complete_chokerman_run2_must_be_final_suffix_of_last_flight(
+            self, db_session, tournament, empty_selection):
+        pro_event = _make_event(db_session, tournament, 'Underhand')
+        chokerman = _make_event(
+            db_session, tournament, "Chokerman's Race",
+            event_type='college', gender='M', stand_type='chokerman',
+        )
+        first_flight = _make_flight(db_session, tournament, flight_number=1)
+        last_flight = _make_flight(db_session, tournament, flight_number=2)
+        _make_heat(
+            db_session, pro_event, heat_number=1,
+            flight_id=first_flight.id, flight_position=1,
+        )
+        closer = _make_heat(
+            db_session, chokerman, heat_number=1, run_number=2,
+            flight_id=last_flight.id, flight_position=1,
+        )
+        trailing = _make_heat(
+            db_session, pro_event, heat_number=2,
+            flight_id=last_flight.id, flight_position=2,
+        )
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(
+            tournament, saturday_college_event_ids=empty_selection,
+        )
+
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'chokerman_run2_invalid_closer'
+        )
+        assert issue in report['blocking']
+        assert issue['heat_ids'] == [closer.id]
+        assert issue['last_flight_id'] == last_flight.id
+        assert 'final suffix of the last flight' in issue['detail']
+        assert 'Rebuild Flights' in issue['detail']
+        assert str(trailing.id) in issue['detail']
+        assert not any(
+            item['code'] in {
+                'chokerman_run2_not_in_flights',
+                'chokerman_run2_partially_in_flights',
+            }
+            for item in report['issues']
+        )
+
+    def test_complete_chokerman_suffix_reports_reversed_heat_order(
+            self, db_session, tournament):
+        chokerman = _make_event(
+            db_session, tournament, "Chokerman's Race",
+            event_type='college', gender='M', stand_type='chokerman',
+        )
+        flight = _make_flight(db_session, tournament, flight_number=1)
+        heat_two = _make_heat(
+            db_session, chokerman, heat_number=2, run_number=2,
+            flight_id=flight.id, flight_position=1,
+        )
+        heat_one = _make_heat(
+            db_session, chokerman, heat_number=1, run_number=2,
+            flight_id=flight.id, flight_position=2,
+        )
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(
+            tournament, saturday_college_event_ids=[],
+        )
+
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'chokerman_run2_invalid_closer'
+        )
+        assert issue in report['blocking']
+        assert issue['title'] == "Chokerman's Race Run 2 heats are out of order"
+        assert 'heat-number order' in issue['detail']
+        assert str(heat_two.id) in issue['detail']
+        assert str(heat_one.id) in issue['detail']
+        assert issue['wrong_flight_heat_ids'] == []
+        assert issue['trailing_heat_ids'] == []
+
+    @pytest.mark.parametrize('empty_selection', (None, []))
+    def test_complete_chokerman_final_suffix_is_clean(
+            self, db_session, tournament, empty_selection):
+        pro_event = _make_event(db_session, tournament, 'Underhand')
+        chokerman = _make_event(
+            db_session, tournament, "Chokerman's Race",
+            event_type='college', gender='M', stand_type='chokerman',
+        )
+        first_flight = _make_flight(db_session, tournament, flight_number=1)
+        last_flight = _make_flight(db_session, tournament, flight_number=2)
+        _make_heat(
+            db_session, pro_event, heat_number=1,
+            flight_id=first_flight.id, flight_position=1,
+        )
+        _make_heat(
+            db_session, pro_event, heat_number=2,
+            flight_id=last_flight.id, flight_position=1,
+        )
+        _make_heat(
+            db_session, chokerman, heat_number=1, run_number=2,
+            flight_id=last_flight.id, flight_position=2,
+        )
+        _make_heat(
+            db_session, chokerman, heat_number=2, run_number=2,
+            flight_id=last_flight.id, flight_position=3,
+        )
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(
+            tournament, saturday_college_event_ids=empty_selection,
+        )
+
+        assert not any(
+            item['code'].startswith('chokerman_run2_')
+            for item in report['issues']
+        )
+
+    @pytest.mark.parametrize('empty_selection', (None, []))
+    def test_speed_climb_run2_is_mandatory_without_explicit_selection(
+            self, db_session, tournament, empty_selection):
+        speed_climb = _make_event(
+            db_session, tournament, 'Speed Climb', event_type='college',
+            gender='F', stand_type='speed_climb',
+        )
+        _make_heat(db_session, speed_climb, run_number=1)
+        run_two = _make_heat(
+            db_session, speed_climb, heat_number=1, run_number=2,
+        )
+        _make_flight(db_session, tournament)
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(
+            tournament, saturday_college_event_ids=empty_selection,
+        )
+
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'spillover_not_in_flights'
+        )
+        assert issue['event_id'] == speed_climb.id
+        assert issue['unassigned_heat_ids'] == [run_two.id]
+        assert '1 heat(s)' in issue['detail']
+
+    @pytest.mark.parametrize('empty_selection', (None, []))
+    def test_no_chokerman_event_does_not_create_false_blocker(
+            self, db_session, tournament, empty_selection):
+        _make_event(db_session, tournament, 'Underhand')
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(
+            tournament, saturday_college_event_ids=empty_selection,
+        )
+
+        assert not any(
+            item['code'].startswith('chokerman_run2_')
+            for item in report['issues']
+        )
+        assert report['has_blockers'] is False
+
+
 # ---------------------------------------------------------------------------
-# Cookie Stack / Standing Block stand conflict
+# Built flight structure
 # ---------------------------------------------------------------------------
 
-class TestStandConflict:
-    """Cookie Stack and Standing Block share stands — warn when both have heats but no flights."""
 
-    def test_both_have_heats_no_flights_warns(self, db_session, tournament):
-        cs_event = _make_event(db_session, tournament, 'Cookie Stack',
-                               stand_type='cookie_stack')
-        sb_event = _make_event(db_session, tournament, 'Standing Block',
-                               stand_type='standing_block')
-        _make_heat(db_session, cs_event)
-        _make_heat(db_session, sb_event)
+class TestBuiltFlightStructure:
+    """Malformed persisted flight order blocks spillover integration."""
+
+    def test_missing_and_non_positive_positions_are_blocking_and_actionable(
+            self, db_session, tournament):
+        event = _make_event(db_session, tournament, 'Underhand')
+        flight = _make_flight(db_session, tournament, flight_number=3)
+        missing = _make_heat(
+            db_session, event, heat_number=1, flight_id=flight.id,
+            flight_position=None,
+        )
+        non_positive = _make_heat(
+            db_session, event, heat_number=2, flight_id=flight.id,
+            flight_position=0,
+        )
 
         from services.preflight import build_preflight_report
         report = build_preflight_report(tournament)
 
-        codes = [i['code'] for i in report['issues']]
-        assert 'stand_conflict_no_flights' in codes
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'invalid_flight_position'
+        )
+        assert issue['severity'] == 'high'
+        assert issue['autofix'] is False
+        assert issue in report['blocking']
+        assert issue['heats'] == [
+            {
+                'flight_id': flight.id,
+                'flight_number': 3,
+                'heat_id': missing.id,
+                'event_id': event.id,
+                'event_name': 'Underhand',
+                'heat_number': 1,
+                'run_number': 1,
+                'flight_position': None,
+                'problem': 'missing',
+            },
+            {
+                'flight_id': flight.id,
+                'flight_number': 3,
+                'heat_id': non_positive.id,
+                'event_id': event.id,
+                'event_name': 'Underhand',
+                'heat_number': 2,
+                'run_number': 1,
+                'flight_position': 0,
+                'problem': 'non_positive',
+            },
+        ]
+        assert f'Flight 3 heat {missing.id}' in issue['detail']
+        assert f'Flight 3 heat {non_positive.id}' in issue['detail']
+        assert 'positive unique position' in issue['detail']
+        assert report['has_blockers'] is True
 
-    def test_both_have_heats_with_flights_no_warning(self, db_session, tournament):
+    def test_duplicate_positions_are_blocking_with_both_heat_details(
+            self, db_session, tournament):
+        from sqlalchemy import inspect
+
+        migrated_uniques = {
+            constraint['name']
+            for constraint in inspect(_db.engine).get_unique_constraints('heats')
+        }
+        if 'uq_heats_flight_position' in migrated_uniques:
+            pytest.skip(
+                'The database now rejects duplicate flight positions before '
+                'preflight can inspect legacy corruption.'
+            )
+
+        event = _make_event(db_session, tournament, 'Single Buck')
+        flight = _make_flight(db_session, tournament, flight_number=2)
+        first = _make_heat(
+            db_session, event, heat_number=4, run_number=1,
+            flight_id=flight.id, flight_position=5,
+        )
+        second = _make_heat(
+            db_session, event, heat_number=2, run_number=2,
+            flight_id=flight.id, flight_position=5,
+        )
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(tournament)
+
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'duplicate_flight_position'
+        )
+        assert issue['severity'] == 'high'
+        assert issue in report['blocking']
+        assert issue['duplicates'] == [{
+            'flight_id': flight.id,
+            'flight_number': 2,
+            'flight_position': 5,
+            'heats': (
+                {
+                    'heat_id': first.id,
+                    'event_id': event.id,
+                    'event_name': 'Single Buck',
+                    'heat_number': 4,
+                    'run_number': 1,
+                },
+                {
+                    'heat_id': second.id,
+                    'event_id': event.id,
+                    'event_name': 'Single Buck',
+                    'heat_number': 2,
+                    'run_number': 2,
+                },
+            ),
+        }]
+        assert f'heats {first.id} and {second.id}' in issue['detail']
+        assert 'Flight 2 position 5' in issue['detail']
+        assert 'assign each heat a positive unique position' in issue['detail']
+
+# ---------------------------------------------------------------------------
+# Physical shared-stand conflicts
+# ---------------------------------------------------------------------------
+
+PHYSICAL_STAND_PAIRS = (
+    ('cookie_stack', 'standing_block'),
+    ('hot_saw', 'stock_saw'),
+    ('saw_hand', 'stock_saw'),
+    ('obstacle_pole', 'speed_climb'),
+)
+
+
+class TestStandConflict:
+    """Preflight distinguishes unbuilt schedules from conflicts already built."""
+
+    @pytest.mark.parametrize(('first_type', 'second_type'), PHYSICAL_STAND_PAIRS)
+    def test_configured_pair_with_heats_no_flights_warns(
+            self, db_session, tournament, first_type, second_type):
+        first = _make_event(
+            db_session, tournament, first_type.replace('_', ' ').title(),
+            stand_type=first_type,
+        )
+        second = _make_event(
+            db_session, tournament, second_type.replace('_', ' ').title(),
+            stand_type=second_type,
+        )
+        _make_heat(db_session, first)
+        _make_heat(db_session, second)
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(tournament)
+
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'stand_conflict_no_flights'
+        )
+        assert issue['severity'] == 'medium'
+        assert issue['pairs'] == [{
+            'stand_types': (first_type, second_type),
+            'event_names': ((first.display_name,), (second.display_name,)),
+            'required_gap': 8,
+        }]
+        assert first.display_name in issue['detail']
+        assert second.display_name in issue['detail']
+        assert 'Rebuild Flights' in issue['detail']
+        assert 'required 8-heat gap' in issue['detail']
+
+    def test_unbuilt_reciprocal_pairs_are_reported_once(
+            self, db_session, tournament):
+        for stand_type in sorted({
+                stand_type
+                for pair in PHYSICAL_STAND_PAIRS
+                for stand_type in pair
+        }):
+            event = _make_event(
+                db_session, tournament, stand_type.replace('_', ' ').title(),
+                stand_type=stand_type,
+            )
+            _make_heat(db_session, event)
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(tournament)
+
+        issues = [
+            item for item in report['issues']
+            if item['code'] == 'stand_conflict_no_flights'
+        ]
+        assert len(issues) == 1
+        reported_pairs = [
+            frozenset(pair['stand_types']) for pair in issues[0]['pairs']
+        ]
+        assert len(reported_pairs) == len(set(reported_pairs))
+        assert set(reported_pairs) == {
+            frozenset(pair) for pair in PHYSICAL_STAND_PAIRS
+        }
+
+    def test_built_conflicting_flight_warns_with_actionable_details(
+            self, db_session, tournament):
         cs_event = _make_event(db_session, tournament, 'Cookie Stack',
                                stand_type='cookie_stack')
         sb_event = _make_event(db_session, tournament, 'Standing Block',
                                stand_type='standing_block')
         flight = _make_flight(db_session, tournament)
-        _make_heat(db_session, cs_event, flight_id=flight.id)
-        _make_heat(db_session, sb_event, flight_id=flight.id)
+        cs_heat = _make_heat(
+            db_session, cs_event, flight_id=flight.id, flight_position=1,
+        )
+        sb_heat = _make_heat(
+            db_session, sb_event, flight_id=flight.id, flight_position=2,
+        )
 
         from services.preflight import build_preflight_report
         report = build_preflight_report(tournament)
 
-        codes = [i['code'] for i in report['issues']]
-        assert 'stand_conflict_no_flights' not in codes
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'stand_conflict_built_flights'
+        )
+        assert issue['severity'] == 'medium'
+        assert issue['autofix'] is False
+        assert issue not in report['blocking']
+        assert issue['conflicts'] == [{
+            'heat_ids': (cs_heat.id, sb_heat.id),
+            'stand_types': ('cookie_stack', 'standing_block'),
+            'events': ('Cookie Stack', 'Standing Block'),
+            'heat_numbers': (1, 1),
+            'run_numbers': (1, 1),
+            'flight_numbers': (1, 1),
+            'flight_positions': (1, 2),
+            'gap': 1,
+            'required_gap': 8,
+        }]
+        assert 'Cookie Stack Heat 1' in issue['detail']
+        assert 'Standing Block Heat 1' in issue['detail']
+        assert 'current gap 1' in issue['detail']
+        assert 'required gap 8' in issue['detail']
+
+    @pytest.mark.parametrize(('first_type', 'second_type'), PHYSICAL_STAND_PAIRS)
+    def test_built_flights_detect_every_configured_physical_stand_pair(
+            self, db_session, tournament, first_type, second_type):
+        first = _make_event(
+            db_session, tournament, first_type.replace('_', ' ').title(),
+            stand_type=first_type,
+        )
+        second = _make_event(
+            db_session, tournament, second_type.replace('_', ' ').title(),
+            stand_type=second_type,
+        )
+        flight = _make_flight(db_session, tournament)
+        _make_heat(
+            db_session, first, flight_id=flight.id, flight_position=1,
+        )
+        _make_heat(
+            db_session, second, flight_id=flight.id, flight_position=2,
+        )
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(tournament)
+
+        issue = next(
+            item for item in report['issues']
+            if item['code'] == 'stand_conflict_built_flights'
+        )
+        detected_pairs = {
+            frozenset(conflict['stand_types'])
+            for conflict in issue['conflicts']
+        }
+        assert frozenset((first_type, second_type)) in detected_pairs
+
+    def test_pair_coverage_matches_shared_flight_builder_configuration(self):
+        from services.flight_builder import _CONFLICTING_STANDS
+
+        configured_pairs = {
+            frozenset((stand_type, conflict_type))
+            for stand_type, conflict_types in _CONFLICTING_STANDS.items()
+            for conflict_type in conflict_types
+        }
+        assert configured_pairs == {
+            frozenset(pair) for pair in PHYSICAL_STAND_PAIRS
+        }
+
+    def test_conflict_free_built_flight_has_no_built_conflict_warning(
+            self, db_session, tournament):
+        cs_event = _make_event(
+            db_session, tournament, 'Cookie Stack', stand_type='cookie_stack',
+        )
+        neutral_event = _make_event(
+            db_session, tournament, 'Underhand', stand_type='underhand',
+        )
+        sb_event = _make_event(
+            db_session, tournament, 'Standing Block',
+            stand_type='standing_block',
+        )
+        flight = _make_flight(db_session, tournament)
+        _make_heat(
+            db_session, cs_event, flight_id=flight.id, flight_position=1,
+        )
+        for position in range(2, 9):
+            _make_heat(
+                db_session, neutral_event, heat_number=position - 1,
+                flight_id=flight.id, flight_position=position,
+            )
+        _make_heat(
+            db_session, sb_event, flight_id=flight.id, flight_position=9,
+        )
+
+        from services.preflight import build_preflight_report
+        report = build_preflight_report(tournament)
+
+        codes = {item['code'] for item in report['issues']}
+        assert 'stand_conflict_built_flights' not in codes
+
+    def test_built_diagnostics_fetch_flight_heats_in_one_query(
+            self, db_session, tournament):
+        from sqlalchemy import event as sqlalchemy_event
+
+        event = _make_event(
+            db_session, tournament, 'Underhand', stand_type='underhand',
+        )
+        for flight_number in range(1, 4):
+            flight = _make_flight(
+                db_session, tournament, flight_number=flight_number,
+            )
+            _make_heat(
+                db_session, event, heat_number=flight_number,
+                flight_id=flight.id, flight_position=1,
+            )
+
+        heat_selects = []
+
+        def capture_heat_select(_connection, _cursor, statement, *args):
+            normalized = ' '.join(statement.lower().split())
+            if (
+                    normalized.startswith('select')
+                    and ' from heats ' in f' {normalized} '
+            ):
+                heat_selects.append(normalized)
+
+        sqlalchemy_event.listen(
+            _db.engine, 'before_cursor_execute', capture_heat_select,
+        )
+        try:
+            from services.preflight import build_preflight_report
+            build_preflight_report(tournament)
+        finally:
+            sqlalchemy_event.remove(
+                _db.engine, 'before_cursor_execute', capture_heat_select,
+            )
+
+        assert len(heat_selects) == 1
+
+    def test_batched_built_heat_order_is_global_and_deterministic(
+            self, db_session, tournament, monkeypatch):
+        event = _make_event(
+            db_session, tournament, 'Underhand', stand_type='underhand',
+        )
+        flight_two = _make_flight(db_session, tournament, flight_number=2)
+        flight_one = _make_flight(db_session, tournament, flight_number=1)
+
+        position_two = _make_heat(
+            db_session, event, heat_number=1, flight_id=flight_one.id,
+            flight_position=2,
+        )
+        null_position = _make_heat(
+            db_session, event, heat_number=2, flight_id=flight_one.id,
+            flight_position=None,
+        )
+        position_one_first = _make_heat(
+            db_session, event, heat_number=3, flight_id=flight_one.id,
+            flight_position=1,
+        )
+        position_three = _make_heat(
+            db_session, event, heat_number=4, flight_id=flight_one.id,
+            flight_position=3,
+        )
+        second_flight_heat = _make_heat(
+            db_session, event, heat_number=5, flight_id=flight_two.id,
+            flight_position=1,
+        )
+
+        captured_order = []
+
+        def capture_order(ordered_heats):
+            captured_order.extend(heat.id for heat in ordered_heats)
+            return []
+
+        from services import flight_builder
+        monkeypatch.setattr(
+            flight_builder, 'find_stand_conflicts', capture_order,
+        )
+
+        from services.preflight import build_preflight_report
+        build_preflight_report(tournament)
+
+        assert captured_order == [
+            position_one_first.id,
+            position_two.id,
+            position_three.id,
+            null_position.id,
+            second_flight_heat.id,
+        ]
 
     def test_only_one_has_heats_no_warning(self, db_session, tournament):
         _make_event(db_session, tournament, 'Cookie Stack', stand_type='cookie_stack')
@@ -751,6 +1371,13 @@ class TestBlockingCodes:
         assert 'self_reference_partner' in BLOCKING_CODES
         assert 'non_reciprocal_partnership' in BLOCKING_CODES
         assert 'invalid_partner_gender' in BLOCKING_CODES
+        assert 'invalid_flight_position' in BLOCKING_CODES
+        assert 'duplicate_flight_position' in BLOCKING_CODES
+        assert 'duplicate_flight_number' in BLOCKING_CODES
+        assert 'chokerman_run2_missing_heats' in BLOCKING_CODES
+        assert 'chokerman_run2_not_in_flights' in BLOCKING_CODES
+        assert 'chokerman_run2_partially_in_flights' in BLOCKING_CODES
+        assert 'chokerman_run2_invalid_closer' in BLOCKING_CODES
         assert 'heat_sync_mismatch' not in BLOCKING_CODES
 
     def test_get_blocking_issues_filters_advisory(self):

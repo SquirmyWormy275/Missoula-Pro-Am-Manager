@@ -179,6 +179,28 @@ def test_within_event_alternation_single_buck(db_session, tournament):
     assert summary["friday_saw_heats"] == 3
 
 
+def test_active_flight_blocks_saw_block_reassignment(db_session, tournament):
+    from services.saw_block_assignment import assign_saw_blocks
+
+    event = _make_event(db_session, tournament, "Single Buck", "college", "M")
+    heat = _make_heat(
+        db_session,
+        event,
+        1,
+        competitors=[1, 2, 3, 4],
+        stand_assignments={"1": 5, "2": 6, "3": 7, "4": 8},
+    )
+    flight = _make_flight(db_session, tournament, 1)
+    flight.status = "in_progress"
+    db_session.flush()
+    assignments_before = _assignments(heat)
+
+    with pytest.raises(RuntimeError, match="blocked after a flight starts"):
+        assign_saw_blocks(tournament)
+
+    assert _assignments(heat) == assignments_before
+
+
 # ---------------------------------------------------------------------------
 # 2. Cross-event continuation on Friday
 # ---------------------------------------------------------------------------

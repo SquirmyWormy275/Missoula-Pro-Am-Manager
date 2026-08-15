@@ -10,10 +10,14 @@ from sqlalchemy.orm.exc import StaleDataError
 import config
 import strings as text
 from database import db
-from models import Event, EventResult, Heat, Tournament
+from models import Event, EventResult, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 
 from . import (
     _build_signup_rows,
@@ -29,6 +33,30 @@ _STALE_HEAT_DATA_FLASH = (
     'Another judge updated this heat in parallel. Reload the page and try again; '
     'your change was not saved.'
 )
+
+
+def _reject_roster_edit_after_flight_start(tournament_id: int, event_id: int):
+    active = (
+        Flight.query
+        .filter(
+            Flight.tournament_id == tournament_id,
+            Flight.status != 'pending',
+        )
+        .order_by(Flight.id)
+        .first()
+    )
+    if active is None:
+        return None
+    flash(
+        'Manual heat-roster changes are blocked after a flight starts. '
+        f'Flight {active.flight_number} is {active.status}.',
+        'error',
+    )
+    return redirect(url_for(
+        'scheduling.event_heats',
+        tournament_id=tournament_id,
+        event_id=event_id,
+    ))
 
 
 def _gear_conflicts_for_heat_change(event: Event, competitor_id: int, target_heats: list[Heat]) -> list[str]:
@@ -158,11 +186,13 @@ def event_heats(tournament_id, event_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/generate-heats', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def generate_heats(tournament_id, event_id):
     """Generate heats for an event using snake draft distribution."""
     event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
+    tournament = lock_tournament_schedule(tournament_id)
 
     # Hard block: finalized events cannot have heats regenerated
     if event.is_finalized:
@@ -223,10 +253,11 @@ def generate_heats(tournament_id, event_id):
         get_last_gender_excluded,
         get_last_unpaired_partnered,
     )
-    from services.saw_block_assignment import trigger_saw_block_recompute
+    from services.saw_block_assignment import assign_saw_blocks
 
     try:
         num_heats = generate_event_heats(event)
+        assign_saw_blocks(tournament, commit=False)
         db.session.commit()
         if _is_list_only_event(event):
             flash(f'{event.display_name} uses signups only (no heats).', 'success')
@@ -259,10 +290,6 @@ def generate_heats(tournament_id, event_id):
                 'Run Preflight Check to fix and regenerate.',
                 'warning'
             )
-        # Recompute hand-saw stand block alternation after heat gen commits.
-        tournament = db.session.get(Tournament, tournament_id)
-        if tournament is not None:
-            trigger_saw_block_recompute(tournament)
     except HeatGenerationSafetyError as exc:
         db.session.rollback()
         flash(str(exc), 'error')
@@ -305,12 +332,25 @@ def generate_heats(tournament_id, event_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/generate-college-heats', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def generate_college_heats(tournament_id):
     """Bulk-generate heats for all closed college events in one click."""
-    from services.heat_generator import generate_event_heats
+    from services.heat_generator import (
+        HeatGenerationSafetyError,
+        assert_heat_regeneration_safe,
+        generate_event_heats,
+    )
 
     tournament = db.get_or_404(Tournament, tournament_id)
+    lock_tournament_schedule(tournament)
     events = tournament.events.filter_by(event_type='college').order_by(Event.name, Event.gender).all()
+
+    try:
+        assert_heat_regeneration_safe(events)
+    except HeatGenerationSafetyError as exc:
+        db.session.rollback()
+        flash(str(exc), 'error')
+        return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
     generated = 0
     skipped_open = 0
@@ -343,11 +383,17 @@ def generate_college_heats(tournament_id):
                 errors += 1
                 flash(f'Error generating heats for {event.display_name}: {exc}', 'error')
 
-    db.session.commit()
-
-    # Recompute hand-saw stand block alternation after bulk college gen.
-    from services.saw_block_assignment import trigger_saw_block_recompute
-    trigger_saw_block_recompute(tournament)
+    try:
+        from services.saw_block_assignment import assign_saw_blocks
+        assign_saw_blocks(tournament, commit=False)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        flash(
+            f'College heat generation failed and was rolled back: {exc}',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
     parts = []
     if generated:
@@ -371,11 +417,18 @@ def generate_college_heats(tournament_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/move-competitor', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def move_competitor_between_heats(tournament_id, event_id):
     """Move a competitor between heats (and mirrored dual run heat, if needed)."""
+    lock_tournament_schedule(tournament_id)
     event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
+    active_flight_redirect = _reject_roster_edit_after_flight_start(
+        tournament_id, event_id,
+    )
+    if active_flight_redirect:
+        return active_flight_redirect
 
     try:
         competitor_id = int(request.form.get('competitor_id', ''))
@@ -586,6 +639,7 @@ def scratch_competitor(tournament_id, event_id):
 # ---------------------------------------------------------------------------
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/add-to-heat', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def add_to_heat(tournament_id, event_id):
     """Add a competitor to an existing heat (day-of late entry).
 
@@ -593,9 +647,15 @@ def add_to_heat(tournament_id, event_id):
     dual-run events. Blocked once the show is active for that division.
     """
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
+    active_flight_redirect = _reject_roster_edit_after_flight_start(
+        tournament_id, event_id,
+    )
+    if active_flight_redirect:
+        return active_flight_redirect
 
     try:
         competitor_id = int(request.form.get('competitor_id', ''))
@@ -794,11 +854,18 @@ def add_to_heat(tournament_id, event_id):
 # ---------------------------------------------------------------------------
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/delete-heat/<int:heat_id>', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def delete_heat(tournament_id, event_id, heat_id):
     """Delete an empty heat and renumber remaining heats."""
+    lock_tournament_schedule(tournament_id)
     event = db.get_or_404(Event, event_id)
     if event.tournament_id != tournament_id:
         abort(404)
+    active_flight_redirect = _reject_roster_edit_after_flight_start(
+        tournament_id, event_id,
+    )
+    if active_flight_redirect:
+        return active_flight_redirect
 
     heat = db.get_or_404(Heat, heat_id)
     if heat.event_id != event.id:
@@ -895,11 +962,13 @@ def delete_heat(tournament_id, event_id, heat_id):
 # ---------------------------------------------------------------------------
 
 @scheduling_bp.route('/<int:tournament_id>/heats/recompute-saw-blocks', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def recompute_saw_blocks(tournament_id):
     """Manually recompute hand-saw stand block assignments for the tournament."""
     from services.saw_block_assignment import assign_saw_blocks
 
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     try:
         summary = assign_saw_blocks(tournament)
         flash(

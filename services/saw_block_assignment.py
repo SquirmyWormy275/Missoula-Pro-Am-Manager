@@ -29,7 +29,11 @@ from __future__ import annotations
 import logging
 
 from database import db
-from models import Heat, Tournament
+from models import Flight, Heat, Tournament
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 from services.schedule_builder import (
     get_friday_ordered_heats,
     get_saturday_ordered_heats,
@@ -42,7 +46,8 @@ BLOCK_B: list[int] = [5, 6, 7, 8]
 SAW_STAND_TYPE = "saw_hand"
 
 
-def assign_saw_blocks(tournament: Tournament) -> dict:
+@serialize_sqlite_schedule_writer
+def assign_saw_blocks(tournament: Tournament, *, commit: bool = True) -> dict:
     """Recompute and persist hand-saw stand block assignments for every
     hand-saw heat in the tournament.
 
@@ -50,7 +55,9 @@ def assign_saw_blocks(tournament: Tournament) -> dict:
     Block B at each hand-saw heat encountered. Skips non-saw heats while
     preserving alternation state. Day boundary resets to Block A.
 
-    Commits once at the end. Rolls back on any exception and re-raises.
+    Commits once at the end by default. With ``commit=False``, flushes into
+    the caller-owned schedule transaction. Rolls back on any exception and
+    re-raises.
 
     Returns:
         {
@@ -61,6 +68,21 @@ def assign_saw_blocks(tournament: Tournament) -> dict:
             'heats_preserved': int,
         }
     """
+    tournament = lock_tournament_schedule(tournament)
+    active_flight = (
+        Flight.query
+        .filter(
+            Flight.tournament_id == tournament.id,
+            Flight.status != 'pending',
+        )
+        .order_by(Flight.id)
+        .first()
+    )
+    if active_flight is not None:
+        raise RuntimeError(
+            'Saw-block recomputation is blocked after a flight starts; '
+            f'Flight {active_flight.flight_number} is {active_flight.status}.'
+        )
     summary = {
         "friday_saw_heats": 0,
         "saturday_saw_heats": 0,
@@ -104,7 +126,10 @@ def assign_saw_blocks(tournament: Tournament) -> dict:
                     summary["heats_unchanged"] += 1
             block = BLOCK_B if block is BLOCK_A else BLOCK_A
 
-        db.session.commit()
+        if commit:
+            db.session.commit()
+        else:
+            db.session.flush()
     except Exception:
         db.session.rollback()
         raise
@@ -218,10 +243,9 @@ def remap_heat_to_block(heat: Heat, target_block: list[int]) -> bool:
 def trigger_saw_block_recompute(tournament: Tournament) -> dict | None:
     """Route-hook wrapper: call assign_saw_blocks, log result, flash on failure.
 
-    Use this inside route handlers after the primary commit so a saw-block
-    failure cannot roll back the route's real work. On exception: logs,
-    flashes a warning, and returns None. On success: logs summary and
-    returns the summary dict.
+    Use this for optional follow-up maintenance. Schedule generation uses
+    ``assign_saw_blocks(..., commit=False)`` before its owning commit so this
+    mandatory field assignment is atomic with the generated schedule.
     """
     from flask import current_app, flash
 

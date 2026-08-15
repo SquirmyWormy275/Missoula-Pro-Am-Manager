@@ -82,6 +82,13 @@ h5i6j7k8l9m0  (schedule_config on tournaments)
 
 Run `flask db history` to confirm the full chain against the target database.
 
+The unique-flight-position migration (`z5d6e7f8a9b0`) acquires PostgreSQL
+`SHARE ROW EXCLUSIVE` locks on `flights` and `heats` before it scans or repairs
+historical rows. Existing application schedule writers wait while that migration
+runs, preventing a duplicate flight number or flight position from appearing
+between validation and constraint creation. Plan the deploy as a brief schedule-
+write maintenance window for databases with substantial flight history.
+
 ---
 
 ## 4. Data Migration (SQLite → PostgreSQL)

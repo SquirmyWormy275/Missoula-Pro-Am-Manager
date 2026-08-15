@@ -177,6 +177,27 @@ def _seed_with_flights(session, with_relay_event=True, with_teams=False, status=
     return t, pros
 
 
+def _add_chokerman(session, tournament, heat_count=2):
+    from models import Event
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Chokerman's Race",
+        event_type="college",
+        gender="M",
+        scoring_type="time",
+        scoring_order="lowest_wins",
+        stand_type="chokerman",
+        requires_dual_runs=True,
+    )
+    session.add(event)
+    session.flush()
+    for heat_number in range(1, heat_count + 1):
+        _make_heat(session, event, heat_number, run_number=1)
+        _make_heat(session, event, heat_number, run_number=2)
+    return event
+
+
 # ---------------------------------------------------------------------------
 # Placement behavior
 # ---------------------------------------------------------------------------
@@ -296,6 +317,85 @@ class TestRelayPlacement:
         relay_event = Event.query.filter_by(tournament_id=t.id, name='Pro-Am Relay').one()
         assert Heat.query.filter_by(event_id=relay_event.id).count() == 1
 
+    @pytest.mark.parametrize('flight_status', ['in_progress', 'completed'])
+    def test_active_or_completed_flight_rejects_new_relay_without_mutation(
+        self, db_session, flight_status
+    ):
+        from models import Event, Flight, Heat
+        from services.flight_builder import (
+            FlightRebuildSafetyError,
+            integrate_proam_relay_into_final_flight,
+        )
+
+        t, _ = _seed_with_flights(db_session, with_relay_event=True, with_teams=True)
+        last_flight = (
+            Flight.query.filter_by(tournament_id=t.id)
+            .order_by(Flight.flight_number.desc())
+            .first()
+        )
+        last_flight.status = flight_status
+        before = [
+            (heat.id, heat.flight_id, heat.flight_position)
+            for heat in Heat.query.join(Flight).filter(
+                Flight.tournament_id == t.id
+            ).order_by(Heat.id).all()
+        ]
+        db_session.flush()
+
+        with pytest.raises(FlightRebuildSafetyError, match='must be pending'):
+            integrate_proam_relay_into_final_flight(t, commit=False)
+
+        after = [
+            (heat.id, heat.flight_id, heat.flight_position)
+            for heat in Heat.query.join(Flight).filter(
+                Flight.tournament_id == t.id
+            ).order_by(Heat.id).all()
+        ]
+        relay_event = Event.query.filter_by(
+            tournament_id=t.id, name='Pro-Am Relay'
+        ).one()
+        assert after == before
+        assert Heat.query.filter_by(event_id=relay_event.id).count() == 0
+
+    @pytest.mark.parametrize('heat_status', ['in_progress', 'completed'])
+    def test_active_or_completed_flighted_heat_rejects_new_relay_without_mutation(
+        self, db_session, heat_status
+    ):
+        from models import Event, Flight, Heat
+        from services.flight_builder import (
+            FlightRebuildSafetyError,
+            integrate_proam_relay_into_final_flight,
+        )
+
+        t, _ = _seed_with_flights(db_session, with_relay_event=True, with_teams=True)
+        protected_heat = (
+            Heat.query.join(Flight)
+            .filter(Flight.tournament_id == t.id)
+            .order_by(Flight.flight_number.desc(), Heat.flight_position.desc())
+            .first()
+        )
+        protected_heat.status = heat_status
+        before = (
+            protected_heat.id,
+            protected_heat.flight_id,
+            protected_heat.flight_position,
+        )
+        db_session.flush()
+
+        with pytest.raises(FlightRebuildSafetyError, match='flighted heats must be pending'):
+            integrate_proam_relay_into_final_flight(t, commit=False)
+
+        db_session.refresh(protected_heat)
+        relay_event = Event.query.filter_by(
+            tournament_id=t.id, name='Pro-Am Relay'
+        ).one()
+        assert (
+            protected_heat.id,
+            protected_heat.flight_id,
+            protected_heat.flight_position,
+        ) == before
+        assert Heat.query.filter_by(event_id=relay_event.id).count() == 0
+
 
 # ---------------------------------------------------------------------------
 # Chain ordering — relay lands BEFORE Chokerman (locked decision #4)
@@ -316,21 +416,7 @@ class TestRelayVsChokermanOrdering:
         # Add a Chokerman college event with Run 2 heats.
         from models import Event
 
-        chokerman = Event(
-            tournament_id=t.id,
-            name="Chokerman's Race",
-            event_type="college",
-            gender="M",
-            scoring_type="time",
-            scoring_order="lowest_wins",
-            stand_type="chokerman",
-            requires_dual_runs=True,
-        )
-        db_session.add(chokerman)
-        db_session.flush()
-        for n in range(1, 3):
-            _make_heat(db_session, chokerman, n, run_number=1)
-            _make_heat(db_session, chokerman, n, run_number=2)
+        chokerman = _add_chokerman(db_session, t)
 
         # Relay FIRST, then spillover — same order as production chain.
         integrate_proam_relay_into_final_flight(t, commit=False)
@@ -366,6 +452,146 @@ class TestRelayVsChokermanOrdering:
             f"Chokerman must close the show. Got relay positions {relay_positions}, "
             f"chokerman positions {chokerman_positions}."
         )
+
+    def test_relay_inserts_before_suffix_when_spillover_ran_first(self, db_session):
+        from models import Event, Flight, Heat
+        from services.flight_builder import (
+            integrate_college_spillover_into_flights,
+            integrate_proam_relay_into_final_flight,
+            validate_chokerman_closer_invariant,
+        )
+
+        t, _ = _seed_with_flights(db_session, with_relay_event=True, with_teams=True)
+        chokerman = _add_chokerman(db_session, t)
+
+        integrate_college_spillover_into_flights(t, college_event_ids=[], commit=False)
+        result = integrate_proam_relay_into_final_flight(t, commit=False)
+
+        last_flight = (
+            Flight.query.filter_by(tournament_id=t.id)
+            .order_by(Flight.flight_number.desc())
+            .first()
+        )
+        ordered = (
+            Heat.query.filter_by(flight_id=last_flight.id)
+            .order_by(Heat.flight_position, Heat.id)
+            .all()
+        )
+        relay_event = Event.query.filter_by(
+            tournament_id=t.id, name='Pro-Am Relay'
+        ).one()
+        relay_index = next(
+            index for index, heat in enumerate(ordered)
+            if heat.event_id == relay_event.id
+        )
+        first_chokerman_index = next(
+            index for index, heat in enumerate(ordered)
+            if heat.event_id == chokerman.id and heat.run_number == 2
+        )
+
+        assert result['placed'] is True
+        assert relay_index + 1 == first_chokerman_index
+        assert [heat.flight_position for heat in ordered] == list(
+            range(1, len(ordered) + 1)
+        )
+        validate_chokerman_closer_invariant(t)
+
+    def test_relay_rerun_inserts_immediately_before_pending_chokerman_suffix(
+        self, db_session
+    ):
+        from models import Event, Flight, Heat
+        from services.flight_builder import (
+            integrate_college_spillover_into_flights,
+            integrate_proam_relay_into_final_flight,
+            validate_chokerman_closer_invariant,
+        )
+
+        t, _ = _seed_with_flights(db_session, with_relay_event=True, with_teams=True)
+        chokerman = _add_chokerman(db_session, t)
+
+        integrate_proam_relay_into_final_flight(t, commit=False)
+        integrate_college_spillover_into_flights(t, college_event_ids=[], commit=False)
+        rerun = integrate_proam_relay_into_final_flight(t, commit=False)
+
+        last_flight = (
+            Flight.query.filter_by(tournament_id=t.id)
+            .order_by(Flight.flight_number.desc())
+            .first()
+        )
+        ordered = (
+            Heat.query.filter_by(flight_id=last_flight.id)
+            .order_by(Heat.flight_position, Heat.id)
+            .all()
+        )
+        relay_event = Event.query.filter_by(
+            tournament_id=t.id, name='Pro-Am Relay'
+        ).one()
+        relay_indexes = [
+            index for index, heat in enumerate(ordered)
+            if heat.event_id == relay_event.id
+        ]
+        chokerman_indexes = [
+            index for index, heat in enumerate(ordered)
+            if heat.event_id == chokerman.id and heat.run_number == 2
+        ]
+
+        assert rerun['placed'] is True
+        assert len(relay_indexes) == 1
+        assert relay_indexes[0] + 1 == min(chokerman_indexes)
+        assert [heat.flight_position for heat in ordered] == list(
+            range(1, len(ordered) + 1)
+        )
+        validate_chokerman_closer_invariant(t)
+
+    def test_relay_then_spillover_chain_is_stable_when_run_twice(self, db_session):
+        from models import Event, Flight, Heat
+        from services.flight_builder import (
+            integrate_college_spillover_into_flights,
+            integrate_proam_relay_into_final_flight,
+            validate_chokerman_closer_invariant,
+        )
+
+        t, _ = _seed_with_flights(db_session, with_relay_event=True, with_teams=True)
+        chokerman = _add_chokerman(db_session, t)
+
+        def run_chain():
+            integrate_proam_relay_into_final_flight(t, commit=False)
+            integrate_college_spillover_into_flights(
+                t, college_event_ids=[], commit=False
+            )
+            last_flight = (
+                Flight.query.filter_by(tournament_id=t.id)
+                .order_by(Flight.flight_number.desc())
+                .first()
+            )
+            ordered = (
+                Heat.query.filter_by(flight_id=last_flight.id)
+                .order_by(Heat.flight_position, Heat.id)
+                .all()
+            )
+            return [
+                (
+                    heat.event.name,
+                    heat.heat_number,
+                    heat.run_number,
+                    heat.flight_position,
+                )
+                for heat in ordered
+            ]
+
+        first = run_chain()
+        second = run_chain()
+
+        relay_event = Event.query.filter_by(
+            tournament_id=t.id, name='Pro-Am Relay'
+        ).one()
+        assert second == first
+        assert Heat.query.filter_by(event_id=relay_event.id).count() == 1
+        assert second[-2:] == [
+            (chokerman.name, 1, 2, second[-2][3]),
+            (chokerman.name, 2, 2, second[-1][3]),
+        ]
+        validate_chokerman_closer_invariant(t)
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,10 @@ from models import Event, Flight, Heat, HeatAssignment, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 
 from . import (
     _build_assignment_details,
@@ -29,6 +33,7 @@ from . import (
     _signed_up_competitors,
     scheduling_bp,
 )
+from .spillover_feedback import flash_spillover_result
 
 
 def _snapshot_flights(tournament_id: int) -> dict:
@@ -37,6 +42,17 @@ def _snapshot_flights(tournament_id: int) -> dict:
     for fl in Flight.query.filter_by(tournament_id=tournament_id).all():
         snapshot[fl.flight_number] = len(fl.get_heats_ordered())
     return snapshot
+
+
+def _discard_success_flashes_since(checkpoint: int) -> None:
+    """Remove success messages emitted by work that was rolled back."""
+    flashes = list(session.get('_flashes', []))
+    if len(flashes) <= checkpoint:
+        return
+    session['_flashes'] = flashes[:checkpoint] + [
+        item for item in flashes[checkpoint:] if item[0] != 'success'
+    ]
+    session.modified = True
 
 
 def _resolve_num_flights_from_form(tournament, form):
@@ -106,9 +122,10 @@ def _resolve_num_flights_from_form(tournament, form):
             tournament, raw_mode, target_minutes, minutes_per_heat,
             form_num_flights if form_num_flights >= FLIGHT_COUNT_MIN else FLIGHT_SIZING_DEFAULTS['num_flights'],
         )
-        db.session.commit()
+        db.session.flush()
     except Exception:
         db.session.rollback()
+        raise
 
     return resolved
 
@@ -116,20 +133,22 @@ def _resolve_num_flights_from_form(tournament, form):
 def _handle_event_list_post(tournament, saturday_college_event_ids, generate_event_heats, build_pro_flights, integrate_college_spillover_into_flights):
     """Handle POST actions for event_list: generate_all, rebuild_flights, integrate_spillover.
 
-    Wraps each multi-step operation in a try/except so a failure in one step rolls
-    back that step without corrupting the whole session (heat generation already
-    commits per-event; flight building commits at the end of build_pro_flights).
+    The active generate/rebuild pipelines flush each scheduling phase and commit
+    only after flight build, relay placement, and college spillover all succeed.
     """
-    from services.saw_block_assignment import trigger_saw_block_recompute
+    from services.saw_block_assignment import assign_saw_blocks
 
     action = request.form.get('action', '')
     tournament_id = tournament.id
 
     from services.flight_builder import integrate_proam_relay_into_final_flight
 
+    if action in {'generate_all', 'rebuild_flights', 'integrate_spillover'}:
+        tournament = lock_tournament_schedule(tournament)
     num_flights_override = _resolve_num_flights_from_form(tournament, request.form)
 
     if action == 'generate_all':
+        flash_checkpoint = len(session.get('_flashes', []))
         try:
             _generate_all_heats(tournament, generate_event_heats)
             raw_sizing_mode = (request.form.get('flight_sizing_mode') or '').strip().lower()
@@ -137,80 +156,137 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
                 from .flights import _resolve_num_flights_from_persisted_config
                 num_flights_override = _resolve_num_flights_from_persisted_config(tournament)
             pre_snap = _snapshot_flights(tournament_id)
-            flights = _build_pro_flights_if_possible(tournament, build_pro_flights, num_flights=num_flights_override)
+            flights = _build_pro_flights_if_possible(
+                tournament,
+                build_pro_flights,
+                num_flights=num_flights_override,
+                commit=False,
+            )
+            relay_result = None
+            integration = None
+            build_diff = None
             if flights is not None:
-                flash(f'Built {flights} pro flight(s).', 'success')
                 # Phase 4: relay BEFORE spillover so Chokerman Run 2 closes.
-                relay_result = integrate_proam_relay_into_final_flight(tournament)
-                if relay_result.get('placed'):
-                    flash('Pro-Am Relay placed in the final flight.', 'success')
-                integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
-                if integration['integrated_heats'] > 0:
-                    db.session.commit()
-                    flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
+                relay_result = integrate_proam_relay_into_final_flight(
+                    tournament, commit=False,
+                )
+                integration = integrate_college_spillover_into_flights(
+                    tournament, saturday_college_event_ids, commit=False,
+                )
                 post_snap = _snapshot_flights(tournament_id)
-                session[f'build_diff_{tournament_id}'] = {
+                build_diff = {
                     'before_flight_count': len(pre_snap),
                     'after_flight_count': len(post_snap),
                     'total_heats': sum(post_snap.values()),
                 }
-                session.modified = True
-            trigger_saw_block_recompute(tournament)
-            invalidate_tournament_caches(tournament_id)
+            assign_saw_blocks(tournament, commit=False)
+            db.session.commit()
         except Exception as exc:
             db.session.rollback()
+            _discard_success_flashes_since(flash_checkpoint)
             flash(f'Heat/flight generation failed and was rolled back: {exc}', 'error')
+        else:
+            try:
+                if flights is not None:
+                    flash(f'Built {flights} pro flight(s).', 'success')
+                    if relay_result.get('placed'):
+                        flash('Pro-Am Relay placed in the final flight.', 'success')
+                    flash_spillover_result(integration)
+                    session[f'build_diff_{tournament_id}'] = build_diff
+                    session.modified = True
+                invalidate_tournament_caches(tournament_id)
+            except Exception as exc:
+                flash(
+                    f'Schedule was saved, but follow-up housekeeping failed: {exc}',
+                    'warning',
+                )
 
     elif action == 'rebuild_flights':
+        flash_checkpoint = len(session.get('_flashes', []))
         try:
             pre_snap = _snapshot_flights(tournament_id)
-            flights = _build_pro_flights_if_possible(tournament, build_pro_flights, num_flights=num_flights_override)
+            flights = _build_pro_flights_if_possible(
+                tournament,
+                build_pro_flights,
+                num_flights=num_flights_override,
+                commit=False,
+            )
+            relay_result = None
+            integration = None
+            build_diff = None
             if flights is not None:
-                flash(f'Rebuilt {flights} pro flight(s).', 'success')
-                relay_result = integrate_proam_relay_into_final_flight(tournament)
-                if relay_result.get('placed'):
-                    flash('Pro-Am Relay placed in the final flight.', 'success')
-                integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
-                if integration['integrated_heats'] > 0:
-                    db.session.commit()
-                    flash(f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.", 'success')
+                relay_result = integrate_proam_relay_into_final_flight(
+                    tournament, commit=False,
+                )
+                integration = integrate_college_spillover_into_flights(
+                    tournament, saturday_college_event_ids, commit=False,
+                )
                 post_snap = _snapshot_flights(tournament_id)
-                session[f'build_diff_{tournament_id}'] = {
+                build_diff = {
                     'before_flight_count': len(pre_snap),
                     'after_flight_count': len(post_snap),
                     'total_heats': sum(post_snap.values()),
                 }
-                session.modified = True
-            trigger_saw_block_recompute(tournament)
-            invalidate_tournament_caches(tournament_id)
+            assign_saw_blocks(tournament, commit=False)
+            db.session.commit()
         except Exception as exc:
             db.session.rollback()
+            _discard_success_flashes_since(flash_checkpoint)
             flash(f'Flight rebuild failed and was rolled back: {exc}', 'error')
+        else:
+            try:
+                if flights is not None:
+                    flash(f'Rebuilt {flights} pro flight(s).', 'success')
+                    if relay_result.get('placed'):
+                        flash('Pro-Am Relay placed in the final flight.', 'success')
+                    flash_spillover_result(integration)
+                    session[f'build_diff_{tournament_id}'] = build_diff
+                    session.modified = True
+                invalidate_tournament_caches(tournament_id)
+            except Exception as exc:
+                flash(
+                    f'Schedule was saved, but follow-up housekeeping failed: {exc}',
+                    'warning',
+                )
 
     elif action == 'integrate_spillover':
+        flash_checkpoint = len(session.get('_flashes', []))
         try:
-            relay_result = integrate_proam_relay_into_final_flight(tournament)
-            if relay_result.get('placed'):
-                flash('Pro-Am Relay placed in the final flight.', 'success')
-            integration = integrate_college_spillover_into_flights(tournament, saturday_college_event_ids)
+            relay_result = integrate_proam_relay_into_final_flight(
+                tournament, commit=False,
+            )
+            integration = integrate_college_spillover_into_flights(
+                tournament, saturday_college_event_ids, commit=False,
+            )
+            assign_saw_blocks(tournament, commit=False)
             db.session.commit()
-            flash(integration['message'], 'info')
-            if integration['integrated_heats'] > 0:
-                flash(f"Integrated {integration['integrated_heats']} heat(s) into flights.", 'success')
-            trigger_saw_block_recompute(tournament)
-            invalidate_tournament_caches(tournament_id)
         except Exception as exc:
             db.session.rollback()
-            flash(f'Spillover integration failed: {exc}', 'error')
+            _discard_success_flashes_since(flash_checkpoint)
+            flash(f'Spillover integration failed and was rolled back: {exc}', 'error')
+        else:
+            try:
+                if relay_result.get('placed'):
+                    flash('Pro-Am Relay placed in the final flight.', 'success')
+                flash_spillover_result(integration)
+                invalidate_tournament_caches(tournament_id)
+            except Exception as exc:
+                flash(
+                    f'Spillover was saved, but follow-up housekeeping failed: {exc}',
+                    'warning',
+                )
 
 
 @scheduling_bp.route('/<int:tournament_id>/events', methods=['GET', 'POST'])
+@serialize_sqlite_schedule_writer
 def event_list(tournament_id):
     """Unified Events & Schedule page — heat status, schedule options, generation actions."""
     from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
     from services.heat_generator import generate_event_heats
 
     tournament = db.get_or_404(Tournament, tournament_id)
+    if request.method == 'POST':
+        tournament = lock_tournament_schedule(tournament)
     session_key = f'schedule_options_{tournament_id}'
 
     all_pro = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
@@ -224,7 +300,10 @@ def event_list(tournament_id):
         saturday_college_event_ids = [int(i) for i in saved.get('saturday_college_event_ids', [])]
         _handle_event_list_post(
             tournament, saturday_college_event_ids,
-            generate_event_heats, build_pro_flights,
+            lambda event: generate_event_heats(
+                event, allow_flight_replacement=True,
+            ),
+            build_pro_flights,
             integrate_college_spillover_into_flights,
         )
         return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
@@ -300,6 +379,7 @@ def event_list(tournament_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])
+@serialize_sqlite_schedule_writer
 def setup_events(tournament_id):
     """Configure events for the tournament."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -308,6 +388,20 @@ def setup_events(tournament_id):
     pro_events = [_with_field_key(e) for e in config.PRO_EVENTS]
 
     if request.method == 'POST':
+        tournament = lock_tournament_schedule(tournament)
+        active_flight = Flight.query.filter(
+            Flight.tournament_id == tournament_id,
+            Flight.status != 'pending',
+        ).first()
+        if active_flight is not None:
+            flash(
+                'Event configuration is frozen after a flight starts.',
+                'error',
+            )
+            return redirect(url_for(
+                'scheduling.setup_events',
+                tournament_id=tournament_id,
+            ))
         action_scope = request.form.get('action_scope', 'both')  # 'college', 'pro', or 'both'
 
         if action_scope in {'college', 'both'}:
@@ -606,10 +700,12 @@ def day_schedule(tournament_id):
 # ---------------------------------------------------------------------------
 
 @scheduling_bp.route('/<int:tournament_id>/events/reorder-friday', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def reorder_friday_events(tournament_id):
     """Save custom Friday event display order. Expects JSON {event_ids: [int, ...]}."""
     from flask import jsonify
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     try:
         data = request.get_json(force=True)
         event_ids = [int(eid) for eid in data.get('event_ids', [])]
@@ -630,10 +726,12 @@ def reorder_friday_events(tournament_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/reorder-saturday', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def reorder_saturday_events(tournament_id):
     """Save custom Saturday event display order (fallback mode). Expects JSON {event_ids: [int, ...]}."""
     from flask import jsonify
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     try:
         data = request.get_json(force=True)
         event_ids = [int(eid) for eid in data.get('event_ids', [])]
@@ -650,6 +748,7 @@ def reorder_saturday_events(tournament_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/events/reset-order', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def reset_event_order(tournament_id):
     """Remove custom event ordering, reverting to config defaults.
 
@@ -658,6 +757,7 @@ def reset_event_order(tournament_id):
     """
     from flask import jsonify
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     cfg = tournament.get_schedule_config()
     try:
         data = request.get_json(force=True) or {}
@@ -733,7 +833,12 @@ def _day_schedule_legacy(tournament_id):
                     'success'
                 )
         elif action == 'generate_all':
-            _generate_all_heats(tournament, generate_event_heats)
+            _generate_all_heats(
+                tournament,
+                lambda event: generate_event_heats(
+                    event, allow_flight_replacement=True,
+                ),
+            )
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
                 flash(f'Built {flights} pro flight(s).', 'success')
@@ -812,10 +917,28 @@ def _build_event_progress(event: Event, entrant_count: int) -> dict:
 # ---------------------------------------------------------------------------
 
 @scheduling_bp.route('/<int:tournament_id>/college/saturday-priority', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def apply_saturday_priority(tournament_id):
     """Re-number college event heats so COLLEGE_SATURDAY_PRIORITY_DEFAULT events run first."""
     import json as _json
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
+
+    active_flight = Flight.query.filter(
+        Flight.tournament_id == tournament_id,
+        Flight.status != 'pending',
+    ).first()
+    historical_heat = Heat.query.join(Event).filter(
+        Event.tournament_id == tournament_id,
+        Event.event_type == 'college',
+        Heat.status != 'pending',
+    ).first()
+    if active_flight is not None or historical_heat is not None:
+        flash(
+            'Saturday priority cannot renumber heats after tournament operations start.',
+            'error',
+        )
+        return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
 
     # Load override file if present, else use default
     order_path = _os.path.join('instance', f'saturday_priority_{tournament_id}.json')

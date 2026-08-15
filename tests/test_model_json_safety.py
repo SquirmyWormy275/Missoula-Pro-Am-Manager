@@ -221,6 +221,24 @@ class TestHeatLocking:
         assert h.is_locked() is True
         assert h.locked_by_user_id == u1.id
 
+    def test_acquired_lock_survives_database_roundtrip(
+            self, db_session, tournament, users):
+        from models.heat import Heat
+
+        u1, _u2 = users
+        event = make_event(db_session, tournament, 'Persisted Lock Test')
+        heat = make_heat(db_session, event)
+        db_session.flush()
+
+        assert heat.acquire_lock(user_id=u1.id) is True
+        heat_id = heat.id
+        db_session.flush()
+        db_session.expire_all()
+
+        persisted = db_session.get(Heat, heat_id)
+        assert persisted.locked_at.tzinfo is None
+        assert persisted.is_locked() is True
+
     def test_release_lock(self, db_session, tournament, users):
         u1, u2 = users
         e = make_event(db_session, tournament, 'Release Test')

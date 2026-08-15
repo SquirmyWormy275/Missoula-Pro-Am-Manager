@@ -14,8 +14,19 @@ from models import Event, EventResult, Heat
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _testing_mode_enabled() -> bool:
+    """Allow legacy unit forms to omit the production heat-instance token."""
+    from flask import current_app
+
+    return bool(current_app.testing)
 
 
 def _normalize_competitor_ids(competitor_ids: list[object]) -> list[int]:
@@ -170,6 +181,7 @@ def _parse_dual_timer(
     return (t1, t2, None)
 
 
+@serialize_sqlite_schedule_writer
 def save_heat_results_submission(
     *,
     tournament_id: int,
@@ -178,6 +190,59 @@ def save_heat_results_submission(
     form_data: Mapping[str, object],
     judge_user_id: int | None,
 ) -> dict:
+    # Scoring and schedule rebuilds share this parent lock. A rebuild that
+    # starts second must observe the completed heat and fail closed instead of
+    # clearing the placement while the judge is saving it.
+    original_heat_id = heat.id
+    original_event_id = event.id
+    lock_tournament_schedule(tournament_id)
+    heat = (
+        Heat.query
+        .filter_by(id=original_heat_id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    event = (
+        Event.query
+        .filter_by(id=original_event_id, tournament_id=tournament_id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if heat is None or event is None or heat.event_id != event.id:
+        return {
+            'ok': False,
+            'category': 'warning',
+            'message': (
+                'This heat was replaced while the schedule was being rebuilt. '
+                'Reload the current schedule before entering results.'
+            ),
+            'redirect_kind': 'event_results',
+            'redirect_event_id': original_event_id,
+            'redirect_heat_id': original_heat_id,
+            'status_code': 409,
+        }
+
+    posted_identity = form_data.get('heat_identity')
+    current_identity = (
+        heat.locked_at.isoformat(timespec='microseconds')
+        if heat.locked_at is not None else None
+    )
+    if posted_identity is not None or not _testing_mode_enabled():
+        if not posted_identity or posted_identity != current_identity:
+            return {
+                'ok': False,
+                'category': 'warning',
+                'message': (
+                    'This scoring form belongs to an older heat instance. '
+                    'Reload the current heat before entering results.'
+                ),
+                'redirect_kind': 'heat_entry',
+                'redirect_event_id': event.id,
+                'redirect_heat_id': heat.id,
+                'status_code': 409,
+            }
     competitor_ids = _normalize_competitor_ids(heat.get_competitors())
     posted_version = _form_int(form_data, 'heat_version')
     if posted_version is None or posted_version != heat.version_id:

@@ -2835,7 +2835,13 @@ DB_DROPPED = [39, 40]            # Mike Johnson + Owen Vredenburg, one pair
 
 
 def _generate_heats(client, *args):
-    """Generate heats, optionally proving a route call replaced stored rows."""
+    """Generate heats, optionally proving a route call replaced stored rows.
+
+    The production mirror is already flighted. These tests target the heat
+    algorithm, so detach only the target event in the disposable clone before
+    invoking the standalone route. Schedule-history lockout has dedicated
+    unit and route coverage elsewhere.
+    """
     if len(args) == 1:
         sql = None
         event_id = args[0]
@@ -2849,6 +2855,13 @@ def _generate_heats(client, *args):
         before_ids = {
             row[0] for row in sql("SELECT id FROM heats WHERE event_id = :e", e=event_id)
         }
+    from database import db
+
+    db.session.execute(db.text(
+        "UPDATE heats SET flight_id = NULL, flight_position = NULL "
+        "WHERE event_id = :event_id"
+    ), {"event_id": event_id})
+    db.session.commit()
     r = client.post(
         f"/scheduling/{TID}/event/{event_id}/generate-heats",
         data={"confirm": "true"},

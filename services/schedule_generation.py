@@ -1,10 +1,17 @@
 """Application services for schedule autofix and bulk generation workflows."""
 from __future__ import annotations
 
+from sqlalchemy.orm.exc import NoResultFound
+
 from database import db
 from models import Event, Tournament
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 
 
+@serialize_sqlite_schedule_writer
 def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None = None) -> dict:
     """Apply the one-click preflight autofix workflow and return a summary."""
     from services.flight_builder import (
@@ -13,6 +20,8 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
     )
     from services.gear_sharing import complete_one_sided_pairs, parse_all_gear_details
     from services.partner_matching import auto_assign_partners
+
+    lock_tournament_schedule(tournament)
 
     # D12-C commit F2: the heat-sync sweep is gone, and with it the
     # `heats_fixed` / `heats_checked` counters this function used to return.
@@ -27,8 +36,12 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
     pairs_result = complete_one_sided_pairs(tournament)
     partner_summary = auto_assign_partners(tournament)
     # Phase 4: relay BEFORE spillover so Chokerman Run 2 still closes the show.
-    relay_result = integrate_proam_relay_into_final_flight(tournament)
-    integration = integrate_college_spillover_into_flights(tournament, saturday_ids or [])
+    relay_result = integrate_proam_relay_into_final_flight(
+        tournament, commit=False,
+    )
+    integration = integrate_college_spillover_into_flights(
+        tournament, saturday_ids or [], commit=False,
+    )
 
     return {
         'gear_parsed': gear_parse_result,
@@ -39,6 +52,7 @@ def run_preflight_autofix(tournament: Tournament, saturday_ids: list[int] | None
     }
 
 
+@serialize_sqlite_schedule_writer
 def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
     """Generate heats for every event, then build pro flights when possible.
 
@@ -59,8 +73,9 @@ def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
     )
     from services.heat_generator import generate_event_heats
 
-    tournament = db.session.get(Tournament, tournament_id)
-    if not tournament:
+    try:
+        tournament = lock_tournament_schedule(tournament_id)
+    except NoResultFound:
         return {'ok': False, 'error': f'Tournament {tournament_id} not found.'}
 
     generated = 0
@@ -69,7 +84,9 @@ def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
     for event in tournament.events.order_by(Event.event_type, Event.name, Event.gender).all():
         try:
             with db.session.begin_nested():
-                generate_event_heats(event)
+                generate_event_heats(
+                    event, allow_flight_replacement=True,
+                )
             generated += 1
         except Exception as exc:
             if 'No competitors entered' in str(exc):
@@ -77,7 +94,18 @@ def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
             else:
                 errors.append(str(exc))
 
-    db.session.commit()
+    if errors:
+        db.session.rollback()
+        return {
+            'ok': False,
+            'generated': 0,
+            'skipped': skipped,
+            'errors': errors,
+            'flights': None,
+            'relay_placed': False,
+            'spillover_integrated': 0,
+            'spillover': {},
+        }
 
     pro_heats = sum(
         1
@@ -88,6 +116,7 @@ def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
     flights = None
     relay_placed = False
     spillover_integrated = 0
+    spillover_result = {}
     if pro_heats:
         from routes.scheduling.flights import _resolve_num_flights_from_persisted_config
         num_flights = _resolve_num_flights_from_persisted_config(tournament)
@@ -110,12 +139,22 @@ def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
                 college_event_ids=saturday_college_event_ids,
                 commit=False,
             )
+            spillover_result = dict(integration)
             spillover_integrated = integration.get('integrated_heats', 0)
-            db.session.commit()
         except Exception as exc:
             db.session.rollback()
-            errors.append(f'flight build chain failed: {exc}')
-            flights = None
+            return {
+                'ok': False,
+                'generated': 0,
+                'skipped': skipped,
+                'errors': [f'flight build chain failed: {exc}'],
+                'flights': None,
+                'relay_placed': False,
+                'spillover_integrated': 0,
+                'spillover': {},
+            }
+
+    db.session.commit()
 
     return {
         'ok': True,
@@ -125,4 +164,5 @@ def generate_tournament_schedule_artifacts(tournament_id: int) -> dict:
         'flights': flights,
         'relay_placed': relay_placed,
         'spillover_integrated': spillover_integrated,
+        'spillover': spillover_result,
     }

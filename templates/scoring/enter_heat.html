@@ -237,6 +237,7 @@
           <form method="POST" id="heatEntryForm" data-heat-form {% if lock_blocked %}inert{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="heat_version" value="{{ heat_version }}">
+            <input type="hidden" name="heat_identity" value="{{ heat_identity }}">
             {# SECURITY (CSO #6): HMAC-bound replay token fetched on page load.
                The offline queue captures the form body verbatim, so this hidden
                input propagates automatically through IDB and the replay POST. #}

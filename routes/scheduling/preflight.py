@@ -10,18 +10,37 @@ from database import db
 from models import Tournament
 from services.audit import log_action
 from services.background_jobs import submit as submit_job
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 from services.schedule_generation import (
     generate_tournament_schedule_artifacts,
     run_preflight_autofix,
 )
 
 from . import scheduling_bp
+from .spillover_feedback import flash_spillover_result
+
+
+def _discard_success_flashes_since(checkpoint: int) -> None:
+    """Remove success messages emitted by work that was rolled back."""
+    flashes = list(session.get('_flashes', []))
+    if len(flashes) <= checkpoint:
+        return
+    session['_flashes'] = flashes[:checkpoint] + [
+        item for item in flashes[checkpoint:] if item[0] != 'success'
+    ]
+    session.modified = True
 
 
 @scheduling_bp.route('/<int:tournament_id>/preflight', methods=['GET', 'POST'])
+@serialize_sqlite_schedule_writer
 def preflight_check(tournament_id):
     """Run preflight checks and offer one-click auto-fix actions."""
     tournament = db.get_or_404(Tournament, tournament_id)
+    if request.method == 'POST':
+        tournament = lock_tournament_schedule(tournament)
     from services.flight_builder import integrate_college_spillover_into_flights
     from services.partner_matching import auto_assign_pro_partners
     from services.preflight import build_preflight_report
@@ -38,8 +57,18 @@ def preflight_check(tournament_id):
     if request.method == 'POST':
         action = request.form.get('action', 'autofix')
         if action == 'autofix':
-            result = run_preflight_autofix(tournament, saturday_ids)
-            db.session.commit()
+            flash_checkpoint = len(session.get('_flashes', []))
+            try:
+                result = run_preflight_autofix(tournament, saturday_ids)
+                db.session.commit()
+            except Exception as exc:
+                db.session.rollback()
+                _discard_success_flashes_since(flash_checkpoint)
+                flash(f'Preflight auto-fix failed and was rolled back: {exc}', 'error')
+                return redirect(url_for(
+                    'scheduling.preflight_check', tournament_id=tournament_id,
+                ))
+
             log_action('preflight_autofix_applied', 'tournament', tournament_id, {
                 **result,
                 'tournament_id': tournament_id,
@@ -62,6 +91,7 @@ def preflight_check(tournament_id):
                 f"integrated {result['spillover']['integrated_heats']} spillover heats.",
                 'success'
             )
+            flash_spillover_result(result.get('spillover'), include_success=False)
             return redirect(url_for('scheduling.preflight_check', tournament_id=tournament_id))
 
     report = build_preflight_report(tournament, saturday_ids)

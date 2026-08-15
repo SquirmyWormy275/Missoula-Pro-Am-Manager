@@ -441,9 +441,11 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.event import Event, EventResult
     from services.audit import log_action
+    from services.flight_builder import lock_tournament_schedule
     from services.proam_relay import ProAmRelay
     from services.scoring_engine import _rebuild_individual_points
 
+    tournament = lock_tournament_schedule(tournament)
     _lock_cascade_rows(competitor, tournament, effects)
 
     # --- Build pre-scratch snapshot ------------------------------------------
@@ -892,6 +894,9 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.event import Event, EventResult
     from services.audit import log_action
+    from services.flight_builder import lock_tournament_schedule
+
+    tournament = lock_tournament_schedule(tournament)
     from services.proam_relay import ProAmRelay
     from services.scoring_engine import _rebuild_individual_points
 

@@ -5,6 +5,8 @@ College birling is gender-segregated (separate men's and women's brackets).
 Judges rank/seed competitors before generating the double-elimination bracket,
 then record match results to advance competitors through the bracket.
 """
+from functools import wraps
+
 from flask import abort, flash, jsonify, redirect, render_template, request, url_for
 from markupsafe import Markup, escape
 from sqlalchemy.orm.exc import StaleDataError
@@ -15,6 +17,10 @@ from services import birling_rows
 from services.audit import log_action
 from services.birling_print import build_birling_print_context
 from services.cache_invalidation import invalidate_tournament_caches
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 from services.print_catalog import record_print
 from services.print_response import weasyprint_or_html
 
@@ -27,6 +33,16 @@ _STALE_DATA_FLASH = (
     'Another judge updated this in parallel. Reload the page and try again — '
     'your last input was not saved.'
 )
+
+
+def _birling_writer(func):
+    @wraps(func)
+    def locked(tournament_id, *args, **kwargs):
+        tournament = db.get_or_404(Tournament, tournament_id)
+        lock_tournament_schedule(tournament)
+        return func(tournament_id, *args, **kwargs)
+
+    return serialize_sqlite_schedule_writer(locked)
 
 
 def _handle_projection_refusal(exc):
@@ -51,7 +67,20 @@ def _college_birling_event_or_404(tournament_id: int, event_id: int) -> Event:
     return event
 
 
+def _birling_has_published_history(event: Event) -> bool:
+    """Return whether clearing bracket state would contradict scoring history."""
+    return (
+        event.status == 'completed'
+        or bool(event.is_finalized)
+        or EventResult.query.filter(
+            EventResult.event_id == event.id,
+            EventResult.status != 'pending',
+        ).first() is not None
+    )
+
+
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling', methods=['GET'])
+@_birling_writer
 def birling_manage(tournament_id, event_id):
     """Birling bracket management page — seeding, generation, and match recording."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -142,6 +171,7 @@ def birling_manage(tournament_id, event_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/generate', methods=['POST'])
+@_birling_writer
 def birling_generate(tournament_id, event_id):
     """Generate a new birling bracket using seeded order from form."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -150,6 +180,25 @@ def birling_generate(tournament_id, event_id):
     competitors = _signed_up_competitors(event)
     if len(competitors) < 2:
         flash('Need at least 2 competitors to generate a bracket.', 'error')
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
+
+    from services.birling_bracket import BirlingBracket
+    bb = BirlingBracket(event)
+    if _birling_has_published_history(event):
+        flash(
+            'Birling scoring history has been published. The bracket cannot '
+            'be regenerated or reset.',
+            'error',
+        )
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
+    if bb.has_any_results_recorded():
+        flash(
+            'This bracket already has match results. Reset it explicitly '
+            'before generating a new bracket.',
+            'error',
+        )
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
 
@@ -201,8 +250,6 @@ def birling_generate(tournament_id, event_id):
     comp_dicts = [{'id': c.id, 'name': c.display_name} for c, _ in ordered_comps]
     seeding = [c.id for c, _ in ordered_comps]
 
-    from services.birling_bracket import BirlingBracket
-    bb = BirlingBracket(event)
     try:
         bb.generate_bracket(comp_dicts, seeding=seeding)
     except birling_rows.ProjectionRefused as exc:
@@ -226,6 +273,7 @@ def birling_generate(tournament_id, event_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/record', methods=['POST'])
+@_birling_writer
 def birling_record_match(tournament_id, event_id):
     """Record the result of a birling match."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -281,6 +329,7 @@ def birling_record_match(tournament_id, event_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/fall', methods=['POST'])
+@_birling_writer
 def birling_record_fall(tournament_id, event_id):
     """Record a single fall in a best-of-3 birling match."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -358,6 +407,7 @@ def _fall_loser_count(result):
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/undo', methods=['POST'])
+@_birling_writer
 def birling_undo_match(tournament_id, event_id):
     """Undo a birling match result — return both competitors to the match."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -409,10 +459,20 @@ def birling_undo_match(tournament_id, event_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/reset', methods=['POST'])
+@_birling_writer
 def birling_reset(tournament_id, event_id):
     """Reset the birling bracket (clear all data)."""
     tournament = db.get_or_404(Tournament, tournament_id)
     event = _college_birling_event_or_404(tournament_id, event_id)
+
+    if _birling_has_published_history(event):
+        flash(
+            'Birling scoring history has been published. The bracket cannot '
+            'be regenerated or reset.',
+            'error',
+        )
+        return redirect(url_for('scheduling.birling_manage',
+                                tournament_id=tournament_id, event_id=event_id))
 
     # Payouts are independent configuration. Resetting a bracket must not
     # discard the event's prize schedule.
@@ -429,6 +489,7 @@ def birling_reset(tournament_id, event_id):
 
 
 @scheduling_bp.route('/<int:tournament_id>/event/<int:event_id>/birling/finalize', methods=['POST'])
+@_birling_writer
 def birling_finalize(tournament_id, event_id):
     """Finalize birling bracket — write placements to EventResult records."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -438,7 +499,7 @@ def birling_finalize(tournament_id, event_id):
     bb = BirlingBracket(event)
 
     placements = bb.get_placements()
-    if not placements:
+    if not bb.is_complete():
         flash('No placements to finalize. Complete the bracket first.', 'error')
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))

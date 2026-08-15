@@ -17,10 +17,23 @@ from flask import (
 
 import strings as text
 from database import db
-from models import CollegeCompetitor, Event, EventResult, Heat, ProCompetitor, Team, Tournament
+from models import (
+    CollegeCompetitor,
+    Event,
+    EventResult,
+    Flight,
+    Heat,
+    ProCompetitor,
+    Team,
+    Tournament,
+)
 from routes.api import write_limit
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 from services.gear_sharing import build_name_index, normalize_person_name, resolve_partner_name
 from services.print_catalog import record_print
 from services.upload_security import malware_scan, save_upload, validate_excel_upload
@@ -29,6 +42,51 @@ registration_bp = Blueprint('registration', __name__)
 logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {'xlsx', 'xls'}
+
+
+def _college_deletion_has_recorded_history(
+    tournament_id: int,
+    competitor_ids: list[int],
+) -> bool:
+    """Return whether deletion would erase published result or heat history."""
+    if not competitor_ids:
+        return False
+
+    college_event_ids = [
+        event.id for event in Event.query.filter_by(
+            tournament_id=tournament_id,
+            event_type='college',
+        ).all()
+    ]
+    if not college_event_ids:
+        return False
+
+    if EventResult.query.filter(
+        EventResult.event_id.in_(college_event_ids),
+        EventResult.competitor_type == 'college',
+        EventResult.competitor_id.in_(competitor_ids),
+        EventResult.status != 'pending',
+    ).first() is not None:
+        return True
+
+    completed_heats = Heat.query.filter(
+        Heat.event_id.in_(college_event_ids),
+        Heat.status == 'completed',
+    ).all()
+    protected_ids = set(competitor_ids)
+    return any(
+        protected_ids.intersection(heat.get_competitors())
+        for heat in completed_heats
+    )
+
+
+def _tournament_operations_started(tournament: Tournament) -> bool:
+    if tournament.status in {'college_active', 'pro_active'}:
+        return True
+    return Flight.query.filter(
+        Flight.tournament_id == tournament.id,
+        Flight.status != 'pending',
+    ).first() is not None
 
 
 def _mirror_college_gear_set(comp, event_key: str, partner_name: str) -> None:
@@ -103,6 +161,7 @@ def college_registration(tournament_id):
 
 @registration_bp.route('/<int:tournament_id>/college/upload', methods=['POST'])
 @write_limit('10 per minute')  # Excel parsing is expensive; prevents accidental or malicious flood.
+@serialize_sqlite_schedule_writer
 def upload_college_entry(tournament_id):
     """Upload and process a college entry form Excel file."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -134,7 +193,14 @@ def upload_college_entry(tournament_id):
                 enabled=bool(current_app.config.get('ENABLE_UPLOAD_MALWARE_SCAN', False)),
                 command_template=current_app.config.get('MALWARE_SCAN_COMMAND', '')
             )
-            result = process_college_entry_form(filepath, tournament, original_filename=file.filename)
+            tournament = lock_tournament_schedule(tournament)
+            result = process_college_entry_form(
+                filepath,
+                tournament,
+                original_filename=file.filename,
+                commit=False,
+            )
+            db.session.commit()
             valid_teams = result.get('teams', 0)
             invalid_teams = result.get('invalid_teams', 0)
             log_action('college_upload_imported', 'tournament', tournament.id, {
@@ -257,12 +323,40 @@ def scratch_college_competitor(tournament_id, competitor_id):
 
 
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/delete', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def delete_college_competitor(tournament_id, competitor_id):
     """Delete a college competitor from registration and schedule."""
+    tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     competitor = db.get_or_404(CollegeCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
+
+    if _tournament_operations_started(tournament):
+        flash(
+            'Competitor deletion is blocked after tournament operations start. '
+            'Use the scratch workflow instead.',
+            'error',
+        )
+        return redirect(url_for(
+            'registration.team_detail',
+            tournament_id=tournament_id,
+            team_id=competitor.team_id,
+        ))
+
+    if _college_deletion_has_recorded_history(tournament_id, [competitor.id]):
+        flash(
+            'Competitor deletion is blocked because recorded scoring or heat '
+            'history exists. Scratch the competitor instead so race-day history '
+            'is preserved.',
+            'error',
+        )
+        return redirect(url_for(
+            'registration.team_detail',
+            tournament_id=tournament_id,
+            team_id=competitor.team_id,
+        ))
 
     team_id = competitor.team_id
     comp_name = competitor.name
@@ -285,15 +379,44 @@ def delete_college_competitor(tournament_id, competitor_id):
 
 
 @registration_bp.route('/<int:tournament_id>/college/team/<int:team_id>/delete', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def delete_college_team(tournament_id, team_id):
     """Delete a college team and all its competitors."""
+    tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     team = db.get_or_404(Team, team_id)
     if team.tournament_id != tournament_id:
         flash('Team not found in this tournament.', 'error')
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
+    if _tournament_operations_started(tournament):
+        flash(
+            'Team deletion is blocked after tournament operations start. '
+            'Use the scratch workflow for individual absences.',
+            'error',
+        )
+        return redirect(url_for(
+            'registration.team_detail',
+            tournament_id=tournament_id,
+            team_id=team_id,
+        ))
+
     team_code = team.team_code
     members = team.members.all()
+    if _college_deletion_has_recorded_history(
+        tournament_id, [member.id for member in members],
+    ):
+        flash(
+            'Team deletion is blocked because at least one member has recorded '
+            'scoring or heat history. Scratch affected competitors instead so '
+            'race-day history is preserved.',
+            'error',
+        )
+        return redirect(url_for(
+            'registration.team_detail',
+            tournament_id=tournament_id,
+            team_id=team_id,
+        ))
     college_event_ids = [e.id for e in Event.query.filter_by(tournament_id=tournament_id, event_type='college').all()]
 
     for competitor in members:
@@ -424,9 +547,12 @@ def remove_team_override(tournament_id, team_id):
 
 
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/remove-event', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def remove_competitor_event(tournament_id, competitor_id):
     """Remove a single event from a competitor's entry and re-validate the team."""
     from services.excel_io import _validate_college_entry_constraints
+    tournament = db.get_or_404(Tournament, tournament_id)
+    lock_tournament_schedule(tournament)
     competitor = db.get_or_404(CollegeCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
@@ -463,9 +589,12 @@ def remove_competitor_event(tournament_id, competitor_id):
 
 
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/add-event', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def add_competitor_event(tournament_id, competitor_id):
     """Add a single event to a competitor's entry and re-validate the team."""
     from services.excel_io import _validate_college_entry_constraints
+    tournament = db.get_or_404(Tournament, tournament_id)
+    lock_tournament_schedule(tournament)
     competitor = db.get_or_404(CollegeCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
@@ -502,9 +631,12 @@ def add_competitor_event(tournament_id, competitor_id):
 
 
 @registration_bp.route('/<int:tournament_id>/college/competitor/<int:competitor_id>/set-partner', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def set_competitor_partner(tournament_id, competitor_id):
     """Set or clear a competitor's partner for a specific event, then re-validate the team."""
     from services.excel_io import _validate_college_entry_constraints
+    tournament = db.get_or_404(Tournament, tournament_id)
+    lock_tournament_schedule(tournament)
     competitor = db.get_or_404(CollegeCompetitor, competitor_id)
     if competitor.tournament_id != tournament_id:
         flash('Competitor not found in this tournament.', 'error')
@@ -683,9 +815,11 @@ def pro_competitor_detail(tournament_id, competitor_id):
 
 
 @registration_bp.route('/<int:tournament_id>/pro/<int:competitor_id>/update-events', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def update_pro_events(tournament_id, competitor_id):
     """Update pro competitor event enrollment, fees, and gear sharing."""
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     competitor = db.get_or_404(ProCompetitor, competitor_id)
     if competitor.tournament_id != tournament.id:
         flash('Competitor not found in this tournament.', 'error')
@@ -815,9 +949,11 @@ def pro_gear_manager(tournament_id):
 
 
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/parse', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def pro_gear_parse(tournament_id):
     """Parse free-text gear_sharing_details fields into structured gear_sharing maps."""
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     from services.gear_sharing import parse_all_gear_details
     try:
         result = parse_all_gear_details(tournament)
@@ -837,9 +973,11 @@ def pro_gear_parse(tournament_id):
 
 
 @registration_bp.route('/<int:tournament_id>/pro/gear-sharing/sync-heats', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def pro_gear_sync_heats(tournament_id):
     """Detect and auto-fix gear-sharing conflicts in existing pro heats."""
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
     from services.gear_sharing import fix_heat_gear_conflicts
     try:
         result = fix_heat_gear_conflicts(tournament)

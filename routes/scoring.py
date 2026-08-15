@@ -36,6 +36,10 @@ from models.payout_template import PayoutTemplate
 from routes.api import write_limit
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 from services.print_catalog import record_print
 from services.scoring_workflow import (
     competitor_lookup_for_event,
@@ -628,7 +632,9 @@ def finalize_preview(tournament_id, event_id):
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/finalize', methods=['POST'])
 @login_required
 @write_limit('10 per minute')
+@serialize_sqlite_schedule_writer
 def finalize_event(tournament_id, event_id):
+    lock_tournament_schedule(tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
     outcome = finalize_event_results(
         event=event,
@@ -798,6 +804,10 @@ def enter_heat_results(tournament_id, heat_id):
     return render_template('scoring/enter_heat.html',
                            tournament=tournament, heat=heat, event=event,
                            competitors=competitors, heat_version=heat.version_id,
+                           heat_identity=(
+                               heat.locked_at.isoformat(timespec='microseconds')
+                               if heat.locked_at is not None else ''
+                           ),
                            next_heat_url=next_heat_url,
                            lock_blocked=lock_blocked, lock_owner=lock_owner)
 
@@ -826,8 +836,10 @@ def release_heat_lock(tournament_id, heat_id):
 
 @scoring_bp.route('/<int:tournament_id>/heat/<int:heat_id>/undo', methods=['POST'])
 @login_required
+@serialize_sqlite_schedule_writer
 def undo_heat_save(tournament_id, heat_id):
     """Revert a heat to pending and delete its EventResult rows (within 30-second window)."""
+    lock_tournament_schedule(tournament_id)
     token = session.get(f'undo_heat_{heat_id}')
     if not token:
         if _is_async():
@@ -984,8 +996,10 @@ def undo_heat_save(tournament_id, heat_id):
 # ---------------------------------------------------------------------------
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/throwoff', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def record_throwoff(tournament_id, event_id):
     """Record judge-assigned positions after an axe throw throw-off."""
+    lock_tournament_schedule(tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
     position_map: dict[int, int] = {}
     for key, val in request.form.items():
@@ -1027,11 +1041,14 @@ def record_throwoff(tournament_id, event_id):
 # ---------------------------------------------------------------------------
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/import-results', methods=['GET', 'POST'])
+@serialize_sqlite_schedule_writer
 def import_results(tournament_id, event_id):
     tournament = db.get_or_404(Tournament, tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
 
     if request.method == 'POST':
+        tournament = lock_tournament_schedule(tournament)
+        db.session.refresh(event)
         f = request.files.get('csv_file')
         csv_text = ''
         if f and f.filename:
@@ -1230,6 +1247,7 @@ def scratch_preview(tournament_id, competitor_id):
     methods=['POST'],
 )
 @write_limit('10 per minute')
+@serialize_sqlite_schedule_writer
 def scratch_confirm(tournament_id, competitor_id):
     """POST: Execute scratch cascade with judge-selected effects.
 
@@ -1240,6 +1258,7 @@ def scratch_confirm(tournament_id, competitor_id):
         affected_entity_type_{i} — affected_entity_type for effect i
         effect_checked_{i}    — present (any value) if effect i is checked
     """
+    lock_tournament_schedule(tournament_id)
     comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
 
     from services.scratch_cascade import (
@@ -1342,8 +1361,10 @@ def scratch_confirm(tournament_id, competitor_id):
     methods=['POST'],
 )
 @write_limit('10 per minute')
+@serialize_sqlite_schedule_writer
 def scratch_undo(tournament_id, competitor_id):
     """POST: Reverse the most recent scratch within the undo window."""
+    lock_tournament_schedule(tournament_id)
     comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
 
     from services.scratch_cascade import ScratchCascadeConflict, reverse_cascade
@@ -1408,9 +1429,13 @@ def offline_ops(tournament_id):
 # ---------------------------------------------------------------------------
 
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/payouts', methods=['GET', 'POST'])
+@serialize_sqlite_schedule_writer
 def configure_payouts(tournament_id, event_id):
     tournament = db.get_or_404(Tournament, tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
+    if request.method == 'POST':
+        tournament = lock_tournament_schedule(tournament)
+        db.session.refresh(event)
 
     if event.event_type != 'pro':
         flash(text.FLASH['pro_only_payouts'], 'error')
@@ -1511,6 +1536,7 @@ def _parse_payout_form() -> dict | None:
 # ---------------------------------------------------------------------------
 
 @scoring_bp.route('/<int:tournament_id>/pro/payout-manager', methods=['GET', 'POST'])
+@serialize_sqlite_schedule_writer
 def tournament_payout_manager(tournament_id):
     """Tournament-level payout configuration dashboard for all pro events."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -1522,6 +1548,7 @@ def tournament_payout_manager(tournament_id):
         return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
 
     if request.method == 'POST':
+        tournament = lock_tournament_schedule(tournament)
         action = request.form.get('action', '')
 
         if action == 'bulk_apply':
@@ -1997,6 +2024,7 @@ def replay_offline_score():
 # ---------------------------------------------------------------------------
 
 @scoring_bp.route('/admin/repair-points/<int:tournament_id>', methods=['POST'])
+@serialize_sqlite_schedule_writer
 def repair_points(tournament_id):
     """
     Admin tool to rebuild every individual_points and team total_points cache
@@ -2016,6 +2044,7 @@ def repair_points(tournament_id):
         return jsonify({'ok': False, 'message': 'Admin role required.'}), 403
 
     tournament = db.get_or_404(Tournament, tournament_id)
+    tournament = lock_tournament_schedule(tournament)
 
     from models.competitor import CollegeCompetitor
     from models.team import Team

@@ -214,9 +214,10 @@ def _build_assignment_details(tournament: Tournament, events: list) -> dict:
 def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
     """Generate heats for all configured events.
 
-    Each event is wrapped in its own savepoint (begin_nested) so that a failure
-    in one event is rolled back in isolation without corrupting the session state
-    for subsequent events or for the flight-building step that follows.
+    Each event is wrapped in its own savepoint (begin_nested) so a failed event
+    does not corrupt the session while diagnostics are collected. Any real
+    generation failure is raised after the loop so the caller can roll back the
+    full schedule-building transaction; no partial heat set may be committed.
 
     Per-event outcomes are surfaced to the operator via flash:
       - generated: count + nothing more (success, common case)
@@ -353,6 +354,15 @@ def _generate_all_heats(tournament: Tournament, generate_event_heats_fn):
             f'Failed to generate heats for {len(failed_events)} event(s) — see errors above.',
             'error',
         )
+        labels = ', '.join(
+            f'{_event_label(event)}: {message}'
+            for event, message in failed_events[:5]
+        )
+        suffix = f' (+{len(failed_events) - 5} more)' if len(failed_events) > 5 else ''
+        raise RuntimeError(
+            'Heat generation failed; the full schedule transaction must be '
+            f'rolled back: {labels}{suffix}'
+        )
 
 
 def _event_label(event: Event) -> str:
@@ -364,7 +374,12 @@ def _event_label(event: Event) -> str:
     return base
 
 
-def _build_pro_flights_if_possible(tournament: Tournament, build_pro_flights_fn, num_flights=None):
+def _build_pro_flights_if_possible(
+        tournament: Tournament,
+        build_pro_flights_fn,
+        num_flights=None,
+        commit=None,
+):
     """Build pro flights if there are any pro heats.
 
     ``num_flights`` is forwarded to ``build_pro_flights_fn`` so callers on the
@@ -381,9 +396,12 @@ def _build_pro_flights_if_possible(tournament: Tournament, build_pro_flights_fn,
     if pro_heats == 0:
         flash('No pro heats available yet, so no flights were built.', 'warning')
         return None
-    if num_flights is None:
-        return build_pro_flights_fn(tournament)
-    return build_pro_flights_fn(tournament, num_flights=num_flights)
+    kwargs = {}
+    if num_flights is not None:
+        kwargs['num_flights'] = num_flights
+    if commit is not None:
+        kwargs['commit'] = commit
+    return build_pro_flights_fn(tournament, **kwargs)
 
 
 # ---------------------------------------------------------------------------

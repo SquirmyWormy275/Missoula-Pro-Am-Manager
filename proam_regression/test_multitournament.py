@@ -124,6 +124,16 @@ def test_heat_generation_for_2026_ignores_the_2027_roster(mt, client, sql):
     anywhere in the generator's competitor scan doubles the field and no
     roster below survives. Pins are the c35 deterministic rosters."""
     def regen(event_id):
+        # The 2026 show is already flighted. This oracle targets tournament
+        # scoping inside heat generation, so detach only the target event in
+        # the disposable clone before invoking the standalone route.
+        from database import db
+
+        db.session.execute(db.text(
+            "UPDATE heats SET flight_id = NULL, flight_position = NULL "
+            "WHERE event_id = :event_id"
+        ), {"event_id": event_id})
+        db.session.commit()
         r = client.post(f"/scheduling/{TID}/event/{event_id}/generate-heats",
                         data={"confirm": "true"}, follow_redirects=False)
         assert r.status_code in (302, 303), r.status_code

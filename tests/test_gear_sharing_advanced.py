@@ -185,6 +185,29 @@ class TestFixHeatGearConflicts:
         total = result.get('fixed', 0) + len(result.get('failed', []))
         assert total >= 0  # May fix or fail depending on capacity
 
+    def test_active_flight_blocks_conflict_fix(self, db_session, tournament):
+        from models import Flight
+        from services.gear_sharing import fix_heat_gear_conflicts
+
+        event = make_event(db_session, tournament, "Men's UH Active",
+                           stand_type='underhand', max_stands=5)
+        c1, c2 = _setup_gear_pair(db_session, tournament, event, 'Active1', 'Active2')
+        heat = make_heat(db_session, event, heat_number=1,
+                         competitors=[c1.id, c2.id])
+        flight = Flight(
+            tournament_id=tournament.id,
+            flight_number=1,
+            status='in_progress',
+        )
+        db_session.add(flight)
+        db_session.flush()
+        roster_before = heat.get_competitors()
+
+        with pytest.raises(ValueError, match='blocked after a flight starts'):
+            fix_heat_gear_conflicts(tournament)
+
+        assert heat.get_competitors() == roster_before
+
     def test_empty_tournament_no_error(self, db_session, tournament):
         from services.gear_sharing import fix_heat_gear_conflicts
         result = fix_heat_gear_conflicts(tournament)
