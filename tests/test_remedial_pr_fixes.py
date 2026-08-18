@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 
 import pytest
 
@@ -55,10 +56,11 @@ def test_background_jobs_run_with_app_context(app):
     with app.app_context():
         job_id = submit('ctx-test', _job, metadata={'tournament_id': 0, 'kind': 'ctx-test'})
 
-    for _ in range(20):
+    deadline = time.monotonic() + 2.0
+    job = get(job_id)
+    while job and job['status'] not in {'completed', 'failed'} and time.monotonic() < deadline:
+        time.sleep(0.01)
         job = get(job_id)
-        if job and job['status'] in {'completed', 'failed'}:
-            break
 
     assert job is not None
     assert job['status'] == 'completed'

@@ -17,6 +17,41 @@
         </div>
     </div>
 
+    <div class="row mb-4">
+        <div class="col-lg-8 mb-3 mb-lg-0">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-device-ssd"></i> Prepared scoring package</h6>
+                    <span class="badge bg-secondary" id="preparedStatus">Not prepared</span>
+                </div>
+                <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                    <button class="btn btn-primary" id="prepareOfflineBtn">
+                        <i class="bi bi-download"></i> Prepare device
+                    </button>
+                    <div class="flex-grow-1">
+                        <div class="progress" role="progressbar" aria-label="Offline package preparation">
+                            <div class="progress-bar" id="prepareProgress" style="width:0%"></div>
+                        </div>
+                        <small class="text-muted" id="preparedDetail">0 of {{ offline_manifest.pages|length }} heat pages verified</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-database-down"></i> Legacy drain</h6>
+                    <span class="badge bg-secondary" id="legacyQueueCount">0</span>
+                </div>
+                <div class="card-body">
+                    <button class="btn btn-outline-info w-100" id="drainLegacyBtn">
+                        <i class="bi bi-arrow-repeat"></i> Drain legacy queue
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="row mb-3">
         <div class="col-12 d-flex justify-content-between align-items-center">
             <div>
@@ -96,6 +131,7 @@
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/offline_queue_shared.js') }}"></script>
 <script>
+window.ProAmOfflineContext = {{ offline_context|tojson }};
 // SECURITY FIX (CSO #1): escape server-supplied strings before innerHTML
 function escapeHtml(s) {
     if (s === null || s === undefined) return '';
@@ -109,23 +145,25 @@ function escapeHtml(s) {
 document.addEventListener('DOMContentLoaded', function () {
     const TOURNAMENT_ID = {{ tournament.id }};
     const EVENT_DIRECTORY = {{ event_directory|tojson }};
+    const OFFLINE_MANIFEST = {{ offline_manifest|tojson }};
+    const OFFLINE_CONTEXT = window.ProAmOfflineContext;
     const queueBody = document.getElementById('queueBody');
     const queueCount = document.getElementById('queueCount');
     const statusBox = document.getElementById('opsStatus');
     const networkStatus = document.getElementById('networkStatus');
     const syncAllBtn = document.getElementById('syncAllBtn');
+    const prepareOfflineBtn = document.getElementById('prepareOfflineBtn');
+    const preparedStatus = document.getElementById('preparedStatus');
+    const preparedDetail = document.getElementById('preparedDetail');
+    const prepareProgress = document.getElementById('prepareProgress');
+    const legacyQueueCount = document.getElementById('legacyQueueCount');
 
     function readQueue() {
         return window.ProAmOfflineQueue.read();
     }
 
-    function writeQueue(queue) {
-        window.ProAmOfflineQueue.write(queue);
-    }
-
     function isForTournament(entry) {
-        const url = String(entry.url || '');
-        return url.indexOf('/scoring/' + TOURNAMENT_ID + '/') !== -1;
+        return Number(entry.tournament_id || 0) === Number(TOURNAMENT_ID);
     }
 
     function setStatus(message, type) {
@@ -172,16 +210,21 @@ document.addEventListener('DOMContentLoaded', function () {
             const timeLabel = queuedAt ? new Date(queuedAt).toLocaleString() : '-';
             const heatLabel = entry.heat_id ? ('Heat ' + entry.heat_id) : '-';
             const entries = resultFieldCount(entry.payload || {});
-            const key = encodeURIComponent((entry.url || '') + '|' + (entry.heat_id || ''));
+            const key = encodeURIComponent(entry.request_id || '');
+            const ageState = window.ProAmOfflineQueue.ageState(entry);
+            const bindingState = window.ProAmOfflineQueue.bindingState(entry, OFFLINE_CONTEXT);
+            const ready = ageState === 'ready' && bindingState === 'ready';
+            const stateLabel = ageState !== 'ready' ? 'Manual reconciliation' :
+                (bindingState !== 'ready' ? 'Blocked: ' + bindingState.replace(/_/g, ' ') : 'Pending');
             return '' +
                 '<tr>' +
                     '<td>' + escapeHtml(timeLabel) + '</td>' +
                     '<td>' + escapeHtml(eventLabel(entry)) + '</td>' +
                     '<td>' + escapeHtml(heatLabel) + '</td>' +
                     '<td>' + escapeHtml(entries) + '</td>' +
-                    '<td><span class="badge bg-warning text-dark">Pending</span></td>' +
+                    '<td><span class="badge ' + (ready ? 'bg-warning text-dark' : 'bg-danger') + '">' + escapeHtml(stateLabel) + '</span></td>' +
                     '<td class="d-flex gap-2">' +
-                        '<button class="btn btn-sm btn-outline-info sync-one" data-key="' + escapeHtml(key) + '"><i class="bi bi-arrow-repeat"></i> Sync</button>' +
+                        '<button class="btn btn-sm btn-outline-info sync-one" data-key="' + escapeHtml(key) + '" ' + (ready ? '' : 'disabled') + '><i class="bi bi-arrow-repeat"></i> Sync</button>' +
                         '<button class="btn btn-sm btn-outline-danger drop-one" data-key="' + escapeHtml(key) + '"><i class="bi bi-x-circle"></i> Remove</button>' +
                     '</td>' +
                 '</tr>';
@@ -189,47 +232,27 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function parseKey(key) {
-        const decoded = decodeURIComponent(key);
-        const sep = decoded.lastIndexOf('|');
-        return {
-            url: decoded.substring(0, sep),
-            heatId: Number(decoded.substring(sep + 1)),
-        };
+        return decodeURIComponent(key);
     }
 
-    function removeEntry(url, heatId) {
-        window.ProAmOfflineQueue.remove(url, heatId);
+    async function removeEntry(requestId) {
+        await window.ProAmOfflineQueue.removeByRequestId(requestId);
         renderQueue();
     }
 
     async function postEntry(entry) {
-        const body = new FormData();
-        Object.keys(entry.payload || {}).forEach(function (k) {
-            body.append(k, entry.payload[k]);
-        });
-        const response = await fetch(entry.url, {
-            method: 'POST',
-            body: body,
-            headers: { 'X-Requested-With': 'XMLHttpRequest' },
-            credentials: 'same-origin'
-        });
-        const data = await response.json().catch(function () { return {}; });
-        if (!response.ok || !data.ok) {
-            const err = new Error(data.message || 'Sync failed');
-            err.httpStatus = response.status;
-            throw err;
-        }
-        return data;
+        const result = await window.ProAmOfflineQueue.syncEntry(entry, OFFLINE_CONTEXT);
+        await window.ProAmOfflineQueue.removeVerified(result.entry, result.data.receipt);
+        return result.data;
     }
 
-    async function syncOne(url, heatId) {
+    async function syncOne(requestId) {
         const queue = readQueue();
         const entry = queue.find(function (row) {
-            return String(row.url || '') === String(url || '') && Number(row.heat_id || 0) === Number(heatId || 0);
+            return String(row.request_id || '') === String(requestId || '');
         });
         if (!entry) return true;
         await postEntry(entry);
-        removeEntry(url, heatId);
         return true;
     }
 
@@ -247,7 +270,7 @@ document.addEventListener('DOMContentLoaded', function () {
         let synced = 0;
         for (let i = 0; i < queue.length; i += 1) {
             try {
-                await syncOne(queue[i].url, queue[i].heat_id);
+                await syncOne(queue[i].request_id);
                 synced += 1;
             } catch (err) {
                 if (err.httpStatus === 409) {
@@ -290,22 +313,11 @@ document.addEventListener('DOMContentLoaded', function () {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = function () {
+        reader.onload = async function () {
             try {
                 const imported = JSON.parse(String(reader.result || '[]'));
                 if (!Array.isArray(imported)) throw new Error('Invalid file format');
-
-                const current = readQueue();
-                const merged = current.slice();
-                imported.forEach(function (entry) {
-                    if (!isForTournament(entry)) return;
-                    const exists = merged.some(function (row) {
-                        return String(row.url || '') === String(entry.url || '') &&
-                               Number(row.heat_id || 0) === Number(entry.heat_id || 0);
-                    });
-                    if (!exists) merged.push(entry);
-                });
-                writeQueue(merged);
+                await window.ProAmOfflineQueue.merge(imported.filter(isForTournament));
                 renderQueue();
                 setStatus('<i class="bi bi-upload"></i> Imported queue file.', 'alert-success');
             } catch (err) {
@@ -317,16 +329,15 @@ document.addEventListener('DOMContentLoaded', function () {
         reader.readAsText(file);
     });
 
-    document.getElementById('clearBtn').addEventListener('click', function () {
+    document.getElementById('clearBtn').addEventListener('click', async function () {
         const queue = readQueue();
-        const keep = queue.filter(function (entry) { return !isForTournament(entry); });
-        const removed = queue.length - keep.length;
+        const removed = queue.filter(isForTournament).length;
         if (!removed) {
             setStatus('<i class="bi bi-info-circle"></i> No queued heats to clear for this tournament.', 'alert-info');
             return;
         }
         if (!window.confirm('Clear all queued heats for this tournament on this device?')) return;
-        writeQueue(keep);
+        await window.ProAmOfflineQueue.removeTournament(TOURNAMENT_ID);
         renderQueue();
         setStatus('<i class="bi bi-trash"></i> Cleared ' + removed + ' queued heat(s).', 'alert-warning');
     });
@@ -339,7 +350,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const parsed = parseKey(syncBtn.getAttribute('data-key'));
             syncBtn.disabled = true;
             try {
-                await syncOne(parsed.url, parsed.heatId);
+                await syncOne(parsed);
                 setStatus('<i class="bi bi-cloud-check"></i> Heat synced.', 'alert-success');
             } catch (err) {
                 if (err.httpStatus === 409) {
@@ -357,7 +368,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (dropBtn) {
             const parsed = parseKey(dropBtn.getAttribute('data-key'));
             if (!window.confirm('Remove this queued heat from local storage?')) return;
-            removeEntry(parsed.url, parsed.heatId);
+            await removeEntry(parsed);
             setStatus('<i class="bi bi-trash"></i> Queued heat removed.', 'alert-warning');
         }
     });
@@ -368,11 +379,61 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     window.addEventListener('offline', updateNetwork);
     window.addEventListener('storage', function (event) {
-        if (event.key === QUEUE_KEY) renderQueue();
+        if (event.key === window.ProAmOfflineQueue.key) renderQueue();
     });
+
+    function swMessage(message) {
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage(message);
+        }
+    }
+
+    function renderPrepared(result) {
+        const state = (result && result.state) || 'not_prepared';
+        const ready = state === 'ready';
+        preparedStatus.textContent = ready ? 'Ready' : state.replace(/_/g, ' ');
+        preparedStatus.className = 'badge ' + (ready ? 'bg-success' : state === 'incomplete' || state === 'failed' ? 'bg-danger' : 'bg-secondary');
+        const completed = Number(result && result.completed || 0);
+        const total = Number(result && result.total || OFFLINE_MANIFEST.pages.length + OFFLINE_MANIFEST.assets.length);
+        prepareProgress.style.width = (total ? Math.round(completed * 100 / total) : 0) + '%';
+        preparedDetail.textContent = completed + ' of ' + total + ' package items verified';
+    }
+
+    prepareOfflineBtn.addEventListener('click', function () {
+        prepareOfflineBtn.disabled = true;
+        renderPrepared({state: 'preparing', completed: 0, total: OFFLINE_MANIFEST.pages.length + OFFLINE_MANIFEST.assets.length});
+        swMessage({type: 'prepare-offline-package', manifest: OFFLINE_MANIFEST});
+    });
+    document.getElementById('drainLegacyBtn').addEventListener('click', function () {
+        swMessage({type: 'drain-legacy-queue'});
+    });
+    if (navigator.serviceWorker) {
+        navigator.serviceWorker.addEventListener('message', function (event) {
+            const data = event.data || {};
+            if (data.type === 'prepare-offline-progress') renderPrepared(Object.assign({state: 'preparing'}, data));
+            if (data.type === 'prepare-offline-complete') {
+                prepareOfflineBtn.disabled = false;
+                renderPrepared(data.result);
+            }
+            if (data.type === 'prepared-package-status') renderPrepared(data.result);
+            if (data.type === 'legacy-queue-status') {
+                legacyQueueCount.textContent = String(data.result.count || 0);
+                const manual = Number(data.result.manual_reconciliation_required || 0);
+                legacyQueueCount.className = 'badge ' + (manual ? 'bg-danger' : 'bg-secondary');
+                legacyQueueCount.title = manual ?
+                    (manual + ' entrie(s) require manual reconciliation') : '';
+            }
+            if (data.type === 'legacy-sync-complete') {
+                legacyQueueCount.textContent = String(data.failed || 0);
+                setStatus('<i class="bi bi-database-check"></i> Legacy drain verified ' + (data.success || 0) + ' entrie(s); ' + (data.failed || 0) + ' remain.', data.failed ? 'alert-warning' : 'alert-success');
+            }
+        });
+    }
 
     updateNetwork();
     renderQueue();
+    swMessage({type: 'prepared-package-status', context: OFFLINE_CONTEXT});
+    swMessage({type: 'legacy-queue-status'});
 });
 </script>
 {% endblock %}

@@ -403,6 +403,8 @@
                                     <td>
                                         {% if job.status == 'failed' %}
                                             <span class="badge bg-danger">failed</span>
+                                        {% elif job.status == 'interrupted' %}
+                                            <span class="badge bg-warning text-dark">interrupted</span>
                                         {% elif job.status == 'running' %}
                                             <span class="badge bg-primary">running</span>
                                         {% elif job.status == 'queued' %}

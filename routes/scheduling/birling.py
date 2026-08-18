@@ -55,6 +55,21 @@ def _handle_projection_refusal(exc):
     )
 
 
+def _birling_fall_conflict_response(exc, tournament_id, event_id):
+    """Return a retryable conflict without losing the no-JS reload path."""
+    db.session.rollback()
+    flash(str(exc), 'warning')
+    response = redirect(url_for(
+        'scheduling.birling_manage',
+        tournament_id=tournament_id,
+        event_id=event_id,
+    ))
+    response.status_code = 409
+    response.headers['X-Retryable'] = 'true'
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 def _college_birling_event_or_404(tournament_id: int, event_id: int) -> Event:
     """Load the college-only bracket event authorized by the tournament rule."""
     event = db.get_or_404(Event, event_id)
@@ -144,7 +159,12 @@ def birling_manage(tournament_id, event_id):
     comp_lookup = {str(c['id']): c['name'] for c in bracket_data.get('competitors', [])}
 
     # Get current playable matches
-    current_matches = bb.get_current_matches() if has_bracket else []
+    current_matches = [
+        dict(match)
+        for match in (bb.get_current_matches() if has_bracket else [])
+    ]
+    for match in current_matches:
+        match['fall_digest'] = bb.match_fall_digest(match['match_id'])
     placements = bracket_data.get('placements', {})
 
     # Check if bracket is complete
@@ -153,6 +173,10 @@ def birling_manage(tournament_id, event_id):
 
     # Compute which decided matches can be undone (no downstream play)
     undoable_match_ids = bb.get_undoable_matches() if has_bracket else set()
+    undo_match_digests = {
+        match_id: bb.match_fall_digest(match_id)
+        for match_id in undoable_match_ids
+    }
 
     return render_template(
         'scheduling/birling_manage.html',
@@ -167,6 +191,8 @@ def birling_manage(tournament_id, event_id):
         is_complete=is_complete,
         total_competitors=total_competitors,
         undoable_match_ids=undoable_match_ids,
+        undo_match_digests=undo_match_digests,
+        bracket_state_digest=bb.bracket_state_digest() if has_bracket else '',
     )
 
 
@@ -294,11 +320,22 @@ def birling_record_match(tournament_id, event_id):
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
 
-    from services.birling_bracket import BirlingBracket
+    from services.birling_bracket import BirlingBracket, BirlingFallConflict
     bb = BirlingBracket(event)
+    expected_fall_digest = request.form.get('expected_fall_digest')
 
     try:
-        bb.record_match_result(match_id, winner_id)
+        bb.record_direct_winner(
+            match_id,
+            winner_id,
+            expected_fall_digest=expected_fall_digest,
+        )
+    except BirlingFallConflict as exc:
+        return _birling_fall_conflict_response(
+            exc,
+            tournament_id,
+            event_id,
+        )
     except birling_rows.ProjectionRefused as exc:
         _handle_projection_refusal(exc)
         return redirect(url_for('scheduling.birling_manage',
@@ -350,11 +387,30 @@ def birling_record_fall(tournament_id, event_id):
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
 
-    from services.birling_bracket import BirlingBracket
+    from services.birling_bracket import BirlingBracket, BirlingFallConflict
     bb = BirlingBracket(event)
 
+    expected_fall_digest = request.form.get('expected_fall_digest')
+    if not expected_fall_digest:
+        return _birling_fall_conflict_response(
+            'Birling fall state changed since this page was loaded. '
+            'Refresh the bracket before recording another physical fall.',
+            tournament_id,
+            event_id,
+        )
+
     try:
-        result = bb.record_fall(match_id, fall_winner_id)
+        result = bb.record_fall(
+            match_id,
+            fall_winner_id,
+            expected_fall_digest=expected_fall_digest,
+        )
+    except BirlingFallConflict as exc:
+        return _birling_fall_conflict_response(
+            exc,
+            tournament_id,
+            event_id,
+        )
     except birling_rows.ProjectionRefused as exc:
         _handle_projection_refusal(exc)
         return redirect(url_for('scheduling.birling_manage',
@@ -419,7 +475,7 @@ def birling_undo_match(tournament_id, event_id):
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
 
-    from services.birling_bracket import BirlingBracket
+    from services.birling_bracket import BirlingBracket, BirlingStateConflict
     bb = BirlingBracket(event)
 
     # Capture previous state for audit log
@@ -428,7 +484,16 @@ def birling_undo_match(tournament_id, event_id):
     prev_loser = match['loser'] if match else None
 
     try:
-        result = bb.undo_match_result(match_id)
+        result = bb.undo_match_result(
+            match_id,
+            expected_undo_digest=request.form.get('expected_undo_digest'),
+        )
+    except BirlingStateConflict as exc:
+        return _birling_fall_conflict_response(
+            exc,
+            tournament_id,
+            event_id,
+        )
     except birling_rows.ProjectionRefused as exc:
         _handle_projection_refusal(exc)
         return redirect(url_for('scheduling.birling_manage',
@@ -474,10 +539,19 @@ def birling_reset(tournament_id, event_id):
         return redirect(url_for('scheduling.birling_manage',
                                 tournament_id=tournament_id, event_id=event_id))
 
-    # Payouts are independent configuration. Resetting a bracket must not
-    # discard the event's prize schedule.
-    birling_rows.clear_event(event.id)
-    db.session.commit()
+    from services.birling_bracket import BirlingBracket, BirlingStateConflict
+    bb = BirlingBracket(event)
+
+    try:
+        # Payouts are independent configuration. Resetting a bracket must not
+        # discard the event's prize schedule.
+        bb.reset_bracket(request.form.get('expected_bracket_digest'))
+    except BirlingStateConflict as exc:
+        return _birling_fall_conflict_response(
+            exc,
+            tournament_id,
+            event_id,
+        )
 
     log_action('birling_bracket_reset', 'event', event_id, {
         'event_name': event.display_name,

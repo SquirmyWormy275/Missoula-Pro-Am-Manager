@@ -483,6 +483,12 @@ def _verify_isolated(*, root: Path, empty_cwd: Path) -> dict[str, Any]:
         with missoula_app.app_context():
             db.session.remove()
             db.engine.dispose()
+        fence_finalizer = missoula_app.extensions.pop(
+            "sqlite_process_fence_finalizer", None
+        )
+        if fence_finalizer is not None:
+            fence_finalizer()
+        missoula_app.extensions.pop("sqlite_process_fence", None)
 
     if calculate_payload is None or outcome_payload is None:
         raise AssertionError("Missoula release rehearsal did not build its request payloads")

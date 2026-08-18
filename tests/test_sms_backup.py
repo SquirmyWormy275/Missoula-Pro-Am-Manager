@@ -16,9 +16,18 @@ Design notes:
     (sms_notify depends only on env vars and the twilio package).
 """
 import os
+import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+def _create_valid_sqlite(path):
+    connection = sqlite3.connect(path)
+    connection.execute('CREATE TABLE evidence (value INTEGER NOT NULL)')
+    connection.execute('INSERT INTO evidence VALUES (17)')
+    connection.commit()
+    connection.close()
 
 # =====================================================================
 # SMS Notify Tests
@@ -327,9 +336,8 @@ class TestBackupToLocal:
     def test_creates_backup_file(self, tmp_path):
         """backup_to_local() copies the source DB to dest_dir."""
         from services.backup import backup_to_local
-        # Create a fake source DB
         src = tmp_path / 'source.db'
-        src.write_bytes(b'SQLite format 3' + b'\x00' * 100)
+        _create_valid_sqlite(src)
 
         dest_dir = tmp_path / 'backups'
         result = backup_to_local(str(src), str(dest_dir), tournament_id=1)
@@ -343,7 +351,7 @@ class TestBackupToLocal:
         """backup_to_local() returns dict with ok, dest, size_bytes, error."""
         from services.backup import backup_to_local
         src = tmp_path / 'source.db'
-        src.write_bytes(b'test data')
+        _create_valid_sqlite(src)
 
         dest_dir = tmp_path / 'backups'
         result = backup_to_local(str(src), str(dest_dir), tournament_id=42)
@@ -356,7 +364,7 @@ class TestBackupToLocal:
         """backup_to_local() creates the destination directory if it does not exist."""
         from services.backup import backup_to_local
         src = tmp_path / 'source.db'
-        src.write_bytes(b'test')
+        _create_valid_sqlite(src)
 
         nested_dir = tmp_path / 'a' / 'b' / 'c'
         assert not nested_dir.exists()
@@ -392,9 +400,8 @@ class TestBackupToS3:
         """backup_to_s3() calls s3.upload_file() when configured."""
         from services.backup import backup_to_s3
 
-        # Create a fake source DB
         src = tmp_path / 'source.db'
-        src.write_bytes(b'SQLite format 3' + b'\x00' * 100)
+        _create_valid_sqlite(src)
 
         mock_s3_client = MagicMock()
         mock_session = MagicMock()
@@ -426,7 +433,7 @@ class TestBackupToS3:
         from services.backup import backup_to_s3
 
         src = tmp_path / 'source.db'
-        src.write_bytes(b'test')
+        _create_valid_sqlite(src)
 
         mock_s3_client = MagicMock()
         mock_s3_client.upload_file.side_effect = Exception('Access Denied')

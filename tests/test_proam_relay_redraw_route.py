@@ -9,6 +9,7 @@ fixture in conftest.
 """
 
 import os
+import re
 
 import pytest
 
@@ -129,7 +130,10 @@ class TestRedrawNumTeams:
 
         r = auth_client.post(
             f"/tournament/{t.id}/proam-relay/redraw",
-            data={"num_teams": "3"},
+            data={
+                "num_teams": "3",
+                "expected_relay_digest": relay.state_digest(),
+            },
         )
         assert r.status_code == 302
 
@@ -138,7 +142,7 @@ class TestRedrawNumTeams:
     def test_redraw_without_num_teams_falls_back_to_existing(
         self, app, auth_client, db_session
     ):
-        """Legacy form submission without num_teams must still work."""
+        """The real redraw form may omit num_teams while retaining its token."""
         from services.proam_relay import ProAmRelay
 
         t = _seed_relay_tournament(db_session)
@@ -147,7 +151,7 @@ class TestRedrawNumTeams:
 
         r = auth_client.post(
             f"/tournament/{t.id}/proam-relay/redraw",
-            data={},
+            data={"expected_relay_digest": relay.state_digest()},
         )
         assert r.status_code == 302
 
@@ -170,7 +174,10 @@ class TestRedrawNumTeams:
 
         r = auth_client.post(
             f"/tournament/{t.id}/proam-relay/redraw",
-            data={"num_teams": bad},
+            data={
+                "num_teams": bad,
+                "expected_relay_digest": relay.state_digest(),
+            },
         )
         assert r.status_code == 302, f"bad input {bad!r} did not redirect"
         assert (
@@ -191,3 +198,186 @@ class TestRedrawNumTeams:
         html = r.get_data(as_text=True)
         assert 'name="num_teams"' in html, "num_teams select missing from dashboard"
         assert "Max 3 based on current opt-ins" in html, "capacity note missing"
+        assert re.search(
+            r'name="expected_relay_digest" value="[0-9a-f]{64}"', html
+        )
+
+
+def test_stale_relay_service_instances_merge_disjoint_team_times(
+    app, db_session,
+):
+    """Two judges saving different teams must not replace the other's time."""
+    from services.proam_relay import ProAmRelay
+
+    tournament = _seed_relay_tournament(db_session)
+    ProAmRelay(tournament).run_lottery(num_teams=2)
+
+    first_judge = ProAmRelay(tournament)
+    second_judge = ProAmRelay(tournament)
+    first_judge.record_total_time(
+        1,
+        91.25,
+        expected_digest=first_judge.team_state_digest(1),
+    )
+    second_judge.record_total_time(
+        2,
+        94.75,
+        expected_digest=second_judge.team_state_digest(2),
+    )
+
+    persisted = ProAmRelay(tournament)
+    assert [team['total_time'] for team in persisted.get_teams()] == [91.25, 94.75]
+
+
+def test_relay_results_rejects_stale_same_team_token(
+    app, auth_client, db_session,
+):
+    """A stale overwrite of one relay team is refused after the first save."""
+    from services.proam_relay import ProAmRelay
+
+    tournament = _seed_relay_tournament(db_session)
+    relay = ProAmRelay(tournament)
+    relay.run_lottery(num_teams=2)
+    expected_digest = relay.team_state_digest(1)
+
+    first = auth_client.post(
+        f'/tournament/{tournament.id}/proam-relay/results',
+        data={
+            'team_number': '1',
+            'time_seconds': '91.25',
+            'expected_relay_digest': expected_digest,
+        },
+    )
+    stale = auth_client.post(
+        f'/tournament/{tournament.id}/proam-relay/results',
+        data={
+            'team_number': '1',
+            'time_seconds': '99.00',
+            'expected_relay_digest': expected_digest,
+        },
+    )
+
+    assert first.status_code == 302
+    assert stale.status_code == 409
+    assert 'changed since this page was loaded' in stale.get_data(as_text=True)
+    assert ProAmRelay(tournament).get_teams()[0]['total_time'] == 91.25
+
+
+def test_relay_results_rejects_omitted_token_without_mutation(
+    app, auth_client, db_session,
+):
+    """A handcrafted relay result POST cannot bypass the concurrency fence."""
+    from services.proam_relay import ProAmRelay
+
+    tournament = _seed_relay_tournament(db_session)
+    relay = ProAmRelay(tournament)
+    relay.run_lottery(num_teams=2)
+
+    response = auth_client.post(
+        f'/tournament/{tournament.id}/proam-relay/results',
+        data={
+            'team_number': '1',
+            'time_seconds': '91.25',
+        },
+    )
+
+    assert response.status_code == 409
+    assert ProAmRelay(tournament).get_teams()[0]['total_time'] is None
+
+
+@pytest.mark.parametrize(
+    ('route_suffix', 'data'),
+    [
+        ('draw', {'num_teams': '2'}),
+        ('redraw', {'num_teams': '2'}),
+        ('results', {'team_number': '1', 'time_seconds': '91.25'}),
+        ('manual-teams/save', {'teams_json': '[]'}),
+        (
+            'replace-competitor',
+            {
+                'team_number': '1',
+                'old_competitor_id': '1',
+                'new_competitor_id': '2',
+                'competitor_type': 'pro',
+            },
+        ),
+    ],
+)
+def test_all_relay_mutation_routes_reject_omitted_token(
+    app,
+    auth_client,
+    db_session,
+    route_suffix,
+    data,
+):
+    """Every relay write endpoint fails closed before parsing its payload."""
+    from services.proam_relay import ProAmRelay
+
+    tournament = _seed_relay_tournament(db_session)
+    relay = ProAmRelay(tournament)
+    relay.run_lottery(num_teams=2)
+    state_before = relay.state_digest()
+
+    response = auth_client.post(
+        f'/tournament/{tournament.id}/proam-relay/{route_suffix}',
+        data=data,
+    )
+
+    assert response.status_code == 409
+    assert ProAmRelay(tournament).state_digest() == state_before
+
+
+@pytest.mark.parametrize(
+    'route_suffix',
+    ['results', 'manual-teams'],
+)
+def test_relay_mutation_forms_render_nonblank_server_token(
+    app, auth_client, db_session, route_suffix,
+):
+    from services.proam_relay import ProAmRelay
+
+    tournament = _seed_relay_tournament(db_session)
+    ProAmRelay(tournament).run_lottery(num_teams=2)
+
+    response = auth_client.get(
+        f'/tournament/{tournament.id}/proam-relay/{route_suffix}'
+    )
+
+    assert response.status_code == 200
+    assert re.search(
+        r'name="expected_relay_digest" value="[0-9a-f]{64}"',
+        response.get_data(as_text=True),
+    )
+
+
+def test_relay_teams_renders_fenced_replacement_form_for_each_member(
+    app, auth_client, db_session,
+):
+    from services.proam_relay import ProAmRelay
+
+    tournament = _seed_relay_tournament(db_session)
+    relay = ProAmRelay(tournament)
+    relay.run_lottery(num_teams=2)
+
+    response = auth_client.get(
+        f'/tournament/{tournament.id}/proam-relay/teams'
+    )
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert html.count('/proam-relay/replace-competitor') == 16
+    for team in relay.get_teams():
+        expected_digest = relay.team_state_digest(team['team_number'])
+        assert html.count(
+            f'name="expected_relay_digest" value="{expected_digest}"'
+        ) == 8
+        for competitor_type, member_key in (
+            ('pro', 'pro_members'),
+            ('college', 'college_members'),
+        ):
+            for member in team[member_key]:
+                assert (
+                    f'name="old_competitor_id" value="{member["id"]}"'
+                    in html
+                )
+                assert f'name="competitor_type" value="{competitor_type}"' in html

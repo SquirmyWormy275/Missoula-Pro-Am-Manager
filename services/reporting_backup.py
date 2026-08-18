@@ -5,6 +5,7 @@ import os
 
 from services.background_jobs import submit as submit_job
 from services.backup import backup_database as run_backup_database
+from services.backup import create_sqlite_snapshot
 
 
 def sqlite_backup_download_plan(db_uri: str, instance_path: str) -> dict:
@@ -27,7 +28,22 @@ def sqlite_backup_download_plan(db_uri: str, instance_path: str) -> dict:
             'message': 'Database file not found.',
         }
 
-    return {'ok': True, 'path': db_path}
+    try:
+        snapshot = create_sqlite_snapshot(db_path)
+    except Exception as exc:
+        return {
+            'ok': False,
+            'reason': 'validation_failed',
+            'message': f'Could not create a recoverable SQLite backup: {exc}',
+        }
+
+    return {
+        'ok': True,
+        'path': snapshot['path'],
+        'cleanup': True,
+        'sha256': snapshot['sha256'],
+        'size_bytes': snapshot['size_bytes'],
+    }
 
 
 def run_database_backup(db_uri: str, tournament_id: int, instance_path: str) -> dict:

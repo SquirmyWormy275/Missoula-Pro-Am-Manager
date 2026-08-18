@@ -101,6 +101,97 @@ class TestForeignKeyCascades:
         assert db.session.get(Heat, hid) is None
         assert db.session.get(EventResult, rid) is None
 
+    def test_delete_heat_preserves_score_submission_receipt_tombstone(
+        self, db_session,
+    ):
+        from models.score_submission_receipt import ScoreSubmissionReceipt
+        from models.user import User
+
+        tournament = make_tournament(db_session)
+        event = make_event(db_session, tournament, 'Receipt History', event_type='pro')
+        heat = make_heat(db_session, event)
+        user = User(username='receipt_history_operator', role='admin')
+        user.set_password('testpass')
+        db_session.add(user)
+        db_session.flush()
+        heat_id = heat.id
+        request_id = '00000000-0000-0000-0000-000000000001'
+        receipt = ScoreSubmissionReceipt(
+            request_id=request_id,
+            tournament_id=tournament.id,
+            heat_id=heat_id,
+            issuing_user_id=user.id,
+            canonical_payload_sha256='a' * 64,
+            accepted_outcome_json={'ok': True},
+        )
+        db_session.add(receipt)
+        db_session.flush()
+
+        db_session.delete(heat)
+        db_session.flush()
+
+        retained = db.session.get(ScoreSubmissionReceipt, request_id)
+        assert retained is not None
+        assert retained.heat_id == heat_id
+
+    def test_delete_user_nulls_receipt_issuer_without_deleting_receipt(
+        self, db_session,
+    ):
+        from models.score_submission_receipt import ScoreSubmissionReceipt
+        from models.user import User
+
+        tournament = make_tournament(db_session)
+        event = make_event(db_session, tournament, 'Receipt Issuer', event_type='pro')
+        heat = make_heat(db_session, event)
+        user = User(username='deleted_receipt_operator', role='admin')
+        user.set_password('testpass')
+        db_session.add(user)
+        db_session.flush()
+        request_id = '00000000-0000-0000-0000-000000000002'
+        db_session.add(ScoreSubmissionReceipt(
+            request_id=request_id,
+            tournament_id=tournament.id,
+            heat_id=heat.id,
+            issuing_user_id=user.id,
+            canonical_payload_sha256='b' * 64,
+            accepted_outcome_json={'ok': True},
+        ))
+        db_session.flush()
+
+        db_session.delete(user)
+        db_session.flush()
+
+        retained = db.session.get(ScoreSubmissionReceipt, request_id)
+        assert retained is not None
+        assert retained.issuing_user_id is None
+
+    def test_delete_tournament_cascades_receipt_history(self, db_session):
+        from models.score_submission_receipt import ScoreSubmissionReceipt
+        from models.user import User
+
+        tournament = make_tournament(db_session)
+        event = make_event(db_session, tournament, 'Receipt Aggregate', event_type='pro')
+        heat = make_heat(db_session, event)
+        user = User(username='aggregate_receipt_operator', role='admin')
+        user.set_password('testpass')
+        db_session.add(user)
+        db_session.flush()
+        request_id = '00000000-0000-0000-0000-000000000003'
+        db_session.add(ScoreSubmissionReceipt(
+            request_id=request_id,
+            tournament_id=tournament.id,
+            heat_id=heat.id,
+            issuing_user_id=user.id,
+            canonical_payload_sha256='c' * 64,
+            accepted_outcome_json={'ok': True},
+        ))
+        db_session.flush()
+
+        db_session.delete(tournament)
+        db_session.flush()
+
+        assert db.session.get(ScoreSubmissionReceipt, request_id) is None
+
 
 # ===========================================================================
 # UNIQUE CONSTRAINTS

@@ -231,7 +231,10 @@ Teams are organized by school. A school can enter multiple teams (e.g., UM-A, UM
 - **Speed Climb Run 1 placement:** Normal position in the Friday schedule (no special end-of-day requirement).
 - **Saturday placement:** Both Chokerman Run 2 and Speed Climb Run 2 go to Saturday. Chokerman Run 2 is placed at the end of the last flight per the existing rule. Speed Climb Run 2 is placed via the college overflow integration (round-robin across flights, or judge-selected position).
 
-Obstacle Pole is single-run in both college and pro divisions for 2026.
+**Obstacle Pole:** the owner requirement is two runs for College (Pole 1 / Pole
+2, best time) and explicitly one run for Pro. Existing 2026 tournament rows
+retain their persisted configuration; newly configured tournaments use the
+owner-rule distinction above.
 
 **Caber Toss:** Caber Toss has `requires_dual_runs=True` in config.py but does NOT split across days -- both runs occur on Friday. The day-split rule applies only to Chokerman's Race and Speed Climb.
 

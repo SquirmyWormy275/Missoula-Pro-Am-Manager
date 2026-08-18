@@ -20,6 +20,7 @@ from .print_tracker import PrintTracker
 from .pro_event_rank import ProEventRank
 from .relay import RelayState, RelayTeam, RelayTeamEvent, RelayTeamMember
 from .school_captain import SchoolCaptain
+from .score_submission_receipt import ScoreSubmissionReceipt
 from .shadow_handicap import (
     CompetitorExternalIdentity,
     ShadowContextObservation,
@@ -51,6 +52,7 @@ __all__ = [
     'AuditLog',
     'BackgroundJob',
     'SchoolCaptain',
+    'ScoreSubmissionReceipt',
     'WoodConfig',
     'ProEventRank',
     'PayoutTemplate',

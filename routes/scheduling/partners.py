@@ -6,8 +6,10 @@ Routes:
   POST /<tid>/events/<eid>/reassign-partner  — assign new partner
 """
 
+import hmac
 import json
 import logging
+from functools import wraps
 
 from flask import abort, flash, redirect, render_template, request, url_for
 
@@ -15,9 +17,14 @@ from database import db
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.event import Event, EventResult
 from services.audit import log_action
+from services.flight_builder import (
+    lock_tournament_schedule,
+    sqlite_schedule_writer_guard,
+)
 from services.partner_matching import (
     get_partner_repair_cases,
     get_unclaimed_partner_candidates,
+    partner_claim_digest,
 )
 from services.partner_matching import (
     set_partner_bidirectional as _set_partner_bidirectional,
@@ -26,6 +33,52 @@ from services.partner_matching import (
 from . import _competitor_entered_event, scheduling_bp
 
 logger = logging.getLogger(__name__)
+
+_PARTNER_CLAIM_CONFLICT = (
+    'Partner claims changed since this page was loaded. '
+    'Refresh the queue and review the current declarations.'
+)
+
+
+def _decode_partner_claim(raw_claim):
+    """Decode a no-JS option value containing candidate ID and state digest."""
+    if not raw_claim or ':' not in raw_claim:
+        return None
+    candidate_id, expected_digest = raw_claim.split(':', 1)
+    try:
+        candidate_id = int(candidate_id)
+    except (TypeError, ValueError):
+        return None
+    if candidate_id < 1 or not expected_digest.strip():
+        return None
+    return candidate_id, expected_digest.strip()
+
+
+def _partner_conflict_response():
+    db.session.rollback()
+    return _PARTNER_CLAIM_CONFLICT, 409
+
+
+def _require_partner_claim_digest(func):
+    """Reject tokenless reassignment requests before taking the writer lock."""
+    @wraps(func)
+    def guarded(*args, **kwargs):
+        expected_digest = request.form.get('expected_claim_digest', '').strip()
+        encoded_claim = _decode_partner_claim(request.form.get('partner_claim'))
+        if not expected_digest and encoded_claim is None:
+            return _partner_conflict_response()
+        return func(*args, **kwargs)
+
+    return guarded
+
+
+def _partner_writer(func):
+    @wraps(func)
+    def locked(tid, *args, **kwargs):
+        with sqlite_schedule_writer_guard(tid):
+            return func(tid, *args, **kwargs)
+
+    return locked
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +300,16 @@ def partner_queue(tid, eid):
     available = get_unclaimed_partner_candidates(
         event, {case['competitor'].id for case in repairs}
     )
+    claim_digests = {}
+    for repair in repairs:
+        candidates = list(available)
+        suggested = repair.get('suggested_partner')
+        if suggested is not None and all(row.id != suggested.id for row in candidates):
+            candidates.append(suggested)
+        for candidate in candidates:
+            claim_digests[(repair['competitor'].id, candidate.id)] = (
+                partner_claim_digest(event, repair['competitor'], candidate)
+            )
 
     return render_template(
         "scheduling/partner_queue.html",
@@ -254,20 +317,29 @@ def partner_queue(tid, eid):
         event=event,
         repairs=repairs,
         available=available,
+        claim_digests=claim_digests,
         partner_repairs_locked=_partner_repair_is_locked(event),
     )
 
 
 @scheduling_bp.route("/<int:tid>/events/<int:eid>/reassign-partner", methods=["POST"])
+@_require_partner_claim_digest
+@_partner_writer
 def reassign_partner(tid, eid):
     """POST: Assign a new partner to an orphaned competitor."""
+    lock_tournament_schedule(tid)
     event = db.get_or_404(Event, eid)
     if event.tournament_id != tid:
         abort(404)
 
     orphan_id = request.form.get("orphan_id", type=int)
     orphan_type = request.form.get("orphan_type", "pro")
-    new_partner_id = request.form.get("new_partner_id", type=int)
+    encoded_claim = _decode_partner_claim(request.form.get('partner_claim'))
+    if encoded_claim is not None:
+        new_partner_id, expected_claim_digest = encoded_claim
+    else:
+        new_partner_id = request.form.get("new_partner_id", type=int)
+        expected_claim_digest = request.form.get('expected_claim_digest', '').strip()
     new_partner_type = request.form.get("new_partner_type", "pro")
 
     if not orphan_id or not new_partner_id:
@@ -284,6 +356,13 @@ def reassign_partner(tid, eid):
     if not orphan or not new_partner:
         flash("Competitor not found.", "error")
         return redirect(url_for("scheduling.partner_queue", tid=tid, eid=eid))
+
+    current_claim_digest = partner_claim_digest(event, orphan, new_partner)
+    if not hmac.compare_digest(
+        expected_claim_digest,
+        current_claim_digest,
+    ):
+        return _partner_conflict_response()
 
     # Check pairing compatibility before the current-roster error so an
     # operator gets the specific correction for a visibly invalid selection.
@@ -321,7 +400,6 @@ def reassign_partner(tid, eid):
     # Apply bidirectional update
     previous_partner_name = orphan.get_partners().get(str(event.id))
     set_partner_bidirectional(orphan, new_partner, event)
-    db.session.commit()
     log_action(
         "partner_reassigned",
         "event",
@@ -336,7 +414,9 @@ def reassign_partner(tid, eid):
             "new_partner_id": new_partner.id,
             "new_partner_type": new_partner_type,
         },
+        use_request_transaction=True,
     )
+    db.session.commit()
 
     flash(f"Reassigned {orphan.name} with new partner {new_partner.name}.", "success")
     logger.info(

@@ -403,7 +403,10 @@ def test_single_flight_reorder_cannot_move_chokerman_ahead_of_tail(
     response = auth_client.post(
         f"/scheduling/{schedule['tournament_id']}/flights/"
         f"{schedule['last_flight_id']}/reorder",
-        json={'heat_ids': [schedule['closer_id'], schedule['neutral_id']]},
+        json={
+            'heat_ids': [schedule['closer_id'], schedule['neutral_id']],
+            'expected_heat_ids': [schedule['neutral_id'], schedule['closer_id']],
+        },
     )
 
     assert response.status_code == 409
@@ -427,10 +430,14 @@ def test_bulk_reorder_cannot_move_chokerman_out_of_last_flight(
             {
                 'flight_id': schedule['first_flight_id'],
                 'heat_ids': [schedule['opener_id'], schedule['closer_id']],
+                'expected_heat_ids': [schedule['opener_id']],
             },
             {
                 'flight_id': schedule['last_flight_id'],
                 'heat_ids': [schedule['neutral_id']],
+                'expected_heat_ids': [
+                    schedule['neutral_id'], schedule['closer_id'],
+                ],
             },
         ]},
     )
@@ -457,7 +464,10 @@ def test_manual_reorder_is_blocked_after_any_flight_starts(app, auth_client):
     response = auth_client.post(
         f"/scheduling/{schedule['tournament_id']}/flights/"
         f"{schedule['last_flight_id']}/reorder",
-        json={'heat_ids': [schedule['neutral_id'], schedule['closer_id']]},
+        json={
+            'heat_ids': [schedule['neutral_id'], schedule['closer_id']],
+            'expected_heat_ids': [schedule['neutral_id'], schedule['closer_id']],
+        },
     )
 
     assert response.status_code == 409

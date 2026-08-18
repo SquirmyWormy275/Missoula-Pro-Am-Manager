@@ -27,6 +27,8 @@ DOMAIN_CONTRACT (2026-04-27): the partner resolver must:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 
 from database import db
@@ -222,6 +224,56 @@ def get_unclaimed_partner_candidates(event: Event, exclude_ids: set[int] | None 
         and competitor.id not in inbound_claims
         and not _read_partner_name(competitor, event)
     ]
+
+
+def partner_claim_digest(event: Event, orphan, candidate) -> str:
+    """Digest only the two competitors and claims that govern this repair."""
+    pool = _event_pool(event)
+
+    def state(competitor):
+        inbound_claims = []
+        for claimant in pool:
+            partner_name = _read_partner_name(claimant, event)
+            if not partner_name:
+                continue
+            resolved = _resolve_partner(partner_name, pool, exclude_id=claimant.id)
+            if resolved is not None and resolved.id == competitor.id:
+                inbound_claims.append((claimant.id, partner_name))
+        entered_events = (
+            competitor.get_events_entered()
+            if hasattr(competitor, 'get_events_entered')
+            else []
+        )
+        return {
+            'id': competitor.id,
+            'name': competitor.name,
+            'status': competitor.status,
+            'gender': competitor.gender,
+            'entered': _is_entered(event, entered_events),
+            'partner': _read_partner_name(competitor, event),
+            'inbound_claims': sorted(inbound_claims),
+        }
+
+    payload = {
+        'event': {
+            'id': event.id,
+            'status': event.status,
+            'is_finalized': bool(event.is_finalized),
+            'scoring_started': EventResult.query.filter_by(
+                event_id=event.id,
+                status='completed',
+            ).first() is not None,
+        },
+        'orphan': state(orphan),
+        'candidate': state(candidate),
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(',', ':'),
+        ensure_ascii=True,
+    ).encode('ascii')
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def auto_assign_event_partners(event: Event) -> dict:

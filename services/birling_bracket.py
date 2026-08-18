@@ -2,6 +2,9 @@
 Birling double-elimination bracket service.
 Handles bracket generation and match progression for Birling events.
 """
+import hashlib
+import hmac
+import json
 import logging
 import math
 from datetime import datetime, timezone
@@ -11,6 +14,14 @@ from models import Event, EventResult
 from services import birling_rows
 
 logger = logging.getLogger(__name__)
+
+
+class BirlingStateConflict(RuntimeError):
+    """Authoritative bracket state changed after the operator loaded a form."""
+
+
+class BirlingFallConflict(BirlingStateConflict):
+    """The match's fall state changed after the operator loaded the page."""
 
 
 class BirlingBracket:
@@ -30,6 +41,91 @@ class BirlingBracket:
         birling_rows.project_document(self.event, self.bracket_data)
         self.projection_refused = None
         db.session.commit()
+
+    def match_fall_digest(self, match_id: str) -> str:
+        """Digest the contestants, decision, and physical falls for one match."""
+        match = self._find_match(match_id)
+        if match is None:
+            raise ValueError(f'Match {match_id} not found')
+        payload = {
+            'match_id': match_id,
+            'competitor1': match.get('competitor1'),
+            'competitor2': match.get('competitor2'),
+            'winner': match.get('winner'),
+            'loser': match.get('loser'),
+            'is_bye': bool(match.get('is_bye', False)),
+            'needed': match.get('needed'),
+            'falls': [
+                {
+                    'fall_number': fall.get('fall_number'),
+                    'winner': fall.get('winner'),
+                }
+                for fall in match.get('falls', [])
+            ],
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('ascii')
+        return hashlib.sha256(encoded).hexdigest()
+
+    def bracket_state_digest(self) -> str:
+        """Digest every authoritative row represented by this bracket."""
+        payload = {
+            'event_id': self.event.id,
+            'bracket_data': self.bracket_data,
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('ascii')
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _require_match_fall_digest(
+        self,
+        match_id: str,
+        expected_fall_digest: str | None,
+    ) -> None:
+        """Refuse a write based on an absent or stale match snapshot."""
+        if not expected_fall_digest or not hmac.compare_digest(
+            expected_fall_digest,
+            self.match_fall_digest(match_id),
+        ):
+            raise BirlingFallConflict(
+                'Birling fall state changed since this page was loaded. '
+                'Refresh the bracket before recording a result.'
+            )
+
+    def _require_match_undo_digest(
+        self,
+        match_id: str,
+        expected_undo_digest: str | None,
+    ) -> None:
+        """Refuse an undo based on an absent or stale match snapshot."""
+        if not expected_undo_digest or not hmac.compare_digest(
+            expected_undo_digest,
+            self.match_fall_digest(match_id),
+        ):
+            raise BirlingStateConflict(
+                'Birling match state changed since this page was loaded. '
+                'Refresh the bracket before undoing a result.'
+            )
+
+    def _require_bracket_state_digest(
+        self,
+        expected_bracket_digest: str | None,
+    ) -> None:
+        """Refuse a reset based on an absent or stale bracket snapshot."""
+        if not expected_bracket_digest or not hmac.compare_digest(
+            expected_bracket_digest,
+            self.bracket_state_digest(),
+        ):
+            raise BirlingStateConflict(
+                'Birling bracket state changed since this page was loaded. '
+                'Refresh the bracket before resetting it.'
+            )
 
     def _expected_round_1_match_count(self, n: int) -> int:
         """Compact-shape round-1 match count for N entrants.
@@ -429,7 +525,12 @@ class BirlingBracket:
                         self._advance_loser_winner(match)
                         changed = True
 
-    def record_fall(self, match_id: str, fall_winner_id: int) -> dict:
+    def record_fall(
+        self,
+        match_id: str,
+        fall_winner_id: int,
+        expected_fall_digest: str | None = None,
+    ) -> dict:
         """Record a single fall in a best-of-3 birling match.
 
         Args:
@@ -442,6 +543,8 @@ class BirlingBracket:
         match = self._find_match(match_id)
         if not match:
             raise ValueError(f"Match {match_id} not found")
+        if expected_fall_digest is not None:
+            self._require_match_fall_digest(match_id, expected_fall_digest)
 
         # Validate the match is currently playable
         playable_ids = {m['match_id'] for m in self.get_current_matches()}
@@ -495,6 +598,17 @@ class BirlingBracket:
             'match_decided': decided,
             'winner': winner,
         }
+
+    def record_direct_winner(
+        self,
+        match_id: str,
+        winner_id: int,
+        *,
+        expected_fall_digest: str | None,
+    ) -> None:
+        """Declare a winner only against the operator's current fall state."""
+        self._require_match_fall_digest(match_id, expected_fall_digest)
+        self.record_match_result(match_id, winner_id)
 
     def record_match_result(self, match_id: str, winner_id: int,
                             _from_fall: bool = False):
@@ -877,7 +991,11 @@ class BirlingBracket:
             target_match_idx = len(target_rnd) - 1
         return target_rnd[target_match_idx]
 
-    def undo_match_result(self, match_id: str) -> dict:
+    def undo_match_result(
+        self,
+        match_id: str,
+        expected_undo_digest: str | None = None,
+    ) -> dict:
         """Undo a decided match result, returning both competitors to the match.
 
         Only allowed if no downstream match has been decided.
@@ -888,6 +1006,7 @@ class BirlingBracket:
         Raises:
             ValueError if the match cannot be undone.
         """
+        self._require_match_undo_digest(match_id, expected_undo_digest)
         match = self._find_match(match_id)
         if not match:
             raise ValueError(f"Match {match_id} not found")
@@ -963,6 +1082,13 @@ class BirlingBracket:
             'undone': True,
             'message': 'Match result cleared. Both competitors returned to this match.',
         }
+
+    def reset_bracket(self, expected_bracket_digest: str | None = None) -> None:
+        """Clear this bracket only when the operator submitted its exact state."""
+        self._require_bracket_state_digest(expected_bracket_digest)
+        birling_rows.clear_event(self.event.id)
+        db.session.commit()
+        self.bracket_data = birling_rows.empty_document()
 
     def finalize_to_event_results(self):
         """Write final placements and points to EventResult records.

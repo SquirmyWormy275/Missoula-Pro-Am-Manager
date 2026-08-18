@@ -501,7 +501,10 @@ class TestARealSaveWritesRows:
         match = next(m for m in bracket.bracket_data["bracket"]["winners"][0]
                      if m["competitor1"] and m["competitor2"])
         bracket.record_match_result(match["match_id"], match["competitor1"])
-        bracket.undo_match_result(match["match_id"])
+        bracket.undo_match_result(
+            match["match_id"],
+            expected_undo_digest=bracket.match_fall_digest(match["match_id"]),
+        )
 
         row = next(m for m in _rows_for(event.id)["matches"]
                    if m.match_id == match["match_id"])

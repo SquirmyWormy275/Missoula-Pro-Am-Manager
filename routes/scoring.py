@@ -5,8 +5,12 @@ undo, throw-off resolution, bulk CSV import, payout templates, and next-event na
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
-from datetime import datetime, timezone
+import json
+import os
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from flask import (
     Blueprint,
@@ -14,6 +18,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    g,
     jsonify,
     redirect,
     render_template,
@@ -23,6 +28,7 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required
+from flask_wtf.csrf import CSRFError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -45,10 +51,31 @@ from services.scoring_workflow import (
     competitor_lookup_for_event,
     existing_results_for_event,
     finalize_event_results,
+    heat_scoring_state_digest,
+    heat_submission_identity,
+    revoke_heat_submission_receipts_for_undo,
     save_heat_results_submission,
 )
 
 scoring_bp = Blueprint('scoring', __name__)
+
+_OFFLINE_PACKAGE_SCHEMA_VERSION = 2
+_OFFLINE_QUEUE_MAX_AGE = timedelta(days=30)
+_OFFLINE_ASSET_FILENAMES = (
+    'vendor/bootstrap/css/bootstrap.min.css',
+    'vendor/bootstrap-icons/font/bootstrap-icons.min.css',
+    'vendor/bootstrap-icons/font/fonts/bootstrap-icons.woff2?2820a3852bdb9a5832199cc61cec4e65',
+    'vendor/bootstrap-icons/font/fonts/bootstrap-icons.woff?2820a3852bdb9a5832199cc61cec4e65',
+    'vendor/bootstrap/js/bootstrap.bundle.min.js',
+    'css/theme.css',
+    'img/favicon.svg',
+    'img/flag_of_arapaho_nation.svg',
+    'img/missoula-pro-am-logo.png',
+    'offline_queue.js',
+    'js/offline_queue_shared.js',
+    'js/onboarding.js',
+    'js/csp_handlers.js',
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,7 +96,35 @@ def _heat_for_tournament_or_404(tournament_id: int, heat_id: int) -> Heat:
 
 
 def _is_async() -> bool:
-    return request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    return (
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.accept_mimetypes.best_match(
+            ['application/json', 'text/html']
+        ) == 'application/json'
+    )
+
+
+def _json_error(code: str, message: str, status_code: int, **extra):
+    payload = {
+        'ok': False,
+        'category': 'error',
+        'message': message,
+        'error': {'code': code, 'message': message},
+    }
+    payload.update(extra)
+    return jsonify(payload), status_code
+
+
+@scoring_bp.errorhandler(CSRFError)
+def _scoring_csrf_error(_error):
+    if _is_async():
+        return _json_error(
+            'csrf_expired',
+            'The score form security token expired.',
+            400,
+        )
+    flash('Your session expired for security. Please try that action again.', 'warning')
+    return redirect(request.referrer or request.path or '/')
 
 
 def _current_user_id() -> int | None:
@@ -77,6 +132,153 @@ def _current_user_id() -> int | None:
     if current_user and current_user.is_authenticated:
         return current_user.id
     return None
+
+
+def _current_user_can_score_tournament(tournament_id: int) -> bool:
+    if not current_user.is_authenticated or not getattr(current_user, 'can_score', False):
+        return False
+    user_tournament_id = getattr(current_user, 'tournament_id', None)
+    return user_tournament_id is None or int(user_tournament_id) == int(tournament_id)
+
+
+def _offline_build_id() -> str:
+    configured = str(current_app.config.get('OFFLINE_BUILD_ID') or '').strip()
+    if configured:
+        return configured
+    for key in ('RAILWAY_GIT_COMMIT_SHA', 'GIT_COMMIT_SHA', 'SOURCE_VERSION'):
+        value = os.environ.get(key, '').strip()
+        if value:
+            return value
+
+    hasher = hashlib.sha256()
+    for relative in (
+        'app.py',
+        'routes/scoring.py',
+        'services/scoring_workflow.py',
+        'templates/scoring/enter_heat.html',
+        'static/sw.js',
+        'static/offline_queue.js',
+        'static/js/offline_queue_shared.js',
+    ):
+        try:
+            with open(os.path.join(current_app.root_path, relative), 'rb') as source:
+                hasher.update(source.read())
+        except OSError:
+            hasher.update(relative.encode('utf-8'))
+    return hasher.hexdigest()[:20]
+
+
+def _offline_schedule_snapshot(tournament_id: int) -> tuple[str, list[Heat]]:
+    heats = (
+        Heat.query.join(Event, Heat.event_id == Event.id)
+        .filter(Event.tournament_id == tournament_id)
+        .order_by(
+            Event.id,
+            Heat.heat_number,
+            Heat.run_number,
+            Heat.id,
+        )
+        .all()
+    )
+    schedule = [
+        {
+            'event_id': heat.event_id,
+            'heat_id': heat.id,
+            'identity': heat_submission_identity(heat),
+            'version': heat.version_id,
+        }
+        for heat in heats
+    ]
+    encoded = json.dumps(
+        schedule,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(',', ':'),
+    )
+    return hashlib.sha256(encoded.encode('utf-8')).hexdigest(), heats
+
+
+def _static_content_sha256(filename: str) -> str:
+    path = os.path.join(current_app.static_folder, filename)
+    hasher = hashlib.sha256()
+    with open(path, 'rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _offline_context(tournament_id: int, schedule_fingerprint: str) -> dict:
+    return {
+        'schema_version': _OFFLINE_PACKAGE_SCHEMA_VERSION,
+        'application_build': _offline_build_id(),
+        'schedule_fingerprint': schedule_fingerprint,
+        'tournament_id': tournament_id,
+        'issuer_user_id': current_user.id,
+        'issuer_role': current_user.role,
+    }
+
+
+def _offline_final_html_sha256(response: Response) -> str:
+    """Hash the bytes produced by the app's deterministic HTML post-processing."""
+    body = response.get_data(as_text=True)
+    active_lang = text.get_language()
+    if active_lang != text.DEFAULT_LANGUAGE and active_lang in text.TRANSLATIONS:
+        body = text.translate_html(body, lang=active_lang)
+    nonce = getattr(g, 'csp_nonce', None)
+    if nonce:
+        # Imported lazily to avoid a route-registration cycle during app startup.
+        from app import _inject_csp_nonce
+
+        body = _inject_csp_nonce(body, nonce)
+    return hashlib.sha256(body.encode('utf-8')).hexdigest()
+
+
+def _offline_manifest(tournament_id: int) -> tuple[dict, dict]:
+    schedule_fingerprint, heats = _offline_schedule_snapshot(tournament_id)
+    context = _offline_context(tournament_id, schedule_fingerprint)
+    pages = []
+    for heat in heats:
+        page_url = url_for(
+            'scoring.enter_heat_results',
+            tournament_id=tournament_id,
+            heat_id=heat.id,
+        )
+        fetch_url = url_for(
+            'scoring.enter_heat_results',
+            tournament_id=tournament_id,
+            heat_id=heat.id,
+            offline_prepare=1,
+            prepared_schedule=schedule_fingerprint,
+        )
+        pages.append({
+            'kind': 'page',
+            'url': page_url,
+            'fetch_url': fetch_url,
+        })
+
+    assets = []
+    theme_version = str(int(os.path.getmtime(
+        os.path.join(current_app.root_path, 'static', 'css', 'theme.css')
+    )))
+    for filename in _OFFLINE_ASSET_FILENAMES:
+        clean_filename, separator, query = filename.partition('?')
+        asset_url = url_for('static', filename=clean_filename)
+        if separator:
+            asset_url = f'{asset_url}?{query}'
+        elif clean_filename == 'css/theme.css':
+            asset_url = f'{asset_url}?v={theme_version}'
+        assets.append({
+            'kind': 'asset',
+            'url': asset_url,
+            'content_sha256': _static_content_sha256(clean_filename),
+        })
+
+    manifest = dict(context)
+    manifest.update({
+        'pages': pages,
+        'assets': assets,
+    })
+    return manifest, context
 
 
 def _normalized_heat_competitor_ids(heat: Heat) -> list[int]:
@@ -499,6 +701,26 @@ def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) 
 # Route-level shim: keep HTTP details here while the scoring workflow lives in
 # services.scoring_workflow for direct testing outside request handlers.
 def _save_heat_results_submission(tournament_id: int, heat: Heat, event: Event) -> dict:
+    posted_tournament_id = request.form.get('tournament_id', type=int)
+    posted_heat_id = request.form.get('heat_id', type=int)
+    posted_role = str(request.form.get('issuer_role') or '').strip()
+    if (
+        (posted_tournament_id is not None and posted_tournament_id != tournament_id)
+        or (posted_heat_id is not None and posted_heat_id != heat.id)
+        or (posted_role and posted_role != getattr(current_user, 'role', None))
+    ):
+        return {
+            'ok': False,
+            'category': 'error',
+            'message': 'This queued score is bound to another user role, tournament, or heat.',
+            'error_code': 'authorization_denied',
+            'redirect_url': url_for(
+                'scoring.enter_heat_results',
+                tournament_id=tournament_id,
+                heat_id=heat.id,
+            ),
+            'status_code': 403,
+        }
     outcome = save_heat_results_submission(
         tournament_id=tournament_id,
         heat=heat,
@@ -710,32 +932,39 @@ def finalize_event(tournament_id, event_id):
 @login_required
 @write_limit('60 per minute')
 def enter_heat_results(tournament_id, heat_id):
+    if not _current_user_can_score_tournament(tournament_id):
+        if _is_async():
+            return _json_error(
+                'authorization_denied',
+                'Your current account cannot score this tournament.',
+                403,
+            )
+        abort(403)
     tournament = db.get_or_404(Tournament, tournament_id)
     heat = _heat_for_tournament_or_404(tournament_id, heat_id)
     event = heat.event
 
     if request.method == 'POST':
-        # Reject POST if the heat is locked by a different judge.  This is the server-side
-        # enforcement of the advisory lock shown on the GET form — a second tab or another
-        # device cannot overwrite results while someone else holds the lock.
-        user_id = _current_user_id()
-        if heat.is_locked() and heat.locked_by_user_id != (user_id or -1):
-            from models.user import User
-            locker = db.session.get(User, heat.locked_by_user_id)
-            owner = locker.username if locker else f'User #{heat.locked_by_user_id}'
-            msg = f'Heat is currently being edited by {owner}. Your submission was not saved.'
-            if _is_async():
-                return jsonify({'ok': False, 'category': 'warning', 'message': msg}), 423
-            flash(msg, 'warning')
-            return redirect(url_for('scoring.enter_heat_results',
-                                    tournament_id=tournament_id, heat_id=heat_id))
-
         outcome = _save_heat_results_submission(tournament_id=tournament_id,
                                                 heat=heat, event=event)
         if _is_async():
-            return jsonify({k: outcome[k] for k in
-                            ('ok', 'message', 'redirect_url', 'category',
-                             'undo_heat_id') if k in outcome}), outcome['status_code']
+            payload = {
+                k: outcome[k] for k in (
+                    'ok',
+                    'message',
+                    'redirect_url',
+                    'category',
+                    'undo_heat_id',
+                    'receipt',
+                    'receipt_replayed',
+                ) if k in outcome
+            }
+            if outcome.get('error_code'):
+                payload['error'] = {
+                    'code': outcome['error_code'],
+                    'message': outcome['message'],
+                }
+            return jsonify(payload), outcome['status_code']
         flash(outcome['message'], outcome['category'])
         redirect_url = outcome['redirect_url']
         if outcome.get('undo_heat_id'):
@@ -743,10 +972,19 @@ def enter_heat_results(tournament_id, heat_id):
         return redirect(redirect_url)
 
     # -- GET: acquire heat lock --
+    schedule_fingerprint, _schedule_heats = _offline_schedule_snapshot(tournament_id)
+    preparing_offline = request.args.get('offline_prepare') == '1'
+    if preparing_offline and request.args.get('prepared_schedule') != schedule_fingerprint:
+        return Response(
+            'Schedule changed while the offline package was being prepared.',
+            status=409,
+            mimetype='text/plain',
+        )
+
     user_id = _current_user_id()
     lock_owner = None
     lock_blocked = False
-    if user_id:
+    if user_id and not preparing_offline:
         if heat.is_locked() and heat.locked_by_user_id != user_id:
             lock_blocked = True
             from models.user import User
@@ -803,15 +1041,42 @@ def enter_heat_results(tournament_id, heat_id):
     next_heat_url = (url_for('scoring.enter_heat_results', tournament_id=tournament_id,
                              heat_id=next_heat.id) if next_heat else None)
 
-    return render_template('scoring/enter_heat.html',
-                           tournament=tournament, heat=heat, event=event,
-                           competitors=competitors, heat_version=heat.version_id,
-                           heat_identity=(
-                               heat.locked_at.isoformat(timespec='microseconds')
-                               if heat.locked_at is not None else ''
-                           ),
-                           next_heat_url=next_heat_url,
-                           lock_blocked=lock_blocked, lock_owner=lock_owner)
+    offline_context = _offline_context(tournament_id, schedule_fingerprint)
+    rendered = render_template(
+        'scoring/enter_heat.html',
+        tournament=tournament,
+        heat=heat,
+        event=event,
+        competitors=competitors,
+        heat_version=heat.version_id,
+        score_request_id=str(uuid4()),
+        heat_identity=heat_submission_identity(heat),
+        scoring_state_digest=heat_scoring_state_digest(
+            heat, event, result_lookup.values()
+        ),
+        offline_context=offline_context,
+        next_heat_url=next_heat_url,
+        lock_blocked=lock_blocked,
+        lock_owner=lock_owner,
+    )
+    response = current_app.make_response(rendered)
+    if preparing_offline:
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['X-ProAm-Offline-Build'] = offline_context[
+            'application_build'
+        ]
+        response.headers['X-ProAm-Offline-Schedule'] = offline_context[
+            'schedule_fingerprint'
+        ]
+        response.headers['X-ProAm-Offline-Tournament'] = str(tournament_id)
+        response.headers['X-ProAm-Offline-Issuer'] = str(
+            offline_context['issuer_user_id']
+        )
+        response.headers['X-ProAm-Offline-Role'] = offline_context['issuer_role']
+        response.headers[
+            'X-ProAm-Offline-Content-SHA256'
+        ] = _offline_final_html_sha256(response)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -968,6 +1233,12 @@ def undo_heat_save(tournament_id, heat_id):
             heat.status = 'pending'
             event.status = 'in_progress'
             event.is_finalized = False
+            revoke_heat_submission_receipts_for_undo(
+                tournament_id=tournament_id,
+                heat_id=heat.id,
+                event_id=event.id,
+                judge_user_id=_current_user_id(),
+            )
 
         db.session.commit()
     except Exception as exc:
@@ -983,8 +1254,6 @@ def undo_heat_save(tournament_id, heat_id):
 
     invalidate_tournament_caches(tournament_id)
     session.pop(f'undo_heat_{heat_id}', None)
-    log_action('heat_undo', 'heat', heat_id,
-               {'event_id': event.id, 'judge_user_id': _current_user_id()})
 
     if _is_async():
         return jsonify({'ok': True, 'message': 'Heat results reverted to pending.'})
@@ -1202,13 +1471,21 @@ def scratch_preview(tournament_id, competitor_id):
     "competitor_type": str, "effects": [CascadeEffect dicts]}.
     """
     comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
-    from services.scratch_cascade import compute_scratch_effects, find_undoable_scratch
+    from services.scratch_cascade import (
+        compute_scratch_effects,
+        find_undoable_scratch,
+        scratch_effect_digest,
+        scratch_undo_token,
+    )
     try:
         effects = compute_scratch_effects(comp, tournament)
     except ValueError:
         abort(403)
 
     comp_type = _competitor_type_of(comp)
+    effect_digest = scratch_effect_digest(comp, effects)
+    undo_entry = find_undoable_scratch(comp.id, comp_type)
+    undo_token = scratch_undo_token(undo_entry) if undo_entry is not None else None
 
     if not _scratch_preview_wants_json():
         # Resolve an explicit heat-board return target from its event id, never
@@ -1223,14 +1500,19 @@ def scratch_preview(tournament_id, competitor_id):
             competitor=comp,
             competitor_type=comp_type,
             effects=effects,
+            effect_digest=effect_digest,
             cancel_url=cancel_url,
             return_event_id=return_event_id,
-            undo_available=find_undoable_scratch(comp.id, comp_type) is not None,
+            undo_available=undo_token is not None,
+            undo_token=undo_token,
         )
 
     return jsonify({
         'competitor_name': comp.name,
         'competitor_type': comp_type,
+        'effect_digest': effect_digest,
+        'undo_available': undo_token is not None,
+        'undo_token': undo_token,
         'effects': [
             {
                 'effect_type': e.effect_type,
@@ -1268,6 +1550,7 @@ def scratch_confirm(tournament_id, competitor_id):
         ScratchCascadeConflict,
         compute_scratch_effects,
         execute_cascade,
+        scratch_effect_digest,
     )
 
     # Re-compute from fresh DB state so we can't be fed stale/forged IDs.
@@ -1275,6 +1558,24 @@ def scratch_confirm(tournament_id, competitor_id):
         fresh_effects = compute_scratch_effects(comp, tournament)
     except ValueError:
         abort(403)
+
+    expected_effect_digest = request.form.get('expected_effect_digest', '')
+    current_effect_digest = scratch_effect_digest(comp, fresh_effects)
+    if not expected_effect_digest or expected_effect_digest != current_effect_digest:
+        db.session.rollback()
+        message = (
+            'Scratch effects changed since you reviewed them. '
+            'Review the current effects and confirm again.'
+        )
+        if _is_async():
+            return jsonify({'ok': False, 'message': message}), 409
+        flash(message, 'warning')
+        return redirect(url_for(
+            'scoring.scratch_preview',
+            tournament_id=tournament_id,
+            competitor_id=competitor_id,
+            return_event_id=request.form.get('return_event_id'),
+        ))
 
     # Build a lookup of fresh effects keyed by (effect_type, affected_entity_id).
     fresh_lookup: dict[tuple, CascadeEffect] = {
@@ -1378,9 +1679,12 @@ def scratch_undo(tournament_id, competitor_id):
         result = reverse_cascade(
             comp.id, judge_id, tournament,
             competitor_type=_competitor_type_of(comp),
+            expected_undo_token=request.form.get('expected_undo_token'),
         )
         if result['success']:
             db.session.commit()
+        else:
+            db.session.rollback()
     except (StaleDataError, ScratchCascadeConflict):
         db.session.rollback()
         message = (
@@ -1396,11 +1700,19 @@ def scratch_undo(tournament_id, competitor_id):
             competitor_id=competitor_id,
         ))
 
-    if result['success']:
-        invalidate_tournament_caches(tournament_id)
-        flash(f'Scratch reversed for {comp.name}.', 'success')
-    else:
+    if not result['success']:
+        status_code = result.get('status_code', 409)
+        if _is_async():
+            return jsonify({'ok': False, 'message': result['message']}), status_code
         flash(result['message'], 'warning')
+        return redirect(url_for(
+            'scoring.scratch_preview',
+            tournament_id=tournament_id,
+            competitor_id=competitor_id,
+        ))
+
+    invalidate_tournament_caches(tournament_id)
+    flash(f'Scratch reversed for {comp.name}.', 'success')
 
     from models.competitor import CollegeCompetitor as _CC
     if isinstance(comp, _CC):
@@ -1419,11 +1731,17 @@ def scratch_undo(tournament_id, competitor_id):
 
 @scoring_bp.route('/<int:tournament_id>/offline-ops')
 def offline_ops(tournament_id):
+    if not _current_user_can_score_tournament(tournament_id):
+        abort(403)
     tournament = db.get_or_404(Tournament, tournament_id)
     events = tournament.events.order_by(Event.name).all()
     event_directory = {e.id: {'name': e.display_name, 'type': e.event_type} for e in events}
+    offline_manifest, offline_context = _offline_manifest(tournament_id)
     return render_template('scoring/offline_ops.html',
-                           tournament=tournament, event_directory=event_directory)
+                           tournament=tournament,
+                           event_directory=event_directory,
+                           offline_manifest=offline_manifest,
+                           offline_context=offline_context)
 
 
 # ---------------------------------------------------------------------------
@@ -1949,27 +2267,88 @@ def issue_replay_token():
     replay_offline_score endpoint when connectivity returns.
     """
     if not current_user.is_authenticated:
-        return jsonify({'ok': False, 'message': 'Login required.'}), 401
+        return _json_error('session_required', 'Login required.', 401)
     import hashlib
     import hmac as _hmac
     import time as _time
     secret = current_app.config.get('SECRET_KEY', '')
     if not secret:
-        return jsonify({'ok': False, 'message': 'Server not configured.'}), 500
+        return _json_error('server_error', 'Server not configured.', 500)
     ts = int(_time.time())
     msg = f'{current_user.id}:{ts}'.encode('utf-8')
     sig = _hmac.new(secret.encode('utf-8'), msg, hashlib.sha256).hexdigest()[:32]
-    return jsonify({'ok': True, 'replay_token': f'{ts}.{sig}'})
+    return jsonify({
+        'ok': True,
+        'replay_token': f'{ts}.{sig}',
+        'issuer_user_id': current_user.id,
+        'issuer_role': current_user.role,
+        'expires_at': (
+            datetime.fromtimestamp(ts, tz=timezone.utc).replace(microsecond=0)
+            + timedelta(days=7)
+        ).isoformat(),
+    })
 
 
 @scoring_bp.route('/api/replay', methods=['POST'])
 def replay_offline_score():
     """Accept an offline-queued score submission without CSRF validation."""
-    from app import csrf
-    # CSRF exemption is applied via decorator-free approach below
-
     if not current_user.is_authenticated:
-        return jsonify({'ok': False, 'message': 'Login required.'}), 401
+        return _json_error('session_required', 'Login required.', 401)
+
+    request_id = str(request.form.get('request_id') or '').strip()
+    if not request_id:
+        return _json_error(
+            'request_id_required',
+            'Queued score request ID is required.',
+            400,
+        )
+
+    issuer_user_id = request.form.get('issuer_user_id', type=int)
+    issuer_role = str(request.form.get('issuer_role') or '').strip()
+    if issuer_user_id is None or not issuer_role:
+        return _json_error(
+            'issuer_identity_required',
+            'Queued score issuer identity is required for automatic replay.',
+            409,
+        )
+    if (
+        issuer_user_id != current_user.id
+    ) or (
+        issuer_role != current_user.role
+    ):
+        return _json_error(
+            'authorization_denied',
+            'This queued score belongs to another user or role.',
+            403,
+        )
+
+    queued_at_raw = str(request.form.get('queued_at') or '').strip()
+    if queued_at_raw:
+        try:
+            queued_at = datetime.fromisoformat(
+                queued_at_raw.replace('Z', '+00:00')
+            )
+            if queued_at.tzinfo is None:
+                queued_at = queued_at.replace(tzinfo=timezone.utc)
+            queued_age = datetime.now(timezone.utc) - queued_at.astimezone(timezone.utc)
+        except ValueError:
+            return _json_error(
+                'queued_at_invalid',
+                'Queued score timestamp is invalid.',
+                400,
+            )
+        if queued_age > _OFFLINE_QUEUE_MAX_AGE:
+            return _json_error(
+                'manual_reconciliation_required',
+                'This queued score is older than 30 days and cannot sync automatically.',
+                409,
+            )
+        if queued_age < timedelta(minutes=-5):
+            return _json_error(
+                'queued_at_invalid',
+                'Queued score timestamp is in the future.',
+                400,
+            )
 
     replay_token = request.form.get('replay_token', '').strip()
     # SECURITY (CSO #6): replay_token must be a real HMAC bound to (user_id, ts).
@@ -1978,7 +2357,11 @@ def replay_offline_score():
     # scorers. Token format: "{ts}.{hex_sig}" where sig is HMAC-SHA256 truncated
     # to 32 hex chars over f"{user_id}:{ts}" using SECRET_KEY.
     if not replay_token or '.' not in replay_token:
-        return jsonify({'ok': False, 'message': 'Missing or malformed replay token.'}), 403
+        return _json_error(
+            'replay_token_required',
+            'Missing or malformed replay token.',
+            403,
+        )
     import hashlib
     import hmac as _hmac
     import time as _time
@@ -1986,39 +2369,63 @@ def replay_offline_score():
         ts_str, sig = replay_token.split('.', 1)
         ts = int(ts_str)
     except (ValueError, TypeError):
-        return jsonify({'ok': False, 'message': 'Malformed replay token.'}), 403
+        return _json_error('replay_token_invalid', 'Malformed replay token.', 403)
     # Reject tokens older than 7 days (race weekend buffer + offline replay window)
     if _time.time() - ts > 7 * 24 * 60 * 60:
-        return jsonify({'ok': False, 'message': 'Replay token expired.'}), 403
+        return _json_error('replay_token_expired', 'Replay token expired.', 403)
     secret = current_app.config.get('SECRET_KEY', '')
     expected_msg = f'{current_user.id}:{ts}'.encode('utf-8')
     expected_sig = _hmac.new(secret.encode('utf-8'), expected_msg, hashlib.sha256).hexdigest()[:32]
     if not _hmac.compare_digest(sig, expected_sig):
-        return jsonify({'ok': False, 'message': 'Invalid replay token.'}), 403
+        return _json_error('authorization_denied', 'Invalid replay token.', 403)
 
     # Extract tournament_id and heat_id from the original URL stored in the body
     # The form body contains the same fields as the regular score entry form
     tournament_id = request.form.get('tournament_id', type=int)
     heat_id = request.form.get('heat_id', type=int)
     if not tournament_id or not heat_id:
-        return jsonify({'ok': False, 'message': 'Missing tournament or heat ID.'}), 400
+        return _json_error(
+            'binding_required',
+            'Missing tournament or heat ID.',
+            400,
+        )
+    if not _current_user_can_score_tournament(tournament_id):
+        return _json_error(
+            'authorization_denied',
+            'Your current account cannot score this tournament.',
+            403,
+        )
 
     tournament = db.session.get(Tournament, tournament_id)
     if not tournament:
-        return jsonify({'ok': False, 'message': 'Tournament not found.'}), 404
+        return _json_error('tournament_not_found', 'Tournament not found.', 404)
 
     heat = db.session.get(Heat, heat_id)
     if not heat or not heat.event or heat.event.tournament_id != tournament_id:
-        return jsonify({'ok': False, 'message': 'Heat not found.'}), 404
+        return _json_error('heat_not_found', 'Heat not found.', 404)
 
     event = heat.event
 
     outcome = _save_heat_results_submission(
         tournament_id=tournament_id, heat=heat, event=event
     )
-    return jsonify({
-        k: outcome[k] for k in ('ok', 'message', 'category') if k in outcome
-    }), outcome['status_code']
+    payload = {
+        key: outcome[key]
+        for key in (
+            'ok',
+            'message',
+            'category',
+            'receipt',
+            'receipt_replayed',
+        )
+        if key in outcome
+    }
+    if outcome.get('error_code'):
+        payload['error'] = {
+            'code': outcome['error_code'],
+            'message': outcome['message'],
+        }
+    return jsonify(payload), outcome['status_code']
 
 
 # ---------------------------------------------------------------------------

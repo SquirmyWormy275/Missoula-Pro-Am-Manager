@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Mapping
+from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -10,7 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 import services.scoring_engine as engine
 import strings as text
 from database import db
-from models import Event, EventResult, Heat
+from models import AuditLog, Event, EventResult, Heat, ScoreSubmissionReceipt, User
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
@@ -20,6 +23,338 @@ from services.flight_builder import (
 )
 
 logger = logging.getLogger(__name__)
+
+_PAYLOAD_TRANSPORT_FIELDS = frozenset({
+    'csrf_token',
+    'replay_token',
+    'payload_sha256',
+    'tournament_id',
+    'heat_id',
+})
+
+
+def _form_pairs(form_data: Mapping[str, object]) -> list[tuple[str, str]]:
+    """Return stable string pairs without losing MultiDict repeated values."""
+    pairs: list[tuple[str, str]] = []
+    if hasattr(form_data, 'lists'):
+        for raw_key, raw_values in form_data.lists():
+            key = str(raw_key)
+            for raw_value in raw_values:
+                pairs.append((key, str(raw_value or '')))
+        return pairs
+    for raw_key, raw_value in form_data.items():
+        key = str(raw_key)
+        if isinstance(raw_value, (list, tuple)):
+            pairs.extend((key, str(value or '')) for value in raw_value)
+        else:
+            pairs.append((key, str(raw_value or '')))
+    return pairs
+
+
+def canonical_score_payload_sha256(
+    form_data: Mapping[str, object],
+    *,
+    tournament_id: int,
+    heat_id: int,
+) -> str:
+    """Hash the complete score payload while excluding transport credentials."""
+    pairs = [
+        (key, value)
+        for key, value in _form_pairs(form_data)
+        if key not in _PAYLOAD_TRANSPORT_FIELDS
+    ]
+    pairs.extend((
+        ('heat_id', str(int(heat_id))),
+        ('tournament_id', str(int(tournament_id))),
+    ))
+    canonical = json.dumps(
+        sorted(pairs),
+        ensure_ascii=False,
+        separators=(',', ':'),
+    )
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+
+
+def heat_submission_identity(heat: Heat) -> str:
+    """Return a lock-independent identity for one generated heat instance."""
+    payload = {
+        'event_id': heat.event_id,
+        'flight_id': heat.flight_id,
+        'flight_position': heat.flight_position,
+        'heat_id': heat.id,
+        'heat_number': heat.heat_number,
+        'roster': heat.get_competitors(),
+        'run_number': heat.run_number,
+        'stands': heat.get_stand_assignments(),
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(',', ':'),
+    )
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+
+
+def heat_scoring_state_digest(
+    heat: Heat,
+    event: Event,
+    results: object | None = None,
+) -> str:
+    """Hash score-relevant state without including the transient judge lock."""
+    competitor_ids = _normalize_competitor_ids(heat.get_competitors())
+    if results is None:
+        rows = EventResult.query.filter(
+            EventResult.event_id == event.id,
+            EventResult.competitor_id.in_(competitor_ids),
+            EventResult.competitor_type == event.event_type,
+        ).all()
+    else:
+        rows = list(results)
+
+    result_fields = (
+        'id',
+        'competitor_id',
+        'competitor_type',
+        'version_id',
+        'result_value',
+        'result_unit',
+        'run1_value',
+        'run2_value',
+        'run3_value',
+        'best_run',
+        'tiebreak_value',
+        't1_run1',
+        't2_run1',
+        't1_run2',
+        't2_run2',
+        'status',
+        'status_reason',
+        'is_flagged',
+        'throwoff_pending',
+    )
+
+    def _stable_value(value: object) -> object:
+        if value is None or isinstance(value, (bool, int, str)):
+            return value
+        return str(value)
+
+    payload = {
+        'heat_identity': heat_submission_identity(heat),
+        'heat_status': heat.status,
+        'results': [
+            {
+                field: _stable_value(getattr(result, field))
+                for field in result_fields
+            }
+            for result in sorted(
+                rows,
+                key=lambda result: (result.competitor_id, result.id or 0),
+            )
+        ],
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(',', ':'),
+    )
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+
+
+def _normalized_request_id(form_data: Mapping[str, object]) -> str | None:
+    raw = str(form_data.get('request_id') or '').strip()
+    if not raw:
+        return None
+    try:
+        return str(UUID(raw))
+    except (TypeError, ValueError, AttributeError):
+        return ''
+
+
+def _receipt_public(receipt: ScoreSubmissionReceipt) -> dict:
+    return {
+        'request_id': receipt.request_id,
+        'tournament_id': receipt.tournament_id,
+        'heat_id': receipt.heat_id,
+        'issuing_user_id': receipt.issuing_user_id,
+        'payload_sha256': receipt.canonical_payload_sha256,
+        'accepted': True,
+    }
+
+
+def _receipt_conflict(
+    *,
+    event_id: int,
+    heat_id: int,
+    code: str,
+    message: str,
+) -> dict:
+    return {
+        'ok': False,
+        'category': 'error',
+        'message': message,
+        'error_code': code,
+        'redirect_kind': 'heat_entry',
+        'redirect_event_id': event_id,
+        'redirect_heat_id': heat_id,
+        'status_code': 409,
+    }
+
+
+def _outcome_from_receipt(
+    receipt: ScoreSubmissionReceipt,
+    *,
+    tournament_id: int,
+    heat_id: int,
+    event_id: int,
+    judge_user_id: int | None,
+    payload_sha256: str,
+) -> dict:
+    if receipt.issuing_user_id is None:
+        return _receipt_conflict(
+            event_id=event_id,
+            heat_id=heat_id,
+            code='request_id_issuer_deleted',
+            message=(
+                'The account that issued this score request no longer exists. '
+                'The retained request ID cannot be replayed.'
+            ),
+        )
+    if (
+        receipt.tournament_id != tournament_id
+        or receipt.heat_id != heat_id
+        or receipt.issuing_user_id != judge_user_id
+    ):
+        return _receipt_conflict(
+            event_id=event_id,
+            heat_id=heat_id,
+            code='request_id_binding_mismatch',
+            message=(
+                'This score request ID is already bound to another user, '
+                'tournament, or heat. The queued entry was not applied.'
+            ),
+        )
+    if receipt.canonical_payload_sha256 != payload_sha256:
+        return _receipt_conflict(
+            event_id=event_id,
+            heat_id=heat_id,
+            code='request_id_payload_mismatch',
+            message=(
+                'This score request ID was already used with different values. '
+                'The queued entry was not applied.'
+            ),
+        )
+    outcome = dict(receipt.accepted_outcome_json or {})
+    if outcome.get('receipt_revoked') is True:
+        return _receipt_conflict(
+            event_id=event_id,
+            heat_id=heat_id,
+            code='request_id_revoked',
+            message=(
+                'This score request was superseded by a heat undo. '
+                'Reload the heat before entering a new score.'
+            ),
+        )
+    outcome['receipt'] = _receipt_public(receipt)
+    outcome['receipt_replayed'] = True
+    return outcome
+
+
+def _add_scoring_audit(
+    action: str,
+    entity_type: str,
+    entity_id: int | None,
+    *,
+    judge_user_id: int | None,
+    details: dict,
+) -> None:
+    """Add score audit evidence to the score transaction itself."""
+    actor_user_id = judge_user_id
+    if actor_user_id is not None and db.session.get(User, actor_user_id) is None:
+        actor_user_id = None
+    db.session.add(AuditLog(
+        actor_user_id=actor_user_id,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        details_json=json.dumps(details, sort_keys=True),
+    ))
+
+
+def _create_submission_receipt(
+    *,
+    request_id: str,
+    tournament_id: int,
+    heat_id: int,
+    judge_user_id: int,
+    payload_sha256: str,
+    outcome: dict,
+) -> ScoreSubmissionReceipt:
+    receipt = ScoreSubmissionReceipt(
+        request_id=request_id,
+        tournament_id=tournament_id,
+        heat_id=heat_id,
+        issuing_user_id=judge_user_id,
+        canonical_payload_sha256=payload_sha256,
+        accepted_outcome_json=outcome,
+    )
+    db.session.add(receipt)
+    return receipt
+
+
+def revoke_heat_submission_receipts_for_undo(
+    *,
+    tournament_id: int,
+    heat_id: int,
+    event_id: int,
+    judge_user_id: int | None,
+) -> list[str]:
+    """Supersede accepted request IDs in the same transaction as a heat undo."""
+    receipts = (
+        ScoreSubmissionReceipt.query
+        .filter_by(tournament_id=tournament_id, heat_id=heat_id)
+        .with_for_update()
+        .all()
+    )
+    revoked_at = datetime.now(timezone.utc).isoformat()
+    revoked_request_ids: list[str] = []
+    for receipt in receipts:
+        accepted_outcome = dict(receipt.accepted_outcome_json or {})
+        if accepted_outcome.get('receipt_revoked') is True:
+            continue
+        receipt.accepted_outcome_json = {
+            'receipt_revoked': True,
+            'reason': 'heat_undo',
+            'revoked_at': revoked_at,
+            'superseded_outcome': accepted_outcome,
+        }
+        revoked_request_ids.append(receipt.request_id)
+
+    if revoked_request_ids:
+        _add_scoring_audit(
+            'score_submission_receipts_revoked',
+            'heat',
+            heat_id,
+            judge_user_id=judge_user_id,
+            details={
+                'event_id': event_id,
+                'request_ids': sorted(revoked_request_ids),
+                'reason': 'heat_undo',
+            },
+        )
+    _add_scoring_audit(
+        'heat_undo',
+        'heat',
+        heat_id,
+        judge_user_id=judge_user_id,
+        details={
+            'event_id': event_id,
+            'judge_user_id': judge_user_id,
+            'revoked_request_ids': sorted(revoked_request_ids),
+        },
+    )
+    return revoked_request_ids
 
 
 def _capture_shadow_outcomes(event: Event, judge_user_id: int | None) -> None:
@@ -201,7 +536,83 @@ def save_heat_results_submission(
     # clearing the placement while the judge is saving it.
     original_heat_id = heat.id
     original_event_id = event.id
+    request_id = _normalized_request_id(form_data)
+    if request_id == '':
+        return {
+            'ok': False,
+            'category': 'error',
+            'message': 'Score request ID must be a valid UUID.',
+            'error_code': 'request_id_invalid',
+            'redirect_kind': 'heat_entry',
+            'redirect_event_id': original_event_id,
+            'redirect_heat_id': original_heat_id,
+            'status_code': 400,
+        }
+    if request_id and judge_user_id is None:
+        return {
+            'ok': False,
+            'category': 'error',
+            'message': 'Login is required to submit an offline score request.',
+            'error_code': 'session_required',
+            'redirect_kind': 'heat_entry',
+            'redirect_event_id': original_event_id,
+            'redirect_heat_id': original_heat_id,
+            'status_code': 401,
+        }
+    posted_issuer = _form_int(form_data, 'issuer_user_id')
+    payload_sha256 = canonical_score_payload_sha256(
+        form_data,
+        tournament_id=tournament_id,
+        heat_id=original_heat_id,
+    )
+    posted_payload_sha256 = str(form_data.get('payload_sha256') or '').strip()
+    if posted_payload_sha256 and posted_payload_sha256 != payload_sha256:
+        return _receipt_conflict(
+            event_id=original_event_id,
+            heat_id=original_heat_id,
+            code='payload_fingerprint_mismatch',
+            message='The queued score payload fingerprint does not match its values.',
+        )
+
+    if request_id:
+        existing_receipt = db.session.get(ScoreSubmissionReceipt, request_id)
+        if existing_receipt is not None:
+            return _outcome_from_receipt(
+                existing_receipt,
+                tournament_id=tournament_id,
+                heat_id=original_heat_id,
+                event_id=original_event_id,
+                judge_user_id=judge_user_id,
+                payload_sha256=payload_sha256,
+            )
+    if posted_issuer is not None and posted_issuer != judge_user_id:
+        return {
+            'ok': False,
+            'category': 'error',
+            'message': 'This queued score belongs to another user.',
+            'error_code': 'authorization_denied',
+            'redirect_kind': 'heat_entry',
+            'redirect_event_id': original_event_id,
+            'redirect_heat_id': original_heat_id,
+            'status_code': 403,
+        }
+
     lock_tournament_schedule(tournament_id)
+    # A matching request can commit while this transaction waits for the
+    # tournament writer lock. Recheck after acquiring the lock so the waiting
+    # duplicate receives the durable outcome instead of a transient stale-form
+    # conflict caused by the first request's heat update.
+    if request_id:
+        committed_receipt = db.session.get(ScoreSubmissionReceipt, request_id)
+        if committed_receipt is not None:
+            return _outcome_from_receipt(
+                committed_receipt,
+                tournament_id=tournament_id,
+                heat_id=original_heat_id,
+                event_id=original_event_id,
+                judge_user_id=judge_user_id,
+                payload_sha256=payload_sha256,
+            )
     heat = (
         Heat.query
         .filter_by(id=original_heat_id)
@@ -230,11 +641,29 @@ def save_heat_results_submission(
             'status_code': 409,
         }
 
+    if heat.is_locked() and heat.locked_by_user_id != (judge_user_id or -1):
+        lock_owner = db.session.get(User, heat.locked_by_user_id)
+        owner_name = (
+            lock_owner.username
+            if lock_owner is not None
+            else f'User #{heat.locked_by_user_id}'
+        )
+        return {
+            'ok': False,
+            'category': 'warning',
+            'message': (
+                f'Heat is currently being edited by {owner_name}. '
+                'Your submission was not saved.'
+            ),
+            'error_code': 'heat_locked',
+            'redirect_kind': 'heat_entry',
+            'redirect_event_id': event.id,
+            'redirect_heat_id': heat.id,
+            'status_code': 423,
+        }
+
     posted_identity = form_data.get('heat_identity')
-    current_identity = (
-        heat.locked_at.isoformat(timespec='microseconds')
-        if heat.locked_at is not None else None
-    )
+    current_identity = heat_submission_identity(heat)
     if posted_identity is not None or not _testing_mode_enabled():
         if not posted_identity or posted_identity != current_identity:
             return {
@@ -250,17 +679,37 @@ def save_heat_results_submission(
                 'status_code': 409,
             }
     competitor_ids = _normalize_competitor_ids(heat.get_competitors())
-    posted_version = _form_int(form_data, 'heat_version')
-    if posted_version is None or posted_version != heat.version_id:
-        return {
-            'ok': False,
-            'category': 'error',
-            'message': 'This heat changed in another session. Reload and re-enter results.',
-            'redirect_kind': 'heat_entry',
-            'redirect_event_id': event.id,
-            'redirect_heat_id': heat.id,
-            'status_code': 409,
-        }
+    posted_state_digest = str(form_data.get('scoring_state_digest') or '')
+    if posted_state_digest or not _testing_mode_enabled():
+        if posted_state_digest != heat_scoring_state_digest(heat, event):
+            return {
+                'ok': False,
+                'category': 'error',
+                'message': (
+                    'This heat or its scores changed in another session. '
+                    'Reload and reconcile before saving.'
+                ),
+                'error_code': 'scoring_state_changed',
+                'redirect_kind': 'heat_entry',
+                'redirect_event_id': event.id,
+                'redirect_heat_id': heat.id,
+                'status_code': 409,
+            }
+    else:
+        posted_version = _form_int(form_data, 'heat_version')
+        if posted_version is None or posted_version != heat.version_id:
+            return {
+                'ok': False,
+                'category': 'error',
+                'message': (
+                    'This heat changed in another session. '
+                    'Reload and re-enter results.'
+                ),
+                'redirect_kind': 'heat_entry',
+                'redirect_event_id': event.id,
+                'redirect_heat_id': heat.id,
+                'status_code': 409,
+            }
 
     result_by_comp = existing_results_for_event(event, competitor_ids)
     comp_lookup = competitor_lookup_for_event(event, competitor_ids)
@@ -445,11 +894,12 @@ def save_heat_results_submission(
                 result.status_reason = None
 
             if result.id:
-                log_action(
+                _add_scoring_audit(
                     'score_edited',
                     'event_result',
                     result.id,
-                    {
+                    judge_user_id=judge_user_id,
+                    details={
                         'event_id': event.id,
                         'heat_id': heat.id,
                         'new_value': result.result_value,
@@ -518,16 +968,103 @@ def save_heat_results_submission(
                 event.status = 'in_progress'
                 finalize_failed = True
 
-        log_action(
+        _add_scoring_audit(
             'heat_results_saved',
             'heat',
             heat.id,
-            {
+            judge_user_id=judge_user_id,
+            details={
                 'event_id': event.id,
                 'result_updates': changes,
                 'judge_user_id': judge_user_id,
             },
         )
+
+        undo_token = {
+            'heat_id': heat.id,
+            'event_id': event.id,
+            'heat_version': heat.version_id,
+            'result_versions': {
+                str(result.id): result.version_id
+                for result in EventResult.query.filter(
+                    EventResult.event_id == event.id,
+                    EventResult.competitor_id.in_(competitor_ids),
+                    EventResult.competitor_type == event.event_type,
+                ).all()
+            },
+            'saved_at': datetime.now(timezone.utc).isoformat(),
+        }
+
+        if finalize_failed:
+            outcome = {
+                'ok': True,
+                'category': 'warning',
+                'message': ('Heat saved, but auto-finalization failed. The event '
+                            'results page will let you retry - your timer values '
+                            'are safe.'),
+                'redirect_kind': 'event_results',
+                'redirect_event_id': event.id,
+                'redirect_heat_id': heat.id,
+                'status_code': 200,
+                'undo_heat_id': heat.id,
+                'undo_token': undo_token,
+            }
+        elif finalize_deferred:
+            shown = ', '.join(partial_names[:5])
+            more = (f' (+{len(partial_names) - 5} more)'
+                    if len(partial_names) > 5 else '')
+            extra = (f' {len(invalid)} invalid value(s) were also skipped.'
+                     if invalid else '')
+            outcome = {
+                'ok': True,
+                'category': 'warning',
+                'message': (f'Heat saved. The event was NOT finalized because '
+                            f'{len(partial_names)} result(s) still have only one '
+                            f'timer entered: {shown}{more}. Enter the second timer '
+                            f'and save again to finalize, or set them to DNF if '
+                            f'the time is gone.{extra}'),
+                'redirect_kind': 'event_results',
+                'redirect_event_id': event.id,
+                'redirect_heat_id': heat.id,
+                'status_code': 200,
+                'undo_heat_id': heat.id,
+                'undo_token': undo_token,
+            }
+        elif invalid:
+            outcome = {
+                'ok': True,
+                'category': 'warning',
+                'message': f'Heat saved with {len(invalid)} invalid value(s) skipped.',
+                'redirect_kind': 'event_results',
+                'redirect_event_id': event.id,
+                'redirect_heat_id': heat.id,
+                'status_code': 200,
+                'undo_heat_id': heat.id,
+                'undo_token': undo_token,
+            }
+        else:
+            outcome = {
+                'ok': True,
+                'category': 'success',
+                'message': text.FLASH['heat_saved'],
+                'redirect_kind': 'event_results',
+                'redirect_event_id': event.id,
+                'redirect_heat_id': heat.id,
+                'status_code': 200,
+                'undo_heat_id': heat.id,
+                'undo_token': undo_token,
+            }
+
+        receipt = None
+        if request_id:
+            receipt = _create_submission_receipt(
+                request_id=request_id,
+                tournament_id=tournament_id,
+                heat_id=heat.id,
+                judge_user_id=judge_user_id,
+                payload_sha256=payload_sha256,
+                outcome=outcome,
+            )
         db.session.commit()
 
     except StaleDataError:
@@ -544,6 +1081,17 @@ def save_heat_results_submission(
         }
     except IntegrityError:
         db.session.rollback()
+        if request_id:
+            raced_receipt = db.session.get(ScoreSubmissionReceipt, request_id)
+            if raced_receipt is not None:
+                return _outcome_from_receipt(
+                    raced_receipt,
+                    tournament_id=tournament_id,
+                    heat_id=original_heat_id,
+                    event_id=original_event_id,
+                    judge_user_id=judge_user_id,
+                    payload_sha256=payload_sha256,
+                )
         return {
             'ok': False,
             'category': 'error',
@@ -556,82 +1104,10 @@ def save_heat_results_submission(
         }
 
     invalidate_tournament_caches(tournament_id)
-    undo_token = {
-        'heat_id': heat.id,
-        'event_id': event.id,
-        'heat_version': heat.version_id,
-        'result_versions': {
-            str(result.id): result.version_id
-            for result in EventResult.query.filter(
-                EventResult.event_id == event.id,
-                EventResult.competitor_id.in_(competitor_ids),
-                EventResult.competitor_type == event.event_type,
-            ).all()
-        },
-        'saved_at': datetime.now(timezone.utc).isoformat(),
-    }
-
-    if finalize_failed:
-        return {
-            'ok': True,
-            'category': 'warning',
-            'message': ('Heat saved, but auto-finalization failed. The event '
-                        'results page will let you retry - your timer values '
-                        'are safe.'),
-            'redirect_kind': 'event_results',
-            'redirect_event_id': event.id,
-            'redirect_heat_id': heat.id,
-            'status_code': 200,
-            'undo_heat_id': heat.id,
-            'undo_token': undo_token,
-        }
-
-    if finalize_deferred:
-        shown = ', '.join(partial_names[:5])
-        more = (f' (+{len(partial_names) - 5} more)'
-                if len(partial_names) > 5 else '')
-        extra = (f' {len(invalid)} invalid value(s) were also skipped.'
-                 if invalid else '')
-        return {
-            'ok': True,
-            'category': 'warning',
-            'message': (f'Heat saved. The event was NOT finalized because '
-                        f'{len(partial_names)} result(s) still have only one '
-                        f'timer entered: {shown}{more}. Enter the second timer '
-                        f'and save again to finalize, or set them to DNF if '
-                        f'the time is gone.{extra}'),
-            'redirect_kind': 'event_results',
-            'redirect_event_id': event.id,
-            'redirect_heat_id': heat.id,
-            'status_code': 200,
-            'undo_heat_id': heat.id,
-            'undo_token': undo_token,
-        }
-
-    if invalid:
-        return {
-            'ok': True,
-            'category': 'warning',
-            'message': f'Heat saved with {len(invalid)} invalid value(s) skipped.',
-            'redirect_kind': 'event_results',
-            'redirect_event_id': event.id,
-            'redirect_heat_id': heat.id,
-            'status_code': 200,
-            'undo_heat_id': heat.id,
-            'undo_token': undo_token,
-        }
-
-    return {
-        'ok': True,
-        'category': 'success',
-        'message': text.FLASH['heat_saved'],
-        'redirect_kind': 'event_results',
-        'redirect_event_id': event.id,
-        'redirect_heat_id': heat.id,
-        'status_code': 200,
-        'undo_heat_id': heat.id,
-        'undo_token': undo_token,
-    }
+    if receipt is not None:
+        outcome['receipt'] = _receipt_public(receipt)
+        outcome['receipt_replayed'] = False
+    return outcome
 
 
 def finalize_event_results(

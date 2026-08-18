@@ -2,6 +2,10 @@
 Flight management routes: flight_list, build_flights, start_flight, complete_flight,
 reorder_flight_heats, and the SMS notification helper.
 """
+import hashlib
+import hmac
+import json
+
 from flask import abort, flash, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -47,6 +51,45 @@ from services.schedule_generation import (
 
 from . import _build_pro_flights_if_possible, scheduling_bp
 from .spillover_feedback import flash_spillover_result, spillover_result_payload
+
+
+def flight_order_digest(flight_or_id) -> str:
+    """Digest one flight's heat membership and order."""
+    flight_id = int(getattr(flight_or_id, 'id', flight_or_id))
+    order = [
+        {'heat_id': heat.id, 'position': heat.flight_position}
+        for heat in Heat.query.filter_by(flight_id=flight_id).order_by(
+            Heat.flight_position,
+            Heat.id,
+        ).all()
+    ]
+    encoded = json.dumps(
+        {'flight_id': flight_id, 'order': order},
+        sort_keys=True,
+        separators=(',', ':'),
+    ).encode('ascii')
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _flight_order_digests(flight_ids) -> dict[str, str]:
+    """Return JSON-ready post-commit digests for affected flights."""
+    return {
+        str(flight_id): flight_order_digest(flight_id)
+        for flight_id in flight_ids
+    }
+
+
+def _flight_order_matches_expected(
+    flight: Flight,
+    expected_digest: str | None,
+    expected_heat_ids: list[int] | None,
+) -> bool:
+    if expected_digest:
+        return hmac.compare_digest(expected_digest, flight_order_digest(flight))
+    if expected_heat_ids is not None:
+        current_ids = [heat.id for heat in flight.get_heats_ordered()]
+        return current_ids == expected_heat_ids
+    return False
 
 
 def _discard_success_flashes_since(checkpoint: int) -> None:
@@ -162,7 +205,11 @@ def flight_list(tournament_id):
                     for cid in comp_ids
                 ],
             })
-        flight_data.append({'flight': flight, 'heats': heat_rows})
+        flight_data.append({
+            'flight': flight,
+            'heats': heat_rows,
+            'order_digest': flight_order_digest(flight),
+        })
 
     return render_template('pro/flights.html',
                            tournament=tournament,
@@ -622,6 +669,18 @@ def _flight_order_conflict_response():
     }), 409
 
 
+def _stale_flight_order_response():
+    db.session.rollback()
+    return jsonify({
+        'ok': False,
+        'code': 'stale_flight_order',
+        'error': (
+            'Flight order changed since this page was loaded. '
+            'Refresh and apply the move to the current order.'
+        ),
+    }), 409
+
+
 def _reject_started_flight_mutation(flights: list[Flight]):
     """Freeze manual running-order and roster edits once any flight starts."""
     active = [flight for flight in flights if flight.status != 'pending']
@@ -669,8 +728,22 @@ def reorder_flight_heats(tournament_id, flight_id):
     try:
         data = request.get_json(force=True)
         heat_ids = [int(hid) for hid in data.get('heat_ids', [])]
+        expected_digest = data.get('expected_digest')
+        raw_expected_heat_ids = data.get('expected_heat_ids')
+        expected_heat_ids = (
+            [int(hid) for hid in raw_expected_heat_ids]
+            if raw_expected_heat_ids is not None
+            else None
+        )
     except (TypeError, ValueError, AttributeError):
         return jsonify({'ok': False, 'error': 'Invalid heat_ids'}), 400
+
+    if not _flight_order_matches_expected(
+        flight,
+        expected_digest,
+        expected_heat_ids,
+    ):
+        return _stale_flight_order_response()
 
     existing = {h.id: h for h in flight.get_heats_ordered()}
     if len(heat_ids) != len(existing) or set(heat_ids) != set(existing.keys()):
@@ -712,7 +785,10 @@ def reorder_flight_heats(tournament_id, flight_id):
     from services.saw_block_assignment import trigger_saw_block_recompute
     trigger_saw_block_recompute(tournament)
 
-    return jsonify({'ok': True})
+    return jsonify({
+        'ok': True,
+        'order_digests': _flight_order_digests([flight_id]),
+    })
 
 
 @scheduling_bp.route('/<int:tournament_id>/flights/bulk-reorder', methods=['POST'])
@@ -733,10 +809,20 @@ def bulk_reorder_flights(tournament_id):
         data = request.get_json(force=True)
         entries = data.get('flights', [])
         payload: list[tuple[int, list[int]]] = []
+        expected_states = {}
         for entry in entries:
             fid = int(entry['flight_id'])
             hids = [int(h) for h in entry.get('heat_ids', [])]
             payload.append((fid, hids))
+            raw_expected_heat_ids = entry.get('expected_heat_ids')
+            expected_states[fid] = (
+                entry.get('expected_digest'),
+                (
+                    [int(hid) for hid in raw_expected_heat_ids]
+                    if raw_expected_heat_ids is not None
+                    else None
+                ),
+            )
     except (TypeError, ValueError, KeyError, AttributeError):
         return jsonify({'ok': False, 'error': 'Invalid payload'}), 400
 
@@ -760,6 +846,14 @@ def bulk_reorder_flights(tournament_id):
     flights = [flights_by_id[fid] for fid in flight_ids if fid in flights_by_id]
     if len(flights) != len(flight_ids):
         return jsonify({'ok': False, 'error': 'Unknown flight id'}), 400
+    for flight in flights:
+        expected_digest, expected_heat_ids = expected_states[flight.id]
+        if not _flight_order_matches_expected(
+            flight,
+            expected_digest,
+            expected_heat_ids,
+        ):
+            return _stale_flight_order_response()
 
     # Heat set check: every heat currently in these flights must still be
     # present in the payload. Prevents a half-loaded DOM from dropping heats.
@@ -819,7 +913,10 @@ def bulk_reorder_flights(tournament_id):
     from services.saw_block_assignment import trigger_saw_block_recompute
     trigger_saw_block_recompute(tournament)
 
-    return jsonify({'ok': True})
+    return jsonify({
+        'ok': True,
+        'order_digests': _flight_order_digests(flight_ids),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -1102,6 +1199,12 @@ def start_flight(tournament_id, flight_id):
     lock_tournament_schedule(tournament)
     flight = Flight.query.filter_by(id=flight_id, tournament_id=tournament_id).first_or_404()
 
+    if flight.status == 'completed':
+        flash(
+            f'Flight {flight.flight_number} is completed and cannot be restarted.',
+            'warning',
+        )
+        return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
     if flight.status == 'in_progress':
         flash(f'Flight {flight.flight_number} is already in progress.', 'warning')
         return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
@@ -1127,6 +1230,15 @@ def complete_flight(tournament_id, flight_id):
     tournament = db.get_or_404(Tournament, tournament_id)
     lock_tournament_schedule(tournament)
     flight = Flight.query.filter_by(id=flight_id, tournament_id=tournament_id).first_or_404()
+    if flight.status == 'pending':
+        flash(
+            f'Flight {flight.flight_number} must be started before it can be completed.',
+            'warning',
+        )
+        return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
+    if flight.status == 'completed':
+        flash(f'Flight {flight.flight_number} is already completed.', 'warning')
+        return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
     flight.status = 'completed'
     log_action('flight_completed', 'flight', flight_id, {'tournament_id': tournament_id})
     db.session.commit()

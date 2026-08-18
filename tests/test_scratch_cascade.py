@@ -338,7 +338,7 @@ def test_normalized_relay_membership_is_scratched_and_undone(app):
         relay_effect = next(e for e in effects if e.effect_type == "relay_team")
         assert relay_effect.metadata["source"] == "normalized"
 
-        execute_cascade(
+        scratched = execute_cascade(
             competitor, [relay_effect], judge_user_id=1, tournament=tournament,
         )
         db.session.commit()
@@ -349,6 +349,7 @@ def test_normalized_relay_membership_is_scratched_and_undone(app):
         undo = reverse_cascade(
             competitor.id, judge_user_id=1, tournament=tournament,
             competitor_type="pro",
+            expected_undo_token=scratched["undo_token"],
         )
         db.session.commit()
 
@@ -393,7 +394,7 @@ def test_normalized_relay_undo_preserves_a_later_reassignment(app):
             effect for effect in compute_scratch_effects(competitor, tournament)
             if effect.effect_type == "relay_team"
         )
-        execute_cascade(
+        scratched = execute_cascade(
             competitor, [relay_effect], judge_user_id=1, tournament=tournament,
         )
         db.session.commit()
@@ -407,6 +408,7 @@ def test_normalized_relay_undo_preserves_a_later_reassignment(app):
         undo = reverse_cascade(
             competitor.id, judge_user_id=1, tournament=tournament,
             competitor_type="pro",
+            expected_undo_token=scratched["undo_token"],
         )
         db.session.commit()
 
@@ -706,7 +708,9 @@ class TestExecuteCascadeResultStatuses:
             db.session.commit()
 
             effects = compute_scratch_effects(comp, t)
-            execute_cascade(comp, effects, judge_user_id=1, tournament=t)
+            scratched = execute_cascade(
+                comp, effects, judge_user_id=1, tournament=t,
+            )
             db.session.commit()
 
             updated = db.session.get(EventResult, result_id)
@@ -738,7 +742,9 @@ class TestExecuteCascadeResultStatuses:
             db.session.commit()
 
             effects = compute_scratch_effects(competitor, tournament)
-            execute_cascade(competitor, effects, judge_user_id=1, tournament=tournament)
+            scratched = execute_cascade(
+                competitor, effects, judge_user_id=1, tournament=tournament,
+            )
             db.session.commit()
 
             scratched_competitor = db.session.get(ProCompetitor, competitor.id)
@@ -749,6 +755,7 @@ class TestExecuteCascadeResultStatuses:
 
             undo = reverse_cascade(
                 competitor.id, judge_user_id=1, tournament=tournament,
+                expected_undo_token=scratched['undo_token'],
             )
             db.session.commit()
 
@@ -832,13 +839,18 @@ class TestReverseCascadeHappyPath:
             )
             db.session.commit()
 
-            execute_cascade(
+            scratched = execute_cascade(
                 comp, compute_scratch_effects(comp, t), judge_user_id=1, tournament=t,
             )
             db.session.commit()
             assert db.session.get(Event, event.id).is_finalized is False
 
-            undo = reverse_cascade(comp.id, judge_user_id=1, tournament=t)
+            undo = reverse_cascade(
+                comp.id,
+                judge_user_id=1,
+                tournament=t,
+                expected_undo_token=scratched['undo_token'],
+            )
             db.session.commit()
 
             assert undo["success"] is True
@@ -867,14 +879,19 @@ class TestReverseCascadeHappyPath:
             survivor_result_id = survivor_result.id
             db.session.commit()
 
-            execute_cascade(
+            scratched = execute_cascade(
                 comp, compute_scratch_effects(comp, t), judge_user_id=1, tournament=t,
             )
             db.session.commit()
             db.session.get(EventResult, survivor_result_id).result_value = 12.34
             db.session.commit()
 
-            undo = reverse_cascade(comp.id, judge_user_id=1, tournament=t)
+            undo = reverse_cascade(
+                comp.id,
+                judge_user_id=1,
+                tournament=t,
+                expected_undo_token=scratched['undo_token'],
+            )
             db.session.commit()
 
             assert undo["success"] is True
@@ -902,18 +919,206 @@ class TestReverseCascadeHappyPath:
             db.session.commit()
 
             effects = compute_scratch_effects(comp, t)
-            execute_cascade(comp, effects, judge_user_id=1, tournament=t)
+            scratched = execute_cascade(comp, effects, judge_user_id=1, tournament=t)
             db.session.commit()
 
             assert comp.status == "scratched"
 
-            undo = reverse_cascade(comp.id, judge_user_id=1, tournament=t)
+            undo = reverse_cascade(
+                comp.id,
+                judge_user_id=1,
+                tournament=t,
+                expected_undo_token=scratched['undo_token'],
+            )
             db.session.commit()
 
             assert undo["success"] is True
             assert comp.status == original_status
             restored = db.session.get(EventResult, result_id)
             assert restored.status == "pending"
+
+    def test_reverse_is_one_shot_and_replay_preserves_later_state(self, app):
+        from database import db
+        from models.audit_log import AuditLog
+        from models.competitor import ProCompetitor
+        from models.event import EventResult
+        from services.scratch_cascade import (
+            compute_scratch_effects,
+            execute_cascade,
+            find_undoable_scratch,
+            reverse_cascade,
+        )
+
+        with app.app_context():
+            tournament = _seed_base(db)
+            competitor = _seed_pro(db, tournament, name="One Shot Undo")
+            competitor.total_earnings = 125.0
+            event = _seed_event(db, tournament, name="One Shot Event")
+            result = _seed_result_with_points(
+                db,
+                event,
+                competitor,
+                comp_type="pro",
+                result_status="completed",
+                payout=125.0,
+            )
+            result_id = result.id
+            db.session.commit()
+
+            scratched = execute_cascade(
+                competitor,
+                compute_scratch_effects(competitor, tournament),
+                judge_user_id=1,
+                tournament=tournament,
+            )
+            db.session.commit()
+            first = reverse_cascade(
+                competitor.id,
+                judge_user_id=1,
+                tournament=tournament,
+                expected_undo_token=scratched["undo_token"],
+            )
+            db.session.commit()
+            assert first["success"] is True
+            assert find_undoable_scratch(competitor.id, "pro") is None
+
+            current_competitor = db.session.get(ProCompetitor, competitor.id)
+            current_result = db.session.get(EventResult, result_id)
+            current_competitor.total_earnings = 777.0
+            current_result.payout_amount = 777.0
+            current_result.status = "completed"
+            db.session.commit()
+
+            replay = reverse_cascade(
+                competitor.id,
+                judge_user_id=1,
+                tournament=tournament,
+                expected_undo_token=scratched["undo_token"],
+            )
+            db.session.rollback()
+
+            assert replay["success"] is False
+            assert db.session.get(ProCompetitor, competitor.id).total_earnings == 777.0
+            assert db.session.get(EventResult, result_id).payout_amount == 777.0
+            assert AuditLog.query.filter_by(
+                action="scratch_undone", entity_id=competitor.id,
+            ).count() == 1
+
+    def test_reverse_refuses_scoring_state_changed_after_scratch(self, app):
+        from database import db
+        from models.competitor import ProCompetitor
+        from models.event import EventResult
+        from services.scratch_cascade import (
+            compute_scratch_effects,
+            execute_cascade,
+            reverse_cascade,
+        )
+
+        with app.app_context():
+            tournament = _seed_base(db)
+            competitor = _seed_pro(db, tournament, name="Stale Financial Undo")
+            competitor.total_earnings = 200.0
+            event = _seed_event(db, tournament, name="Stale Financial Event")
+            result = _seed_result_with_points(
+                db,
+                event,
+                competitor,
+                comp_type="pro",
+                result_status="completed",
+                payout=200.0,
+            )
+            result_id = result.id
+            db.session.commit()
+
+            scratched = execute_cascade(
+                competitor,
+                compute_scratch_effects(competitor, tournament),
+                judge_user_id=1,
+                tournament=tournament,
+            )
+            db.session.commit()
+            changed_result = db.session.get(EventResult, result_id)
+            changed_result.status = "completed"
+            changed_result.payout_amount = 75.0
+            db.session.get(ProCompetitor, competitor.id).total_earnings = 75.0
+            db.session.commit()
+
+            stale = reverse_cascade(
+                competitor.id,
+                judge_user_id=1,
+                tournament=tournament,
+                expected_undo_token=scratched["undo_token"],
+            )
+            db.session.rollback()
+
+            assert stale["success"] is False
+            assert "changed" in stale["message"].lower()
+            assert db.session.get(ProCompetitor, competitor.id).status == "scratched"
+            assert db.session.get(ProCompetitor, competitor.id).total_earnings == 75.0
+            assert db.session.get(EventResult, result_id).payout_amount == 75.0
+
+    def test_stale_tab_token_cannot_undo_a_newer_scratch(self, app):
+        from database import db
+        from models.competitor import ProCompetitor
+        from services.scratch_cascade import (
+            compute_scratch_effects,
+            execute_cascade,
+            reverse_cascade,
+        )
+
+        with app.app_context():
+            tournament = _seed_base(db)
+            competitor = _seed_pro(db, tournament, name="Two Scratch Cycles")
+            event = _seed_event(db, tournament, name="Two Cycle Event")
+            _seed_result_with_points(
+                db, event, competitor, comp_type="pro", result_status="pending",
+            )
+            db.session.commit()
+
+            first_scratch = execute_cascade(
+                competitor,
+                compute_scratch_effects(competitor, tournament),
+                judge_user_id=1,
+                tournament=tournament,
+            )
+            db.session.commit()
+            first_undo = reverse_cascade(
+                competitor.id,
+                judge_user_id=1,
+                tournament=tournament,
+                expected_undo_token=first_scratch["undo_token"],
+            )
+            db.session.commit()
+            assert first_undo["success"] is True
+
+            current = db.session.get(ProCompetitor, competitor.id)
+            second_scratch = execute_cascade(
+                current,
+                compute_scratch_effects(current, tournament),
+                judge_user_id=1,
+                tournament=tournament,
+            )
+            db.session.commit()
+
+            stale_tab = reverse_cascade(
+                competitor.id,
+                judge_user_id=1,
+                tournament=tournament,
+                expected_undo_token=first_scratch["undo_token"],
+            )
+            db.session.rollback()
+            assert stale_tab["success"] is False
+            assert db.session.get(ProCompetitor, competitor.id).status == "scratched"
+
+            current_tab = reverse_cascade(
+                competitor.id,
+                judge_user_id=1,
+                tournament=tournament,
+                expected_undo_token=second_scratch["undo_token"],
+            )
+            db.session.commit()
+            assert current_tab["success"] is True
+            assert db.session.get(ProCompetitor, competitor.id).status == "active"
 
 
 class TestReverseCascadeExpiredWindow:
@@ -939,7 +1144,7 @@ class TestReverseCascadeExpiredWindow:
             db.session.commit()
 
             effects = compute_scratch_effects(comp, t)
-            execute_cascade(comp, effects, judge_user_id=1, tournament=t)
+            scratched = execute_cascade(comp, effects, judge_user_id=1, tournament=t)
             db.session.commit()
 
             # Back-date the audit log entry so it's outside the undo window
@@ -1007,10 +1212,17 @@ class TestExecuteReverseRoundTrip:
             db.session.commit()
 
             effects = compute_scratch_effects(comp, t)
-            execute_cascade(comp, effects, judge_user_id=1, tournament=t)
+            scratched = execute_cascade(
+                comp, effects, judge_user_id=1, tournament=t,
+            )
             db.session.commit()
 
-            reverse_cascade(comp.id, judge_user_id=1, tournament=t)
+            reverse_cascade(
+                comp.id,
+                judge_user_id=1,
+                tournament=t,
+                expected_undo_token=scratched['undo_token'],
+            )
             db.session.commit()
 
             final_comp = db.session.get(ProCompetitor, comp.id)

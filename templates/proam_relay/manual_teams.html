@@ -210,6 +210,7 @@
     <form id="saveForm" method="POST"
           action="{{ url_for('proam_relay.save_manual_teams', tournament_id=tournament.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="expected_relay_digest" value="{{ relay_state_digest }}">
         <input type="hidden" name="teams_json" id="teamsJsonInput" value="[]">
     </form>
 </div>

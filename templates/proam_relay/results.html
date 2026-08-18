@@ -42,6 +42,7 @@
                     <form action="{{ url_for('proam_relay.enter_results', tournament_id=tournament.id) }}" method="POST">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="team_number" value="{{ team.team_number }}">
+                        <input type="hidden" name="expected_relay_digest" value="{{ team_state_digests[team.team_number] }}">
                         <div class="input-group">
                             <input type="text" name="time_seconds" class="form-control form-control-lg"
                                    placeholder="e.g., 45.67 or 1:23.45"

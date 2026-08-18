@@ -4,16 +4,16 @@ Why this exists
 ---------------
 `smoke_env` in tests/test_route_smoke.py has two branches:
 
-    use_real_db = SOURCE_DB.exists()          # instance/proam.db
-    if use_real_db:
+    use_source_db = SOURCE_DB is not None and SOURCE_DB.exists()
+    if use_source_db:
         shutil.copy2(SOURCE_DB, db_copy)      # cheap
     ...
-    if not use_real_db:
+    if not use_source_db:
         upgrade(directory=str(migrations_dir))  # <-- runs the WHOLE alembic
         _seed_minimal_smoke_data(app)           #     chain, per test
 
-`instance/` is gitignored, so on a fresh CI checkout the file is absent and
-CI takes the second branch for all 245 parametrized route tests. Replaying
+CI explicitly supplies the dedicated database built by this script. Without
+that source, all 245 parametrized route tests take the second branch. Replaying
 the full migration chain 245 times inside one process leaks roughly
 17 MB per test on top of the ~3.3 MB per test that `create_app()` costs on
 its own. Measured stair, same machine, same suite:

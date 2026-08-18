@@ -45,6 +45,12 @@ class BaseConfig:
     STRUCTURED_LOGGING = os.environ.get('STRUCTURED_LOGGING', '1') == '1'
     SENTRY_DSN = os.environ.get('SENTRY_DSN', '').strip()
     JOB_MAX_WORKERS = int(os.environ.get('JOB_MAX_WORKERS', '2'))
+    JOB_HEARTBEAT_INTERVAL_SECONDS = int(
+        os.environ.get('JOB_HEARTBEAT_INTERVAL_SECONDS', '5')
+    )
+    JOB_LEASE_TIMEOUT_SECONDS = int(
+        os.environ.get('JOB_LEASE_TIMEOUT_SECONDS', '30')
+    )
     REPORT_CACHE_TTL_SECONDS = int(os.environ.get('REPORT_CACHE_TTL_SECONDS', '60'))
     PUBLIC_CACHE_TTL_SECONDS = int(os.environ.get('PUBLIC_CACHE_TTL_SECONDS', '5'))
     ENABLE_UPLOAD_MALWARE_SCAN = os.environ.get('ENABLE_UPLOAD_MALWARE_SCAN', '0') == '1'
@@ -418,7 +424,8 @@ COLLEGE_CLOSED_EVENTS = [
     {'name': 'Jack & Jill Sawing', 'scoring_type': 'time', 'stand_type': 'saw_hand', 'is_partnered': True, 'partner_gender': 'mixed'},
     {'name': 'Stock Saw', 'scoring_type': 'time', 'stand_type': 'stock_saw', 'is_gendered': True},
     {'name': 'Speed Climb', 'scoring_type': 'time', 'stand_type': 'speed_climb', 'is_gendered': True, 'requires_dual_runs': True},
-    {'name': 'Obstacle Pole', 'scoring_type': 'time', 'stand_type': 'obstacle_pole', 'is_gendered': True},
+    {'name': 'Obstacle Pole', 'scoring_type': 'time', 'stand_type': 'obstacle_pole',
+     'is_gendered': True, 'requires_dual_runs': True},
     {'name': 'Chokerman\'s Race', 'scoring_type': 'time', 'stand_type': 'chokerman', 'is_gendered': True, 'requires_dual_runs': True},
     {'name': 'Birling', 'scoring_type': 'bracket', 'stand_type': 'birling', 'is_gendered': True},
     {'name': '1-Board Springboard', 'scoring_type': 'time', 'stand_type': 'springboard', 'is_gendered': True},

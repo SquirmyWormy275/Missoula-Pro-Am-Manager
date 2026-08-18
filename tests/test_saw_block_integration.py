@@ -458,7 +458,10 @@ def test_reorder_flight_heats_triggers_recompute(app, auth_client):
     # Reverse two different events. Event-local heat sequencing stays valid.
     resp = auth_client.post(
         f"/scheduling/{tid}/flights/{fid}/reorder",
-        json={"heat_ids": [h_b_id, h_a_id]},
+        json={
+            "heat_ids": [h_b_id, h_a_id],
+            "expected_heat_ids": [h_a_id, h_b_id],
+        },
     )
     assert resp.status_code == 200
 
@@ -493,7 +496,10 @@ def test_reorder_flight_heats_rejects_out_of_order_event(app, auth_client):
 
     resp = auth_client.post(
         f"/scheduling/{tid}/flights/{fid}/reorder",
-        json={"heat_ids": [second_id, first_id]},
+        json={
+            "heat_ids": [second_id, first_id],
+            "expected_heat_ids": [first_id, second_id],
+        },
     )
 
     assert resp.status_code == 409
@@ -528,7 +534,10 @@ def test_reorder_flight_heats_rejects_completed_heat_move(app, auth_client):
 
     resp = auth_client.post(
         f"/scheduling/{tid}/flights/{fid}/reorder",
-        json={"heat_ids": [pending_id, completed_id]},
+        json={
+            "heat_ids": [pending_id, completed_id],
+            "expected_heat_ids": [completed_id, pending_id],
+        },
     )
 
     assert resp.status_code == 409
@@ -562,7 +571,10 @@ def test_reorder_flight_heats_rejects_duplicate_heat_id(app, auth_client):
 
     resp = auth_client.post(
         f"/scheduling/{tid}/flights/{fid}/reorder",
-        json={"heat_ids": [first_id, second_id, second_id]},
+        json={
+            "heat_ids": [first_id, second_id, second_id],
+            "expected_heat_ids": [first_id, second_id],
+        },
     )
 
     assert resp.status_code == 400
@@ -603,8 +615,16 @@ def test_bulk_reorder_moves_heat_between_flights(app, auth_client):
         f"/scheduling/{tid}/flights/bulk-reorder",
         json={
             "flights": [
-                {"flight_id": f1_id, "heat_ids": [h_a_id]},
-                {"flight_id": f2_id, "heat_ids": [h_b_id, h_c_id]},
+                {
+                    "flight_id": f1_id,
+                    "heat_ids": [h_a_id],
+                    "expected_heat_ids": [h_a_id, h_b_id],
+                },
+                {
+                    "flight_id": f2_id,
+                    "heat_ids": [h_b_id, h_c_id],
+                    "expected_heat_ids": [h_c_id],
+                },
             ]
         },
     )
@@ -647,8 +667,16 @@ def test_bulk_reorder_rejects_out_of_order_event(app, auth_client):
         f"/scheduling/{tid}/flights/bulk-reorder",
         json={
             "flights": [
-                {"flight_id": first_flight_id, "heat_ids": [second_id]},
-                {"flight_id": second_flight_id, "heat_ids": [first_id]},
+                {
+                    "flight_id": first_flight_id,
+                    "heat_ids": [second_id],
+                    "expected_heat_ids": [first_id],
+                },
+                {
+                    "flight_id": second_flight_id,
+                    "heat_ids": [first_id],
+                    "expected_heat_ids": [second_id],
+                },
             ]
         },
     )
@@ -690,8 +718,16 @@ def test_bulk_reorder_rejects_completed_heat_move(app, auth_client):
         f"/scheduling/{tid}/flights/bulk-reorder",
         json={
             "flights": [
-                {"flight_id": first_flight_id, "heat_ids": [pending_id]},
-                {"flight_id": second_flight_id, "heat_ids": [completed_id]},
+                {
+                    "flight_id": first_flight_id,
+                    "heat_ids": [pending_id],
+                    "expected_heat_ids": [completed_id],
+                },
+                {
+                    "flight_id": second_flight_id,
+                    "heat_ids": [completed_id],
+                    "expected_heat_ids": [pending_id],
+                },
             ]
         },
     )
@@ -732,8 +768,16 @@ def test_bulk_reorder_rejects_duplicate_heat_id(app, auth_client):
         f"/scheduling/{tid}/flights/bulk-reorder",
         json={
             "flights": [
-                {"flight_id": first_flight_id, "heat_ids": [first_id, second_id]},
-                {"flight_id": second_flight_id, "heat_ids": [second_id]},
+                {
+                    "flight_id": first_flight_id,
+                    "heat_ids": [first_id, second_id],
+                    "expected_heat_ids": [first_id],
+                },
+                {
+                    "flight_id": second_flight_id,
+                    "heat_ids": [second_id],
+                    "expected_heat_ids": [second_id],
+                },
             ]
         },
     )
@@ -764,10 +808,15 @@ def test_bulk_reorder_rejects_mismatched_heat_set(app, auth_client):
         _db.session.commit()
         tid, f1_id = t.id, f1.id
         h_a_id = h_a.id  # intentionally omit h_b from the payload
+        h_b_id = h_b.id
 
     resp = auth_client.post(
         f"/scheduling/{tid}/flights/bulk-reorder",
-        json={"flights": [{"flight_id": f1_id, "heat_ids": [h_a_id]}]},
+        json={"flights": [{
+            "flight_id": f1_id,
+            "heat_ids": [h_a_id],
+            "expected_heat_ids": [h_a_id, h_b_id],
+        }]},
     )
     assert resp.status_code == 400
     body = resp.get_json()
@@ -806,7 +855,10 @@ def test_reorder_rejects_new_shared_stand_conflict(app, auth_client):
 
     response = auth_client.post(
         f"/scheduling/{tournament_id}/flights/{flight_id}/reorder",
-        json={"heat_ids": [cookie_heat_id, standing_heat_id, *neutral_heat_ids]},
+        json={
+            "heat_ids": [cookie_heat_id, standing_heat_id, *neutral_heat_ids],
+            "expected_heat_ids": original_ids,
+        },
     )
 
     assert response.status_code == 409
@@ -861,6 +913,7 @@ def test_bulk_reorder_rejects_new_shared_stand_conflict(app, auth_client):
                     standing_heat_id,
                     *neutral_heat_ids,
                 ],
+                "expected_heat_ids": original_ids,
             }],
         },
     )
@@ -898,7 +951,10 @@ def test_reorder_keeps_preexisting_unavoidable_shared_stand_conflict(app, auth_c
 
     response = auth_client.post(
         f"/scheduling/{tournament_id}/flights/{flight_id}/reorder",
-        json={"heat_ids": [standing_heat_id, cookie_heat_id]},
+        json={
+            "heat_ids": [standing_heat_id, cookie_heat_id],
+            "expected_heat_ids": [cookie_heat_id, standing_heat_id],
+        },
     )
 
     assert response.status_code == 200, response.data

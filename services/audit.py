@@ -34,7 +34,14 @@ def _supports_independent_write() -> bool:
         return False
 
 
-def log_action(action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None) -> None:
+def log_action(
+    action: str,
+    entity_type: str,
+    entity_id: int | None = None,
+    details: dict | None = None,
+    *,
+    use_request_transaction: bool = False,
+) -> None:
     """Append an audit log record on its own connection.
 
     Why this does not simply ``db.session.add()``, and why it does not simply
@@ -69,11 +76,12 @@ def log_action(action: str, entity_type: str, entity_id: int | None = None, deta
     at ``sqlite3.OperationalError: database is locked`` on the login audit row,
     and three more failed the same way inside the route's commit.
 
-    So on SQLite this function does exactly what it did before: add to the
-    caller's session and let the caller decide. That preserves the old
-    lost-attribution bug on SQLite and nowhere else. Production is PostgreSQL,
-    which is where payout settlement, fee payment and Saturday ordering actually
-    run, and PostgreSQL is where the durable write applies.
+    So on SQLite the default path adds to the caller's session and lets the
+    caller decide. A mutation that needs its audit row to commit atomically can
+    pass ``use_request_transaction=True`` and call this helper before its own
+    commit; that same mode deliberately bypasses the independent connection on
+    PostgreSQL. Existing commit-then-log call sites retain the durable
+    independent-write behavior where the database supports it.
     """
     try:
         actor_id = current_user.id if getattr(current_user, 'is_authenticated', False) else None
@@ -100,7 +108,7 @@ def log_action(action: str, entity_type: str, entity_id: int | None = None, deta
         'created_at': utc_now_naive(),
     }
 
-    if _supports_independent_write():
+    if not use_request_transaction and _supports_independent_write():
         try:
             with db.engine.connect() as conn:
                 conn.execute(AuditLog.__table__.insert().values(**values))

@@ -57,22 +57,31 @@
             {% if partner_repairs_locked %}
             <span class="text-muted">Locked after scoring</span>
             {% else %}
+            {% set default_partner = repair.suggested_partner or (available|first) %}
+            {% if default_partner %}
             <form method="POST" action="{{ url_for('scheduling.reassign_partner', tid=tournament.id, eid=event.id) }}" class="d-flex gap-2">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="orphan_id" value="{{ repair.competitor.id }}">
               <input type="hidden" name="orphan_type" value="{{ repair.competitor_type }}">
               <input type="hidden" name="new_partner_type" value="{{ repair.competitor_type }}">
-              <select name="new_partner_id" class="form-select form-select-sm" required>
+              <input type="hidden" name="new_partner_id" value="{{ default_partner.id }}">
+              <input type="hidden" name="expected_claim_digest" value="{{ claim_digests[(repair.competitor.id, default_partner.id)] }}">
+              <select name="partner_claim" class="form-select form-select-sm partner-choice" required>
                 <option value="">Select partner...</option>
                 {% if repair.suggested_partner %}
-                <option value="{{ repair.suggested_partner.id }}" selected>{{ repair.suggested_partner.name }} ({{ repair.suggested_partner.gender }})</option>
+                <option value="{{ repair.suggested_partner.id }}:{{ claim_digests[(repair.competitor.id, repair.suggested_partner.id)] }}" selected>{{ repair.suggested_partner.name }} ({{ repair.suggested_partner.gender }})</option>
                 {% endif %}
                 {% for a in available %}
-                <option value="{{ a.id }}">{{ a.name }} ({{ a.gender }})</option>
+                {% if not repair.suggested_partner or a.id != repair.suggested_partner.id %}
+                <option value="{{ a.id }}:{{ claim_digests[(repair.competitor.id, a.id)] }}" {% if not repair.suggested_partner and loop.first %}selected{% endif %}>{{ a.name }} ({{ a.gender }})</option>
+                {% endif %}
                 {% endfor %}
               </select>
               <button type="submit" class="btn btn-sm btn-primary">Reassign</button>
             </form>
+            {% else %}
+            <span class="text-muted">No eligible partners</span>
+            {% endif %}
             {% endif %}
           </td>
           <td></td>
@@ -87,4 +96,18 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.querySelectorAll('.partner-choice').forEach(function (select) {
+  function syncExpectedDigest() {
+    var claim = select.value.split(':');
+    select.form.querySelector('[name="new_partner_id"]').value = claim.shift() || '';
+    select.form.querySelector('[name="expected_claim_digest"]').value = claim.join(':');
+  }
+  select.addEventListener('change', syncExpectedDigest);
+  syncExpectedDigest();
+});
+</script>
 {% endblock %}

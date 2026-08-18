@@ -285,7 +285,7 @@
         {% endif %}
 
         {# Screen view: Bootstrap grid + drag handles #}
-        <div class="row no-print flight-screen-grid" data-flight-id="{{ fd.flight.id }}">
+        <div class="row no-print flight-screen-grid" data-flight-id="{{ fd.flight.id }}" data-expected-order="{% for row in fd.heats %}{{ row.heat.id }}{{ ',' if not loop.last }}{% endfor %}">
             {% for row in fd.heats %}
             <div class="col-md-6 col-lg-4 mb-0" data-heat-id="{{ row.heat.id }}">
                 <div class="heat-card">
@@ -644,7 +644,9 @@ function filterFlights(filter, btn) {
 // ── Drag-and-drop reorder ────────────────────────────────────────────────
 {% if flight_data %}
 document.querySelectorAll('.flight-screen-grid').forEach(function(grid) {
-    var flightId = grid.dataset.flightId;
+            var flightId = grid.dataset.flightId;
+            var expectedHeatIds = (grid.dataset.expectedOrder || '').split(',')
+                .filter(Boolean).map(function(id) { return parseInt(id, 10); });
     new Sortable(grid, {
         animation: 150,
         handle: '.heat-drag-handle',
@@ -660,7 +662,10 @@ document.querySelectorAll('.flight-screen-grid').forEach(function(grid) {
                     'Content-Type': 'application/json',
                     'X-CSRFToken': csrfToken,
                 },
-                body: JSON.stringify({heat_ids: heatIds})
+                body: JSON.stringify({
+                    heat_ids: heatIds,
+                    expected_heat_ids: expectedHeatIds
+                })
             }).then(function(r) { return r.json(); }).then(function(data) {
                 if (!data.ok) {
                     alert('Reorder failed: ' + (data.error || 'unknown error') + '. Refresh to see current order.');

@@ -238,9 +238,16 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="heat_version" value="{{ heat_version }}">
             <input type="hidden" name="heat_identity" value="{{ heat_identity }}">
-            {# SECURITY (CSO #6): HMAC-bound replay token fetched on page load.
-               The offline queue captures the form body verbatim, so this hidden
-               input propagates automatically through IDB and the replay POST. #}
+            <input type="hidden" name="scoring_state_digest" value="{{ scoring_state_digest }}">
+            <input type="hidden" name="request_id" value="{{ score_request_id }}">
+            <input type="hidden" name="tournament_id" value="{{ tournament.id }}">
+            <input type="hidden" name="heat_id" value="{{ heat.id }}">
+            <input type="hidden" name="issuer_user_id" value="{{ offline_context.issuer_user_id }}">
+            <input type="hidden" name="issuer_role" value="{{ offline_context.issuer_role }}">
+            <input type="hidden" name="schedule_fingerprint" value="{{ offline_context.schedule_fingerprint }}">
+            <input type="hidden" name="application_build" value="{{ offline_context.application_build }}">
+            <input type="hidden" name="queued_at" value="">
+            <input type="hidden" name="payload_sha256" value="">
             <input type="hidden" name="replay_token" value="">
 
             <div class="table-responsive">
@@ -565,6 +572,7 @@
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/offline_queue_shared.js') }}"></script>
 <script>
+window.ProAmOfflineContext = {{ offline_context|tojson }};
 document.addEventListener('DOMContentLoaded', function () {
     /* ── Constants from server ───────────────────────────────────────────── */
     const postUrl          = {{ url_for('scoring.enter_heat_results', tournament_id=tournament.id, heat_id=heat.id)|tojson }};
@@ -583,12 +591,11 @@ document.addEventListener('DOMContentLoaded', function () {
         {{ comp.id }}: {{ comp.name|tojson }}{% if not loop.last %},{% endif %}
         {% endfor %}
     };
+    const offlineContext   = window.ProAmOfflineContext;
 
     if (lockBlocked) return; // read-only, no JS wiring needed
 
-    /* ── SECURITY FIX (CSO #6): fetch a real HMAC replay token ───────────── */
-    // The offline queue stashes the form body in IndexedDB at queue time, so
-    // the replay_token hidden input propagates automatically to the replay POST.
+    /* ── Fetch replay authority for a future CSRF-expired queue sync ─────── */
     (async function () {
         try {
             const r = await fetch('/scoring/api/replay-token', {credentials: 'same-origin'});
@@ -623,7 +630,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
     /* ── Offline queue helpers ───────────────────────────────────────────── */
     const readQ  = () => window.ProAmOfflineQueue.read();
-    const writeQ = (q) => { window.ProAmOfflineQueue.write(q); refreshBanner(); };
 
     function setStatus(msg, type) {
         statusBox.classList.remove('d-none','alert-secondary','alert-info','alert-success','alert-warning','alert-danger');
@@ -653,21 +659,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function postEntry(entry) {
-        const body = new FormData();
-        Object.keys(entry.payload).forEach(k => body.append(k, entry.payload[k]));
-        const res = await fetch(entry.url, {
-            method: 'POST', body,
-            headers: {'X-Requested-With': 'XMLHttpRequest'},
-            credentials: 'same-origin'
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
-            const e = new Error(data.message || 'Error');
-            e.httpStatus = res.status;
-            e.serverMessage = data.message || null;  // surface for conflict modal
-            throw e;
-        }
-        return data;
+        const result = await window.ProAmOfflineQueue.syncEntry(entry, offlineContext);
+        await window.ProAmOfflineQueue.removeVerified(result.entry, result.data.receipt);
+        return result.data;
     }
 
     async function syncPending() {
@@ -678,10 +672,10 @@ document.addEventListener('DOMContentLoaded', function () {
         for (const entry of q) {
             try {
                 await postEntry(entry);
-                window.ProAmOfflineQueue.remove(entry.url, entry.heat_id);
                 synced++;
             } catch(err) {
-                if (err.httpStatus === 409) { setStatus('<i class="bi bi-exclamation-circle"></i> A queued heat is stale. Open and re-save.', 'alert-danger'); return false; }
+                if (err.httpStatus === 409 || err.code === 'stale_manifest') { setStatus('<i class="bi bi-exclamation-circle"></i> A queued heat needs reconciliation before it can sync.', 'alert-danger'); return false; }
+                if (err.code === 'session_required' || err.code === 'issuer_mismatch' || err.code === 'role_mismatch') { setStatus('<i class="bi bi-person-lock"></i> Sign in as the original queue issuer before syncing.', 'alert-warning'); return false; }
                 setStatus('<i class="bi bi-cloud-slash"></i> Connection issue — scores remain queued.', 'alert-warning'); return false;
             }
         }
@@ -971,7 +965,7 @@ document.addEventListener('DOMContentLoaded', function () {
         e.preventDefault();
         if (savingState) return;
         const autoAdvance = autoAdvTgl?.checked && saveNextBtn;
-        const entry = {
+        let entry = {
             url: postUrl, event_id: eventId, heat_id: heatId,
             scoring_order: scoringOrder, requires_dual_runs: requiresDualRuns,
             run_number: runNumber, competitor_names: competitorNames,
@@ -980,8 +974,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
         setSaving(true);
         try {
+            entry = await window.ProAmOfflineQueue.prepareEntry(entry, offlineContext);
+            form.querySelector('[name="request_id"]').value = entry.request_id;
+            form.querySelector('[name="queued_at"]').value = entry.queued_at;
+            form.querySelector('[name="payload_sha256"]').value = entry.payload_sha256;
+            await window.ProAmOfflineQueue.upsert(entry);
             const res = await postEntry(entry);
-            window.ProAmOfflineQueue.remove(postUrl, heatId);
             // Show undo toast
             showUndoToast(res.undo_heat_id, res.redirect_url || redirectUrl);
             const dest = nextHeatOverride || (autoAdvance ? saveNextBtn.dataset.nextUrl : null) || res.redirect_url || redirectUrl;
@@ -1004,8 +1002,9 @@ document.addEventListener('DOMContentLoaded', function () {
                 } else {
                     setStatus('<i class="bi bi-exclamation-circle"></i> ' + msg, 'alert-danger');
                 }
+            } else if (err.code === 'session_required' || err.code === 'authorization_denied') {
+                setStatus('<i class="bi bi-person-lock"></i> Score retained. Sign in as the original issuer before syncing.', 'alert-warning');
             } else {
-                window.ProAmOfflineQueue.upsert(entry);
                 setStatus('<i class="bi bi-cloud-slash"></i> Saved locally — will sync when online.', 'alert-warning');
                 refreshBanner();
             }

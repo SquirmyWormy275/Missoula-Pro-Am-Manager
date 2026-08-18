@@ -671,11 +671,13 @@ def test_day_of_operations_workflow(qa_env):
     assert scratch_response.status_code == 302
     preview_response = client.get(f'{scratch_response.location}&format=json')
     assert preview_response.status_code == 200
-    effects = preview_response.get_json()["effects"]
+    preview_payload = preview_response.get_json()
+    effects = preview_payload["effects"]
     scratch_form = {
         "competitor_type": "pro",
         "return_event_id": str(seeded["event_id"]),
         "effect_count": str(len(effects)),
+        "expected_effect_digest": preview_payload["effect_digest"],
     }
     for index, effect in enumerate(effects):
         scratch_form.update({

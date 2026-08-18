@@ -1012,15 +1012,14 @@ def ops_dashboard(tid):
     # ------------------------------------------------------------------
     from services.background_jobs import list_recent as list_recent_jobs
 
-    recent_jobs = [
-        job
-        for job in list_recent_jobs(limit=30)
-        if int((job.get('metadata') or {}).get('tournament_id', -1)) == tid
-    ]
+    recent_jobs = list_recent_jobs(limit=30, tournament_id=tid)
     job_summary = {
         'queued': sum(1 for job in recent_jobs if job['status'] == 'queued'),
         'running': sum(1 for job in recent_jobs if job['status'] == 'running'),
-        'failed': sum(1 for job in recent_jobs if job['status'] == 'failed'),
+        'failed': sum(
+            1 for job in recent_jobs
+            if job['status'] in {'failed', 'interrupted'}
+        ),
     }
 
     return render_template(
