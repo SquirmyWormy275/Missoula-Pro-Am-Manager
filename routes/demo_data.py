@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 demo_bp = Blueprint('demo', __name__)
 
 DEMO_PREFIX = '[DEMO] '
+DEMO_TOURNAMENT_NAME = f'{DEMO_PREFIX}Missoula Pro-Am'
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ def generate():
     try:
         # --- Tournament ---
         tournament = Tournament(
-            name=f'{DEMO_PREFIX}Missoula Pro-Am 2026',
+            name=DEMO_TOURNAMENT_NAME,
             year=2026,
             college_date=date(2026, 4, 17),
             pro_date=date(2026, 4, 18),

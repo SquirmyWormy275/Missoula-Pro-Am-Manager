@@ -41,6 +41,86 @@
     margin-bottom: 1.25rem;
 }
 
+.page-action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+#schedWizard {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.sched-wizard-step { min-width: 0 !important; }
+.sched-wizard-control {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    border-right: 1px solid var(--sx-border);
+    color: var(--sx-text-2);
+    text-decoration: none;
+}
+.sched-wizard-step:last-child .sched-wizard-control { border-right: 0; }
+.sched-wizard-control.is-active { background: rgba(232,184,75,0.10); }
+.sched-wizard-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sx-surface-3);
+    color: var(--sx-text-2);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+.sched-wizard-control.is-active .sched-wizard-number {
+    background: var(--sx-gold);
+    color: #111;
+}
+.sched-wizard-control.is-done .sched-wizard-number {
+    background: rgba(45,168,94,0.25);
+    color: #5cd48a;
+}
+.sched-wizard-label {
+    color: var(--sx-text-2);
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.25;
+}
+.sched-wizard-control.is-active .sched-wizard-label { color: var(--sx-gold); }
+.schedule-warning-row { align-items: flex-start; }
+
+@media (max-width: 575px) {
+    .page-action-bar {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+    }
+    .page-action-bar .btn { width: 100%; }
+    #schedWizard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sched-wizard-control { border-bottom: 1px solid var(--sx-border); }
+    .sched-wizard-step:nth-child(2n) .sched-wizard-control { border-right: 0; }
+    .sched-wizard-step:nth-last-child(-n + 2) .sched-wizard-control { border-bottom: 0; }
+    .ops-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+    }
+    .ops-tabs .nav-link { min-height: 44px; padding-inline: 0.9rem; }
+    .schedule-warning-row {
+        flex-direction: column;
+    }
+    .schedule-warning-row form,
+    .schedule-warning-row form .btn,
+    .schedule-warning-row > .btn {
+        width: 100%;
+    }
+}
+
 /* ── Event table rows ──────────────────────────────────── */
 .event-row-complete { background: rgba(45,168,94,0.06); }
 .event-row-warning  { background: rgba(255,193,7,0.07); }
@@ -109,7 +189,7 @@
                     <i class="bi bi-play-circle text-warning"></i>
                     Run Show
                 </h1>
-                <div class="d-flex gap-2 flex-wrap">
+                <div class="page-action-bar">
                     <a href="{{ url_for('scheduling.show_day', tournament_id=tournament.id) }}"
                        class="btn btn-warning btn-sm">
                         <i class="bi bi-broadcast me-1"></i>Show Day
@@ -147,18 +227,17 @@
         {% for num, label, href, icon in wizard_steps %}
         {% set is_active = (num == '3') %}
         {% set is_done = (num in ('1', '2')) %}
-        <li style="flex:1; min-width:120px;">
+        <li class="sched-wizard-step">
             {% if href and not is_active %}
             <a href="{{ href }}"
-               style="display:flex; align-items:center; gap:8px; padding:8px 14px; text-decoration:none; border-right:1px solid var(--sx-border); {{ 'color:var(--sx-text-2);' if not is_active else '' }}{% if loop.last %}border-right:none;{% endif %}">
+               class="sched-wizard-control {{ 'is-done' if is_done else '' }}">
             {% else %}
-            <span style="display:flex; align-items:center; gap:8px; padding:8px 14px; border-right:1px solid var(--sx-border); background:rgba(232,184,75,0.10); {% if loop.last %}border-right:none;{% endif %}">
+            <span class="sched-wizard-control {{ 'is-active' if is_active else '' }} {{ 'is-done' if is_done else '' }}">
             {% endif %}
-                <span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; font-size:0.72rem; font-weight:800; flex-shrink:0;
-                    {% if is_active %}background:var(--sx-gold); color:#111;{% elif is_done %}background:rgba(45,168,94,0.25); color:#2da85e;{% else %}background:var(--sx-surface-3); color:var(--sx-text-2);{% endif %}">
+                <span class="sched-wizard-number">
                     {{ num }}
                 </span>
-                <span style="font-size:0.80rem; font-weight:{% if is_active %}700{% else %}500{% endif %}; color:{% if is_active %}var(--sx-gold){% elif is_done %}var(--sx-text-2){% else %}var(--sx-text-2){% endif %}; white-space:nowrap;">
+                <span class="sched-wizard-label">
                     <i class="bi {{ icon }} me-1"></i>{{ label }}
                 </span>
             {% if href and not is_active %}</a>{% else %}</span>{% endif %}
@@ -169,7 +248,7 @@
     {# ── Tab Navigation ─────────────────────────────────────────────────── #}
     <ul class="nav ops-tabs mb-4 no-print" id="runShowTabs">
         <li class="nav-item">
-            <button class="nav-link" id="tab-btn-build" data-bs-toggle="tab"
+            <button class="nav-link active" id="tab-btn-build" data-bs-toggle="tab"
                     data-bs-target="#tab-build" type="button" data-tab="build">
                 <i class="bi bi-lightning-charge me-1"></i> Build Schedule
             </button>
@@ -179,7 +258,11 @@
                     data-bs-target="#tab-friday" type="button" data-tab="friday">
                 <i class="bi bi-mortarboard me-1"></i> Friday Operations
                 {% if college_with_heats < college_heats_total and college_heats_total > 0 %}
-                <span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;">{{ college_heats_total - college_with_heats }} missing</span>
+                <span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;"
+                      aria-label="{{ college_heats_total - college_with_heats }} missing heats">
+                    <span class="d-none d-sm-inline">{{ college_heats_total - college_with_heats }} missing</span>
+                    <span class="d-sm-none">{{ college_heats_total - college_with_heats }}</span>
+                </span>
                 {% endif %}
             </button>
         </li>
@@ -199,7 +282,7 @@
         {# ══════════════════════════════════════════════════════════════════
            TAB 1: BUILD SCHEDULE
         ══════════════════════════════════════════════════════════════════ #}
-        <div class="tab-pane fade" id="tab-build" role="tabpanel">
+        <div class="tab-pane fade show active" id="tab-build" role="tabpanel">
 
             {# ── Current Schedule Status Panel ─────────────────────────────
                Inline summary of heats, flights, and warnings so the judge
@@ -316,7 +399,7 @@
                     <hr class="my-3">
                     <div>
                         {% for w in schedule_status.warnings %}
-                        <div class="alert alert-{{ w.severity }} py-2 mb-2 d-flex align-items-start gap-2"
+                        <div class="alert alert-{{ w.severity }} schedule-warning-row py-2 mb-2 d-flex gap-2"
                              style="font-size:0.85rem;">
                             <i class="bi bi-{% if w.severity == 'danger' %}exclamation-triangle-fill{% elif w.severity == 'warning' %}exclamation-circle{% else %}info-circle{% endif %} flex-shrink-0 mt-1"></i>
                             <div class="flex-grow-1">
@@ -1178,15 +1261,32 @@ function escapeHtml(s) {
     var params = new URLSearchParams(window.location.search);
     var target = params.get('tab') || 'build';
     var btn = document.querySelector('#runShowTabs button[data-tab="' + target + '"]');
-    if (btn) {
-        bootstrap.Tab.getOrCreateInstance(btn).show();
+    if (btn && window.bootstrap && window.bootstrap.Tab) {
+        window.bootstrap.Tab.getOrCreateInstance(btn).show();
+    } else if (!window.bootstrap) {
+        document.querySelectorAll('#runShowTabs button[data-bs-target]').forEach(function (tabButton) {
+            tabButton.addEventListener('click', function () {
+                document.querySelectorAll('#runShowTabs .nav-link').forEach(function (item) {
+                    item.classList.remove('active');
+                });
+                document.querySelectorAll('.tab-content > .tab-pane').forEach(function (pane) {
+                    pane.classList.remove('show', 'active');
+                });
+                tabButton.classList.add('active');
+                var pane = document.querySelector(tabButton.getAttribute('data-bs-target'));
+                if (pane) pane.classList.add('show', 'active');
+            });
+        });
+        if (btn) btn.click();
     }
 
     // Auto-open build diff modal if present
     {% if build_diff %}
     var diffModal = document.getElementById('buildDiffModal');
     if (diffModal) {
-        bootstrap.Modal.getOrCreateInstance(diffModal).show();
+        if (window.bootstrap && window.bootstrap.Modal) {
+            window.bootstrap.Modal.getOrCreateInstance(diffModal).show();
+        }
     }
     {% endif %}
 })();
@@ -1302,7 +1402,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/sortable/Sortable.min.js') }}"></script>
 <script>
 (function() {
     var tid = {{ tournament.id }};

@@ -5,18 +5,41 @@
 {% block extra_css %}
 <style>
 /* ── Heat row colour-coding ───────────────────────────────────────────────── */
-.heat-row-completed  { background: #d1e7dd !important; }
-.heat-row-inprogress { background: #fff3cd !important; }
-.heat-row-flagged    { background: #f8d7da !important; }
+.heat-row-completed  {
+    background: rgba(45,168,94,0.12) !important;
+    box-shadow: inset 3px 0 0 rgba(45,168,94,0.8);
+}
+.heat-row-inprogress {
+    background: rgba(232,144,18,0.12) !important;
+    box-shadow: inset 3px 0 0 rgba(232,144,18,0.8);
+}
+.heat-row-flagged {
+    background: rgba(232,53,53,0.12) !important;
+    box-shadow: inset 3px 0 0 rgba(232,53,53,0.8);
+}
 
 /* ── Sticky finalize footer ───────────────────────────────────────────────── */
 #finalizeBar {
     position: sticky; bottom: 0;
-    background: rgba(255,255,255,.95); backdrop-filter: blur(6px);
-    border-top: 1px solid #dee2e6; padding: 10px 16px;
+    background: rgba(17,20,27,.96); backdrop-filter: blur(6px);
+    border: 1px solid var(--sx-border-bright); padding: 10px 16px;
     z-index: 40; display: none;
 }
 #finalizeBar.visible { display: flex; }
+
+/* ── Page actions ─────────────────────────────────────────────────────────── */
+.scoring-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.scoring-actions .btn { min-height: 44px; }
+.scoring-icon-action {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+}
 
 /* ── Live standings panel ─────────────────────────────────────────────────── */
 #liveStandingsPanel { transition: opacity .3s; }
@@ -24,6 +47,23 @@
 
 /* ── Throw-off banner ─────────────────────────────────────────────────────── */
 .throwoff-banner { border-left: 4px solid #dc3545; }
+
+@media (max-width: 575.98px) {
+    .scoring-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(3, 44px) minmax(0, 1fr);
+        justify-content: start;
+    }
+    .scoring-primary-action {
+        grid-column: 1 / -1;
+        width: 100%;
+    }
+    .scoring-secondary-action {
+        grid-column: 1 / -1;
+        width: 100%;
+    }
+}
 </style>
 {% endblock %}
 
@@ -63,14 +103,14 @@
             {% endif %}
           </div>
         </div>
-        <div class="d-flex gap-2 flex-wrap">
+        <div class="scoring-actions">
           {# Jump to next incomplete event #}
           <a href="{{ url_for('scoring.next_incomplete_event', tournament_id=tournament.id) }}"
-             class="btn btn-outline-primary">
+             class="btn btn-outline-primary scoring-primary-action">
             <i class="bi bi-fast-forward"></i> Next Incomplete Event
           </a>
           {% if event.status != 'completed' or not event.is_finalized %}
-            <button type="button" class="btn btn-success" id="finalizeBtn"
+            <button type="button" class="btn btn-success scoring-secondary-action" id="finalizeBtn"
                     data-preview-url="{{ url_for('scoring.finalize_preview', tournament_id=tournament.id, event_id=event.id) }}"
                     data-finalize-url="{{ url_for('scoring.finalize_event', tournament_id=tournament.id, event_id=event.id) }}">
               <i class="bi bi-check-circle"></i> Finalize Event
@@ -78,26 +118,29 @@
           {% endif %}
           {% if event.event_type == 'pro' %}
             <a href="{{ url_for('scoring.configure_payouts', tournament_id=tournament.id, event_id=event.id) }}"
-               class="btn btn-outline-warning">
+               class="btn btn-outline-warning scoring-secondary-action">
               <i class="bi bi-cash"></i> Payouts
             </a>
           {% endif %}
           {% if event.event_type == 'college' and event.scoring_type == 'bracket' %}
             <a href="{{ url_for('scheduling.birling_manage', tournament_id=tournament.id, event_id=event.id) }}"
-               class="btn btn-outline-info">
+               class="btn btn-outline-info scoring-secondary-action">
               <i class="bi bi-diagram-3"></i> Bracket
             </a>
           {% endif %}
           <a href="{{ url_for('scoring.import_results', tournament_id=tournament.id, event_id=event.id) }}"
-             class="btn btn-outline-secondary" title="Bulk CSV import">
+             class="btn btn-outline-secondary scoring-icon-action" title="Import results"
+             aria-label="Import results">
             <i class="bi bi-upload"></i>
           </a>
           <a href="{{ url_for('reporting.event_results_print', tournament_id=tournament.id, event_id=event.id) }}"
-             class="btn btn-outline-secondary" target="_blank">
+             class="btn btn-outline-secondary scoring-icon-action" target="_blank" rel="noopener"
+             title="Print results" aria-label="Print results">
             <i class="bi bi-printer"></i>
           </a>
           <a href="{{ url_for('scoring.offline_ops', tournament_id=tournament.id) }}"
-             class="btn btn-outline-info">
+             class="btn btn-outline-info scoring-icon-action" title="Offline scoring"
+             aria-label="Offline scoring">
             <i class="bi bi-wifi-off"></i>
           </a>
         </div>
@@ -326,6 +369,7 @@
               </thead>
               <tbody id="resultsTableBody">
                 {% for r in results %}
+                {% set non_result_status = r.status in ('dnf', 'dq', 'scratched') %}
                 <tr class="{{ 'table-warning' if r.is_flagged else '' }}">
                   <td>
                     {% if r.final_position == 1 %}<span class="badge badge-gold">1st</span>
@@ -339,34 +383,35 @@
                   {% if event.is_partnered %}<td>{{ r.partner_name or '—' }}</td>{% endif %}
 
                   {% if event.requires_triple_runs %}
-                    <td>{{ r.run1_value|int if r.run1_value is not none else '—' }}</td>
-                    <td>{{ r.run2_value|int if r.run2_value is not none else '—' }}</td>
-                    <td>{{ r.run3_value|int if r.run3_value is not none else '—' }}</td>
+                    <td>{{ r.run1_value|int if not non_result_status and r.run1_value is not none else '—' }}</td>
+                    <td>{{ r.run2_value|int if not non_result_status and r.run2_value is not none else '—' }}</td>
+                    <td>{{ r.run3_value|int if not non_result_status and r.run3_value is not none else '—' }}</td>
                     <td>
-                      <strong>{{ r.result_value|int if r.result_value is not none else '—' }}</strong>
+                      <strong>{{ r.result_value|int if not non_result_status and r.result_value is not none else '—' }}</strong>
                       {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2 standard deviations"><i class="bi bi-exclamation-triangle-fill"></i></span>{% endif %}
                     </td>
 
                   {% elif event.requires_dual_runs %}
-                    <td class="text-muted">{{ "%.2f"|format(r.run1_value) if r.run1_value is not none else '—' }}</td>
-                    <td class="text-muted">{{ "%.2f"|format(r.run2_value) if r.run2_value is not none else '—' }}</td>
+                    <td class="text-muted">{{ "%.2f"|format(r.run1_value) if not non_result_status and r.run1_value is not none else '—' }}</td>
+                    <td class="text-muted">{{ "%.2f"|format(r.run2_value) if not non_result_status and r.run2_value is not none else '—' }}</td>
                     <td>
-                      <strong>{{ "%.2f"|format(r.best_run) if r.best_run is not none else '—' }}</strong>
+                      <strong>{{ "%.2f"|format(r.best_run) if not non_result_status and r.best_run is not none else '—' }}</strong>
                       {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2 standard deviations"><i class="bi bi-exclamation-triangle-fill"></i></span>{% endif %}
                     </td>
 
                   {% elif event.is_hard_hit %}
                     <td>
-                      <strong>{{ r.result_value|int if r.result_value is not none else '—' }}</strong> hits
+                      {% if non_result_status %}—{% else %}<strong>{{ r.result_value|int if r.result_value is not none else '—' }}</strong> hits{% endif %}
                       {% if r.is_flagged %}<span class="badge bg-warning text-dark ms-1" title="Outlier >2 standard deviations"><i class="bi bi-exclamation-triangle-fill"></i></span>{% endif %}
                     </td>
                     <td class="text-muted small">
-                      {{ "%.2f"|format(r.tiebreak_value) ~ 's' if r.tiebreak_value is not none else '—' }}
+                      {{ "%.2f"|format(r.tiebreak_value) ~ 's' if not non_result_status and r.tiebreak_value is not none else '—' }}
                     </td>
 
                   {% else %}
                     <td>
-                      {% if r.result_value is not none %}
+                      {% if non_result_status %}—
+                      {% elif r.result_value is not none %}
                         {% if event.scoring_type == 'time' %}{{ "%.2f"|format(r.result_value) }}s
                         {% elif event.scoring_type == 'hits' %}{{ r.result_value|int }} hits
                         {% elif event.scoring_type == 'distance' %}{{ "%.1f"|format(r.result_value) }} ft

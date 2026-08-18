@@ -2,6 +2,32 @@
 
 {% block title %}Pro Competition - {{ tournament.name }} {{ tournament.year }}{% endblock %}
 
+{% block extra_css %}
+<style>
+.operator-action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+.competitor-row-actions .btn {
+    width: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    padding-inline: 0;
+}
+@media (max-width: 575px) {
+    .operator-action-bar {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+        margin-top: 0.75rem;
+    }
+    .operator-action-bar .btn { width: 100%; }
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
     <div class="row mb-2">
@@ -27,7 +53,13 @@
                 Unified pro operations: registrations, imports, partner assignment, fee tracking, flights, payouts, and scoring.
             </p>
         </div>
-        <div class="col-auto d-flex gap-2 flex-wrap justify-content-end">
+        <div class="col-auto operator-action-bar">
+            <a href="{{ url_for('registration.new_pro_competitor', tournament_id=tournament.id) }}" class="btn btn-primary btn-sm">
+                <i class="bi bi-person-plus"></i> Add Competitor
+            </a>
+            <a href="{{ url_for('import_pro.upload_pro_entries', tournament_id=tournament.id) }}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-file-earmark-spreadsheet"></i> Import
+            </a>
             <form action="{{ url_for('registration.auto_assign_pro_partners_route', tournament_id=tournament.id) }}"
                   method="POST" style="display:inline;" data-confirm="Auto-assign partners for all partnered pro events?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -35,19 +67,13 @@
                     <i class="bi bi-person-check"></i> Auto-Assign Partners
                 </button>
             </form>
-            <a href="{{ url_for('import_pro.upload_pro_entries', tournament_id=tournament.id) }}" class="btn btn-outline-warning btn-sm">
-                <i class="bi bi-file-earmark-spreadsheet"></i> Import
-            </a>
-            <a href="{{ url_for('registration.new_pro_competitor', tournament_id=tournament.id) }}" class="btn btn-warning btn-sm">
-                <i class="bi bi-plus"></i> Add Competitor
-            </a>
             <a href="{{ url_for('registration.pro_gear_manager', tournament_id=tournament.id) }}" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-tools"></i> Gear Sharing
             </a>
-            <a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}" class="btn btn-outline-warning btn-sm">
+            <a href="{{ url_for('scheduling.flight_list', tournament_id=tournament.id) }}" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-layers"></i> Flights
             </a>
-            <a href="{{ url_for('reporting.pro_payout_summary', tournament_id=tournament.id) }}" class="btn btn-outline-primary btn-sm">
+            <a href="{{ url_for('reporting.pro_payout_summary', tournament_id=tournament.id) }}" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-cash-stack"></i> Payouts
             </a>
         </div>
@@ -104,6 +130,7 @@
         <div class="card-body">
             {% if competitors %}
             <div class="mb-3">
+                <label class="visually-hidden" for="competitorSearch">Search competitors</label>
                 <input type="text" class="form-control" id="competitorSearch" placeholder="Search by name or email...">
             </div>
             <div class="table-responsive">
@@ -145,15 +172,17 @@
                             <td>${{ "%.2f"|format(c.total_earnings) }}</td>
                             <td>{% if c.status == 'active' %}<span class="badge bg-success">Active</span>{% else %}<span class="badge bg-secondary">Scratched</span>{% endif %}</td>
                             <td>
-                                <div class="btn-group btn-group-sm">
-                                    <a href="{{ url_for('registration.pro_competitor_detail', tournament_id=tournament.id, competitor_id=c.id) }}" class="btn btn-outline-primary">
+                                <div class="btn-group btn-group-sm competitor-row-actions">
+                                    <a href="{{ url_for('registration.pro_competitor_detail', tournament_id=tournament.id, competitor_id=c.id) }}"
+                                       class="btn btn-outline-primary" aria-label="View {{ c.name }}" title="View competitor">
                                         <i class="bi bi-eye"></i>
                                     </a>
                                     {% if c.status == 'active' %}
                                     <form action="{{ url_for('registration.scratch_pro_competitor', tournament_id=tournament.id, competitor_id=c.id) }}"
                                           method="POST" style="display:inline;" data-confirm="Scratch {{ c.name }}?">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <button type="submit" class="btn btn-outline-danger">
+                                        <button type="submit" class="btn btn-outline-danger"
+                                                aria-label="Scratch {{ c.name }}" title="Scratch competitor">
                                             <i class="bi bi-x-lg"></i>
                                         </button>
                                     </form>
@@ -169,7 +198,8 @@
                                           method="POST" style="display:inline;" data-confirm="Undo the scratch for {{ c.name }}?">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="competitor_type" value="pro">
-                                        <button type="submit" class="btn btn-outline-secondary" title="Undo scratch">
+                                        <button type="submit" class="btn btn-outline-secondary"
+                                                aria-label="Undo scratch for {{ c.name }}" title="Undo scratch">
                                             <i class="bi bi-arrow-counterclockwise"></i>
                                         </button>
                                     </form>

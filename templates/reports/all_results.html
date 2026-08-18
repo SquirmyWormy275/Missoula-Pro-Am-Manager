@@ -2,181 +2,415 @@
 
 {% block title %}All Results - {{ tournament.name }} {{ tournament.year }}{% endblock %}
 
+{% macro result_card(event, event_type) %}
+<div class="col-md-6 col-xl-4" data-result-card data-event-name="{{ event.display_name|lower }}">
+    <article class="result-card result-card-{{ event_type }}">
+        <button type="button" class="result-card-toggle"
+                data-bs-toggle="collapse" data-bs-target="#result-details-{{ event.id }}"
+                aria-expanded="true" aria-controls="result-details-{{ event.id }}">
+            <span>{{ event.display_name }}</span>
+            <i class="bi bi-chevron-down result-card-chevron" aria-hidden="true"></i>
+        </button>
+        <div id="result-details-{{ event.id }}" class="collapse show" data-result-details>
+            <div class="result-card-body">
+                <table class="table table-sm mb-0 result-table">
+                    <thead class="visually-hidden">
+                        <tr>
+                            <th scope="col">Place</th>
+                            <th scope="col">Competitor</th>
+                            <th scope="col">Result</th>
+                            <th scope="col">{% if event_type == 'college' %}Points{% else %}Payout{% endif %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in event.get_results_sorted()[:6] %}
+                        <tr>
+                            <td class="result-place">
+                                {% if r.final_position == 1 %}
+                                    <span class="badge badge-gold">1</span>
+                                {% elif r.final_position == 2 %}
+                                    <span class="badge badge-silver">2</span>
+                                {% elif r.final_position == 3 %}
+                                    <span class="badge badge-bronze">3</span>
+                                {% elif r.final_position %}
+                                    <span>{{ r.final_position }}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ (r.status or 'pending')|upper }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="result-competitor">
+                                <span>{{ r.competitor_name }}</span>
+                                {% if r.partner_name %}
+                                <small class="text-muted">&amp; {{ r.partner_name }}</small>
+                                {% endif %}
+                            </td>
+                            <td class="result-value">
+                                {% if r.status in ('dnf', 'dq', 'scratched') %}
+                                    <span aria-label="No result">-</span>
+                                {% elif r.result_value is not none %}
+                                    {% if event.scoring_type == 'time' %}
+                                        {{ "%.2f"|format(r.result_value) }}s
+                                    {% else %}
+                                        {{ r.result_value }}
+                                    {% endif %}
+                                {% else %}
+                                    <span aria-label="No result">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="result-award">
+                                {% if event_type == 'college' %}
+                                    <span class="badge bg-primary">{{ r.points_awarded or 0 }}</span>
+                                {% elif r.payout_amount %}
+                                    <span class="text-success">${{ "%.0f"|format(r.payout_amount) }}</span>
+                                {% else %}
+                                    <span aria-label="No payout">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="result-card-footer">
+                <a href="{{ url_for('reporting.event_results_report', tournament_id=tournament.id, event_id=event.id) }}"
+                   class="btn btn-sm {% if event_type == 'college' %}btn-outline-primary{% else %}btn-outline-warning{% endif %}">
+                    <i class="bi bi-list-ol" aria-hidden="true"></i>Full Results
+                </a>
+            </div>
+        </div>
+    </article>
+</div>
+{% endmacro %}
+
+{% block extra_css %}
+<style>
+.results-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+}
+.results-header h1 { margin-bottom: 0.2rem; }
+.results-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.results-actions .btn,
+.result-card-footer .btn { min-height: 44px; }
+
+.results-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem;
+    margin-bottom: 1.5rem;
+    background: var(--sx-surface);
+    border: 1px solid var(--sx-border);
+    border-radius: 8px;
+}
+.results-search {
+    position: relative;
+    width: min(100%, 460px);
+}
+.results-search > .bi-search {
+    position: absolute;
+    left: 0.9rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--sx-text-2);
+    pointer-events: none;
+}
+.results-search .form-control {
+    min-height: 44px;
+    padding-left: 2.5rem;
+    padding-right: 3rem;
+}
+.results-search-clear {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    border: 0;
+    color: var(--sx-text-2);
+    background: transparent;
+}
+.results-search-clear:hover { color: var(--sx-text); }
+.results-count {
+    color: var(--sx-text-2);
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+.results-empty-search { margin-bottom: 1.5rem; }
+
+.results-section + .results-section { margin-top: 2.25rem; }
+.results-section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-bottom: 0.65rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--sx-border);
+}
+.results-section-title {
+    margin: 0;
+    font-size: 1.1rem;
+}
+.results-section-count {
+    color: var(--sx-text-2);
+    font-size: 0.76rem;
+}
+.results-grid { --bs-gutter-y: 1rem; }
+
+.result-card {
+    height: 100%;
+    overflow: hidden;
+    background: var(--sx-surface);
+    border: 1px solid var(--sx-border);
+    border-radius: 8px;
+}
+.result-card-toggle {
+    width: 100%;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.7rem 1rem;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    color: var(--sx-text);
+    font-weight: 700;
+    text-align: left;
+}
+.result-card-college .result-card-toggle {
+    background: rgba(59,142,232,0.22);
+    border-bottom-color: rgba(59,142,232,0.7);
+}
+.result-card-pro .result-card-toggle {
+    background: rgba(232,144,18,0.20);
+    border-bottom-color: rgba(232,144,18,0.7);
+}
+.result-card-toggle:hover { filter: brightness(1.12); }
+.result-card-chevron {
+    flex: 0 0 auto;
+    transition: transform 0.2s ease;
+}
+.result-card-toggle[aria-expanded="true"] .result-card-chevron {
+    transform: rotate(180deg);
+}
+.result-card-body { min-height: 166px; }
+.result-table { table-layout: fixed; }
+.result-table td {
+    vertical-align: middle;
+    border-color: var(--sx-border);
+}
+.result-place { width: 44px; text-align: center; }
+.result-competitor {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.result-competitor > span,
+.result-competitor > small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.result-value {
+    width: 82px;
+    color: var(--sx-text-2);
+    font-size: 0.78rem;
+    text-align: right;
+    white-space: nowrap;
+}
+.result-award {
+    width: 62px;
+    text-align: right;
+    white-space: nowrap;
+}
+.result-card-footer {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0.5rem 0.75rem;
+    border-top: 1px solid var(--sx-border);
+    background: rgba(0,0,0,0.1);
+}
+
+@media (max-width: 767.98px) {
+    .results-header,
+    .results-actions { width: 100%; }
+    .results-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .results-actions .btn { width: 100%; }
+}
+
+@media (max-width: 575.98px) {
+    .results-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .results-search { width: 100%; }
+    .results-count { padding-inline: 0.15rem; }
+    .results-section + .results-section { margin-top: 1.5rem; }
+    .results-section-title { font-size: 1rem; }
+    .results-grid { --bs-gutter-y: 0.65rem; }
+    .result-card { height: auto; }
+    .result-card-toggle { padding: 0.65rem 0.8rem; }
+    .result-card-body { min-height: 0; }
+    .result-card-footer .btn { width: 100%; }
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
-    <div class="row mb-2">
-        <div class="col-12">
-            <nav aria-label="breadcrumb">
-                <ol class="breadcrumb">
-                    <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
-                    <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
-                    <li class="breadcrumb-item active">Reports</li>
-                </ol>
-            </nav>
-        </div>
-    </div>
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>
-                    <h1>
-                        <i class="bi bi-file-text text-primary"></i>
-                        All Event Results
-                    </h1>
-                    <p class="text-muted">{{ tournament.name }} {{ tournament.year }}</p>
-                </div>
-                <div class="d-flex gap-2">
-                    <a href="{{ url_for('reporting.export_results', tournament_id=tournament.id) }}"
-                       class="btn btn-outline-success">
-                        <i class="bi bi-file-earmark-excel"></i> Export Results
-                    </a>
-                    <a href="{{ url_for('reporting.all_results_print', tournament_id=tournament.id) }}"
-                       class="btn btn-outline-secondary" target="_blank">
-                        <i class="bi bi-printer"></i> Print All
-                    </a>
-                </div>
-            </div>
-        </div>
-    </div>
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Home</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+            <li class="breadcrumb-item active">Reports</li>
+        </ol>
+    </nav>
 
-    <!-- College Events -->
-    {% if college_events %}
-    <div class="row mb-4">
-        <div class="col-12">
-            <h3 class="text-primary"><i class="bi bi-mortarboard"></i> College Events (Friday)</h3>
-            <hr>
+    <header class="results-header">
+        <div>
+            <h1><i class="bi bi-file-text text-primary me-2" aria-hidden="true"></i>All Event Results</h1>
+            <p class="text-muted mb-0">{{ tournament.name }} {{ tournament.year }}</p>
         </div>
+        <div class="results-actions">
+            <a href="{{ url_for('reporting.export_results', tournament_id=tournament.id) }}"
+               class="btn btn-outline-success">
+                <i class="bi bi-file-earmark-excel" aria-hidden="true"></i>Export Results
+            </a>
+            <a href="{{ url_for('reporting.all_results_print', tournament_id=tournament.id) }}"
+               class="btn btn-outline-secondary" target="_blank" rel="noopener">
+                <i class="bi bi-printer" aria-hidden="true"></i>Print All
+            </a>
+        </div>
+    </header>
+
+    {% if college_events or pro_events %}
+    <div class="results-toolbar">
+        <div class="results-search">
+            <i class="bi bi-search" aria-hidden="true"></i>
+            <label class="visually-hidden" for="resultsSearch">Search event results</label>
+            <input id="resultsSearch" class="form-control" type="search"
+                   placeholder="Search events" autocomplete="off" data-results-search>
+            <button type="button" class="results-search-clear" aria-label="Clear event search"
+                    title="Clear search" data-results-clear hidden>
+                <i class="bi bi-x-lg" aria-hidden="true"></i>
+            </button>
+        </div>
+        <span class="results-count" data-results-count>
+            {{ (college_events|length) + (pro_events|length) }} events
+        </span>
     </div>
-    <div class="row">
-        {% for event in college_events %}
-        <div class="col-md-6 col-lg-4 mb-4">
-            <div class="card h-100">
-                <div class="card-header bg-primary text-white">
-                    <h6 class="mb-0">{{ event.display_name }}</h6>
-                </div>
-                <div class="card-body p-0">
-                    <table class="table table-sm mb-0">
-                        <tbody>
-                            {% for r in event.get_results_sorted()[:6] %}
-                            <tr>
-                                <td class="text-center" style="width: 40px;">
-                                    {% if r.final_position == 1 %}
-                                        <span class="badge badge-gold">1</span>
-                                    {% elif r.final_position == 2 %}
-                                        <span class="badge badge-silver">2</span>
-                                    {% elif r.final_position == 3 %}
-                                        <span class="badge badge-bronze">3</span>
-                                    {% else %}
-                                        <small>{{ r.final_position }}</small>
-                                    {% endif %}
-                                </td>
-                                <td>{{ r.competitor_name }}</td>
-                                <td class="text-end">
-                                    <small class="text-muted">
-                                        {% if event.scoring_type == 'time' %}
-                                            {{ "%.2f"|format(r.result_value) if r.result_value else '-' }}s
-                                        {% else %}
-                                            {{ r.result_value or '-' }}
-                                        {% endif %}
-                                    </small>
-                                </td>
-                                <td class="text-end" style="width: 50px;">
-                                    <span class="badge bg-primary">{{ r.points_awarded or 0 }}</span>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                <div class="card-footer text-center">
-                    <a href="{{ url_for('reporting.event_results_report', tournament_id=tournament.id, event_id=event.id) }}"
-                       class="btn btn-sm btn-outline-primary">
-                        View Full Results
-                    </a>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
+    <div class="alert alert-info results-empty-search" data-results-empty hidden>
+        No completed events match that search.
     </div>
     {% endif %}
 
-    <!-- Pro Events -->
+    {% if college_events %}
+    <section class="results-section" data-result-section>
+        <div class="results-section-header">
+            <h2 class="results-section-title text-primary">
+                <i class="bi bi-mortarboard me-1" aria-hidden="true"></i>College Events
+            </h2>
+            <span class="results-section-count">Friday &middot; {{ college_events|length }}</span>
+        </div>
+        <div class="row results-grid">
+            {% for event in college_events %}
+                {{ result_card(event, 'college') }}
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
     {% if pro_events %}
-    <div class="row mb-4 mt-4">
-        <div class="col-12">
-            <h3 class="text-warning"><i class="bi bi-trophy"></i> Pro Events (Saturday)</h3>
-            <hr>
+    <section class="results-section" data-result-section>
+        <div class="results-section-header">
+            <h2 class="results-section-title text-warning">
+                <i class="bi bi-trophy me-1" aria-hidden="true"></i>Pro Events
+            </h2>
+            <span class="results-section-count">Saturday &middot; {{ pro_events|length }}</span>
         </div>
-    </div>
-    <div class="row">
-        {% for event in pro_events %}
-        <div class="col-md-6 col-lg-4 mb-4">
-            <div class="card h-100">
-                <div class="card-header bg-warning text-dark">
-                    <h6 class="mb-0">{{ event.display_name }}</h6>
-                </div>
-                <div class="card-body p-0">
-                    <table class="table table-sm mb-0">
-                        <tbody>
-                            {% for r in event.get_results_sorted()[:6] %}
-                            <tr>
-                                <td class="text-center" style="width: 40px;">
-                                    {% if r.final_position == 1 %}
-                                        <span class="badge badge-gold">1</span>
-                                    {% elif r.final_position == 2 %}
-                                        <span class="badge badge-silver">2</span>
-                                    {% elif r.final_position == 3 %}
-                                        <span class="badge badge-bronze">3</span>
-                                    {% else %}
-                                        <small>{{ r.final_position }}</small>
-                                    {% endif %}
-                                </td>
-                                <td>{{ r.competitor_name }}</td>
-                                <td class="text-end">
-                                    <small class="text-muted">
-                                        {% if event.scoring_type == 'time' %}
-                                            {{ "%.2f"|format(r.result_value) if r.result_value else '-' }}s
-                                        {% else %}
-                                            {{ r.result_value or '-' }}
-                                        {% endif %}
-                                    </small>
-                                </td>
-                                <td class="text-end" style="width: 60px;">
-                                    {% if r.payout_amount %}
-                                        <span class="text-success">${{ "%.0f"|format(r.payout_amount) }}</span>
-                                    {% else %}
-                                        -
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                <div class="card-footer text-center">
-                    <a href="{{ url_for('reporting.event_results_report', tournament_id=tournament.id, event_id=event.id) }}"
-                       class="btn btn-sm btn-outline-warning">
-                        View Full Results
-                    </a>
-                </div>
-            </div>
+        <div class="row results-grid">
+            {% for event in pro_events %}
+                {{ result_card(event, 'pro') }}
+            {% endfor %}
         </div>
-        {% endfor %}
-    </div>
+    </section>
     {% endif %}
 
     {% if not college_events and not pro_events %}
-    <div class="row">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-body text-center py-5">
-                    <i class="bi bi-clipboard-x display-1 text-muted"></i>
-                    <h4 class="mt-4">No Completed Events Yet</h4>
-                    <p class="text-muted">Results will appear here once events are finalized.</p>
-                </div>
-            </div>
+    <div class="card">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-clipboard-x display-1 text-muted" aria-hidden="true"></i>
+            <h2 class="h4 mt-4">No Completed Events Yet</h2>
+            <p class="text-muted mb-0">Results will appear here once events are finalized.</p>
         </div>
     </div>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var cards = Array.prototype.slice.call(document.querySelectorAll('[data-result-card]'));
+    var sections = Array.prototype.slice.call(document.querySelectorAll('[data-result-section]'));
+    var search = document.querySelector('[data-results-search]');
+    var clear = document.querySelector('[data-results-clear]');
+    var count = document.querySelector('[data-results-count]');
+    var empty = document.querySelector('[data-results-empty]');
+    var mobile = window.matchMedia('(max-width: 575.98px)');
+
+    function setResponsiveDetails(isMobile) {
+        cards.forEach(function (card) {
+            var details = card.querySelector('[data-result-details]');
+            var toggle = card.querySelector('[data-bs-toggle="collapse"]');
+            if (!details || !toggle) return;
+            details.classList.toggle('show', !isMobile);
+            toggle.setAttribute('aria-expanded', isMobile ? 'false' : 'true');
+        });
+    }
+
+    function filterCards() {
+        var query = search ? search.value.trim().toLowerCase() : '';
+        var visibleCount = 0;
+        cards.forEach(function (card) {
+            var matches = !query || (card.dataset.eventName || '').includes(query);
+            card.hidden = !matches;
+            if (matches) visibleCount += 1;
+        });
+        sections.forEach(function (section) {
+            section.hidden = !section.querySelector('[data-result-card]:not([hidden])');
+        });
+        if (clear) clear.hidden = !query;
+        if (count) count.textContent = visibleCount + (visibleCount === 1 ? ' event' : ' events');
+        if (empty) empty.hidden = visibleCount !== 0;
+    }
+
+    setResponsiveDetails(mobile.matches);
+    if (mobile.addEventListener) mobile.addEventListener('change', function (event) {
+        setResponsiveDetails(event.matches);
+    });
+    if (search) search.addEventListener('input', filterCards);
+    if (clear) clear.addEventListener('click', function () {
+        search.value = '';
+        filterCards();
+        search.focus();
+    });
+})();
+</script>
 {% endblock %}

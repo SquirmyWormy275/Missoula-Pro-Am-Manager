@@ -72,9 +72,14 @@
         body.portal-mobile { background: #0d1015; }
 
         h1, h2, h3, h4, h5, h6 {
-            font-family: "Fraunces", Georgia, serif;
-            letter-spacing: 0.01em;
+            font-family: "Inter", "Segoe UI", sans-serif;
+            letter-spacing: 0;
             color: var(--sx-text);
+        }
+        #main-content h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            line-height: 1.2;
         }
 
         a { color: var(--sx-info); }
@@ -145,7 +150,21 @@
         /* ═══════════════════════════════════════════════════════════
            BUTTONS
         ═══════════════════════════════════════════════════════════ */
-        .btn { font-weight: 600; letter-spacing: 0.01em; font-family: "Inter", sans-serif; }
+        .btn {
+            min-height: 40px;
+            font-weight: 600;
+            letter-spacing: 0;
+            font-family: "Inter", sans-serif;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.35rem;
+        }
+        .btn-sm { min-height: 38px; }
+        .btn-group-sm > .btn {
+            min-width: 40px;
+            min-height: 40px;
+        }
 
         .btn-proam {
             background: linear-gradient(135deg, #e8391f 0%, #c02010 100%);
@@ -226,19 +245,14 @@
         .card {
             background: var(--sx-surface);
             border: 1px solid var(--sx-border);
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.24);
             color: var(--sx-text);
             position: relative;
             overflow: hidden;
         }
         .card::before {
-            content: "";
-            position: absolute;
-            left: 0; top: 0; right: 0;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
-            pointer-events: none;
+            content: none;
         }
         .card-header {
             background: var(--sx-surface-2);
@@ -387,6 +401,7 @@
            FORMS
         ═══════════════════════════════════════════════════════════ */
         .form-control, .form-select {
+            min-height: 40px;
             background: var(--sx-surface-2);
             border-color: var(--sx-border);
             color: var(--sx-text);
@@ -398,7 +413,13 @@
             color: var(--sx-text);
         }
         .form-control::placeholder { color: var(--sx-text-3); }
-        .form-label { color: var(--sx-text-2); font-size: 0.84rem; font-weight: 500; }
+        .form-control-sm, .form-select-sm { min-height: 38px; }
+        .form-label {
+            color: var(--sx-text-2);
+            font-size: 0.82rem;
+            font-weight: 600;
+            margin-bottom: 0.4rem;
+        }
         .form-check-input { background-color: var(--sx-surface-2); border-color: var(--sx-border-bright); }
         .form-check-input:checked { background-color: var(--sx-fire); border-color: var(--sx-fire); }
         .form-text { color: var(--sx-text-3); }
@@ -521,30 +542,6 @@
             font-weight: 700;
             color: var(--sx-fire);
         }
-        .ownership-copy {
-            font-size: 0.7rem;
-            letter-spacing: 0.03em;
-            color: var(--sx-text-2);
-        }
-        .ownership-logo {
-            height: 18px;
-            width: auto;
-            max-width: 140px;
-            object-fit: contain;
-            padding: 1px 6px;
-            border-radius: 6px;
-            background: #020307;
-            border: 1px solid rgba(239,43,22,0.28);
-            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05), 0 0 14px rgba(239,43,22,0.18);
-            opacity: 0.96;
-        }
-        .ownership-divider {
-            width: 1px;
-            height: 12px;
-            background: var(--sx-border-bright);
-            flex-shrink: 0;
-        }
-
         /* ═══════════════════════════════════════════════════════════
            NAVBAR
         ═══════════════════════════════════════════════════════════ */
@@ -627,6 +624,15 @@
             align-items: center;
             justify-content: center;
         }
+        .navbar-utility-controls {
+            flex-wrap: nowrap;
+            margin-left: auto;
+        }
+        .navbar-utility-controls .btn {
+            width: 44px;
+            min-width: 44px;
+            padding-inline: 0.65rem;
+        }
         /* Same guarantee for action buttons in data tables (View, Load Demo Data,
            inline row actions) which are the primary tap targets on tournament
            lists. */
@@ -648,37 +654,6 @@
 
         .navbar-text { color: var(--sx-text-3) !important; font-size: 0.78rem; }
 
-        /* STRATHEX pill in navbar */
-        .strathex-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            background: linear-gradient(180deg, rgba(12,14,20,0.96), rgba(7,8,13,0.96));
-            border: 1px solid rgba(239,43,22,0.34);
-            border-radius: 999px;
-            padding: 0.18rem 0.55rem 0.18rem 0.35rem;
-            transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s;
-        }
-        .strathex-chip:hover {
-            border-color: rgba(255,122,26,0.55);
-            box-shadow: 0 0 18px rgba(239,43,22,0.24);
-            transform: translateY(-1px);
-        }
-        .strathex-chip img {
-            height: 16px;
-            width: auto;
-            max-width: 108px;
-            object-fit: contain;
-        }
-        .strathex-chip span {
-            font-size: 0.55rem;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            color: #ffd8bf;
-            font-family: "Orbitron", sans-serif;
-            font-weight: 700;
-        }
-
         /* ═══════════════════════════════════════════════════════════
            FOOTER
         ═══════════════════════════════════════════════════════════ */
@@ -687,22 +662,10 @@
             border-top: 1px solid var(--sx-border) !important;
         }
         .footer-meta { color: var(--sx-text-3); font-size: 0.76rem; }
-        .footer-logo {
-            height: 19px;
-            object-fit: contain;
-            padding: 2px 8px;
-            border-radius: 8px;
-            background: #020307;
-            border: 1px solid rgba(239,43,22,0.28);
-            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
-            opacity: 0.9;
-        }
-
         /* ═══════════════════════════════════════════════════════════
            PORTAL MOBILE MODE
         ═══════════════════════════════════════════════════════════ */
         body.portal-mobile .ownership-bar,
-        body.portal-mobile .strathex-chip,
         body.portal-mobile footer { display: none !important; }
         body.portal-mobile .navbar-proam { position: sticky; top: 0; z-index: 1030; }
         body.portal-mobile .brand-title small { display: none; }
@@ -791,11 +754,6 @@
         body.lang-arp .ownership-bar::before {
             background: linear-gradient(90deg, transparent, #c40000, #c40000, transparent);
         }
-        body.lang-arp .strathex-chip {
-            background: rgba(196,0,0,0.09);
-            border-color: rgba(196,0,0,0.28);
-        }
-        body.lang-arp .strathex-chip span { color: #c40000; }
         body.lang-arp.brainrot-active {
             overflow: hidden;
         }
@@ -1360,18 +1318,15 @@
         ═══════════════════════════════════════════════════════════ */
         @media (max-width: 991px) {
             .brand-title small { display: none; }
-            .strathex-chip span { display: none; }
-            .ownership-copy { font-size: 0.63rem; }
             .ownership-inner { justify-content: flex-start; }
-            .ownership-logo { height: 16px; max-width: 110px; padding: 1px 5px; }
-            .strathex-chip { padding: 0.17rem 0.45rem 0.17rem 0.32rem; }
-            .strathex-chip img { height: 14px; max-width: 94px; }
-            .footer-logo { height: 17px; padding: 1px 6px; }
+            .navbar-utility-controls {
+                padding: 0.75rem 0;
+                margin-left: 0;
+            }
         }
         @media (max-width: 575px) {
             .ownership-inner { gap: 0.5rem; padding-inline: 0.5rem; }
             .ownership-label { font-size: 0.5rem; letter-spacing: 0.1em; }
-            .ownership-logo { height: 14px; max-width: 92px; padding: 1px 4px; }
             .brand-logo-wrap { width: 34px; height: 34px; }
             .brand-title strong { font-size: 0.75rem; letter-spacing: 0.05em; }
         }
@@ -1681,11 +1636,17 @@
             background: transparent;
             border: 1px solid var(--sx-border-bright);
             border-radius: 7px;
-            padding: 0.3rem 0.55rem;
+            min-height: 44px;
+            gap: 0.4rem;
+            padding: 0.3rem 0.65rem;
             color: var(--sx-text-2);
             font-size: 1.1rem;
             cursor: pointer;
             transition: color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        #mobileNavToggle span {
+            font-size: 0.75rem;
+            font-weight: 700;
         }
         #mobileNavToggle:hover {
             color: var(--sx-text);
@@ -1716,7 +1677,7 @@
             color: var(--sx-text-3);
         }
         .empty-state .empty-state-title {
-            font-family: "Fraunces", Georgia, serif;
+            font-family: "Inter", "Segoe UI", sans-serif;
             font-size: 1.15rem;
             color: var(--sx-text-2);
             margin-bottom: 0.5rem;
@@ -1761,9 +1722,10 @@
         }
 
         /* ── Card Micro-interactions ─────────────────────────────────── */
-        .card { transition: box-shadow 0.22s ease; }
+        .card { transition: border-color 0.18s ease; }
         .card:hover {
-            box-shadow: 0 10px 36px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.24);
+            border-color: var(--sx-border-bright);
         }
 
         /* ── Tabular Numbers in Competition Tables ───────────────────── */
@@ -1901,7 +1863,7 @@
             font-family: "Orbitron", sans-serif;
             font-size: 1.5rem;
             font-weight: 700;
-            letter-spacing: -0.01em;
+            letter-spacing: 0;
             color: var(--sx-text);
             line-height: 1;
         }
@@ -1942,6 +1904,9 @@
         @keyframes beaconPulse {
             0%, 100% { opacity: 1; transform: scale(1); }
             50% { opacity: 0.4; transform: scale(0.7); }
+        }
+        @media (max-width: 575px) {
+            #main-content h1 { font-size: 1.75rem; }
         }
 
         /* ── Competition Phase Banner ─────────────────────────────────── */

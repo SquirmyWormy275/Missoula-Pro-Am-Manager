@@ -119,6 +119,17 @@ class TestDashboardTemplates:
     def test_main_dashboard(self, admin_client):
         _assert_renders(admin_client.get('/'))
 
+    def test_shared_shell_uses_local_ui_dependencies(self, admin_client):
+        response = admin_client.get('/judge')
+        _assert_renders(response)
+        body = response.get_data(as_text=True)
+
+        assert '/static/vendor/bootstrap/css/bootstrap.min.css' in body
+        assert '/static/vendor/bootstrap/js/bootstrap.bundle.min.js' in body
+        assert '/static/vendor/bootstrap-icons/font/bootstrap-icons.min.css' in body
+        assert 'cdn.jsdelivr.net' not in body
+        assert 'fonts.googleapis.com' not in body
+
     def test_tournament_detail(self, admin_client, seeded_app):
         tid = seeded_app['tournament'].id
         _assert_renders(admin_client.get(f'/tournament/{tid}'))
