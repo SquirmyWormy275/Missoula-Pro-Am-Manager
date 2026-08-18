@@ -294,6 +294,7 @@ def test_complete_shadow_dress_rehearsal_is_atomic_recoverable_and_scoring_inert
 def test_release_docs_and_dependency_comments_describe_the_real_shadow_authority():
     mark_workflow = (ROOT / "docs" / "MARK_ASSIGNMENT_WORKFLOW.md").read_text(encoding="utf-8")
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    verifier_requirements = (ROOT / "requirements-shadow-verifier.txt").read_text(encoding="utf-8")
     release = (ROOT / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
     rollback = (ROOT / "docs" / "ROLLBACK_SOP.md").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -314,6 +315,13 @@ def test_release_docs_and_dependency_comments_describe_the_real_shadow_authority
     assert "STRATHMARK shadow" in rollback
     assert "python scripts/verify_strathmark_shadow_contract.py" in workflow
     assert "@9c021c5" not in requirements
+    assert "strathmark[api]" in verifier_requirements.lower()
+    assert "@da5c44d07311b226c1e9842104477efaf61253fa" in verifier_requirements
+    verifier_install = "pip install -r requirements.txt -r requirements-shadow-verifier.txt"
+    test_job = workflow.split("  test:\n", 1)[1].split("\n  postgres-smoke:\n", 1)[0]
+    unit_postgres_job = workflow.split("  unit-postgres:\n", 1)[1].split("\n  lint:\n", 1)[0]
+    assert verifier_install in test_job
+    assert verifier_install in unit_postgres_job
     assert [
         line.strip() for line in requirements.splitlines() if line.strip() == "jsonschema==4.25.1"
     ] == ["jsonschema==4.25.1"]

@@ -1,0 +1,7 @@
+# Test-only dependencies for the installed STRATHMARK contract rehearsal.
+#
+# Production uses the separately deployed STRATHMARK service and therefore
+# deliberately keeps the API extra out of requirements.txt. CI imports the
+# pinned service app in-process to verify Missoula's exact request/response
+# contract, so those jobs need the matching API extra from the same commit.
+strathmark[api] @ git+https://github.com/SquirmyWormy275/STRATHMARK@da5c44d07311b226c1e9842104477efaf61253fa
