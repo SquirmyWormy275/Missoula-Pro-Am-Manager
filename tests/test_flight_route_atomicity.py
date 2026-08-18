@@ -174,79 +174,73 @@ def _assert_snapshot_and_flashes(app, client, tournament_id):
 
 
 def test_one_click_build_chain_rolls_back_as_one_unit(app, auth_client):
+    from services.schedule_generation import ScheduleBuildError
+
     tournament_id = _make_tournament(app)
 
     with patch(
-        'routes.scheduling.flights._generate_all_heats',
-        side_effect=_flash_heat_generation_success,
-    ), patch(
-        'routes.scheduling.flights._build_pro_flights_if_possible',
-        side_effect=_mutating_build,
-    ) as build, patch(
-        'services.flight_builder.integrate_proam_relay_into_final_flight',
-        return_value={'placed': True},
-    ) as relay, patch(
-        'services.flight_builder.integrate_college_spillover_into_flights',
-        side_effect=_raise_spillover,
-    ) as spillover:
+        'routes.scheduling.flights.generate_tournament_schedule_artifacts',
+        side_effect=ScheduleBuildError(
+            'spillover_failed',
+            'spillover',
+            'Schedule build failed while integrating Saturday spillover and was rolled back.',
+        ),
+    ) as generate:
         response = auth_client.post(
             f'/scheduling/{tournament_id}/flights/one-click-generate',
             follow_redirects=False,
         )
 
     assert response.status_code in (302, 303)
-    assert build.call_args.kwargs['commit'] is False
-    assert relay.call_args.kwargs['commit'] is False
-    assert spillover.call_args.kwargs['commit'] is False
+    generate.assert_called_once_with(tournament_id)
     _assert_snapshot_and_flashes(app, auth_client, tournament_id)
 
 
 def test_one_click_heat_generation_failure_rolls_back_as_one_unit(
         app, auth_client):
+    from services.schedule_generation import ScheduleBuildError
+
     tournament_id = _make_tournament(app)
 
     with patch(
-        'routes.scheduling.flights._generate_all_heats',
-        side_effect=_raise_after_heat_generation_mutation,
-    ), patch(
-        'services.flight_builder.build_pro_flights',
-    ) as build:
+        'routes.scheduling.flights.generate_tournament_schedule_artifacts',
+        side_effect=ScheduleBuildError(
+            'heat_generation_failed',
+            'heat_generation',
+            'Schedule build failed while generating event heats and was rolled back.',
+        ),
+    ) as generate:
         response = auth_client.post(
             f'/scheduling/{tournament_id}/flights/one-click-generate',
             follow_redirects=False,
         )
 
     assert response.status_code in (302, 303)
-    build.assert_not_called()
+    generate.assert_called_once_with(tournament_id)
     _assert_snapshot_and_flashes(app, auth_client, tournament_id)
 
 
 def test_one_click_saw_assignment_failure_rolls_back_as_one_unit(
         app, auth_client):
+    from services.schedule_generation import ScheduleBuildError
+
     tournament_id = _make_tournament(app)
 
     with patch(
-        'routes.scheduling.flights._generate_all_heats',
-        side_effect=_flash_heat_generation_success,
-    ), patch(
-        'routes.scheduling.flights._build_pro_flights_if_possible',
-        side_effect=_mutating_build,
-    ), patch(
-        'services.flight_builder.integrate_proam_relay_into_final_flight',
-        return_value={'placed': True},
-    ), patch(
-        'services.flight_builder.integrate_college_spillover_into_flights',
-        return_value={'integrated_heats': 0},
-    ), patch(
-        'services.saw_block_assignment.assign_saw_blocks',
-        side_effect=_raise_saw_assignment,
-    ):
+        'routes.scheduling.flights.generate_tournament_schedule_artifacts',
+        side_effect=ScheduleBuildError(
+            'saw_blocks_failed',
+            'saw_blocks',
+            'Schedule build failed while assigning saw blocks and was rolled back.',
+        ),
+    ) as generate:
         response = auth_client.post(
             f'/scheduling/{tournament_id}/flights/one-click-generate',
             follow_redirects=False,
         )
 
     assert response.status_code in (302, 303)
+    generate.assert_called_once_with(tournament_id)
     _assert_snapshot_and_flashes(app, auth_client, tournament_id)
 
 

@@ -134,7 +134,6 @@ def _run_action(
             _handle_event_list_post(
                 tournament,
                 [],
-                generate_event_heats,
                 build_pro_flights,
                 integrate_spillover,
             )
@@ -148,7 +147,7 @@ def _run_action(
     return calls, commit.call_count, flashes, heat, flights
 
 
-@pytest.mark.parametrize('action', ['generate_all', 'rebuild_flights'])
+@pytest.mark.parametrize('action', ['rebuild_flights'])
 def test_active_event_build_chain_commits_once_after_all_steps(
         app, scheduling_state, action):
     calls, commit_count, flashes, heat, flights = _run_action(
@@ -166,7 +165,7 @@ def test_active_event_build_chain_commits_once_after_all_steps(
     assert any(category == 'success' for category, _message in flashes)
 
 
-@pytest.mark.parametrize('action', ['generate_all', 'rebuild_flights'])
+@pytest.mark.parametrize('action', ['rebuild_flights'])
 def test_active_event_build_chain_rolls_back_forced_spillover_failure(
         app, scheduling_state, action):
     calls, commit_count, flashes, heat, flights = _run_action(
@@ -191,7 +190,7 @@ def test_active_event_build_chain_rolls_back_forced_spillover_failure(
     )
 
 
-@pytest.mark.parametrize('action', ['generate_all', 'rebuild_flights'])
+@pytest.mark.parametrize('action', ['rebuild_flights'])
 def test_saw_assignment_failure_rolls_back_generated_schedule(
         app, scheduling_state, action):
     _calls, commit_count, flashes, heat, flights = _run_action(
@@ -255,7 +254,6 @@ def test_standalone_spillover_chain_commits_once_after_relay(app, scheduling_sta
             _handle_event_list_post(
                 tournament,
                 [],
-                lambda _event: 0,
                 lambda _tournament, **_kwargs: 0,
                 integrate_spillover,
             )
@@ -302,7 +300,6 @@ def test_standalone_spillover_rolls_back_relay_and_success_flash(
             _handle_event_list_post(
                 tournament,
                 [],
-                lambda _event: 0,
                 lambda _tournament, **_kwargs: 0,
                 integrate_spillover,
             )

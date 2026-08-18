@@ -393,8 +393,7 @@ class TestGenerateSpringboardHeats:
       - Only one physical LH springboard dummy on site.
       - At most one LH cutter per heat.
       - Spread LH cutters one per heat 0..N-1.
-      - If more LH cutters than heats, overflow goes to the FINAL heat with
-        a warning (emitted via lh_warnings list).
+      - Expand the heat count when the original layout has too few time slots.
       - Slow-heat cutters still cluster into the final heat (unchanged).
     """
 
@@ -455,8 +454,8 @@ class TestGenerateSpringboardHeats:
         ]
         assert lh_per_heat == [1, 1, 1, 1]
 
-    def test_overflow_lh_goes_to_final_heat_with_warning(self):
-        """5 LH cutters across 4 heats: 4 spread, 1 overflows to final heat."""
+    def test_lh_overflow_expands_to_one_cutter_per_heat(self):
+        """A fifth LH cutter creates a fifth dummy time slot."""
         ev = _event(event_type='college', stand_type='springboard')
         comps = [
             _comp(1, name='A', is_left_handed=True),
@@ -472,25 +471,18 @@ class TestGenerateSpringboardHeats:
         heats = _generate_springboard_heats(
             comps, 4, 4, {}, event=ev, lh_warnings=lh_warnings,
         )
-        # Heat 0..2 each have exactly 1 LH; final heat has 2 LH.
+        # Each LH cutter gets the sole left-handed dummy in a separate heat.
         lh_per_heat = [
             sum(1 for c in heat if c['id'] in {1, 2, 3, 4, 5})
             for heat in heats
         ]
-        assert lh_per_heat == [1, 1, 1, 2]
-        # Overflow warning emitted for heat 3.
-        assert len(lh_warnings) == 1
-        assert lh_warnings[0]['type'] == 'lh_overflow'
-        assert lh_warnings[0]['heat_index'] == 3
-        assert lh_warnings[0]['overflow_count'] == 1
+        assert lh_per_heat == [1, 1, 1, 1, 1]
+        assert lh_warnings == []
 
-    def test_overflow_unplaceable_when_final_heat_full(self):
-        """LH overflow exceeds max_per_heat of final heat — gear_violations records it."""
+    def test_lh_capacity_expands_until_every_cutter_is_placed(self):
+        """LH dummy capacity expands even when the original final heat is full."""
         ev = _event(event_type='college', stand_type='springboard')
-        # 3 heats of max 2 cutters each = 6 slots.
-        # 4 LH cutters: 3 spread to heats 0/1/2 (one each), 4th overflow to final
-        # heat 2.  Final heat now has 1 LH from spread + 1 LH overflow = 2/2 capacity.
-        # Add a 5th LH: overflow unplaceable.
+        # The original three-heat request cannot represent five LH cutters.
         comps = [
             _comp(1, name='A', is_left_handed=True),
             _comp(2, name='B', is_left_handed=True),
@@ -500,14 +492,14 @@ class TestGenerateSpringboardHeats:
         ]
         lh_warnings: list = []
         gear_violations: list = []
-        _generate_springboard_heats(
+        heats = _generate_springboard_heats(
             comps, 3, 2, {}, event=ev,
             gear_violations=gear_violations, lh_warnings=lh_warnings,
         )
-        # E (id=5) can't fit anywhere — all heats at max 2 after spread + 1 overflow.
-        unplaceable = [v for v in gear_violations if 'unplaced' in v.get('reason', '').lower()]
-        assert len(unplaceable) == 1
-        assert unplaceable[0]['comp_name'] == 'E'
+        assert len(heats) == 5
+        assert [sum(c['is_left_handed'] for c in heat) for heat in heats] == [1] * 5
+        assert gear_violations == []
+        assert lh_warnings == []
 
     def test_no_left_handers_no_warning_and_no_grouping(self):
         ev = _event(event_type='college', stand_type='springboard')
@@ -539,8 +531,8 @@ class TestGenerateSpringboardHeats:
 
     def test_lh_and_slow_heat_both_land_in_final_heat(self):
         """Interaction: 1 LH cutter alone fits heat 0; 1 slow-heat cutter in final.
-        With only 2 heats, final heat hosts the slow cutter AND (eventually) overflow
-        LH would go there too.  Smoke test that both mechanisms coexist without crash.
+        With only 2 heats, the final heat hosts the slow cutter while the LH
+        cutter retains its own dummy slot. Smoke test that both mechanisms coexist.
         """
         ev = _event(event_type='college', stand_type='springboard')
         comps = [
@@ -679,22 +671,10 @@ class TestPartialHeatGoesLast:
             f'Slow cutter must close the event — heats={[[c["id"] for c in h] for h in heats]}'
         )
 
-    def test_gear_violation_heat_index_follows_reorder(self):
-        """When a fallback gear-conflict places a competitor in the partial
-        heat AND the partial gets reordered to the end, the gear_violations
-        entry's heat_index must point at the NEW position so the judge's
-        flash-warning fingers the correct heat (not the original snake-draft
-        index that no longer exists in the final order)."""
-        ev = _event(event_type='college', stand_type='underhand')
-        # 3 competitors, all sharing axe gear → snake forces heat 0 to take
-        # the leftover via the fallback path. With max_per_heat=1, num_heats=3,
-        # so all heats end up partial — _no_ reorder occurs (all-partial guard).
-        # Use 5 comps with max_per_heat=2 → snake gives sizes [1, 2, 2], a real
-        # reorder. To force a fallback gear violation in the partial heat,
-        # competitors share gear so the snake's first pass conflicts.
-        gear = {'axe': True}
+    def test_gear_conflicts_expand_and_partial_heat_still_closes(self):
+        ev = _event(id=9, event_type='college', stand_type='underhand')
         comps = [
-            _comp(i, name=f'C{i}', gear_sharing=dict(gear))
+            _comp(i, name=f'C{i}', gear_sharing={'9': 'group:one-axe'})
             for i in range(1, 6)
         ]
         gear_violations: list = []
@@ -703,23 +683,9 @@ class TestPartialHeatGoesLast:
         )
         sizes = [len(h) for h in heats]
         assert sum(sizes) == 5
-        # Partial heat (size 1) is at the end after reorder.
-        assert sizes[-1] == 1, f'expected partial last, got {sizes}'
-        # Any logged gear_violation heat_index points at a valid heat in the
-        # post-reorder order (not stale pre-reorder index that would mislead
-        # the judge's flash warning to the wrong heat number).
-        for v in gear_violations:
-            idx = v['heat_index']
-            assert 0 <= idx < len(heats), (
-                f'gear_violation heat_index={idx} out of range — stale after reorder?'
-            )
-            # The named competitor must actually be in the heat the violation
-            # points at — proves the remap is correct, not just in-bounds.
-            comp_id = v['comp_id']
-            assert any(c['id'] == comp_id for c in heats[idx]), (
-                f'gear_violation says comp {comp_id} is in heat {idx} but they are not — '
-                f'heat {idx} contains {[c["id"] for c in heats[idx]]}'
-            )
+        assert len(heats) == 5
+        assert all(size == 1 for size in sizes)
+        assert gear_violations == []
 
     def test_partnered_saw_odd_pairs_partial_at_end(self):
         """Partnered Jack & Jill: 5 mixed pairs (10 competitors) on 2-stand heats

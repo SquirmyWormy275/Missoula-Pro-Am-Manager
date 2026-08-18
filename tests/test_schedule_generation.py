@@ -137,12 +137,35 @@ def test_run_preflight_autofix_reports_its_summary_numbers(db_session, monkeypat
 
 
 def test_generate_tournament_schedule_artifacts_returns_error_for_missing_tournament():
-    from services.schedule_generation import generate_tournament_schedule_artifacts
+    from services.schedule_generation import (
+        ScheduleBuildError,
+        generate_tournament_schedule_artifacts,
+    )
 
-    result = generate_tournament_schedule_artifacts(999999)
+    with pytest.raises(ScheduleBuildError) as exc_info:
+        generate_tournament_schedule_artifacts(999999)
 
-    assert result['ok'] is False
-    assert 'not found' in result['error']
+    assert exc_info.value.code == 'tournament_not_found'
+    assert 'not found' in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ('submitted', 'expected'),
+    [('1', 2), ('99', 10)],
+)
+def test_normalize_flight_sizing_input_clamps_submitted_flight_count(
+    submitted,
+    expected,
+):
+    from services.schedule_generation import normalize_flight_sizing_input
+
+    sizing = normalize_flight_sizing_input({
+        'flight_sizing_mode': 'fixed',
+        'num_flights': submitted,
+    })
+
+    assert sizing['num_flights'] == expected
+    assert sizing['requested_num_flights'] == expected
 
 
 def test_generate_tournament_schedule_artifacts_orchestrates_heat_and_flight_generation(
@@ -189,7 +212,10 @@ def test_generate_tournament_schedule_rolls_back_all_events_on_error(
     monkeypatch,
 ):
     from models import Heat
-    from services.schedule_generation import generate_tournament_schedule_artifacts
+    from services.schedule_generation import (
+        ScheduleBuildError,
+        generate_tournament_schedule_artifacts,
+    )
 
     tournament = _make_tournament(db_session)
     success_event = _make_event(
@@ -212,11 +238,11 @@ def test_generate_tournament_schedule_rolls_back_all_events_on_error(
         'services.heat_generator.generate_event_heats', _fake_generate,
     )
 
-    result = generate_tournament_schedule_artifacts(tournament.id)
+    with pytest.raises(ScheduleBuildError) as exc_info:
+        generate_tournament_schedule_artifacts(tournament.id)
 
-    assert result['ok'] is False
-    assert result['generated'] == 0
-    assert result['errors'] == ['kaboom']
+    assert exc_info.value.phase == 'heat_generation'
+    assert 'kaboom' not in str(exc_info.value)
     assert Heat.query.filter_by(event_id=success_event.id).count() == 0
 
 
@@ -226,7 +252,10 @@ def test_generate_tournament_schedule_rolls_back_partial_failed_event(
 ):
     """A failed event must not leak flushed heat rows into the final commit."""
     from models import Heat
-    from services.schedule_generation import generate_tournament_schedule_artifacts
+    from services.schedule_generation import (
+        ScheduleBuildError,
+        generate_tournament_schedule_artifacts,
+    )
 
     tournament = _make_tournament(db_session)
     failed_event = _make_event(db_session, tournament, 'Partial Failure', event_type='pro')
@@ -239,11 +268,11 @@ def test_generate_tournament_schedule_rolls_back_partial_failed_event(
 
     monkeypatch.setattr('services.heat_generator.generate_event_heats', _partial_failure)
 
-    result = generate_tournament_schedule_artifacts(tournament.id)
+    with pytest.raises(ScheduleBuildError) as exc_info:
+        generate_tournament_schedule_artifacts(tournament.id)
 
-    assert result['ok'] is False
-    assert result['generated'] == 0
-    assert result['errors'] == ['forced failure after flush']
+    assert exc_info.value.phase == 'heat_generation'
+    assert 'forced failure after flush' not in str(exc_info.value)
     assert Heat.query.filter_by(event_id=failed_event.id).count() == 0
 
 
@@ -252,7 +281,10 @@ def test_generate_tournament_schedule_rolls_back_heats_when_flight_chain_fails(
     monkeypatch,
 ):
     from models import Heat
-    from services.schedule_generation import generate_tournament_schedule_artifacts
+    from services.schedule_generation import (
+        ScheduleBuildError,
+        generate_tournament_schedule_artifacts,
+    )
 
     tournament = _make_tournament(db_session)
     event = _make_event(db_session, tournament, 'Atomic Background Event')
@@ -280,13 +312,11 @@ def test_generate_tournament_schedule_rolls_back_heats_when_flight_chain_fails(
         ),
     )
 
-    result = generate_tournament_schedule_artifacts(tournament.id)
+    with pytest.raises(ScheduleBuildError) as exc_info:
+        generate_tournament_schedule_artifacts(tournament.id)
 
-    assert result['ok'] is False
-    assert result['generated'] == 0
-    assert result['errors'] == [
-        'flight build chain failed: forced spillover failure',
-    ]
+    assert exc_info.value.phase == 'spillover'
+    assert 'forced spillover failure' not in str(exc_info.value)
     assert Heat.query.filter_by(event_id=event.id).count() == 0
 
 

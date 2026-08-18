@@ -18,8 +18,34 @@ from services.flight_builder import (
     serialize_sqlite_schedule_writer,
 )
 from services.partner_resolver import _resolve_partner_name_local, lookup_partner_cid
+from services.schedule_generation import (
+    FLIGHT_COUNT_MAX,
+    FLIGHT_COUNT_MIN,
+    FLIGHT_SIZING_DEFAULTS,
+    FLIGHT_SIZING_MODE_COUNT,
+    FLIGHT_SIZING_MODE_MINUTES,
+    MINUTES_PER_FLIGHT_MAX,
+    MINUTES_PER_FLIGHT_MIN,
+    MINUTES_PER_HEAT_MAX,
+    MINUTES_PER_HEAT_MIN,
+    VALID_FLIGHT_SIZING_MODES,
+    ScheduleBuildError,
+    ScheduleReadinessError,
+    generate_tournament_schedule_artifacts,
+    persist_flight_sizing_config,
+    schedule_operator_messages,
+)
+from services.schedule_generation import (
+    compute_num_flights_from_duration as _compute_num_flights_from_duration,
+)
+from services.schedule_generation import (
+    read_flight_sizing_config as _read_flight_sizing_config,
+)
+from services.schedule_generation import (
+    resolve_num_flights as _resolve_num_flights_from_persisted_config,
+)
 
-from . import _build_pro_flights_if_possible, _generate_all_heats, scheduling_bp
+from . import _build_pro_flights_if_possible, scheduling_bp
 from .spillover_feedback import flash_spillover_result, spillover_result_payload
 
 
@@ -48,62 +74,17 @@ def one_click_generate(tournament_id):
     the builder's 8-heats-per-flight default. Without this, ~615 pro heats produced 77
     flights regardless of what the operator picked.
     """
-    from services.flight_builder import (
-        FlightRebuildSafetyError,
-        build_pro_flights,
-        integrate_college_spillover_into_flights,
-        integrate_proam_relay_into_final_flight,
-    )
-    from services.heat_generator import generate_event_heats
-    from services.saw_block_assignment import assign_saw_blocks
-
-    tournament = db.get_or_404(Tournament, tournament_id)
-    tournament = lock_tournament_schedule(tournament)
-
-    db_config = tournament.get_schedule_config() or {}
-    saturday_college_event_ids = [int(i) for i in db_config.get('saturday_college_event_ids', [])]
+    db.get_or_404(Tournament, tournament_id)
 
     flash_checkpoint = len(session.get('_flashes', []))
     try:
-        _generate_all_heats(
-            tournament,
-            lambda event: generate_event_heats(
-                event, allow_flight_replacement=True,
-            ),
-        )
-        # Minutes-mode sizing depends on generated heat count. Resolve after
-        # fresh heat generation so first-use one-click honors persisted config.
-        num_flights_override = _resolve_num_flights_from_persisted_config(tournament)
-        flights_built = _build_pro_flights_if_possible(
-            tournament,
-            build_pro_flights,
-            num_flights=num_flights_override,
-            commit=False,
-        )
-        if flights_built is not None:
-            # Phase 4: Relay BEFORE spillover so Chokerman Run 2 still closes.
-            relay_result = integrate_proam_relay_into_final_flight(
-                tournament, commit=False,
-            )
-            integration = integrate_college_spillover_into_flights(
-                tournament, saturday_college_event_ids, commit=False,
-            )
-            assign_saw_blocks(tournament, commit=False)
-            db.session.commit()
-            flash(f'Built {flights_built} pro flight(s).', 'success')
-            if relay_result.get('placed'):
-                flash('Pro-Am Relay placed in the final flight.', 'success')
-            flash_spillover_result(integration)
-        else:
-            assign_saw_blocks(tournament, commit=False)
-            db.session.commit()
-        log_action('one_click_generate', 'tournament', tournament_id, {
-            'flights_built': flights_built,
-        })
-    except FlightRebuildSafetyError as exc:
-        db.session.rollback()
+        summary = generate_tournament_schedule_artifacts(tournament_id)
+    except ScheduleReadinessError as exc:
         _discard_success_flashes_since(flash_checkpoint)
-        flash(str(exc), 'warning')
+        flash(str(exc), 'error')
+    except ScheduleBuildError as exc:
+        _discard_success_flashes_since(flash_checkpoint)
+        flash(str(exc), 'error')
     except Exception:
         db.session.rollback()
         _discard_success_flashes_since(flash_checkpoint)
@@ -111,7 +92,20 @@ def one_click_generate(tournament_id):
         current_app.logger.exception(
             'One-click generate failed for tournament %s', tournament_id,
         )
-        flash('One-click generate failed and was rolled back. See application logs.', 'error')
+        flash(
+            'One-click generation failed and was rolled back. Open Preflight '
+            'to review the show, then run Generate again.',
+            'error',
+        )
+    else:
+        for message in schedule_operator_messages(summary):
+            flash(message['message'], message['category'])
+        flash_spillover_result(summary.get('spillover'))
+        log_action('one_click_generate', 'tournament', tournament_id, {
+            'flights_built': summary.get('flights'),
+            'generated': summary.get('generated'),
+            'protected': len(summary.get('protected') or []),
+        })
 
     return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 
@@ -183,109 +177,14 @@ def flight_list(tournament_id):
 # Missoula Pro Am's 60-min flight cadence and 5.5-min avg heat duration.
 # ---------------------------------------------------------------------------
 
-FLIGHT_SIZING_MODE_MINUTES = 'minutes'
-FLIGHT_SIZING_MODE_COUNT = 'count'
-VALID_FLIGHT_SIZING_MODES = {FLIGHT_SIZING_MODE_MINUTES, FLIGHT_SIZING_MODE_COUNT}
-
-FLIGHT_SIZING_DEFAULTS = {
-    'mode': FLIGHT_SIZING_MODE_MINUTES,
-    'target_minutes_per_flight': 60,
-    'minutes_per_heat': 5.5,
-    'num_flights': 4,
-}
-
-FLIGHT_COUNT_MIN = 2
-FLIGHT_COUNT_MAX = 10
-MINUTES_PER_FLIGHT_MIN = 30
-MINUTES_PER_FLIGHT_MAX = 180
-MINUTES_PER_HEAT_MIN = 1.0
-MINUTES_PER_HEAT_MAX = 15.0
-
-
-def _read_flight_sizing_config(tournament):
-    """Return saved flight-sizing config merged over defaults."""
-    cfg = tournament.get_schedule_config() or {}
-    mode = cfg.get('flight_sizing_mode', FLIGHT_SIZING_DEFAULTS['mode'])
-    if mode not in VALID_FLIGHT_SIZING_MODES:
-        mode = FLIGHT_SIZING_DEFAULTS['mode']
-    try:
-        target_minutes = int(cfg.get('target_minutes_per_flight',
-                                     FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']))
-    except (TypeError, ValueError):
-        target_minutes = FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']
-    try:
-        minutes_per_heat = float(cfg.get('minutes_per_heat',
-                                         FLIGHT_SIZING_DEFAULTS['minutes_per_heat']))
-    except (TypeError, ValueError):
-        minutes_per_heat = FLIGHT_SIZING_DEFAULTS['minutes_per_heat']
-    try:
-        saved_num_flights = int(cfg.get('num_flights', FLIGHT_SIZING_DEFAULTS['num_flights']))
-    except (TypeError, ValueError):
-        saved_num_flights = FLIGHT_SIZING_DEFAULTS['num_flights']
-    return {
-        'mode': mode,
-        'target_minutes_per_flight': max(
-            MINUTES_PER_FLIGHT_MIN, min(MINUTES_PER_FLIGHT_MAX, target_minutes),
-        ),
-        'minutes_per_heat': max(
-            MINUTES_PER_HEAT_MIN, min(MINUTES_PER_HEAT_MAX, minutes_per_heat),
-        ),
-        'num_flights': max(FLIGHT_COUNT_MIN, min(FLIGHT_COUNT_MAX, saved_num_flights)),
-    }
-
-
 def _persist_flight_sizing_config(tournament, mode, target_minutes, minutes_per_heat, num_flights):
     """Persist operator's flight sizing choices to schedule_config."""
-    cfg = tournament.get_schedule_config() or {}
-    cfg['flight_sizing_mode'] = mode
-    cfg['target_minutes_per_flight'] = int(target_minutes)
-    cfg['minutes_per_heat'] = float(minutes_per_heat)
-    cfg['num_flights'] = int(num_flights)
-    tournament.set_schedule_config(cfg)
-
-
-def _compute_num_flights_from_duration(total_heats, minutes_per_heat, target_minutes_per_flight):
-    """Derive num_flights from target flight duration.
-
-    Returns a clamped value in [FLIGHT_COUNT_MIN, FLIGHT_COUNT_MAX]. A
-    ``clamped`` flag indicates the ideal calculation exceeded the range so
-    the caller can surface a warning.
-    """
-    import math as _math
-    if total_heats <= 0 or minutes_per_heat <= 0 or target_minutes_per_flight <= 0:
-        return FLIGHT_COUNT_MIN, False
-    ideal = _math.ceil((total_heats * minutes_per_heat) / target_minutes_per_flight)
-    clamped_value = max(FLIGHT_COUNT_MIN, min(FLIGHT_COUNT_MAX, ideal))
-    return clamped_value, clamped_value != ideal
-
-
-def _resolve_num_flights_from_persisted_config(tournament) -> int | None:
-    """Return num_flights from saved schedule_config, honouring the saved mode.
-
-    Mirrors the resolver used by /flights/build POST and the Run Show form, but
-    reads from persisted Tournament.schedule_config instead of request.form. Used
-    by buttons (one-click generate) that don't host the sizing form themselves —
-    without this, the builder's 8-heats-per-flight default produces a flight per
-    8 heats no matter what the operator chose.
-
-    Returns None when there are no pro heats yet or when the saved config can't
-    be resolved, letting the builder fall back to its own default.
-    """
-    sizing = _read_flight_sizing_config(tournament)
-    if sizing['mode'] == FLIGHT_SIZING_MODE_MINUTES:
-        pro_heats = Heat.query.join(Event).filter(
-            Event.tournament_id == tournament.id,
-            Event.event_type == 'pro',
-            Event.name != 'Partnered Axe Throw',
-            Heat.run_number == 1,
-        ).count()
-        if pro_heats <= 0:
-            return None
-        computed, _ = _compute_num_flights_from_duration(
-            pro_heats, sizing['minutes_per_heat'], sizing['target_minutes_per_flight'],
-        )
-        return computed if computed >= 1 else None
-    return sizing['num_flights'] if sizing['num_flights'] >= 1 else None
+    persist_flight_sizing_config(tournament, {
+        'mode': mode,
+        'target_minutes_per_flight': target_minutes,
+        'minutes_per_heat': minutes_per_heat,
+        'num_flights': num_flights,
+    })
 
 
 @scheduling_bp.route('/<int:tournament_id>/flights/build', methods=['GET', 'POST'])

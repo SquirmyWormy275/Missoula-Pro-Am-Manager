@@ -790,7 +790,7 @@ class TestFinalizationGuard:
 
         assert calls == []
 
-    def test_regen_gear_conflict_rebuilds_with_operator_warning(
+    def test_regen_gear_conflict_expands_to_safe_heats(
         self, db_session, auth_client
     ):
         t = _make_tournament(db_session)
@@ -813,13 +813,16 @@ class TestFinalizationGuard:
         )
 
         assert resp.status_code == 200
-        assert b"gear-sharing conflict" in resp.data.lower()
+        assert b"gear-sharing conflict" not in resp.data.lower()
         from models.heat import Heat
 
         _db.session.expire_all()
-        heats = Heat.query.filter_by(event_id=e.id).all()
-        assert len(heats) == 1
-        assert sorted(heats[0].get_competitors()) == sorted([first.id, second.id])
+        heats = Heat.query.filter_by(event_id=e.id).order_by(Heat.heat_number).all()
+        assert len(heats) == 2
+        assert {tuple(heat.get_competitors()) for heat in heats} == {
+            (first.id,),
+            (second.id,),
+        }
 
 
 # ---------------------------------------------------------------------------

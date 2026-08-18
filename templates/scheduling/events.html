@@ -107,10 +107,18 @@
     .sched-wizard-step:nth-child(2n) .sched-wizard-control { border-right: 0; }
     .sched-wizard-step:nth-last-child(-n + 2) .sched-wizard-control { border-bottom: 0; }
     .ops-tabs {
-        flex-wrap: nowrap;
-        overflow-x: auto;
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
     }
-    .ops-tabs .nav-link { min-height: 44px; padding-inline: 0.9rem; }
+    .ops-tabs .nav-item { min-width: 0; }
+    .ops-tabs .nav-item:first-child { grid-column: 1 / -1; }
+    .ops-tabs .nav-link {
+        width: 100%;
+        min-height: 44px;
+        padding-inline: 0.65rem;
+        white-space: normal;
+    }
     .schedule-warning-row {
         flex-direction: column;
     }
@@ -221,11 +229,11 @@
         {% set wizard_steps = [
             ('1', 'Configure Events', url_for('scheduling.setup_events', tournament_id=tournament.id), 'bi-gear'),
             ('2', 'Fri/Sat Options', url_for('scheduling.friday_feature', tournament_id=tournament.id), 'bi-calendar2-week'),
-            ('3', 'Generate & Build', '', 'bi-lightning-charge'),
-            ('4', 'Preflight & Print', url_for('scheduling.preflight_check', tournament_id=tournament.id), 'bi-printer'),
+            ('3', 'Preflight Check', url_for('scheduling.preflight_check', tournament_id=tournament.id), 'bi-shield-check'),
+            ('4', 'Generate & Print', '', 'bi-lightning-charge'),
         ] %}
         {% for num, label, href, icon in wizard_steps %}
-        {% set is_active = (num == '3') %}
+        {% set is_active = (num == '4') %}
         {% set is_done = (num in ('1', '2')) %}
         <li class="sched-wizard-step">
             {% if href and not is_active %}
@@ -454,11 +462,11 @@
                 <i class="bi bi-check-circle-fill text-success" style="font-size:1.3rem; flex-shrink:0;"></i>
                 <div class="flex-grow-1">
                     <div class="fw-bold text-success">Heats and flights are ready</div>
-                    <div class="small text-muted">Run a Preflight Check to verify, then print heat sheets for game day.</div>
+                    <div class="small text-muted">The full build passed its readiness checks. Print heat sheets for game day or inspect the current report.</div>
                 </div>
                 <div class="d-flex gap-2 flex-shrink-0">
                     <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
-                       class="btn btn-outline-success btn-sm">Preflight Check</a>
+                       class="btn btn-outline-success btn-sm">Readiness Report</a>
                     <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
                        class="btn btn-success btn-sm" target="_blank">
                         <i class="bi bi-printer me-1"></i>Print Heat Sheets
@@ -541,7 +549,8 @@
                             {# Primary action — flight sizing form is the same one as on the
                                Build Flights page; values are stored in schedule_config so the
                                two pages stay in sync. #}
-                            <form method="POST" action="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" data-loading>
+                            <form method="POST" action="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
+                                  data-loading data-full-build-form>
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
                                 {% if flight_sizing %}
@@ -591,7 +600,8 @@
 
                                 <div class="d-grid mb-2">
                                     <button type="submit" name="action" value="generate_all" class="btn btn-primary"
-                                            data-confirm="Generate heats for all events and build pro flights? Existing heats will be regenerated.">
+                                            data-full-build-submit
+                                            data-confirm="Run the required preflight, regenerate all heats, and build the complete show? Existing heats will be replaced only if the full build succeeds.">
                                         <i class="bi bi-lightning-charge me-1"></i>Generate All Heats + Build Flights
                                     </button>
                                 </div>
@@ -1296,15 +1306,32 @@ function loadPreflight() {
     const url = "{{ url_for('scheduling.preflight_json', tournament_id=tournament.id) }}";
     const panel = document.getElementById('preflight-panel');
     const body = document.getElementById('preflight-body');
+    const buildSubmit = document.querySelector('[data-full-build-submit]');
+    function setFullBuildBlocked(blocked) {
+        if (!buildSubmit) return;
+        buildSubmit.disabled = blocked;
+        buildSubmit.setAttribute('aria-disabled', blocked ? 'true' : 'false');
+        buildSubmit.title = blocked
+            ? 'Resolve hard blockers before generating the show.'
+            : '';
+    }
     panel.style.display = '';
     body.innerHTML = '<span class="text-muted">Loading...</span>';
     fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(data) {
+            setFullBuildBlocked(data.pre_generation_has_blockers);
             if (data.issue_count === 0) {
                 body.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>No preflight issues — ready to generate.</span>';
             } else {
-                var html = '<div class="d-flex gap-3 mb-2">';
+                var html = '';
+                if (data.pre_generation_has_blockers) {
+                    html += '<div class="alert alert-danger py-2 mb-2"><strong>Build blocked:</strong> Resolve ' +
+                        data.pre_generation_blocking_count + ' input blocker(s) before generating the show.</div>';
+                } else {
+                    html += '<div class="text-success fw-semibold mb-2"><i class="bi bi-check-circle-fill me-1"></i>No input blockers. The full build can proceed.</div>';
+                }
+                html += '<div class="d-flex gap-3 mb-2">';
                 if (data.severity.high)   html += '<span class="text-danger fw-bold">' + data.severity.high + ' high</span>';
                 if (data.severity.medium) html += '<span class="text-warning fw-bold">' + data.severity.medium + ' medium</span>';
                 if (data.severity.low)    html += '<span class="text-muted">' + data.severity.low + ' low</span>';
@@ -1320,12 +1347,12 @@ function loadPreflight() {
             }
         })
         .catch(function() {
-            body.innerHTML = '<span class="text-danger">Preflight check failed to load.</span>';
+            setFullBuildBlocked(false);
+            body.innerHTML = '<span class="text-warning">Preflight status could not be loaded here. Generation will still run the required server-side check before changing the schedule.</span>';
         });
 }
 
-// Auto-load preflight when on Build tab and heats/flights already exist
-{% if flights_built or pro_heats_exist %}
+// Load readiness whenever the operator reaches the Build tab.
 document.addEventListener('DOMContentLoaded', function() {
     var buildTabBtn = document.getElementById('tab-btn-build');
     if (buildTabBtn) {
@@ -1339,15 +1366,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 });
-{% endif %}
-
-// Re-load preflight when switching back to build tab
-var buildTabBtn2 = document.getElementById('tab-btn-build');
-if (buildTabBtn2) {
-    buildTabBtn2.addEventListener('shown.bs.tab', function() {
-        loadPreflight();
-    });
-}
 
 // ── Loading overlay for build actions ────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {

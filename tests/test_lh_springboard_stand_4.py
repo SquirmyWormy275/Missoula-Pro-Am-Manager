@@ -201,9 +201,8 @@ class TestLhCutterGetsStand4:
 
 
 class TestMultipleLhInSameHeat:
-    def test_two_lh_same_heat_first_gets_stand_4_and_warning_fires(self, db_session):
-        """When 2+ LH cutters land in the same heat, first gets stand 4 +
-        a 'multiple_lh_same_heat' warning is recorded."""
+    def test_multiple_lh_cutters_expand_to_one_dummy_slot_each(self, db_session):
+        """Generation never schedules two cutters on the sole LH dummy together."""
         from services.heat_generator import (
             generate_event_heats,
             get_last_lh_overflow_warnings,
@@ -223,11 +222,17 @@ class TestMultipleLhInSameHeat:
 
         generate_event_heats(ev)
 
+        from models import Heat
+
+        heats = Heat.query.filter_by(event_id=ev.id, run_number=1).order_by(
+            Heat.heat_number
+        ).all()
+        assert len(heats) == 4
+        for heat in heats:
+            assert len(heat.get_competitors()) == 1
+            assert list(heat.get_stand_assignments().values()) == [4]
         warnings = get_last_lh_overflow_warnings(ev.id)
-        types = {w.get("type") for w in warnings}
-        assert (
-            "multiple_lh_same_heat" in types
-        ), f"expected 'multiple_lh_same_heat' warning, got types {types}"
+        assert warnings == []
 
 
 # ---------------------------------------------------------------------------
