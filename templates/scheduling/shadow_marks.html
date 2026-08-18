@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+
+{% block title %}Shadow Handicap Sheet{% endblock %}
+
+{% block content %}
+<main class="container py-3" id="shadow-sheet-main">
+  <nav aria-label="Breadcrumb">
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item"><a href="{{ url_for('main.tournament_detail', tournament_id=tournament.id) }}">{{ tournament.name }}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Shadow handicap</li>
+    </ol>
+  </nav>
+
+  <h1>Shadow handicap sheet</h1>
+  <p class="lead">{{ event.name }} — recommendation only. This page never changes official championship marks.</p>
+
+  {% if not run %}
+    <section aria-labelledby="prepare-heading" class="card mb-3">
+      <div class="card-body">
+        <h2 id="prepare-heading" class="h4">Prepare field snapshot</h2>
+        <p>Freeze the current roster, run order, wood specification, and exclusive UTC evidence cutoff.</p>
+        <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="prepare">
+          <label for="prediction-as-of" class="form-label">Prediction cutoff (exclusive UTC date)</label>
+          <input id="prediction-as-of" class="form-control mb-1" type="date" name="prediction_as_of" required>
+          <p class="form-text mb-3">Choose deliberately. Same-day, undated, and future evidence are excluded, and changing this date creates a new request.</p>
+          <button class="btn btn-primary shadow-touch-target" type="submit">Prepare whole field</button>
+        </form>
+      </div>
+    </section>
+  {% else %}
+    <div role="status" aria-live="polite" class="alert {% if view.blockers %}alert-danger{% else %}alert-success{% endif %}">
+      <strong>{{ view.primary_summary }}</strong> — {{ view.primary_action }}
+    </div>
+
+      <section aria-labelledby="shadow-blockers" class="card {% if view.blockers %}border-danger{% else %}border-success{% endif %} mb-3">
+        <div class="card-body">
+          <h2 id="shadow-blockers" class="h4">{{ view.blocker_heading }}</h2>
+          {% if view.blockers %}
+            <ul>{% for item in view.blockers %}<li>{{ item }}</li>{% endfor %}</ul>
+          {% else %}
+            <p class="mb-0">No blocking issues.</p>
+          {% endif %}
+        </div>
+      </section>
+
+    {% if view.advisories %}
+      <section aria-labelledby="shadow-advisories" class="card border-warning mb-3">
+        <div class="card-body">
+          <h2 id="shadow-advisories" class="h4">{{ view.advisory_heading }}</h2>
+          <ul>{% for item in view.advisories %}<li>{{ item }}</li>{% endfor %}</ul>
+        </div>
+      </section>
+    {% endif %}
+
+    <section aria-labelledby="shadow-field" class="card mb-3">
+      <div class="card-body">
+        <h2 id="shadow-field" class="h4">Whole-field recommendations</h2>
+        <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="expected_version" value="{{ run.lifecycle_version }}">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <caption>Every row must be reviewed together. A zero-second recommendation is explicit and valid.</caption>
+              <thead><tr><th scope="col">Reviewed</th><th scope="col">Order</th><th scope="col">Competitor ID</th><th scope="col">Recommended start</th><th scope="col">Median elapsed</th><th scope="col">90% interval</th></tr></thead>
+              <tbody>
+              {% for prediction in view.predictions %}
+                <tr>
+                  <td><input class="form-check-input shadow-review-check" type="checkbox" name="review_prediction" value="{{ prediction.prediction_id }}" aria-label="Review recommendation {{ prediction.ordinal + 1 }}"></td>
+                  <td>{{ prediction.ordinal + 1 }}</td>
+                  <td><code>{{ prediction.competitor_id }}</code></td>
+                  <td>{{ prediction.assigned_mark }} s</td>
+                  <td>{{ prediction.median_seconds }} s</td>
+                  <td>{% if prediction.interval %}{{ prediction.interval.lower }}–{{ prediction.interval.upper }} s{% else %}Unavailable{% endif %}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="6">No trusted recommendations recorded yet.</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          {% if run.lifecycle == 'prepared' %}
+            <button class="btn btn-primary shadow-touch-target" name="action" value="approve_preflight" type="submit">Approve exact preflight revision</button>
+          {% elif run.lifecycle == 'preflight-approved' %}
+            <button class="btn btn-primary shadow-touch-target" name="action" value="calculate" type="submit">Calculate or recover receipt</button>
+          {% elif run.lifecycle == 'calculated' %}
+            <button class="btn btn-primary shadow-touch-target" name="action" value="review" type="submit" {% if view.blockers %}disabled{% endif %}>Review entire sheet</button>
+          {% elif run.lifecycle == 'reviewed' %}
+            <button class="btn btn-warning shadow-touch-target" name="action" value="issue" type="submit" {% if view.blockers %}disabled{% endif %}>Issue entire shadow sheet</button>
+          {% endif %}
+        </form>
+        {% if run.issue_artifacts %}
+          <a class="btn btn-outline-secondary shadow-touch-target mt-2" href="{{ url_for('scheduling.shadow_marks_export', tournament_id=tournament.id, event_id=event.id, run_pk=run.id) }}">Download checksummed export</a>
+        {% endif %}
+      </div>
+    </section>
+
+    {% if run.lifecycle in ['shadow-issued', 'outcomes-complete'] %}
+      <section aria-labelledby="shadow-standings-heading" class="card mb-3" id="shadow-outcomes">
+        <div class="card-body">
+          <h2 id="shadow-standings-heading" class="h4">Shadow comparison standings</h2>
+          <p><strong>Read-only official context:</strong> these comparisons are recommendation evidence only. They do not determine championship position, points, or payout.</p>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <caption>Separate shadow comparison metric beside the current official result and immutable outcome evidence.</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Competitor</th>
+                  <th scope="col">Official</th>
+                  <th scope="col">Outcome</th>
+                  <th scope="col">Recommended start</th>
+                  <th scope="col">Shadow elapsed</th>
+                  <th scope="col">Prediction residual</th>
+                  <th scope="col">Shadow rank</th>
+                  <th scope="col">Evidence status</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for outcome in outcomes %}
+                <tr>
+                  <th scope="row">{{ outcome.display_name }}<br><code>{{ outcome.competitor_id }}</code></th>
+                  <td>
+                    {{ outcome.official_status }}
+                    {% if outcome.official_value is not none %} — {{ outcome.official_value }}{% endif %}
+                    {% if outcome.official_position is not none %}<br>Place {{ outcome.official_position }}{% endif %}
+                  </td>
+                  <td>{{ outcome.classification }}</td>
+                  <td>{{ outcome.recommended_start_seconds }} s</td>
+                  <td>{% if outcome.shadow_elapsed_seconds is not none %}{{ outcome.shadow_elapsed_seconds }} s{% else %}—{% endif %}</td>
+                  <td>{% if outcome.residual_seconds is not none %}{{ outcome.residual_seconds }} s{% else %}—{% endif %}</td>
+                  <td>{{ outcome.shadow_rank or '—' }}</td>
+                  <td>
+                    {{ outcome.settlement_effect }}<br>
+                    Delivery: {{ outcome.delivery_status }}
+                    <details class="mt-1">
+                      <summary>Prior immutable evidence</summary>
+                      {% if outcome.history %}
+                        <ol class="mb-0">
+                        {% for revision in outcome.history %}
+                          <li>Revision {{ revision.revision }}: {{ revision.classification }}{% if revision.raw_elapsed_seconds is not none %}, {{ revision.raw_elapsed_seconds }} s{% endif %} — {{ revision.reason_code }}</li>
+                        {% endfor %}
+                        </ol>
+                      {% else %}
+                        <p class="mb-0">No operational outcome has been recorded.</p>
+                      {% endif %}
+                    </details>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="8">No current outcome rows are available.</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <form method="post" class="border-top pt-3" aria-describedby="reconcile-help">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="reconcile_outcomes">
+            <input type="hidden" name="expected_outcome_token" value="{{ outcome_state_token }}">
+            <label for="outcome-reason" class="form-label">Reason for reconciliation</label>
+            <select id="outcome-reason" class="form-select mb-2" name="reason_code" required>
+              <option value="">Choose a reason</option>
+              {% for reason in correction_reason_codes %}
+                <option value="{{ reason }}">{{ reason.replace('_', ' ')|title }}</option>
+              {% endfor %}
+            </select>
+            <p id="reconcile-help" class="form-text">Review changed official results above. Eligible positive raw time queues settlement; replacing valid numeric evidence with DNF/DQ queues a void. This never changes official results.</p>
+            <div class="form-check mb-3">
+              <input id="confirm-outcome-reconciliation" class="form-check-input" type="checkbox" name="confirm_outcome_reconciliation" value="yes" required>
+              <label class="form-check-label" for="confirm-outcome-reconciliation">I confirm the current official context and the settle/void preview.</label>
+            </div>
+            <button class="btn btn-outline-primary shadow-touch-target" type="submit">Record outcome reconciliation</button>
+          </form>
+        </div>
+      </section>
+    {% endif %}
+
+    <section aria-labelledby="shadow-context-heading" class="card mb-3" id="shadow-context">
+      <div class="card-body">
+        <h2 id="shadow-context-heading" class="h4">Prospective context for future seasons</h2>
+        <p><strong>Numerically inactive:</strong> these structured observations are stored for later multi-season research. They do not change this sheet, its V2 hash, or training eligibility.</p>
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <caption>Deferred-factor coverage, provenance stage, and explicit unknown state.</caption>
+            <thead><tr><th scope="col">Factor</th><th scope="col">Capture stage</th><th scope="col">State</th><th scope="col">Latest provenance</th></tr></thead>
+            <tbody>
+            {% for factor in context_audit.factors %}
+              <tr>
+                <th scope="row">{{ factor.factor.replace('_', ' ')|title }}</th>
+                <td>{{ factor.stage.replace('_', ' ') }}</td>
+                <td>{{ factor.state }}</td>
+                <td>
+                  {% if factor.latest %}
+                    {% for item in factor.latest %}
+                      <div><code>{{ item.subject_id }}</code>: {{ item.value_state }} / {{ item.source }}</div>
+                    {% endfor %}
+                  {% else %}
+                    Not recorded
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <details class="mb-3">
+          <summary>Record an Explicit unknown</summary>
+          <form method="post" class="pt-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="record_context_unknown">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <label class="form-label" for="unknown-context-factor">Factor</label>
+            <select class="form-select mb-2" id="unknown-context-factor" name="factor" required>
+              <option value="">Choose a factor</option>
+              {% for factor in manual_unknown_factors %}
+                <option value="{{ factor }}">{{ factor.replace('_', ' ')|title }}</option>
+              {% endfor %}
+            </select>
+            <label class="form-label" for="unknown-context-subject-type">Scope type</label>
+            <input class="form-control mb-2" id="unknown-context-subject-type" name="subject_type" maxlength="40" placeholder="material, run, time_window…" required>
+            <label class="form-label" for="unknown-context-subject-id">Stable scope ID</label>
+            <input class="form-control mb-2" id="unknown-context-subject-id" name="subject_id" maxlength="224" placeholder="missoula:material:…" required>
+            <p class="form-text">Missing is recorded as unknown—not false or zero. Do not enter names, medical notes, contact details, or free text.</p>
+            <button class="btn btn-outline-primary shadow-touch-target" type="submit">Record explicit unknown</button>
+          </form>
+        </details>
+
+        <details class="mb-3">
+          <summary>Record venue</summary>
+          <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="record_context_venue">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <div class="col-md-6"><label class="form-label" for="venue-subject-id">Tournament-day ID</label><input class="form-control" id="venue-subject-id" name="subject_id" placeholder="missoula:tournament-day:…" maxlength="224" required></div>
+            <div class="col-md-6"><label class="form-label" for="venue-code">Venue ID</label><input class="form-control" id="venue-code" name="venue_code" placeholder="missoula:venue:…" maxlength="224" required></div>
+            <div class="col-12"><button class="btn btn-outline-primary shadow-touch-target" type="submit">Record venue</button></div>
+          </form>
+        </details>
+
+        <details class="mb-3">
+          <summary>Record material preparation</summary>
+          <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="record_context_material">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <div class="col-md-6"><label class="form-label" for="material-id">Material ID</label><input class="form-control" id="material-id" name="material_id" placeholder="missoula:material:…" maxlength="224" required></div>
+            <div class="col-md-6"><label class="form-label" for="batch-id">Batch ID</label><input class="form-control" id="batch-id" name="batch_id" placeholder="missoula:batch:…" maxlength="224" required></div>
+            <div class="col-md-4"><label class="form-label" for="identity-source">Identity source</label><select class="form-select" id="identity-source" name="identity_source"><option value="scanned">Scanned</option><option value="operator_entered">Entered</option></select></div>
+            <div class="col-md-4"><label class="form-label" for="quality-code">Quality</label><select class="form-select" id="quality-code" name="quality_code" required><option value="">Choose</option><option value="ungraded">Ungraded</option><option value="select">Select</option><option value="standard">Standard</option><option value="reject">Reject</option></select></div>
+            <div class="col-md-4"><label class="form-label" for="moisture-percent">Moisture percent</label><input class="form-control" id="moisture-percent" name="moisture_percent" type="number" min="0" max="100" step="0.1" required></div>
+            <div class="col-12"><button class="btn btn-outline-primary shadow-touch-target" type="submit">Record material</button></div>
+          </form>
+        </details>
+
+        <details class="mb-3">
+          <summary>Record weather window</summary>
+          <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="record_context_weather">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <div class="col-12"><label class="form-label" for="weather-subject-id">Time-window ID</label><input class="form-control" id="weather-subject-id" name="subject_id" placeholder="missoula:time-window:…" maxlength="224" required></div>
+            <div class="col-md-3"><label class="form-label" for="temperature-f">Temperature °F</label><input class="form-control" id="temperature-f" name="temperature_f" type="number" min="-80" max="150" step="0.1" required></div>
+            <div class="col-md-3"><label class="form-label" for="humidity-percent">Humidity %</label><input class="form-control" id="humidity-percent" name="humidity_percent" type="number" min="0" max="100" step="0.1" required></div>
+            <div class="col-md-3"><label class="form-label" for="wind-mph">Wind mph</label><input class="form-control" id="wind-mph" name="wind_mph" type="number" min="0" max="200" step="0.1" required></div>
+            <div class="col-md-3"><label class="form-label" for="precipitation-code">Precipitation</label><select class="form-select" id="precipitation-code" name="precipitation_code" required><option value="none">None</option><option value="rain">Rain</option><option value="snow">Snow</option><option value="mixed">Mixed</option></select></div>
+            <div class="col-12"><button class="btn btn-outline-primary shadow-touch-target" type="submit">Record weather</button></div>
+          </form>
+        </details>
+
+        <details class="mb-3">
+          <summary>Record equipment and structured rest observation</summary>
+          <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="record_context_run_observation">
+            <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
+            <div class="col-md-6"><label class="form-label" for="run-subject-id">Run ID</label><input class="form-control" id="run-subject-id" name="subject_id" placeholder="missoula:run:…" maxlength="224" required></div>
+            <div class="col-md-6"><label class="form-label" for="entrant-run-id">Entrant-run ID</label><input class="form-control" id="entrant-run-id" name="entrant_run_id" placeholder="missoula:entrant-run:…" maxlength="224" required></div>
+            <div class="col-md-4"><label class="form-label" for="equipment-code">Equipment code</label><input class="form-control" id="equipment-code" name="equipment_code" maxlength="80" required></div>
+            <div class="col-md-4"><label class="form-label" for="rest-minutes">Rest minutes</label><input class="form-control" id="rest-minutes" name="rest_minutes" type="number" min="0" max="10080" required></div>
+            <div class="col-md-4"><label class="form-label" for="observation-code">Structured observation</label><select class="form-select" id="observation-code" name="observation_code" required><option value="rested">Rested</option><option value="typical">Typical</option><option value="fatigued">Fatigued</option></select></div>
+            <div class="col-12"><p class="form-text">No medical notes or free text are accepted.</p><button class="btn btn-outline-primary shadow-touch-target" type="submit">Record run context</button></div>
+          </form>
+        </details>
+
+        <a class="btn btn-outline-secondary shadow-touch-target" href="{{ url_for('scheduling.shadow_context_export', tournament_id=tournament.id, event_id=event.id, run_pk=run.id) }}">Download redacted context audit</a>
+      </div>
+    </section>
+
+    <section aria-labelledby="shadow-audit" class="card mb-3">
+      <div class="card-body">
+        <h2 id="shadow-audit" class="h4">{{ view.lifecycle_heading }}</h2>
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Lifecycle</dt><dd class="col-sm-8">{{ run.lifecycle }}</dd>
+          <dt class="col-sm-4">Run revision</dt><dd class="col-sm-8"><code>{{ run.run_revision }}</code></dd>
+          <dt class="col-sm-4">Prediction cutoff</dt><dd class="col-sm-8">{{ run.prediction_as_of }} (exclusive UTC)</dd>
+          <dt class="col-sm-4">Authority</dt><dd class="col-sm-8">Shadow recommendation only</dd>
+        </dl>
+      </div>
+    </section>
+
+    {% if view.blockers and run.lifecycle in ['prepared', 'preflight-approved', 'calculated', 'reviewed'] %}
+      <section aria-labelledby="supersede-heading" class="card mb-3">
+        <div class="card-body">
+          <h2 id="supersede-heading" class="h4">Prepare a corrected field revision</h2>
+          <p>This preserves the current receipt and audit history and links a new request to the superseded run.</p>
+          <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="prepare">
+            <label for="superseding-prediction-as-of" class="form-label">Prediction cutoff (exclusive UTC date)</label>
+            <input id="superseding-prediction-as-of" class="form-control mb-3" type="date" name="prediction_as_of" value="{{ run.prediction_as_of }}" required>
+            <button class="btn btn-outline-primary shadow-touch-target" type="submit">Prepare superseding whole-field run</button>
+          </form>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+</main>
+
+<style nonce="{{ csp_nonce }}">
+  .shadow-touch-target { min-height: 44px; }
+  .shadow-review-check { min-width: 24px; min-height: 24px; }
+  @media (max-width: 576px) {
+    #shadow-sheet-main table { min-width: 760px; }
+  }
+</style>
+{% endblock %}

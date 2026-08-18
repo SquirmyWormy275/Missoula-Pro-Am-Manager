@@ -26,6 +26,7 @@ Run with: pytest tests/test_pg_migration_safety.py -v
 """
 
 import ast
+import importlib.util
 import os
 import re
 from pathlib import Path
@@ -36,6 +37,9 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations" / "versions"
+SHADOW_REPAIR_MIGRATION = (
+    MIGRATIONS_DIR / "c8a9b0c1d2e3_repair_shadow_schema_and_freeze_delivery.py"
+)
 
 
 def _migration_files():
@@ -83,6 +87,50 @@ def _read_full_source(filepath: Path) -> list[tuple[int, str]]:
     """Return all lines as (line_number, line_text) tuples."""
     source = filepath.read_text(encoding="utf-8")
     return [(i + 1, line) for i, line in enumerate(source.splitlines())]
+
+
+def test_shadow_repair_uses_native_postgresql_constraint_operations(monkeypatch):
+    """The c8 PostgreSQL branches must never enter SQLite batch mode."""
+    spec = importlib.util.spec_from_file_location("_shadow_repair_migration", SHADOW_REPAIR_MIGRATION)
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    calls = []
+
+    class _Dialect:
+        name = "postgresql"
+
+    class _Bind:
+        dialect = _Dialect()
+
+    class _NativeOnlyOperations:
+        def get_bind(self):
+            return _Bind()
+
+        def batch_alter_table(self, *_args, **_kwargs):
+            raise AssertionError("PostgreSQL entered SQLite batch mode")
+
+        def __getattr__(self, name):
+            def record(*args, **kwargs):
+                calls.append((name, args, kwargs))
+
+            return record
+
+    monkeypatch.setattr(migration, "op", _NativeOnlyOperations())
+    migration._create_context_version_constraint()
+    migration._create_delivery_actor_foreign_key()
+    migration._drop_delivery_actor_column()
+    migration._drop_context_version_column()
+
+    assert [name for name, _args, _kwargs in calls] == [
+        "create_check_constraint",
+        "create_foreign_key",
+        "drop_constraint",
+        "drop_column",
+        "drop_constraint",
+        "drop_column",
+    ]
 
 
 # ── Tests ────────────────────────────────────────────────────────────────────

@@ -176,6 +176,14 @@ This is the most important module. Score entry is what you'll do hundreds of tim
 - If you see a warning **"Another judge edited this heat — reload to see the latest"**, that means someone else updated this heat while you were typing. **Reload the page** and re-enter only the new scores.
 - If you enter a wildly different time from the rest of the heat (e.g., `1.5` when everyone else is `15+`), the app flags it with a warning icon. **Double-check** before saving — most of the time you forgot a digit.
 
+### If the local tournament network drops
+
+1. A yellow offline banner means score submissions will be held in this browser until the local server returns.
+2. **Do not clear browser/site data, switch browsers, or move to another device.** The durable queue belongs to this browser profile.
+3. A heat page opened successfully while online can be shown from its exact saved copy. During preflight, open the heat-entry pages the scoring station expects to use.
+4. If you see **"Score page unavailable offline,"** that heat was not saved before the outage. Do not guess or enter it again elsewhere. Reconnect, then check **Offline Operations** before retrying.
+5. When the network returns, keep the browser open. Confirm the success banner or resolve any session/version conflict in Offline Operations before treating the score as recorded.
+
 ---
 
 ## Module 4 — Fixing Mistakes

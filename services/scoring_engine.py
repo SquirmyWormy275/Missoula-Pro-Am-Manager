@@ -158,7 +158,11 @@ def _metric(result: EventResult, event: Event) -> Optional[float]:
 
     # Apply handicap start mark: net_time = raw_time - start_mark_seconds.
     # handicap_factor stores the start mark in seconds; 0.0 or None = scratch.
-    if getattr(event, 'is_handicap', False) and event.scoring_type == 'time':
+    if (
+        getattr(event, 'is_handicap', False)
+        and getattr(event, 'handicap_authority_mode', 'official') == 'official'
+        and event.scoring_type == 'time'
+    ):
         start_mark = result.handicap_factor
         if start_mark is None:
             start_mark = 0.0
@@ -802,7 +806,11 @@ def validate_finalization(event: Event) -> list[dict]:
             })
 
     # Check 2: Handicap events with unassigned marks
-    if getattr(event, 'is_handicap', False) and event.scoring_type == 'time':
+    if (
+        getattr(event, 'is_handicap', False)
+        and getattr(event, 'handicap_authority_mode', 'official') == 'official'
+        and event.scoring_type == 'time'
+    ):
         completed = [r for r in event.results.all() if r.status == 'completed']
         unassigned = [r for r in completed
                       if r.handicap_factor is None or r.handicap_factor == 0.0]

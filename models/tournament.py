@@ -1,6 +1,8 @@
 """
 Tournament model for managing overall tournament state.
 """
+import uuid
+
 import sqlalchemy as sa
 
 from config import TournamentStatus  # noqa: F401 — re-exported for convenience
@@ -14,6 +16,12 @@ class Tournament(db.Model):
     __tablename__ = 'tournaments'
 
     id = db.Column(db.Integer, primary_key=True)
+    shadow_tournament_id = db.Column(
+        db.String(224),
+        nullable=False,
+        unique=True,
+        default=lambda: f"missoula:tournament:{uuid.uuid4()}",
+    )
     name = db.Column(db.String(200), nullable=False)
     year = db.Column(db.Integer, nullable=False)
 

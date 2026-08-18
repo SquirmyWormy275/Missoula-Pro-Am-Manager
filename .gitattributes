@@ -5,6 +5,14 @@
 
 * text=auto
 
+# Supply-chain manifests bind these exact vendored bytes by SHA-256.
+static/vendor/** -text
+static/vendor/README.md text
+static/vendor/manifest.json text
+static/vendor/bootstrap-5.3.2/LICENSE text
+static/vendor/bootstrap-icons-1.11.1/LICENSE text
+static/vendor/sortablejs-1.15.2/LICENSE text
+
 # Binary file types — never diff or convert
 *.xlsx binary
 *.png binary

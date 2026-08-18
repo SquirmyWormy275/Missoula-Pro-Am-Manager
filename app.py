@@ -558,9 +558,9 @@ def _create_app_inner():
         response.headers.setdefault(
             'Content-Security-Policy',
             "default-src 'self'; "
-            f"script-src 'self' {script_nonce}https://cdn.jsdelivr.net; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+            f"script-src 'self' {script_nonce}; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self'; "
             "img-src 'self' data:; "
             "connect-src 'self'; "
             "frame-ancestors 'none'"

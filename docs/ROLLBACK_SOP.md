@@ -87,6 +87,24 @@ Response:
    - restore service first
    - investigate on a branch
 
+### STRATHMARK shadow-specific containment
+
+If the STRATHMARK shadow integration is unhealthy, disable new shadow
+preparation/calculation without rewriting issued receipts or official results.
+Keep receipt lookup, status, export, and durable settlement recovery available
+when their local evidence remains valid. Do not delete append-only outcome,
+context, receipt, or outbox rows as a rollback technique.
+
+- A mirror outage alone is not a reason to revoke an issued local receipt.
+- Missing/stale/corrupt offline evidence blocks new calculations, not exact old
+  receipt replay.
+- If a numeric settlement was wrong, append a correction or void; never edit the
+  earlier evidence row.
+- Reverting Missoula code does not roll back the separately versioned
+  STRATHMARK ledger or its PostgreSQL mirror migrations.
+- Do not fall back silently to the legacy official mark writer. Any authority
+  change is an explicit show-director decision outside the shadow workflow.
+
 ## 4. Data Integrity Issue
 
 Symptoms:

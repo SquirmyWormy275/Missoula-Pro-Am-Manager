@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-shadow-verifier.txt
           pip install pytest
 
       # instance/ is gitignored, so on a fresh checkout tests/test_route_smoke.py
@@ -53,6 +53,14 @@ jobs:
         run: |
           pytest -x -q --tb=short \
             --ignore=tests/test_migration_integrity.py
+
+      # Fail closed until requirements.txt points at the reviewed, published
+      # STRATHMARK V2 contract. This uses only temporary SQLite files and the
+      # installed distribution; it never contacts STRATHMARK over a network.
+      - name: Rehearse installed STRATHMARK shadow contract
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python scripts/verify_strathmark_shadow_contract.py
 
   postgres-smoke:
     runs-on: ubuntu-latest
@@ -143,7 +151,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-shadow-verifier.txt
           pip install pytest
 
       # Same reason as the fast lane: without a seeded instance DB,
@@ -153,6 +161,20 @@ jobs:
         env:
           PROAM_ALLOW_CI_SMOKE_DB_BUILD: "1"
         run: python scripts/ci_build_smoke_db.py
+
+      - name: Prove shadow migration repair and concurrent delivery on PostgreSQL
+        env:
+          FLASK_ENV: testing
+          SECRET_KEY: ci-unit-postgres-secret-key
+          PROAM_UNIT_PG: "1"
+          PROAM_UNIT_PG_HOST: localhost
+          PROAM_UNIT_PG_USER: postgres
+          PROAM_UNIT_PG_PASSWORD: postgres
+        run: >-
+          pytest
+          tests/test_migration_integrity.py::test_shadow_schema_repair_round_trip_on_populated_b7_postgresql
+          tests/test_shadow_settlement_workflow.py::test_postgres_workers_skip_a_locked_delivery_instead_of_double_sending
+          -q --tb=short -p no:randomly
 
       - name: Run the unit suite on PostgreSQL
         env:
@@ -214,6 +236,7 @@ jobs:
           DATABASE_URL: sqlite:///test_migration.db
         run: |
           pytest tests/test_migration_integrity.py::TestMigrationIntegrity -q
+          pytest tests/test_migration_integrity.py::test_shadow_schema_repair_upgrades_an_existing_b7_database -q
           pytest tests/test_pg_migration_safety.py -q
 
   pip-audit:

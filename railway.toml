@@ -20,10 +20,8 @@ preDeployCommand = "flask db upgrade"
 #   STRATHMARK_SUPABASE_URL   = https://<project>.supabase.co
 #   STRATHMARK_SUPABASE_KEY   = <service or anon key>
 #
-# Recommended for Railway (Ollama is unreachable from Railway containers).
-# These dial down the LLM cascade so requests fail fast and fall through to
-# the ML / baseline / panel-mark levels instead of waiting on a 30s TCP
-# timeout per call.  Both are read at strathmark.config import time.
-#   STRATHMARK_OLLAMA_TIMEOUT     = 2
-#   STRATHMARK_OLLAMA_MAX_RETRIES = 0
+# Authoritative handicap numbers are deterministic and do not use an LLM.
+# Do not configure Ollama, Gemini, or another narrative provider as a numeric
+# prediction dependency. Optional reviewed narrative work belongs outside the
+# race-day mark-assignment and shadow-authority paths.
 # ---------------------------------------------------------------------------

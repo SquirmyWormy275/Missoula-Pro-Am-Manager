@@ -13,6 +13,7 @@ Requirements:
     All app dependencies installed.
 """
 import logging
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -364,6 +365,45 @@ class TestAssignHandicapMarksCalculatorFailures:
         with patch.dict('sys.modules', {'strathmark': MagicMock(), 'strathmark.calculator': mock_module}):
             calc = _get_handicap_calculator()
             assert calc is None
+
+    def test_calculator_constructor_does_not_receive_llm_configuration(self):
+        """Authoritative mark calculation must not depend on an LLM endpoint."""
+        from services.mark_assignment import _get_handicap_calculator
+
+        captured = {}
+        calculator_module = types.ModuleType('strathmark.calculator')
+        package_module = types.ModuleType('strathmark')
+        package_module.__path__ = []
+
+        class _Calculator:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        calculator_module.HandicapCalculator = _Calculator
+        with (
+            patch.dict(
+                'sys.modules',
+                {
+                    'strathmark': package_module,
+                    'strathmark.calculator': calculator_module,
+                },
+            ),
+            patch.dict(
+                'os.environ',
+                {'STRATHMARK_OLLAMA_URL': 'http://must-not-be-used.invalid'},
+            ),
+        ):
+            calculator = _get_handicap_calculator(
+                event_ceiling=180,
+                global_results_df='results-frame',
+            )
+
+        assert calculator is not None
+        assert set(captured) == {'event_ceiling', 'wood_df', 'results_df'}
+        assert captured['event_ceiling'] == 180
+        assert captured['results_df'] == 'results-frame'
+        assert captured['wood_df'] is not None
+        assert 'ollama_url' not in captured
 
 
 # ---------------------------------------------------------------------------

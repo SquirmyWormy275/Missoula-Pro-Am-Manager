@@ -1,6 +1,8 @@
 """
 User model for role-based authentication.
 """
+import uuid
+
 import sqlalchemy as sa
 
 try:
@@ -40,6 +42,12 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(80), nullable=False, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default=ROLE_SPECTATOR)
+    shadow_actor_id = db.Column(
+        db.String(224),
+        nullable=False,
+        unique=True,
+        default=lambda: f"missoula:operator:{uuid.uuid4()}",
+    )
 
     tournament_id = db.Column(db.Integer, db.ForeignKey('tournaments.id'), nullable=True)
     competitor_type = db.Column(db.String(20), nullable=True)  # 'college' or 'pro'

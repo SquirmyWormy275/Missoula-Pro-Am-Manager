@@ -20,6 +20,17 @@ from .print_tracker import PrintTracker
 from .pro_event_rank import ProEventRank
 from .relay import RelayState, RelayTeam, RelayTeamEvent, RelayTeamMember
 from .school_captain import SchoolCaptain
+from .shadow_handicap import (
+    CompetitorExternalIdentity,
+    ShadowContextObservation,
+    ShadowFieldReview,
+    ShadowHandicapRun,
+    ShadowIssueArtifact,
+    ShadowLifecycleTransition,
+    ShadowOutcomeRevision,
+    ShadowReceiptRevision,
+    ShadowSettlementOutbox,
+)
 from .team import Team
 from .tournament import Tournament
 from .tournament_event import TournamentEvent
@@ -56,4 +67,13 @@ __all__ = [
     'BirlingMatch',
     'BirlingFall',
     'BirlingPlacement',
+    'CompetitorExternalIdentity',
+    'ShadowHandicapRun',
+    'ShadowLifecycleTransition',
+    'ShadowReceiptRevision',
+    'ShadowContextObservation',
+    'ShadowFieldReview',
+    'ShadowIssueArtifact',
+    'ShadowOutcomeRevision',
+    'ShadowSettlementOutbox',
 ]

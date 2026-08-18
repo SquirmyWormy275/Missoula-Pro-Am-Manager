@@ -2,6 +2,7 @@
 Event and EventResult models for tournament events.
 """
 import json
+import uuid
 
 import sqlalchemy as sa
 
@@ -23,10 +24,20 @@ class Event(db.Model):
             "status IN ('pending', 'in_progress', 'completed')",
             name='ck_events_status_valid',
         ),
+        db.CheckConstraint(
+            "handicap_authority_mode IN ('official', 'shadow')",
+            name='ck_events_handicap_authority_mode',
+        ),
         db.CheckConstraint('(max_stands IS NULL) OR (max_stands >= 1)', name='ck_events_max_stands_valid'),
     )
 
     id = db.Column(db.Integer, primary_key=True)
+    shadow_event_occurrence_id = db.Column(
+        db.String(224),
+        nullable=False,
+        unique=True,
+        default=lambda: f"missoula:event-occurrence:{uuid.uuid4()}",
+    )
     tournament_id = db.Column(db.Integer, db.ForeignKey('tournaments.id'), nullable=False)
 
     # Event identification
@@ -45,6 +56,16 @@ class Event(db.Model):
     is_handicap = db.Column(
         db.Boolean, nullable=False, default=False, server_default=sa.text("false")
     )  # False = Championship, True = Handicap
+
+    # Authority boundary for handicap operations.  Existing events remain
+    # ``official``.  ``shadow`` enables the isolated recommendation workflow,
+    # whose tables never write EventResult.handicap_factor or scoring outputs.
+    handicap_authority_mode = db.Column(
+        db.String(16),
+        nullable=False,
+        default="official",
+        server_default=sa.text("'official'"),
+    )
 
     # Event characteristics
     is_partnered = db.Column(db.Boolean, nullable=False, default=False)

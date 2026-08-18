@@ -701,6 +701,82 @@ def test_run_show_route_delegates_to_full_show_service(
     )]
 
 
+@pytest.mark.parametrize(
+    ('failure', 'expected_message', 'expects_route_rollback'),
+    [
+        (
+            pytest.param(
+                'schedule',
+                'Schedule build blocked by Preflight.',
+                False,
+                id='operator-safe-schedule-error',
+            )
+        ),
+        (
+            pytest.param(
+                'unexpected',
+                'Run Show generation failed and was rolled back.',
+                True,
+                id='unexpected-error',
+            )
+        ),
+    ],
+)
+def test_run_show_route_reports_failures_without_leaking_internal_errors(
+    db_session,
+    auth_client,
+    monkeypatch,
+    failure,
+    expected_message,
+    expects_route_rollback,
+):
+    from services.schedule_generation import ScheduleBuildError
+
+    tournament = make_tournament(db_session, name='Failed Run Show')
+    rollback_calls = []
+    original_rollback = db.session.rollback
+
+    def _rollback():
+        rollback_calls.append(True)
+        original_rollback()
+
+    def _generate(_tournament_id, *, flight_sizing=None):
+        assert flight_sizing is not None
+        if failure == 'schedule':
+            raise ScheduleBuildError(
+                'preflight_blocked',
+                'pre_generation',
+                expected_message,
+            )
+        raise RuntimeError('private failure detail')
+
+    monkeypatch.setattr(
+        'routes.scheduling.events.generate_tournament_schedule_artifacts',
+        _generate,
+    )
+    monkeypatch.setattr(db.session, 'rollback', _rollback)
+
+    response = auth_client.post(
+        f'/scheduling/{tournament.id}/events',
+        data={
+            'action': 'generate_all',
+            'flight_sizing_mode': 'count',
+            'num_flights': '3',
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 303)
+    with auth_client.session_transaction() as session_state:
+        flashes = session_state.get('_flashes', [])
+    assert any(
+        category == 'error' and expected_message in message
+        for category, message in flashes
+    )
+    assert all('private failure detail' not in message for _category, message in flashes)
+    assert bool(rollback_calls) is expects_route_rollback
+
+
 def test_async_route_submits_the_shared_full_show_service(
     db_session, auth_client, monkeypatch
 ):

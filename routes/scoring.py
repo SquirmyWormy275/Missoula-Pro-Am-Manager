@@ -97,6 +97,8 @@ def _push_strathmark_results(event: Event, tournament_id: int) -> None:
     Covers Change 2 (pro SB/UH) and Change 3 (college SB Speed / UH Speed).
     All STRATHMARK calls are non-blocking — failures are logged, never raised.
     """
+    if event.handicap_authority_mode == 'shadow':
+        return
     try:
         from services import strathmark_sync
         tournament = db.session.get(Tournament, tournament_id)

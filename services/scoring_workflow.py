@@ -22,6 +22,12 @@ from services.flight_builder import (
 logger = logging.getLogger(__name__)
 
 
+def _capture_shadow_outcomes(event: Event, judge_user_id: int | None) -> None:
+    from services.shadow_settlement import capture_shadow_outcome_revisions
+
+    capture_shadow_outcome_revisions(event, actor_id=judge_user_id)
+
+
 def _testing_mode_enabled() -> bool:
     """Allow legacy unit forms to omit the production heat-instance token."""
     from flask import current_app
@@ -505,6 +511,7 @@ def save_heat_results_submission(
             try:
                 with db.session.begin_nested():
                     engine.calculate_positions(event)
+                    _capture_shadow_outcomes(event, judge_user_id)
             except Exception as exc:
                 logger.error('auto-finalize failed for event %s: %s', event.id, exc)
                 event.is_finalized = False
@@ -638,6 +645,7 @@ def finalize_event_results(
     try:
         with db.session.begin_nested():
             engine.calculate_positions(event)
+            _capture_shadow_outcomes(event, judge_user_id)
             log_action(
                 'event_finalized',
                 'event',

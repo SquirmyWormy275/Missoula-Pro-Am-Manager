@@ -108,6 +108,8 @@ def health_diag():
     from flask import current_app
     from flask import request as _request
 
+    from services.strathmark_shadow import shadow_configuration_status
+
     cfg = current_app.config
 
     # SECRET_KEY strength check (mirrors validate_runtime logic but never raises).
@@ -138,6 +140,7 @@ def health_diag():
             'session_cookie_samesite': cfg.get('SESSION_COOKIE_SAMESITE'),
         },
         'integrations': {
+            'strathmark_shadow_status': shadow_configuration_status(cfg),
             'strathmark_supabase_url_set': bool(_os.environ.get('STRATHMARK_SUPABASE_URL')),
             'strathmark_supabase_key_set': bool(_os.environ.get('STRATHMARK_SUPABASE_KEY')),
             'twilio_configured': bool(cfg.get('TWILIO_ACCOUNT_SID') and cfg.get('TWILIO_AUTH_TOKEN')),

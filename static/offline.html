@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>Score page unavailable offline</title>
+    <style>
+        :root {
+            font-family: "Segoe UI", system-ui, sans-serif;
+            color: #f6f7fb;
+            background: #080a0f;
+        }
+        body {
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            background: linear-gradient(145deg, #080a0f, #151923);
+        }
+        main {
+            width: min(36rem, calc(100% - 2rem));
+            box-sizing: border-box;
+            padding: 2rem;
+            border: 1px solid #ef2b16;
+            border-radius: 1rem;
+            background: #11141c;
+            box-shadow: 0 1rem 3rem rgb(0 0 0 / 35%);
+        }
+        .eyebrow {
+            color: #ff6755;
+            font-size: 0.8rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+        h1 { margin: 0.5rem 0 1rem; line-height: 1.15; }
+        p, li { line-height: 1.55; color: #d9dce6; }
+        strong { color: #fff; }
+    </style>
+</head>
+<body>
+    <main>
+        <div class="eyebrow">Missoula Pro-Am offline operations</div>
+        <h1>Score page unavailable offline</h1>
+        <p>This heat entry page was not saved in this browser before the local tournament server became unavailable.</p>
+        <ul>
+            <li><strong>Do not clear this browser's site data.</strong> Queued score submissions are stored here.</li>
+            <li>Reconnect to the local tournament network and reopen the required heat page once.</li>
+            <li>Confirm queued entries in Offline Operations before entering the score again.</li>
+        </ul>
+    </main>
+</body>
+</html>

@@ -1,144 +1,115 @@
-# Handicap Mark Assignment — Race-Day Workflow
+# Handicap Marks and STRATHMARK Shadow Recommendations
 
-**Applies to:** Missoula Pro-Am Manager V2.7.0+
-**Owner:** Show Director / Head Judge
+**Audience:** Show director, head judge, scoring lead, and release operator
 
-This document describes the two paths for assigning STRATHMARK handicap start
-marks to a Handicap-format event, plus the offline pre-compute workflow that
-keeps race day moving when Railway can't reach the local STRATHMARK Ollama
-host.
+**Authority:** `Event.handicap_authority_mode` is the deciding switch
 
----
+**Last reviewed:** 2026-08-14
 
-## Path A — Live STRATHMARK call (default)
+Missoula now has two deliberately separate handicap workflows. They must never
+be blended.
 
-Use this when you're on the Pro-Am Manager UI **and** the STRATHMARK Supabase
-backend is reachable (`STRATHMARK_SUPABASE_URL` + `STRATHMARK_SUPABASE_KEY`
-env vars are set).
+## Official legacy path
 
-1. Open the event page: **Scheduling → [event] → Assign Marks**
-2. Confirm the status cards show:
-   - **Handicap Format:** Eligible
-   - **STRATHMARK Connection:** Configured
-3. Click **Assign Marks via STRATHMARK**.
-4. The cascade runs server-side:
-   `Manual > LLM (Ollama → Gemini cloud fallback) > ML > Baseline > Panel Fallback`.
-   Whichever tier succeeds first wins.
-5. Refresh the page; each competitor's start mark appears in the table.
+Events whose authority mode is not `shadow` continue to use the existing
+**Assign Marks** page. That workflow may write `EventResult.handicap_factor`,
+`predicted_time`, and `mark_assigned_at`. Existing manual entry and CSV import
+remain available for those events.
 
-If Ollama is unreachable from the host (race-day Railway is the common case),
-the cascade automatically tries Gemini next (if `GEMINI_API_KEY` is set), then
-falls through to ML / Baseline / Panel. **Total budget: under 5 seconds per
-event** thanks to the new fail-fast (3s connect / 15s read) timeouts.
+The legacy path is retained for backward compatibility. Its old model-selection
+description is not a statement about STRATHMARK V2 and is not the procedure for
+a shadow event.
 
----
+## STRATHMARK V2 shadow path
 
-## Path B — Offline pre-compute + CSV upload (race-day safety net)
+A shadow event produces a **shadow recommendation only**. It never writes the
+official mark fields, never changes championship placement, and never becomes
+official merely because a judge reviewed or issued it.
 
-Use this when STRATHMARK is unreachable from the deployment **and** you have
-no Gemini key set, **or** when you want to pre-compute marks at home with the
-full local cascade and just push the result to Railway on the morning of the
-show.
+Open **Scheduling → Event → Shadow marks** and complete the whole-field workflow:
 
-### Step 1 — Compute marks locally
+1. **Prepare.** Select one deliberate **exclusive UTC** prediction cutoff. The
+   app freezes the ordered entrants, stable external identities, wood, event,
+   target, schedule, and context fingerprint into one immutable request.
+2. **Approve preflight.** Confirm the exact field revision. A changed entrant,
+   wood specification, run order, cutoff, or identity requires a new linked run.
+3. **Calculate or recover.** Missoula performs **receipt lookup** before any
+   calculation. After a timeout or restart it looks up the same request rather
+   than blindly calculating again.
+4. **Review.** A judge or admin explicitly accepts every recommendation,
+   including a zero-second recommendation. Individual rows cannot be
+   cherry-picked or edited into a different V2 sheet.
+5. **Issue.** Freeze the **whole-field** recommendation and download its
+   checksummed, pseudonymous, non-importable export.
+6. **Record results.** Normal scoring remains official. Missoula separately
+   appends operational outcomes and sends only eligible positive raw elapsed
+   time as **numeric settlement** evidence. DNF, DQ, scratch, and timing failure
+   remain context-only unless a previous numeric finish must be voided.
+7. **Correct evidence.** A finish-to-DQ correction appends a void; a corrected
+   time appends a new numeric revision. History is not overwritten.
+8. **Export prospective context.** Deferred factors are structured,
+   pseudonymous, explicit-known or explicit-unknown, and numerically inactive.
 
-On a laptop with the `strathmark` package installed and Ollama running:
+## Blocking versus advisory status
 
-```bash
-# In the STRATHMARK repo
-python -m strathmark.cli calculate \
-    --event UH \
-    --tournament "Missoula Pro-Am 2026" \
-    --species cottonwood \
-    --diameter-mm 305 \
-    --output marks.csv
-```
+The local STRATHMARK receipt is race-day authority for the shadow sheet.
 
-The CSV will look like:
+Blocking:
 
-```csv
-competitor_name,proposed_mark
-Alice Smith,4.5
-Bob Jones,7.0
-Carol White,12.0
-```
+- missing or unresolved stable identity;
+- unsupported multi-run target;
+- missing wood, invalid diameter, or changed frozen input;
+- no trusted receipt, stale receipt, or incomplete whole-field review;
+- local ledger write failure or invalid integrity evidence.
 
-> Either `competitor_name` or `competitor_id` is required. The mark column
-> can be named `proposed_mark`, `mark`, `start_mark`, or `start_mark_seconds`.
+Advisory:
 
-### Step 2 — Upload to Pro-Am Manager
+- cloud mirror pending or retryable-failed after the local receipt is durable;
+- model drift/calibration monitoring that does not invalidate the saved receipt.
 
-1. Open **Scheduling → [event] → Assign Marks** on the deployed app.
-2. Scroll to **Upload Pre-Computed Marks (CSV)**.
-3. Pick the CSV from Step 1 and click **Parse CSV & Preview**.
-4. The preview table shows each row matched to a competitor in this event.
-   - Rows with no warning are auto-matched.
-   - Rows with a yellow warning need attention: unknown name, ambiguous
-     name, missing ID, invalid mark, etc. **You can still type the mark
-     directly into the form for a matched row even if the CSV warning
-     applied to a different row.**
-5. Override any individual mark by editing the input field.
-6. Click **Confirm & Write Marks**.
+Cloud mirroring is not a restore source and is not required to review or issue a
+durable local receipt.
 
-The route writes `EventResult.handicap_factor` for every non-blank row,
-clears `predicted_time` (because CSV-imported marks have no upstream
-prediction to compare against), and audit-logs the action with
-`source='csv_upload'`.
+## Configuration
 
-### Matching policy
+The V2 client uses a dedicated local/service boundary, not the legacy Supabase
+variables:
 
-| CSV row state                   | What happens                                          |
-|---------------------------------|-------------------------------------------------------|
-| Single name match               | Auto-matched, ready to confirm                        |
-| Two competitors with same name  | Warning: ambiguous; unmatched until you disambiguate  |
-| Name not in this event          | Warning: unknown; row stays unmatched                 |
-| competitor_id supplied          | Direct lookup wins over name match                    |
-| Negative mark (-2.5)            | Clamped to 0.0 with a warning                         |
-| Non-numeric mark                | Warning, mark left blank                              |
-| Blank mark                      | Warning, row preserved but skipped on confirm         |
+| Variable | Purpose |
+|---|---|
+| `STRATHMARK_SHADOW_URL` | Absolute URL of the trusted STRATHMARK service |
+| `STRATHMARK_SHADOW_CONSUMER_ID` | Namespaced consumer identity; default `missoula:service:shadow` |
+| `STRATHMARK_SHADOW_SERVICE_TOKEN` | Service bearer credential |
+| `STRATHMARK_SHADOW_ATTESTATION_KEY` | Separate HMAC key for actor/request attestations |
 
-The judge resolves all warnings manually before confirming. **No silent
-guesses** — that's the entire point of the warning column.
+The two secrets must be distinct. Missing or partial configuration is a visible
+not-configured/invalid state; it must not fall back to another numeric engine.
 
----
+## Race-day recovery
 
-## When to use which path
+| Symptom | Safe action |
+|---|---|
+| Calculate timed out | Use the same run; receipt lookup resolves an ambiguous commit |
+| App restarted after calculation | Open the saved run; the immutable local receipt is replayed |
+| Roster, wood, cutoff, or schedule changed | Prepare a new run that supersedes the old run |
+| Mirror is retryable-failed | Continue locally; replay the durable outbox later |
+| Receipt is stale or fails integrity | Do not issue; investigate and supersede if needed |
+| Incorrect valid finish was recorded | Reconcile with reason and append a void/correction |
+| STRATHMARK unavailable before any receipt exists | Do not invent a shadow sheet; use the separately authorized official workflow if the show director chooses it |
 
-| Scenario                                                  | Path |
-|-----------------------------------------------------------|------|
-| Local development with Ollama running                     | A    |
-| Railway with `GEMINI_API_KEY` set                         | A    |
-| Railway with neither Ollama nor Gemini                    | B    |
-| Pre-show practice with full cascade tuning                | B    |
-| Last-minute mark override after seeing warm-up runs       | B (one row CSV is fine) |
+Numeric outcomes are committed to Missoula's durable outbox in the same local
+transaction as the operational result. Scoring and judge requests never wait
+for remote delivery. Run `python scripts/deliver_shadow_settlements.py --limit 25`
+as the separately supervised delivery command. Failed rows use a bounded
+exponential cooldown; exact STRATHMARK duplicate responses close the local row
+as recorded.
 
----
+## Non-negotiable authority rule
 
-## Race-day failure modes
+The shadow recommendation export is for evaluation and operational learning.
+It is deliberately non-importable. Applying shadow recommendations to official
+marks is a future product decision and requires a separately reviewed authority
+change; this workflow does not provide that capability.
 
-| Symptom                                                  | Diagnosis                    | Fix                              |
-|----------------------------------------------------------|------------------------------|----------------------------------|
-| "STRATHMARK is not configured" warning                   | Env vars unset on Railway    | Use Path B (CSV upload)          |
-| `assigned: 0, skipped: N` after Path A                   | Cascade fell to panel fallback for everyone | Check `GEMINI_API_KEY`; or use Path B |
-| `no_wood_config` flash message                           | WoodConfig row missing for this event | Set wood specs in Tournament Setup → Wood Specs first |
-| GET takes > 5 seconds                                    | Timeouts not honored; check STRATHMARK V0.4.0+ is installed | `pip install -U strathmark` |
-| CSV preview shows all rows as "unknown"                  | competitor_name column doesn't match | Use `competitor_id` column instead |
-
----
-
-## Related env vars (STRATHMARK V0.4.0+)
-
-| Variable                          | Default                          | Purpose                                                       |
-|-----------------------------------|----------------------------------|---------------------------------------------------------------|
-| `OLLAMA_HOST`                     | `http://localhost:11434`         | Override Ollama host. Set to `disabled` to skip the tier.     |
-| `STRATHMARK_OLLAMA_CONNECT_TIMEOUT` | `3`                            | TCP connect budget (seconds)                                  |
-| `STRATHMARK_OLLAMA_READ_TIMEOUT`  | `15`                             | HTTP read budget (seconds)                                    |
-| `STRATHMARK_OLLAMA_MAX_RETRIES`   | `0`                              | Race-day fail-fast — no retries by default                    |
-| `GEMINI_API_KEY`                  | _(unset)_                        | Cloud fallback model. Unset = skip Gemini tier entirely.      |
-| `GEMINI_MODEL`                    | `gemini-2.0-flash-lite`          | Cloud model name                                              |
-| `STRATHMARK_SUPABASE_URL`         | _(unset)_                        | Required for Path A                                           |
-| `STRATHMARK_SUPABASE_KEY`         | _(unset)_                        | Required for Path A                                           |
-
----
-
-*Last updated: 2026-04-06 — V2.7.0*
+See [STRATHMARK Shadow Operations](STRATHMARK_SHADOW_OPERATIONS.md) for the
+deployment, recovery, and rehearsal runbook.

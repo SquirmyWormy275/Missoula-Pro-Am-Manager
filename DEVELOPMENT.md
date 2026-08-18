@@ -55,7 +55,8 @@ Missoula-Pro-Am-Manager/
 │   │   ├── show_day.py    # Flight status dashboard (60s auto-refresh)
 │   │   ├── ability_rankings.py # ProEventRank UI
 │   │   ├── preflight.py   # Pre-scheduling validation
-│   │   └── assign_marks.py # Handicap mark assignment UI
+│   │   ├── assign_marks.py # Retained legacy official handicap mark UI
+│   │   └── shadow_marks.py # Scoring-inert V2 prepare/review/issue/outcome/context UI
 │   ├── scoring.py         # Result entry & calculation; outlier flagging
 │   ├── reporting.py       # Standings, reports, payout summary (with settlement), ALA report + email, cloud backup
 │   ├── proam_relay.py     # Pro-Am Relay lottery system
@@ -93,6 +94,11 @@ Missoula-Pro-Am-Manager/
 │   ├── scoring_engine.py  # Centralized scoring: positions, tiebreaks, throwoffs, payouts, outlier flagging
 │   ├── strathmark_sync.py # STRATHMARK enrollment, result push, prediction residuals
 │   ├── mark_assignment.py # Handicap mark calculation via STRATHMARK HandicapCalculator
+│   ├── strathmark_shadow.py # Authenticated receipt-first V2 consumer
+│   ├── shadow_operator.py # Whole-field review, issue, and export
+│   ├── shadow_settlement.py # Append-only outcomes and durable numeric outbox
+│   ├── shadow_context.py # Prospective explicit-known/unknown factor evidence
+│   ├── shadow_handicap_state.py # Independent lifecycle/concurrency transitions
 │   └── cache_invalidation.py # Tournament cache invalidation helpers
 ├── static/                # Static assets
 │   ├── js/onboarding.js   # First-time onboarding modal engine
@@ -119,6 +125,19 @@ Missoula-Pro-Am-Manager/
 ---
 
 ## Data Models
+
+### STRATHMARK shadow boundary
+
+The shadow workflow is additive and scoring-inert. Missoula persists an exact
+field snapshot and receipt reference, performs receipt lookup before calculate,
+and records operator review/issue/outcome/context revisions. STRATHMARK remains
+the authority for prediction numerics and numeric settlement history. The
+legacy direct mark path is separate and must never be invoked for an event whose
+`handicap_authority_mode` is `shadow`.
+
+Development and tests must use isolated databases. The installed-contract
+rehearsal in `scripts/verify_strathmark_shadow_contract.py` creates temporary
+SQLite state and makes no network calls.
 
 ### Tournament
 
