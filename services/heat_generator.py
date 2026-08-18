@@ -4,6 +4,7 @@ Adapted from STRATHEX tournament_ui.py patterns.
 """
 import logging
 import math
+from functools import wraps
 
 import config
 from config import LIST_ONLY_EVENT_NAMES
@@ -58,6 +59,75 @@ _last_gender_excluded: dict[int, list[dict]] = {}
 
 class HeatGenerationSafetyError(ValueError):
     """Raised when a requested heat layout cannot be run safely."""
+
+
+def _serialize_schedule_heat_generation(func):
+    """Make direct heat generation participate in the schedule writer lock."""
+    @wraps(func)
+    def locked(event, *args, **kwargs):
+        # Lightweight validation callers use event-shaped stubs and never
+        # mutate database rows. Real generation always receives a persisted
+        # Event and must join the tournament writer protocol.
+        if not isinstance(event, Event):
+            return func(event, *args, **kwargs)
+
+        from services.flight_builder import (
+            lock_tournament_schedule,
+            sqlite_schedule_writer_guard,
+        )
+
+        with sqlite_schedule_writer_guard(event.tournament_id):
+            lock_tournament_schedule(event.tournament_id)
+            db.session.refresh(event)
+            return func(event, *args, **kwargs)
+
+    return locked
+
+
+def assert_heat_regeneration_safe(
+    events: Event | list[Event] | tuple[Event, ...],
+    *,
+    allow_flight_replacement: bool = False,
+) -> None:
+    """Reject a partial regeneration that would silently detach flighted heats."""
+    if allow_flight_replacement:
+        return
+
+    event_list = (
+        list(events)
+        if isinstance(events, (list, tuple, set))
+        else [events]
+    )
+    event_ids = [event.id for event in event_list if event.id is not None]
+    if not event_ids:
+        return
+
+    flighted_heat = (
+        Heat.query
+        .filter(
+            Heat.event_id.in_(event_ids),
+            Heat.flight_id.isnot(None),
+        )
+        .order_by(Heat.event_id, Heat.flight_id, Heat.flight_position, Heat.id)
+        .first()
+    )
+    if flighted_heat is None:
+        return
+
+    event = next(
+        candidate for candidate in event_list
+        if candidate.id == flighted_heat.event_id
+    )
+    flight_number = getattr(flighted_heat.flight, 'flight_number', None)
+    flight_label = (
+        f'Flight {flight_number}' if flight_number is not None else 'a flight'
+    )
+    raise HeatGenerationSafetyError(
+        f'{event.display_name} already has heats assigned to {flight_label}. '
+        'Standalone regeneration is blocked because it would detach the live '
+        'schedule. Use Generate All / One-Click Generate so heat replacement '
+        'and flight rebuilding commit together.'
+    )
 
 
 def get_last_gear_violations(event_id: int) -> list[dict]:
@@ -130,7 +200,12 @@ def _sort_by_ability(competitors: list, event: Event) -> list:
     )
 
 
-def generate_event_heats(event: Event) -> int:
+@_serialize_schedule_heat_generation
+def generate_event_heats(
+    event: Event,
+    *,
+    allow_flight_replacement: bool = False,
+) -> int:
     """
     Generate heats for an event using snake draft distribution.
 
@@ -169,6 +244,10 @@ def generate_event_heats(event: Event) -> int:
         raise HeatGenerationSafetyError(
             f'{event.display_name} has completed heat history. Heat regeneration is blocked.'
         )
+    assert_heat_regeneration_safe(
+        event,
+        allow_flight_replacement=allow_flight_replacement,
+    )
 
     # Clear the per-tournament event cache so it refreshes each generate call.
     _get_tournament_events._cache = {}

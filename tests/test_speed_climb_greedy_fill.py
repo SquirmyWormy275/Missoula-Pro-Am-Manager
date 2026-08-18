@@ -126,11 +126,14 @@ def _seed(session):
     ev_uh = _make_pro_event(
         session, t, "Underhand", "underhand", gender="M", max_stands=5
     )
-    ev_op_pro = _make_pro_event(session, t, "Obstacle Pole", "obstacle_pole")
+    # Keep this fixture neutral to Speed Climb's Pole 2 conflict. Dedicated
+    # flight-builder integration tests cover Obstacle Pole / Speed Climb
+    # avoidance; this module isolates round-robin versus cluster preference.
+    ev_saw_pro = _make_pro_event(session, t, "Single Buck", "saw_hand")
     for n in range(1, 3):
         _make_heat(session, ev_sb, n, [pros[n - 1].id])
         _make_heat(session, ev_uh, n, [pros[n].id, pros[n + 1].id])
-        _make_heat(session, ev_op_pro, n, [pros[n + 2].id])
+        _make_heat(session, ev_saw_pro, n, [pros[n + 2].id])
 
     ev_speed_m = _make_college_event(
         session, t, "Speed Climb", "speed_climb", gender="M", requires_dual_runs=True
@@ -205,19 +208,36 @@ class TestClusterMode:
         assert len(flights) >= 2, "test needs at least 2 flights"
 
         first_flight_id = flights[0].id
-        last_flight_id = flights[-1].id
-
-        # Cluster should place Speed Climb heats starting in flight 1, not
-        # the last flight. Some may spill if flight 1 is at cap but the FIRST
-        # Speed Climb heat must land in an earlier flight than the last.
+        # With no spacing or physical-stand pressure, cluster mode keeps every
+        # spillover heat in the earliest flight.
         placed_flight_ids = {h.flight_id for h in speed_run2}
-        assert first_flight_id in placed_flight_ids or len(placed_flight_ids) == 1, (
-            f"cluster mode should fill earlier flights first, got flights {placed_flight_ids}, "
-            f"expected flight {first_flight_id} to be among them"
+        assert placed_flight_ids == {first_flight_id}
+
+    def test_cluster_advances_when_earlier_flight_reaches_capacity(self, db_session):
+        from models import Flight
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        data = _seed(db_session)
+        extra = _make_college_event(
+            db_session,
+            data['t'],
+            'College Underhand',
+            'underhand',
         )
-        assert placed_flight_ids != {
-            last_flight_id
-        }, "cluster mode must not dump all Speed Climb heats into the last flight"
+        for heat_number in range(1, 11):
+            _make_heat(db_session, extra, heat_number, [])
+
+        integrate_college_spillover_into_flights(
+            data['t'],
+            college_event_ids=[extra.id],
+            placement_mode='cluster',
+        )
+
+        flights = Flight.query.filter_by(
+            tournament_id=data['t'].id,
+        ).order_by(Flight.flight_number).all()
+        counts = [flight.heat_count for flight in flights]
+        assert counts == [8, 8, 4]
 
 
 class TestPlacementModeFromConfig:

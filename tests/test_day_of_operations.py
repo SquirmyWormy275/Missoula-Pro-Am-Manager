@@ -465,8 +465,6 @@ class TestScratchLockedHeat:
     """Test that scratch is rejected when heat is locked by another judge."""
 
     def test_scratch_locked_heat_rejected(self, db_session, auth_client):
-        from datetime import datetime, timezone
-
         from models.user import User
 
         t = _make_tournament(db_session)
@@ -478,9 +476,11 @@ class TestScratchLockedHeat:
         )
         # Lock the heat by the other judge (seeded in _seed_admin)
         other_judge = User.query.filter_by(username="dayof_other_judge").first()
-        h.locked_by_user_id = other_judge.id
-        h.locked_at = datetime.now(timezone.utc)
+        assert h.acquire_lock(other_judge.id)
         db_session.commit()
+        assert h.is_locked(), 'persisted judge lock unexpectedly expired'
+        with auth_client.session_transaction() as session:
+            assert int(session['_user_id']) != other_judge.id
 
         resp = auth_client.post(
             f"/scheduling/{t.id}/event/{e.id}/scratch-competitor",
@@ -611,6 +611,42 @@ class TestMoveCapacityGuard:
         assert mover.id in _db.session.get(type(source), source.id).get_competitors()
         assert mover.id not in _db.session.get(type(target), target.id).get_competitors()
 
+    def test_move_is_blocked_after_a_flight_starts(self, db_session, auth_client):
+        from models import Flight
+
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Active Flight Move")
+        mover = _make_pro(db_session, t.id, "Active_Mover", events=[e.id])
+        source = _make_heat(
+            db_session, e.id, heat_number=1,
+            competitors=[mover.id], stand_assignments={str(mover.id): 1},
+        )
+        target = _make_heat(db_session, e.id, heat_number=2)
+        flight = Flight(
+            tournament_id=t.id, flight_number=1, status="in_progress",
+        )
+        db_session.add(flight)
+        db_session.flush()
+        source.flight_id = flight.id
+        source.flight_position = 1
+        target.flight_id = flight.id
+        target.flight_position = 2
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/move-competitor",
+            data={
+                "competitor_id": mover.id,
+                "from_heat_id": source.id,
+                "to_heat_id": target.id,
+            },
+            follow_redirects=True,
+        )
+
+        assert b"blocked after a flight starts" in resp.data.lower()
+        assert mover.id in _db.session.get(type(source), source.id).get_competitors()
+        assert mover.id not in _db.session.get(type(target), target.id).get_competitors()
+
 
 class TestFinalizationGuard:
     """Test that heat generation is blocked for finalized events."""
@@ -670,6 +706,73 @@ class TestFinalizationGuard:
         preserved = _db.session.get(type(heat), heat.id)
         assert preserved.status == "completed"
         assert preserved.get_competitors() == [c.id]
+
+    def test_standalone_regeneration_cannot_detach_pending_flight(
+        self, db_session, auth_client
+    ):
+        from models import Flight
+
+        t = _make_tournament(db_session)
+        e = _make_event(db_session, t.id, name="Flighted Regen Guard")
+        c = _make_pro(db_session, t.id, "Flighted_Regen", events=[e.id])
+        _make_result(db_session, e.id, c)
+        flight = Flight(tournament_id=t.id, flight_number=1, status="pending")
+        db_session.add(flight)
+        db_session.flush()
+        heat = _make_heat(
+            db_session, e.id, competitors=[c.id],
+            stand_assignments={str(c.id): 1},
+        )
+        heat.flight_id = flight.id
+        heat.flight_position = 1
+        db_session.commit()
+
+        resp = auth_client.post(
+            f"/scheduling/{t.id}/event/{e.id}/generate-heats",
+            data={},
+            follow_redirects=True,
+        )
+
+        assert resp.status_code == 200
+        assert b"already has heats assigned" in resp.data.lower()
+        preserved = _db.session.get(type(heat), heat.id)
+        assert preserved.flight_id == flight.id
+        assert preserved.flight_position == 1
+
+    def test_bulk_college_regeneration_blocks_before_any_partial_rebuild(
+        self, db_session, auth_client
+    ):
+        from models import Flight
+
+        t = _make_tournament(db_session)
+        blocked = _make_event(
+            db_session, t.id, name="Standing Block",
+            event_type="college", gender="M", stand_type="standing_block",
+        )
+        _make_event(
+            db_session, t.id, name="Underhand",
+            event_type="college", gender="M", stand_type="underhand",
+        )
+        flight = Flight(tournament_id=t.id, flight_number=1, status="pending")
+        db_session.add(flight)
+        db_session.flush()
+        heat = _make_heat(db_session, blocked.id)
+        heat.flight_id = flight.id
+        heat.flight_position = 1
+        db_session.commit()
+
+        with patch('services.heat_generator.generate_event_heats') as generate:
+            resp = auth_client.post(
+                f"/scheduling/{t.id}/generate-college-heats",
+                follow_redirects=True,
+            )
+
+        assert resp.status_code == 200
+        assert b"already has heats assigned" in resp.data.lower()
+        generate.assert_not_called()
+        preserved = _db.session.get(type(heat), heat.id)
+        assert preserved.flight_id == flight.id
+        assert preserved.flight_position == 1
 
     def test_bulk_regeneration_skips_scored_event(self, app, db_session):
         """The one-click helper cannot bypass the scored-event guard."""

@@ -9,7 +9,8 @@ click-path fix rather than as advisory warnings.
 """
 from __future__ import annotations
 
-from models import Event, EventResult, Flight, Tournament
+from config import DAY_SPLIT_EVENT_NAMES
+from models import Event, EventResult, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.gear_sharing import (
     event_matches_gear_key,
@@ -27,6 +28,13 @@ BLOCKING_CODES = frozenset({
     'self_reference_partner',
     'non_reciprocal_partnership',
     'invalid_partner_gender',
+    'invalid_flight_position',
+    'duplicate_flight_position',
+    'duplicate_flight_number',
+    'chokerman_run2_missing_heats',
+    'chokerman_run2_not_in_flights',
+    'chokerman_run2_partially_in_flights',
+    'chokerman_run2_invalid_closer',
 })
 
 
@@ -595,53 +603,543 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
             'mismatches': payout_mismatches,
         })
 
-    # 3) Saturday spillover integration
-    if saturday_ids:
-        flights = Flight.query.filter_by(tournament_id=tournament.id).all()
-        if flights:
-            for event in tournament.events.filter(Event.id.in_(saturday_ids)).all():
-                spillover_heats = event.heats.filter_by(run_number=2).all() if event.name == "Chokerman's Race" else event.heats.all()
-                if not spillover_heats:
-                    issues.append({
-                        'severity': 'medium',
-                        'code': 'spillover_missing_heats',
-                        'title': 'Spillover has no heats',
-                        'detail': f'{event.display_name}: no heats to integrate.',
-                        'autofix': False,
-                    })
-                    continue
-                unassigned = [h for h in spillover_heats if h.flight_id is None]
-                if unassigned:
-                    issues.append({
-                        'severity': 'high',
-                        'code': 'spillover_not_in_flights',
-                        'title': 'Spillover not integrated into flights',
-                        'detail': f'{event.display_name}: {len(unassigned)} heat(s) are not assigned to a Saturday flight.',
-                        'autofix': True,
-                    })
+    flights = (
+        Flight.query
+        .filter_by(tournament_id=tournament.id)
+        .order_by(Flight.flight_number, Flight.id)
+        .all()
+    )
 
-    # 4) Cookie Stack / Standing Block stand conflict — both have heats but no flights yet
-    # These events share 5 physical stands. The flight builder enforces the required
-    # 8-heat gap automatically, but only when flights are rebuilt after heat generation.
-    # Warn the judge if both events have heats but no flights exist yet.
-    cookie_events = [e for e in all_events if getattr(e, 'stand_type', '') == 'cookie_stack']
-    sb_events = [e for e in all_events if getattr(e, 'stand_type', '') == 'standing_block']
-    cs_has_heats = any(e.heats.count() > 0 for e in cookie_events)
-    sb_has_heats = any(e.heats.count() > 0 for e in sb_events)
-    if cs_has_heats and sb_has_heats:
-        flights_exist = Flight.query.filter_by(tournament_id=tournament.id).count() > 0
-        if not flights_exist:
+    flight_ids = [flight.id for flight in flights]
+    flight_number_by_id = {
+        flight.id: flight.flight_number for flight in flights
+    }
+    flight_order_by_id = {
+        flight.id: order for order, flight in enumerate(flights)
+    }
+    ordered_heats = (
+        Heat.query
+        .filter(Heat.flight_id.in_(flight_ids))
+        .all()
+        if flight_ids else []
+    )
+    ordered_heats.sort(key=lambda heat: (
+        flight_order_by_id[heat.flight_id],
+        heat.flight_position is None,
+        heat.flight_position if heat.flight_position is not None else 0,
+        heat.id,
+    ))
+
+    from services.flight_builder import (
+        _CONFLICTING_STANDS,
+        _STAND_CONFLICT_GAP,
+        FlightRebuildSafetyError,
+        find_stand_conflicts,
+        validate_chokerman_closer_invariant,
+    )
+
+    # 3) Saturday spillover integration
+    # Match integrate_college_spillover_into_flights(): explicit selections are
+    # restricted to this tournament's college events, then every day-split event
+    # is auto-added. Chokerman participation is checked separately because the
+    # shared closer validator intentionally treats an absent closer as valid.
+    effective_spillover_events = sorted(
+        (
+            event for event in college_events
+            if event.id in saturday_ids or event.name in DAY_SPLIT_EVENT_NAMES
+        ),
+        key=lambda event: (event.name, event.gender or '', event.id),
+    )
+    chokerman_events = [
+        event for event in effective_spillover_events
+        if event.name == "Chokerman's Race"
+    ]
+    current_flight_ids = set(flight_ids)
+    chokerman_participation_complete = bool(chokerman_events)
+    chokerman_run2_heats: list[Heat] = []
+
+    for event in chokerman_events:
+        run2_heats = (
+            event.heats
+            .filter_by(run_number=2)
+            .order_by(Heat.heat_number, Heat.id)
+            .all()
+        )
+        chokerman_run2_heats.extend(run2_heats)
+        if not run2_heats:
+            chokerman_participation_complete = False
+            issues.append({
+                'severity': 'high',
+                'code': 'chokerman_run2_missing_heats',
+                'title': "Mandatory Chokerman's Race Run 2 heats are missing",
+                'detail': (
+                    f'{event.display_name} has no Run 2 heats. Open Events and '
+                    f'run "Generate All Heats" before building or publishing '
+                    f'the Saturday flights.'
+                ),
+                'autofix': False,
+                'event_id': event.id,
+                'expected_run_number': 2,
+                'heat_ids': [],
+            })
+            continue
+
+        assigned = [
+            heat for heat in run2_heats
+            if heat.flight_id in current_flight_ids
+        ]
+        unassigned = [
+            heat for heat in run2_heats
+            if heat.flight_id not in current_flight_ids
+        ]
+        if not unassigned:
+            continue
+
+        chokerman_participation_complete = False
+        heat_ids = [heat.id for heat in run2_heats]
+        assigned_heat_ids = [heat.id for heat in assigned]
+        unassigned_heat_ids = [heat.id for heat in unassigned]
+        if not assigned:
+            code = 'chokerman_run2_not_in_flights'
+            title = "Mandatory Chokerman's Race Run 2 is not in Saturday flights"
+            assignment_summary = 'None of the generated Run 2 heats are assigned'
+        else:
+            code = 'chokerman_run2_partially_in_flights'
+            title = "Mandatory Chokerman's Race Run 2 is only partly assigned"
+            assignment_summary = (
+                f'{len(assigned)} of {len(run2_heats)} generated Run 2 heats '
+                f'are assigned'
+            )
+        issues.append({
+            'severity': 'high',
+            'code': code,
+            'title': title,
+            'detail': (
+                f'{event.display_name}: {assignment_summary} to this '
+                f'tournament\'s Saturday flights. Build or Rebuild Flights if '
+                f'needed, then run "Integrate College Spillover" so every '
+                f'Chokerman Run 2 heat closes the show.'
+            ),
+            'autofix': bool(flights),
+            'event_id': event.id,
+            'heat_ids': heat_ids,
+            'assigned_heat_ids': assigned_heat_ids,
+            'unassigned_heat_ids': unassigned_heat_ids,
+        })
+
+    if chokerman_participation_complete:
+        try:
+            validate_chokerman_closer_invariant(
+                tournament,
+                flights=flights,
+                projected_order=ordered_heats,
+            )
+        except FlightRebuildSafetyError as exc:
+            if exc.reason == 'chokerman_closer_order':
+                issues.append({
+                    'severity': 'high',
+                    'code': 'chokerman_run2_invalid_closer',
+                    'title': "Chokerman's Race Run 2 heats are out of order",
+                    'detail': (
+                        'All mandatory Chokerman Run 2 heats form the final '
+                        'flight suffix, but their heat-number order is reversed '
+                        'or otherwise invalid. Reorder that closing block by '
+                        'heat number, or run "Rebuild Flights". Current closing '
+                        'heat ID order: '
+                        + ', '.join(str(heat.id) for heat in chokerman_run2_heats)
+                        + '.'
+                    ),
+                    'autofix': False,
+                    'event_ids': [event.id for event in chokerman_events],
+                    'heat_ids': [heat.id for heat in chokerman_run2_heats],
+                    'last_flight_id': flights[-1].id if flights else None,
+                    'wrong_flight_heat_ids': [],
+                    'trailing_heat_ids': [],
+                })
+            else:
+                first_closer_index = next(
+                    index for index, heat in enumerate(ordered_heats)
+                    if heat in chokerman_run2_heats
+                )
+                trailing_heat_ids = [
+                    heat.id for heat in ordered_heats[first_closer_index + 1:]
+                    if heat not in chokerman_run2_heats
+                ]
+                last_flight_id = flights[-1].id if flights else None
+                wrong_flight_heat_ids = [
+                    heat.id for heat in chokerman_run2_heats
+                    if heat.flight_id != last_flight_id
+                ]
+                offending_ids = wrong_flight_heat_ids + trailing_heat_ids
+                offending_summary = ', '.join(
+                    str(heat_id) for heat_id in offending_ids
+                )
+                issues.append({
+                    'severity': 'high',
+                    'code': 'chokerman_run2_invalid_closer',
+                    'title': "Chokerman's Race Run 2 does not close the show",
+                    'detail': (
+                        f'All mandatory Chokerman Run 2 heats are assigned, but '
+                        f'they do not form the final suffix of the last flight. '
+                        f'Run "Rebuild Flights" or reorder the affected heats so '
+                        f'nothing follows Chokerman Run 2. Affected schedule heat '
+                        f'ID(s): {offending_summary or "unknown"}.'
+                    ),
+                    'autofix': False,
+                    'event_ids': [event.id for event in chokerman_events],
+                    'heat_ids': [heat.id for heat in chokerman_run2_heats],
+                    'last_flight_id': last_flight_id,
+                    'wrong_flight_heat_ids': wrong_flight_heat_ids,
+                    'trailing_heat_ids': trailing_heat_ids,
+                })
+
+    if flights:
+        for event in effective_spillover_events:
+            if event.name == "Chokerman's Race":
+                continue
+            if event.name in DAY_SPLIT_EVENT_NAMES:
+                spillover_heats = (
+                    event.heats
+                    .filter_by(run_number=2)
+                    .order_by(Heat.heat_number, Heat.id)
+                    .all()
+                )
+            else:
+                spillover_heats = (
+                    event.heats
+                    .order_by(Heat.run_number, Heat.heat_number, Heat.id)
+                    .all()
+                )
+            if not spillover_heats:
+                issues.append({
+                    'severity': 'medium',
+                    'code': 'spillover_missing_heats',
+                    'title': 'Spillover has no heats',
+                    'detail': f'{event.display_name}: no heats to integrate.',
+                    'autofix': False,
+                    'event_id': event.id,
+                    'expected_run_number': (
+                        2 if event.name in DAY_SPLIT_EVENT_NAMES else None
+                    ),
+                })
+                continue
+            unassigned = [
+                heat for heat in spillover_heats
+                if heat.flight_id not in current_flight_ids
+            ]
+            if unassigned:
+                issues.append({
+                    'severity': 'high',
+                    'code': 'spillover_not_in_flights',
+                    'title': 'Spillover not integrated into flights',
+                    'detail': (
+                        f'{event.display_name}: {len(unassigned)} heat(s) are '
+                        f'not assigned to a Saturday flight.'
+                    ),
+                    'autofix': True,
+                    'event_id': event.id,
+                    'unassigned_heat_ids': [heat.id for heat in unassigned],
+                })
+
+    configured_stand_pairs = sorted({
+        tuple(sorted((stand_type, conflict_type)))
+        for stand_type, conflict_types in _CONFLICTING_STANDS.items()
+        for conflict_type in conflict_types
+    })
+
+    # 4) Before flights exist, show every configured physical stand pair that
+    # already has heats on both sides. Reciprocal configuration entries collapse
+    # into one pair so the operator receives one actionable diagnostic.
+    if not flights and configured_stand_pairs:
+        event_ids_with_heats = {
+            event_id
+            for event_id, in (
+                Heat.query
+                .with_entities(Heat.event_id)
+                .filter(Heat.event_id.in_([event.id for event in all_events]))
+                .distinct()
+                .all()
+            )
+        }
+        events_by_stand_type: dict[str, list[Event]] = {}
+        for event in all_events:
+            if event.id not in event_ids_with_heats or not event.stand_type:
+                continue
+            events_by_stand_type.setdefault(event.stand_type, []).append(event)
+
+        unbuilt_conflicts = []
+        pair_summaries = []
+        for first_type, second_type in configured_stand_pairs:
+            first_names = tuple(sorted(
+                event.display_name
+                for event in events_by_stand_type.get(first_type, ())
+            ))
+            second_names = tuple(sorted(
+                event.display_name
+                for event in events_by_stand_type.get(second_type, ())
+            ))
+            if not first_names or not second_names:
+                continue
+            unbuilt_conflicts.append({
+                'stand_types': (first_type, second_type),
+                'event_names': (first_names, second_names),
+                'required_gap': _STAND_CONFLICT_GAP,
+            })
+            pair_summaries.append(
+                f'{", ".join(first_names)} ({first_type}) / '
+                f'{", ".join(second_names)} ({second_type})'
+            )
+
+        if unbuilt_conflicts:
             issues.append({
                 'severity': 'medium',
                 'code': 'stand_conflict_no_flights',
-                'title': 'Cookie Stack / Standing Block — rebuild flights to enforce stand gap',
+                'title': 'Shared physical stands need flight spacing',
                 'detail': (
-                    'Both Cookie Stack and Standing Block have heats generated. '
-                    'These events share the same 5 physical stands. '
-                    'Run "Rebuild Flights" after heat generation so the flight builder enforces '
-                    'the required 8-heat gap between these event types.'
+                    f'Generated heats share physical stands across these event '
+                    f'pairs: {"; ".join(pair_summaries)}. Run "Rebuild Flights" '
+                    f'after heat generation to enforce the required '
+                    f'{_STAND_CONFLICT_GAP}-heat gap for each pair.'
                 ),
                 'autofix': False,
+                'pairs': unbuilt_conflicts,
+            })
+
+    # 4a) Inspect the actual built Saturday show order for every physical
+    # shared-stand pair configured by the flight builder. Keep this advisory:
+    # the builder may retain an unavoidable fallback, but the judge still
+    # needs the exact heats and spacing required to resolve it manually.
+    if flights:
+        # Spillover refuses to mutate an ambiguous persisted show order. Detect
+        # the same malformed structures from this already-batched snapshot so
+        # preflight gives the operator exact records to repair before calling it.
+        heats_by_flight_id = {flight.id: [] for flight in flights}
+        for heat in ordered_heats:
+            heats_by_flight_id[heat.flight_id].append(heat)
+
+        invalid_position_heats = sorted(
+            (
+                heat for heat in ordered_heats
+                if heat.flight_position is None or heat.flight_position <= 0
+            ),
+            key=lambda heat: (flight_order_by_id[heat.flight_id], heat.id),
+        )
+        if invalid_position_heats:
+            invalid_details = []
+            invalid_summaries = []
+            for heat in invalid_position_heats:
+                problem = (
+                    'missing' if heat.flight_position is None
+                    else 'non_positive'
+                )
+                invalid_details.append({
+                    'flight_id': heat.flight_id,
+                    'flight_number': flight_number_by_id[heat.flight_id],
+                    'heat_id': heat.id,
+                    'event_id': heat.event_id,
+                    'event_name': heat.event.display_name,
+                    'heat_number': heat.heat_number,
+                    'run_number': heat.run_number,
+                    'flight_position': heat.flight_position,
+                    'problem': problem,
+                })
+                position_summary = (
+                    'missing flight_position'
+                    if heat.flight_position is None
+                    else f'non-positive flight_position {heat.flight_position}'
+                )
+                invalid_summaries.append(
+                    f'Flight {flight_number_by_id[heat.flight_id]} heat {heat.id} '
+                    f'({heat.event.display_name} Heat {heat.heat_number}, '
+                    f'Run {heat.run_number}): {position_summary}'
+                )
+            issues.append({
+                'severity': 'high',
+                'code': 'invalid_flight_position',
+                'title': 'Built flight heats have invalid positions',
+                'detail': (
+                    f'{"; ".join(invalid_summaries)}. Open Flights and assign '
+                    f'each heat a positive unique position, or run "Rebuild '
+                    f'Flights" before integrating spillover.'
+                ),
+                'autofix': False,
+                'heats': invalid_details,
+            })
+
+        duplicate_position_details = []
+        duplicate_position_summaries = []
+        for flight in flights:
+            heats_by_position: dict[int, list[Heat]] = {}
+            for heat in heats_by_flight_id[flight.id]:
+                if heat.flight_position is None:
+                    continue
+                heats_by_position.setdefault(heat.flight_position, []).append(heat)
+            for position, position_heats in sorted(heats_by_position.items()):
+                if len(position_heats) < 2:
+                    continue
+                position_heats.sort(key=lambda heat: heat.id)
+                heat_details = tuple({
+                    'heat_id': heat.id,
+                    'event_id': heat.event_id,
+                    'event_name': heat.event.display_name,
+                    'heat_number': heat.heat_number,
+                    'run_number': heat.run_number,
+                } for heat in position_heats)
+                duplicate_position_details.append({
+                    'flight_id': flight.id,
+                    'flight_number': flight.flight_number,
+                    'flight_position': position,
+                    'heats': heat_details,
+                })
+                heat_ids = [str(heat.id) for heat in position_heats]
+                if len(heat_ids) == 2:
+                    heat_id_summary = f'{heat_ids[0]} and {heat_ids[1]}'
+                else:
+                    heat_id_summary = f'{", ".join(heat_ids[:-1])}, and {heat_ids[-1]}'
+                duplicate_position_summaries.append(
+                    f'Flight {flight.flight_number} position {position}: '
+                    f'heats {heat_id_summary}'
+                )
+        if duplicate_position_details:
+            issues.append({
+                'severity': 'high',
+                'code': 'duplicate_flight_position',
+                'title': 'Built flight heats share positions',
+                'detail': (
+                    f'{"; ".join(duplicate_position_summaries)}. Open Flights '
+                    f'and assign each heat a positive unique position, or run '
+                    f'"Rebuild Flights" before integrating spillover.'
+                ),
+                'autofix': False,
+                'duplicates': duplicate_position_details,
+            })
+
+        flights_by_number: dict[int, list[Flight]] = {}
+        for flight in flights:
+            flights_by_number.setdefault(flight.flight_number, []).append(flight)
+        duplicate_number_details = []
+        duplicate_number_summaries = []
+        for flight_number, number_flights in sorted(flights_by_number.items()):
+            if len(number_flights) < 2:
+                continue
+            number_flights.sort(key=lambda flight: flight.id)
+            flight_details = []
+            for flight in number_flights:
+                heat_details = tuple({
+                    'heat_id': heat.id,
+                    'event_id': heat.event_id,
+                    'event_name': heat.event.display_name,
+                    'heat_number': heat.heat_number,
+                    'run_number': heat.run_number,
+                    'flight_position': heat.flight_position,
+                } for heat in heats_by_flight_id[flight.id])
+                flight_details.append({
+                    'flight_id': flight.id,
+                    'heats': heat_details,
+                })
+            duplicate_number_details.append({
+                'flight_number': flight_number,
+                'flights': tuple(flight_details),
+            })
+            flight_ids_for_number = [
+                str(flight.id) for flight in number_flights
+            ]
+            if len(flight_ids_for_number) == 2:
+                flight_id_summary = (
+                    f'{flight_ids_for_number[0]} and {flight_ids_for_number[1]}'
+                )
+            else:
+                flight_id_summary = (
+                    f'{", ".join(flight_ids_for_number[:-1])}, and '
+                    f'{flight_ids_for_number[-1]}'
+                )
+            heat_id_summary = ', '.join(
+                f'flight {flight.id}: '
+                f'{", ".join(f"heat {heat.id}" for heat in heats_by_flight_id[flight.id]) or "no heats"}'
+                for flight in number_flights
+            )
+            duplicate_number_summaries.append(
+                f'Flight number {flight_number} is used by flights '
+                f'{flight_id_summary} ({heat_id_summary})'
+            )
+        if duplicate_number_details:
+            issues.append({
+                'severity': 'high',
+                'code': 'duplicate_flight_number',
+                'title': 'Built flights share flight numbers',
+                'detail': (
+                    f'{"; ".join(duplicate_number_summaries)}. Open Flights and '
+                    f'assign every flight a unique number, or run "Rebuild '
+                    f'Flights" before integrating spillover.'
+                ),
+                'autofix': False,
+                'duplicates': duplicate_number_details,
+            })
+
+        detected_conflicts = find_stand_conflicts(ordered_heats)
+        if detected_conflicts:
+            heat_by_id = {heat.id: heat for heat in ordered_heats}
+            conflict_details = []
+            summaries = []
+            for conflict in detected_conflicts:
+                first_id, second_id = conflict['heat_ids']
+                first_heat = heat_by_id[first_id]
+                second_heat = heat_by_id[second_id]
+                first_flight_number = flight_number_by_id[first_heat.flight_id]
+                second_flight_number = flight_number_by_id[second_heat.flight_id]
+                conflict_details.append({
+                    'heat_ids': (first_id, second_id),
+                    'stand_types': conflict['stand_types'],
+                    'events': (
+                        first_heat.event.display_name,
+                        second_heat.event.display_name,
+                    ),
+                    'heat_numbers': (
+                        first_heat.heat_number,
+                        second_heat.heat_number,
+                    ),
+                    'run_numbers': (
+                        first_heat.run_number,
+                        second_heat.run_number,
+                    ),
+                    'flight_numbers': (
+                        first_flight_number,
+                        second_flight_number,
+                    ),
+                    'flight_positions': (
+                        first_heat.flight_position,
+                        second_heat.flight_position,
+                    ),
+                    'gap': conflict['gap'],
+                    'required_gap': _STAND_CONFLICT_GAP,
+                })
+                summaries.append(
+                    f'{first_heat.event.display_name} Heat {first_heat.heat_number} '
+                    f'(Run {first_heat.run_number}, Flight {first_flight_number}, '
+                    f'position {first_heat.flight_position}) and '
+                    f'{second_heat.event.display_name} Heat {second_heat.heat_number} '
+                    f'(Run {second_heat.run_number}, Flight {second_flight_number}, '
+                    f'position {second_heat.flight_position}): current gap '
+                    f"{conflict['gap']}, required gap {_STAND_CONFLICT_GAP}"
+                )
+
+            shown = '; '.join(summaries[:5])
+            suffix = (
+                f' (+{len(summaries) - 5} more)'
+                if len(summaries) > 5 else ''
+            )
+            issues.append({
+                'severity': 'medium',
+                'code': 'stand_conflict_built_flights',
+                'title': 'Built flights contain physical shared-stand conflicts',
+                'detail': (
+                    f'{len(conflict_details)} shared-stand conflict(s) are too '
+                    f'close in the Saturday show order. Rebuild flights or '
+                    f'reorder these heats to meet the required gap: '
+                    f'{shown}{suffix}.'
+                ),
+                'autofix': False,
+                'conflicts': conflict_details,
             })
 
     by_severity = {'high': 0, 'medium': 0, 'low': 0}

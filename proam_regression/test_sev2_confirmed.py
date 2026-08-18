@@ -2679,6 +2679,17 @@ def _placed_ids(sql, event_id):
 
 
 def _gen(client, flashes, event_id):
+    # These tests exercise entrant reporting during standalone generation,
+    # not the route's flight-history guard. The 2026 mirror is already
+    # flighted, so make only this event eligible to regenerate inside its
+    # disposable clone while preserving its real entrants and roster data.
+    from database import db
+
+    db.session.execute(db.text(
+        "UPDATE heats SET flight_id = NULL, flight_position = NULL "
+        "WHERE event_id = :event_id"
+    ), {"event_id": event_id})
+    db.session.commit()
     flashes()
     r = client.post(f"/scheduling/{TID}/event/{event_id}/generate-heats",
                     data={"confirm": "true"})
@@ -2776,6 +2787,11 @@ def test_the_generator_records_the_excluded_entrant_when_called_directly(app):
     )
 
     event = db.session.get(Event, UH_M)
+    db.session.execute(db.text(
+        "UPDATE heats SET flight_id = NULL, flight_position = NULL "
+        "WHERE event_id = :event_id"
+    ), {"event_id": UH_M})
+    db.session.commit()
     generate_event_heats(event)
     db.session.commit()
 

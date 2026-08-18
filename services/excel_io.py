@@ -10,7 +10,13 @@ from models import CollegeCompetitor, ProCompetitor, Team, Tournament
 from services.gear_sharing import infer_equipment_categories, normalize_person_name
 
 
-def process_college_entry_form(filepath: str, tournament: Tournament, original_filename: str = None) -> dict:
+def process_college_entry_form(
+    filepath: str,
+    tournament: Tournament,
+    original_filename: str = None,
+    *,
+    commit: bool = True,
+) -> dict:
     """
     Process a college entry form Excel file and import teams/competitors.
 
@@ -45,13 +51,29 @@ def process_college_entry_form(filepath: str, tournament: Tournament, original_f
 
     # Detect the format and process accordingly
     if _find_column(df, ['school', 'university', 'college', 'institution']) or _find_column(df, ['team', 'team code']):
-        return _process_standard_entry_form(df, tournament, default_school_name=default_school_name)
+        return _process_standard_entry_form(
+            df,
+            tournament,
+            default_school_name=default_school_name,
+            commit=commit,
+        )
     else:
         # Try to infer format
-        return _process_inferred_format(df, tournament, default_school_name=default_school_name)
+        return _process_inferred_format(
+            df,
+            tournament,
+            default_school_name=default_school_name,
+            commit=commit,
+        )
 
 
-def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, default_school_name: str = None) -> dict:
+def _process_standard_entry_form(
+    df: pd.DataFrame,
+    tournament: Tournament,
+    default_school_name: str = None,
+    *,
+    commit: bool = True,
+) -> dict:
     """Process a standard format entry form with school/team columns."""
     teams_created = 0
     competitors_created = 0
@@ -210,7 +232,8 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
         else:
             valid_count += 1
 
-    db.session.commit()
+    if commit:
+        db.session.commit()
 
     return {
         'teams': valid_count,
@@ -219,7 +242,13 @@ def _process_standard_entry_form(df: pd.DataFrame, tournament: Tournament, defau
     }
 
 
-def _process_inferred_format(df: pd.DataFrame, tournament: Tournament, default_school_name: str = None) -> dict:
+def _process_inferred_format(
+    df: pd.DataFrame,
+    tournament: Tournament,
+    default_school_name: str = None,
+    *,
+    commit: bool = True,
+) -> dict:
     """Try to infer format from column structure."""
     # Fallback processing - try common patterns
     name_col = _find_column(df, ['name', 'first and last name', 'competitor', 'athlete', 'full name', 'participant'])
@@ -228,7 +257,12 @@ def _process_inferred_format(df: pd.DataFrame, tournament: Tournament, default_s
         # Try first column
         name_col = df.columns[0]
 
-    return _process_standard_entry_form(df, tournament, default_school_name=default_school_name)
+    return _process_standard_entry_form(
+        df,
+        tournament,
+        default_school_name=default_school_name,
+        commit=commit,
+    )
 
 
 def _find_column(df: pd.DataFrame, candidates: list) -> str:

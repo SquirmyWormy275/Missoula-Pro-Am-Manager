@@ -1695,8 +1695,24 @@ def fix_heat_gear_conflicts(tournament) -> dict:
     """
     import config
     from database import db
-    from models import Event, Heat
+    from models import Event, Flight, Heat
     from models.competitor import ProCompetitor
+
+    active_flight = (
+        Flight.query
+        .filter(
+            Flight.tournament_id == tournament.id,
+            Flight.status != 'pending',
+        )
+        .order_by(Flight.id)
+        .first()
+    )
+    if active_flight is not None:
+        raise ValueError(
+            'Gear-sharing heat synchronization is blocked after a flight '
+            f'starts; Flight {active_flight.flight_number} is '
+            f'{active_flight.status}.'
+        )
 
     pro_comps = ProCompetitor.query.filter_by(
         tournament_id=tournament.id, status='active'

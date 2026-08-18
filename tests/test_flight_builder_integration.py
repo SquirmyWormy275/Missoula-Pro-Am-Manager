@@ -19,6 +19,7 @@ import json
 from collections import defaultdict
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from database import db as _db
 
@@ -132,6 +133,21 @@ def _make_pro_competitor(session, tournament, name, gender='M'):
     session.add(c)
     session.flush()
     return c
+
+
+def _make_flight(session, tournament, flight_number):
+    from models import Flight
+
+    flight = Flight(tournament_id=tournament.id, flight_number=flight_number)
+    session.add(flight)
+    session.flush()
+    return flight
+
+
+def _place_heat(heat, flight, flight_position):
+    heat.flight_id = flight.id
+    heat.flight_position = flight_position
+    return heat
 
 
 def _seed_standard_show(session):
@@ -498,6 +514,866 @@ class TestFlightBuilderSpillover:
                 f'expected last flight {last_flight.id}'
             )
 
+    def test_repeated_integration_inserts_before_pending_chokerman_tail(self, db_session):
+        """New last-flight spillover shifts only the contiguous pending closer tail."""
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        filler_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        filler_heat = _place_heat(
+            _make_heat(db_session, filler_event, 1, [1]), flight, 1
+        )
+        chokerman = _make_college_event(
+            db_session,
+            tournament,
+            "Chokerman's Race",
+            'chokerman',
+            requires_dual_runs=True,
+        )
+        chokerman_heats = [
+            _make_heat(db_session, chokerman, heat_number, [800 + heat_number], run_number=2)
+            for heat_number in (1, 2)
+        ]
+
+        integrate_college_spillover_into_flights(
+            tournament, college_event_ids=[], placement_mode='roundrobin'
+        )
+        assert [heat.flight_position for heat in chokerman_heats] == [2, 3]
+
+        later_event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block'
+        )
+        later_heat = _make_heat(db_session, later_event, 1, [900])
+        db_session.flush()
+
+        integrate_college_spillover_into_flights(
+            tournament,
+            college_event_ids=[later_event.id],
+            placement_mode='roundrobin',
+        )
+
+        assert filler_heat.flight_position == 1
+        assert later_heat.flight_position == 2
+        assert [heat.flight_position for heat in chokerman_heats] == [3, 4]
+        assert [heat.id for heat in flight.get_heats_ordered()] == [
+            filler_heat.id,
+            later_heat.id,
+            chokerman_heats[0].id,
+            chokerman_heats[1].id,
+        ]
+
+    def test_configured_day_split_event_requires_run_two_heats(self, db_session):
+        from services.flight_builder import (
+            FlightRebuildSafetyError,
+            integrate_college_spillover_into_flights,
+        )
+
+        tournament = _make_tournament(db_session)
+        _make_flight(db_session, tournament, 1)
+        _make_college_event(
+            db_session,
+            tournament,
+            "Chokerman's Race",
+            'chokerman',
+            requires_dual_runs=True,
+        )
+
+        with pytest.raises(FlightRebuildSafetyError, match='has no Run 2 heats'):
+            integrate_college_spillover_into_flights(
+                tournament, college_event_ids=[], placement_mode='roundrobin',
+            )
+
+    def test_chokerman_closer_requires_heat_number_order(self, db_session):
+        from services.flight_builder import (
+            FlightRebuildSafetyError,
+            validate_chokerman_closer_invariant,
+        )
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        event = _make_college_event(
+            db_session,
+            tournament,
+            "Chokerman's Race",
+            'chokerman',
+            gender='M',
+            requires_dual_runs=True,
+        )
+        heat_one = _place_heat(
+            _make_heat(db_session, event, 1, [801], run_number=2), flight, 2,
+        )
+        heat_two = _place_heat(
+            _make_heat(db_session, event, 2, [802], run_number=2), flight, 1,
+        )
+
+        with pytest.raises(FlightRebuildSafetyError, match='heat-number order'):
+            validate_chokerman_closer_invariant(tournament)
+
+        assert [heat.id for heat in flight.get_heats_ordered()] == [
+            heat_two.id, heat_one.id,
+        ]
+
+    def test_pre_misplaced_chokerman_rejected_without_mutation(self, db_session):
+        """A flighted Run 2 closer must already be the last-flight suffix."""
+        from services.flight_builder import (
+            FlightRebuildSafetyError,
+            integrate_college_spillover_into_flights,
+            validate_chokerman_closer_invariant,
+        )
+
+        tournament = _make_tournament(db_session)
+        first_flight = _make_flight(db_session, tournament, 1)
+        last_flight = _make_flight(db_session, tournament, 2)
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        first_heat = _place_heat(
+            _make_heat(db_session, pro_event, 1, [1]), first_flight, 1
+        )
+        last_heat = _place_heat(
+            _make_heat(db_session, pro_event, 2, [2]), last_flight, 1
+        )
+        chokerman = _make_college_event(
+            db_session,
+            tournament,
+            "Chokerman's Race",
+            'chokerman',
+            requires_dual_runs=True,
+        )
+        misplaced_closer = _place_heat(
+            _make_heat(db_session, chokerman, 1, [800], run_number=2),
+            first_flight,
+            2,
+        )
+        spillover_event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [900])
+        db_session.flush()
+
+        with pytest.raises(FlightRebuildSafetyError, match='final suffix'):
+            validate_chokerman_closer_invariant(tournament)
+        with pytest.raises(FlightRebuildSafetyError, match='final suffix'):
+            integrate_college_spillover_into_flights(
+                tournament,
+                college_event_ids=[spillover_event.id],
+                placement_mode='roundrobin',
+            )
+
+        assert (first_heat.flight_id, first_heat.flight_position) == (first_flight.id, 1)
+        assert (misplaced_closer.flight_id, misplaced_closer.flight_position) == (
+            first_flight.id,
+            2,
+        )
+        assert (last_heat.flight_id, last_heat.flight_position) == (last_flight.id, 1)
+        assert spillover_heat.flight_id is None
+        assert spillover_heat.flight_position is None
+
+    @pytest.mark.parametrize('flight_status', ['in_progress', 'completed'])
+    def test_nonpending_flight_rejects_new_spillover_before_mutation(
+        self, db_session, flight_status
+    ):
+        """Pending heats do not make an active or completed flight mutable."""
+        from services.flight_builder import (
+            FlightRebuildSafetyError,
+            integrate_college_spillover_into_flights,
+        )
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        flight.status = flight_status
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        placed_heat = _place_heat(
+            _make_heat(db_session, pro_event, 1, [1]), flight, 1
+        )
+        spillover_event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [2])
+        db_session.flush()
+
+        with pytest.raises(FlightRebuildSafetyError, match='must be pending'):
+            integrate_college_spillover_into_flights(
+                tournament,
+                college_event_ids=[spillover_event.id],
+                placement_mode='roundrobin',
+            )
+
+        assert flight.status == flight_status
+        assert placed_heat.status == 'pending'
+        assert (placed_heat.flight_id, placed_heat.flight_position) == (flight.id, 1)
+        assert spillover_heat.flight_id is None
+        assert spillover_heat.flight_position is None
+
+    def test_in_progress_chokerman_tail_rejects_new_spillover(self, db_session):
+        """An in-progress closer heat seals even a still-pending final flight."""
+        from services.flight_builder import (
+            FlightRebuildSafetyError,
+            integrate_college_spillover_into_flights,
+        )
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        filler = _place_heat(_make_heat(db_session, pro_event, 1, [1]), flight, 1)
+        chokerman = _make_college_event(
+            db_session,
+            tournament,
+            "Chokerman's Race",
+            'chokerman',
+            requires_dual_runs=True,
+        )
+        closer = _place_heat(
+            _make_heat(db_session, chokerman, 1, [800], run_number=2), flight, 2
+        )
+        closer.status = 'in_progress'
+        spillover_event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [900])
+        db_session.flush()
+
+        with pytest.raises(FlightRebuildSafetyError, match='flighted heats must be pending'):
+            integrate_college_spillover_into_flights(
+                tournament,
+                college_event_ids=[spillover_event.id],
+                placement_mode='roundrobin',
+            )
+
+        assert [(heat.id, heat.flight_position) for heat in flight.get_heats_ordered()] == [
+            (filler.id, 1),
+            (closer.id, 2),
+        ]
+        assert spillover_heat.flight_id is None
+        assert spillover_heat.flight_position is None
+
+    def test_chokerman_invariant_validates_before_and_after_integration(
+        self, db_session, monkeypatch
+    ):
+        """Integration checks both the persisted and final projected show order."""
+        import services.flight_builder as flight_builder
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        _place_heat(_make_heat(db_session, pro_event, 1, [1]), flight, 1)
+        chokerman = _make_college_event(
+            db_session,
+            tournament,
+            "Chokerman's Race",
+            'chokerman',
+            requires_dual_runs=True,
+        )
+        closer = _make_heat(db_session, chokerman, 1, [800], run_number=2)
+        db_session.flush()
+
+        original = flight_builder.validate_chokerman_closer_invariant
+        snapshots = []
+
+        def track_invariant(*args, **kwargs):
+            projected_order = kwargs.get('projected_order')
+            snapshots.append(
+                [] if projected_order is None else [heat.id for heat in projected_order]
+            )
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(
+            flight_builder, 'validate_chokerman_closer_invariant', track_invariant
+        )
+
+        flight_builder.integrate_college_spillover_into_flights(
+            tournament, college_event_ids=[], placement_mode='roundrobin'
+        )
+
+        assert len(snapshots) == 2
+        assert closer.id not in snapshots[0]
+        assert snapshots[1][-1] == closer.id
+
+    def test_completed_flight_rejects_new_spillover_before_mutation(self, db_session):
+        """A scored show cannot be changed by a later spillover integration."""
+        from services.flight_builder import (
+            FlightRebuildSafetyError,
+            integrate_college_spillover_into_flights,
+        )
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        completed_heat = _place_heat(
+            _make_heat(db_session, pro_event, 1, [1]), flight, 1
+        )
+        completed_heat.status = 'completed'
+        spillover_event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [2])
+        db_session.flush()
+
+        with pytest.raises(FlightRebuildSafetyError, match='completed'):
+            integrate_college_spillover_into_flights(
+                tournament,
+                college_event_ids=[spillover_event.id],
+                placement_mode='roundrobin',
+            )
+
+        assert completed_heat.flight_id == flight.id
+        assert completed_heat.flight_position == 1
+        assert completed_heat.status == 'completed'
+        assert spillover_heat.flight_id is None
+        assert spillover_heat.flight_position is None
+
+    def test_selected_pro_event_is_reported_and_not_integrated(self, db_session):
+        """A selected id is never enough to pull a pro heat into spillover."""
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        filler_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        _place_heat(_make_heat(db_session, filler_event, 1, [1]), flight, 1)
+
+        selected_pro_event = _make_pro_event(
+            db_session, tournament, 'Single Buck', 'saw_hand'
+        )
+        selected_heat = _make_heat(db_session, selected_pro_event, 1, [2])
+        db_session.flush()
+
+        result = integrate_college_spillover_into_flights(
+            tournament,
+            college_event_ids=[selected_pro_event.id],
+            placement_mode='roundrobin',
+        )
+
+        assert selected_heat.flight_id is None
+        assert selected_heat.flight_position is None
+        assert result['integrated_heats'] == 0
+        assert result['ignored_non_college_event_ids'] == [selected_pro_event.id]
+
+    def test_selected_college_event_lookup_stays_in_current_tournament(
+        self, db_session, monkeypatch
+    ):
+        """A foreign college id is ignored without using the global Event query."""
+        from models import Event
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session, name='Current Tournament')
+        flight = _make_flight(db_session, tournament, 1)
+        filler_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        _place_heat(_make_heat(db_session, filler_event, 1, [1]), flight, 1)
+
+        other_tournament = _make_tournament(db_session, name='Other Tournament')
+        foreign_event = _make_college_event(
+            db_session, other_tournament, 'Standing Block Speed', 'standing_block'
+        )
+        foreign_heat = _make_heat(db_session, foreign_event, 1, [2])
+        db_session.flush()
+
+        class ForbiddenGlobalEventQuery:
+            def __getattr__(self, name):
+                raise AssertionError(
+                    f'initial selected-event lookup used Event.query.{name}'
+                )
+
+        monkeypatch.setattr(Event, 'query', ForbiddenGlobalEventQuery())
+
+        result = integrate_college_spillover_into_flights(
+            tournament,
+            college_event_ids=[foreign_event.id],
+            placement_mode='roundrobin',
+        )
+
+        assert foreign_heat.flight_id is None
+        assert foreign_heat.flight_position is None
+        assert result['integrated_heats'] == 0
+        assert result['ignored_non_college_event_ids'] == []
+
+    def test_flight_rows_are_requested_for_update(self, db_session, monkeypatch):
+        """Integration acquires the tournament flight rows through with_for_update."""
+        from sqlalchemy.orm import Query
+
+        from models import Flight
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        _place_heat(_make_heat(db_session, pro_event, 1, [1]), flight, 1)
+        spillover_event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block'
+        )
+        _make_heat(db_session, spillover_event, 1, [2])
+        db_session.flush()
+
+        original = Query.with_for_update
+        locked_flight_query = []
+
+        def track_with_for_update(query, *args, **kwargs):
+            if any(
+                description.get('entity') is Flight
+                for description in query.column_descriptions
+            ):
+                locked_flight_query.append(True)
+            return original(query, *args, **kwargs)
+
+        monkeypatch.setattr(Query, 'with_for_update', track_with_for_update)
+
+        integrate_college_spillover_into_flights(
+            tournament,
+            college_event_ids=[spillover_event.id],
+            placement_mode='roundrobin',
+        )
+
+        assert locked_flight_query == [True]
+
+    def test_sqlite_concurrent_spillover_persists_unique_positions(
+        self, monkeypatch
+    ):
+        """SQLite serializes two real integrations before either can reuse a slot."""
+        import threading
+        import time
+
+        import services.flight_builder as flight_builder
+        from models import Heat, Tournament
+        from tests.db_test_utils import create_test_app, drop_test_db
+
+        monkeypatch.delenv('PROAM_UNIT_PG', raising=False)
+        concurrent_app, db_handle = create_test_app()
+        first_at_snapshot = threading.Event()
+        second_attempting = threading.Event()
+        first_delay_used = threading.Event()
+        errors = []
+        result_lock = threading.Lock()
+
+        try:
+            with concurrent_app.app_context():
+                tournament = _make_tournament(_db.session, name='Concurrent Spillover')
+                flight = _make_flight(_db.session, tournament, 1)
+                pro_event = _make_pro_event(
+                    _db.session, tournament, 'Underhand', 'underhand'
+                )
+                _place_heat(
+                    _make_heat(_db.session, pro_event, 1, [1]), flight, 1
+                )
+                first_event = _make_college_event(
+                    _db.session,
+                    tournament,
+                    'Standing Block Speed A',
+                    'standing_block',
+                )
+                first_heat = _make_heat(_db.session, first_event, 1, [2])
+                second_event = _make_college_event(
+                    _db.session,
+                    tournament,
+                    'Standing Block Speed B',
+                    'standing_block',
+                )
+                second_heat = _make_heat(_db.session, second_event, 1, [3])
+                tournament_id = tournament.id
+                event_ids = (first_event.id, second_event.id)
+                spillover_heat_ids = (first_heat.id, second_heat.id)
+                _db.session.commit()
+
+            original_invariant = flight_builder.validate_chokerman_closer_invariant
+
+            def hold_first_snapshot(*args, **kwargs):
+                if (
+                    threading.current_thread().name == 'spillover-first'
+                    and not first_delay_used.is_set()
+                ):
+                    first_delay_used.set()
+                    first_at_snapshot.set()
+                    if not second_attempting.wait(timeout=5):
+                        raise AssertionError('second integration never attempted')
+                    time.sleep(0.25)
+                return original_invariant(*args, **kwargs)
+
+            monkeypatch.setattr(
+                flight_builder,
+                'validate_chokerman_closer_invariant',
+                hold_first_snapshot,
+            )
+
+            def integrate(event_id, *, announce_attempt=False):
+                with concurrent_app.app_context():
+                    try:
+                        if announce_attempt:
+                            second_attempting.set()
+                        current_tournament = _db.session.get(Tournament, tournament_id)
+                        flight_builder.integrate_college_spillover_into_flights(
+                            current_tournament,
+                            college_event_ids=[event_id],
+                            placement_mode='roundrobin',
+                            commit=True,
+                        )
+                    except Exception as exc:  # pragma: no cover - asserted below
+                        _db.session.rollback()
+                        with result_lock:
+                            errors.append(exc)
+                    finally:
+                        _db.session.remove()
+
+            first_thread = threading.Thread(
+                target=integrate,
+                args=(event_ids[0],),
+                name='spillover-first',
+            )
+            second_thread = threading.Thread(
+                target=integrate,
+                args=(event_ids[1],),
+                kwargs={'announce_attempt': True},
+                name='spillover-second',
+            )
+            first_thread.start()
+            assert first_at_snapshot.wait(timeout=5)
+            second_thread.start()
+            first_thread.join(timeout=10)
+            second_thread.join(timeout=10)
+
+            assert not first_thread.is_alive()
+            assert not second_thread.is_alive()
+            assert errors == []
+
+            with concurrent_app.app_context():
+                positions = [
+                    heat.flight_position
+                    for heat in Heat.query.filter(Heat.id.in_(spillover_heat_ids)).all()
+                ]
+                all_positions = [
+                    heat.flight_position
+                    for heat in Heat.query.filter(Heat.flight_id.isnot(None)).all()
+                ]
+                assert sorted(positions) == [2, 3]
+                assert len(all_positions) == len(set(all_positions))
+        finally:
+            with concurrent_app.app_context():
+                _db.session.remove()
+                _db.engine.dispose()
+            drop_test_db(db_handle)
+
+    def test_flight_heats_are_batch_loaded_once(self, db_session, monkeypatch):
+        """All existing flight heats load in one tournament-scoped IN query."""
+        from sqlalchemy import event as sqlalchemy_event
+
+        from models import Flight
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        first_flight = _make_flight(db_session, tournament, 1)
+        second_flight = _make_flight(db_session, tournament, 2)
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        _place_heat(_make_heat(db_session, pro_event, 1, [1]), first_flight, 1)
+        _place_heat(_make_heat(db_session, pro_event, 2, [2]), second_flight, 1)
+        spillover_event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block'
+        )
+        _make_heat(db_session, spillover_event, 1, [3])
+        db_session.flush()
+
+        def forbid_per_flight_query(*args, **kwargs):
+            raise AssertionError('integration called Flight.get_heats_ordered')
+
+        monkeypatch.setattr(Flight, 'get_heats_ordered', forbid_per_flight_query)
+        statements = []
+
+        def capture_statement(connection, cursor, statement, parameters, context, executemany):
+            normalized = ' '.join(statement.lower().split())
+            if ' from heats ' in f' {normalized} ' and 'heats.flight_id in' in normalized:
+                statements.append(normalized)
+
+        sqlalchemy_event.listen(_db.engine, 'before_cursor_execute', capture_statement)
+        try:
+            integrate_college_spillover_into_flights(
+                tournament,
+                college_event_ids=[spillover_event.id],
+                placement_mode='roundrobin',
+            )
+        finally:
+            sqlalchemy_event.remove(_db.engine, 'before_cursor_execute', capture_statement)
+
+        assert len(statements) == 1
+
+    def test_missing_flight_position_rejected_without_mutation(self, db_session):
+        """NULL positions are corruption, not an implicit position zero."""
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        corrupt_heat = _place_heat(
+            _make_heat(db_session, pro_event, 1, [1]), flight, None
+        )
+        spillover_event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [2])
+        db_session.flush()
+
+        with pytest.raises(ValueError, match='missing flight_position'):
+            integrate_college_spillover_into_flights(
+                tournament,
+                college_event_ids=[spillover_event.id],
+                placement_mode='roundrobin',
+            )
+
+        assert corrupt_heat.flight_position is None
+        assert spillover_heat.flight_id is None
+        assert spillover_heat.flight_position is None
+
+    @pytest.mark.parametrize('bad_position', [0, -1])
+    def test_nonpositive_flight_position_rejected_without_mutation(
+        self, db_session, bad_position
+    ):
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        corrupt_heat = _place_heat(
+            _make_heat(db_session, pro_event, 1, [1]), flight, bad_position
+        )
+        spillover_event = _make_college_event(
+            db_session, tournament, 'Standing Block Speed', 'standing_block'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [2])
+        db_session.flush()
+
+        with pytest.raises(ValueError, match='non-positive flight_position'):
+            integrate_college_spillover_into_flights(
+                tournament,
+                college_event_ids=[spillover_event.id],
+                placement_mode='roundrobin',
+            )
+
+        assert corrupt_heat.flight_position == bad_position
+        assert spillover_heat.flight_id is None
+        assert spillover_heat.flight_position is None
+
+    def test_duplicate_flight_position_rejected_by_database(self, db_session):
+        """The schema rejects duplicate persisted positions immediately."""
+        tournament = _make_tournament(db_session)
+        flight = _make_flight(db_session, tournament, 1)
+        pro_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        _place_heat(_make_heat(db_session, pro_event, 1, [1]), flight, 1)
+        second_heat = _place_heat(
+            _make_heat(db_session, pro_event, 2, [2]), flight, 2,
+        )
+        db_session.flush()
+
+        second_heat.flight_position = 1
+        with pytest.raises(IntegrityError, match='flight_position'):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_spacing_uses_assignment_uids_not_overlapping_integer_ids(self, db_session):
+        """Pro/college id overlap is distinct, while one college uid still spaces."""
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        first_flight = _make_flight(db_session, tournament, 1)
+        second_flight = _make_flight(db_session, tournament, 2)
+        third_flight = _make_flight(db_session, tournament, 3)
+        neutral_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+
+        pro_heat = _make_heat(db_session, neutral_event, 1, [1])
+        _place_heat(pro_heat, first_flight, 1)
+        _place_heat(_make_heat(db_session, neutral_event, 2, [10]), second_flight, 1)
+        _place_heat(_make_heat(db_session, neutral_event, 3, [11]), third_flight, 1)
+        _place_heat(_make_heat(db_session, neutral_event, 4, [12]), third_flight, 2)
+
+        spillover_event = _make_college_event(
+            db_session, tournament, 'College Underhand', 'underhand'
+        )
+        first_spillover = _make_heat(db_session, spillover_event, 1, [1])
+        second_spillover = _make_heat(db_session, spillover_event, 2, [1])
+        db_session.flush()
+
+        integrate_college_spillover_into_flights(
+            tournament,
+            college_event_ids=[spillover_event.id],
+            placement_mode='roundrobin',
+        )
+
+        pro_uid = pro_heat.assignments[0].uid
+        college_uids = {
+            first_spillover.assignments[0].uid,
+            second_spillover.assignments[0].uid,
+        }
+        assert college_uids == {first_spillover.assignments[0].uid}
+        assert pro_uid not in college_uids
+        assert first_spillover.flight_id == first_flight.id
+        assert second_spillover.flight_id == third_flight.id
+
+    def test_roundrobin_uses_projected_order_to_avoid_stock_saw_conflict(self, db_session):
+        """Round-robin may advance a flight to avoid a Stock Saw/hand-saw clash."""
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        first_flight = _make_flight(db_session, tournament, 1)
+        second_flight = _make_flight(db_session, tournament, 2)
+        neutral_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        saw_event = _make_pro_event(db_session, tournament, 'Single Buck', 'saw_hand')
+
+        _place_heat(_make_heat(db_session, neutral_event, 1, [10]), first_flight, 1)
+        _place_heat(_make_heat(db_session, saw_event, 1, [20]), second_flight, 1)
+        for offset in range(7):
+            _place_heat(
+                _make_heat(db_session, neutral_event, offset + 2, [30 + offset]),
+                second_flight,
+                offset + 2,
+            )
+
+        spillover_event = _make_college_event(
+            db_session, tournament, 'College Stock Saw', 'stock_saw'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [100])
+        db_session.flush()
+
+        result = integrate_college_spillover_into_flights(
+            tournament,
+            college_event_ids=[spillover_event.id],
+            placement_mode='roundrobin',
+        )
+
+        assert spillover_heat.flight_id == second_flight.id
+        assert result['unavoidable_stand_conflicts'] == []
+
+    def test_cluster_uses_projected_order_to_avoid_pole_conflict(self, db_session):
+        """Cluster placement keeps its bias only among physically safe flights."""
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        first_flight = _make_flight(db_session, tournament, 1)
+        second_flight = _make_flight(db_session, tournament, 2)
+        neutral_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        obstacle_event = _make_pro_event(
+            db_session, tournament, 'Obstacle Pole', 'obstacle_pole'
+        )
+
+        for offset in range(7):
+            _place_heat(
+                _make_heat(db_session, neutral_event, offset + 1, [200 + offset]),
+                first_flight,
+                offset + 1,
+            )
+        _place_heat(_make_heat(db_session, obstacle_event, 1, [220]), first_flight, 8)
+        for offset in range(8):
+            _place_heat(
+                _make_heat(db_session, neutral_event, offset + 8, [230 + offset]),
+                second_flight,
+                offset + 1,
+            )
+
+        spillover_event = _make_college_event(
+            db_session, tournament, 'College Pole Sprint', 'speed_climb'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [300])
+        db_session.flush()
+
+        result = integrate_college_spillover_into_flights(
+            tournament,
+            college_event_ids=[spillover_event.id],
+            placement_mode='cluster',
+        )
+
+        assert spillover_heat.flight_id == second_flight.id
+        assert result['unavoidable_stand_conflicts'] == []
+
+    def test_spacing_first_fallback_reports_unavoidable_stand_conflict(self, db_session):
+        """Spacing wins deterministically when no flight satisfies both constraints."""
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        first_flight = _make_flight(db_session, tournament, 1)
+        second_flight = _make_flight(db_session, tournament, 2)
+        neutral_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        saw_event = _make_pro_event(db_session, tournament, 'Single Buck', 'saw_hand')
+        prior_college_event = _make_college_event(
+            db_session, tournament, 'Prior College Underhand', 'underhand'
+        )
+
+        first_appearance = _make_heat(db_session, prior_college_event, 1, [1])
+        _place_heat(first_appearance, first_flight, 1)
+        for offset in range(3):
+            _place_heat(
+                _make_heat(db_session, neutral_event, offset + 2, [400 + offset]),
+                first_flight,
+                offset + 2,
+            )
+
+        saw_heat = _make_heat(db_session, saw_event, 1, [410])
+        _place_heat(saw_heat, second_flight, 1)
+        for offset in range(6):
+            _place_heat(
+                _make_heat(db_session, neutral_event, offset + 5, [420 + offset]),
+                second_flight,
+                offset + 2,
+            )
+        second_appearance = _make_heat(db_session, prior_college_event, 2, [1])
+        _place_heat(second_appearance, second_flight, 8)
+
+        spillover_event = _make_college_event(
+            db_session, tournament, 'College Stock Saw', 'stock_saw'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [1])
+        db_session.flush()
+
+        result = integrate_college_spillover_into_flights(
+            tournament,
+            college_event_ids=[spillover_event.id],
+            placement_mode='roundrobin',
+        )
+
+        assert spillover_heat.flight_id == first_flight.id
+        assert result['unavoidable_stand_conflicts'] == [
+            {
+                'heat_ids': (spillover_heat.id, saw_heat.id),
+                'stand_types': ('stock_saw', 'saw_hand'),
+                'gap': 1,
+            }
+        ]
+
+    def test_unavoidable_stand_cost_prefers_fewer_then_milder_conflicts(self, db_session):
+        """Equal-spacing fallback minimizes conflict count, then total shortfall."""
+        from services.flight_builder import integrate_college_spillover_into_flights
+
+        tournament = _make_tournament(db_session)
+        first_flight = _make_flight(db_session, tournament, 1)
+        second_flight = _make_flight(db_session, tournament, 2)
+        third_flight = _make_flight(db_session, tournament, 3)
+        neutral_event = _make_pro_event(db_session, tournament, 'Underhand', 'underhand')
+        saw_event = _make_pro_event(db_session, tournament, 'Single Buck', 'saw_hand')
+
+        _place_heat(_make_heat(db_session, neutral_event, 1, []), first_flight, 1)
+        first_saw = _make_heat(db_session, saw_event, 1, [])
+        second_saw = _make_heat(db_session, saw_event, 2, [])
+        _place_heat(first_saw, second_flight, 1)
+        _place_heat(second_saw, second_flight, 2)
+        for offset in range(6):
+            _place_heat(
+                _make_heat(db_session, neutral_event, offset + 2, []),
+                third_flight,
+                offset + 1,
+            )
+
+        spillover_event = _make_college_event(
+            db_session, tournament, 'College Stock Saw', 'stock_saw'
+        )
+        spillover_heat = _make_heat(db_session, spillover_event, 1, [])
+        db_session.flush()
+
+        result = integrate_college_spillover_into_flights(
+            tournament,
+            college_event_ids=[spillover_event.id],
+            placement_mode='roundrobin',
+        )
+
+        assert spillover_heat.flight_id == third_flight.id
+        assert result['unavoidable_stand_conflicts'] == [
+            {
+                'heat_ids': (second_saw.id, spillover_heat.id),
+                'stand_types': ('saw_hand', 'stock_saw'),
+                'gap': 7,
+            }
+        ]
+
     def test_spillover_with_no_flights_returns_zero(self, db_session):
         """Spillover on a tournament with no flights returns a no-op result."""
         from services.flight_builder import FlightBuilder
@@ -724,6 +1600,37 @@ class TestBuildProFlights:
             for heat in Heat.query.join(Flight).filter(
                 Flight.tournament_id == tournament.id,
                 Heat.event_id.in_(event_ids),
+            ).order_by(Heat.id).all()
+        ]
+        assert after == before
+
+    def test_rebuild_refuses_to_delete_in_progress_flight(self, db_session):
+        from models import Flight, Heat
+        from services.flight_builder import FlightRebuildSafetyError, build_pro_flights
+
+        data = _seed_standard_show(db_session)
+        tournament = data['tournament']
+        build_pro_flights(tournament)
+        active_flight = Flight.query.filter_by(
+            tournament_id=tournament.id,
+        ).order_by(Flight.flight_number).first()
+        active_flight.status = 'in_progress'
+        db_session.commit()
+
+        before = [
+            (heat.id, heat.flight_id, heat.flight_position)
+            for heat in Heat.query.join(Flight).filter(
+                Flight.tournament_id == tournament.id,
+            ).order_by(Heat.id).all()
+        ]
+
+        with pytest.raises(FlightRebuildSafetyError, match='after a flight starts'):
+            build_pro_flights(tournament)
+
+        after = [
+            (heat.id, heat.flight_id, heat.flight_position)
+            for heat in Heat.query.join(Flight).filter(
+                Flight.tournament_id == tournament.id,
             ).order_by(Heat.id).all()
         ]
         assert after == before

@@ -6,8 +6,9 @@ them against the isolated migration-backed test database.
 """
 from __future__ import annotations
 
-import logging
 from decimal import Decimal
+
+import pytest
 
 from database import db
 from models import EventResult
@@ -88,8 +89,18 @@ class TestBirlingFinalization:
             for competitor in competitors
         ] == [Decimal('10'), Decimal('7'), Decimal('5'), Decimal('3')]
 
-    def test_standings_rebuild_failure_is_logged_without_losing_results(
-        self, db_session, monkeypatch, caplog
+    def test_partial_placements_cannot_publish_event_results(self, db_session):
+        event, _team, competitors, bracket = _completed_college_bracket(db_session)
+        bracket.bracket_data['placements'].pop(str(competitors[-1].id))
+
+        with pytest.raises(ValueError, match='bracket is incomplete'):
+            bracket.finalize_to_event_results()
+
+        assert EventResult.query.filter_by(event_id=event.id).count() == 0
+        assert event.status == 'pending'
+
+    def test_standings_rebuild_failure_rolls_back_results(
+        self, db_session, monkeypatch
     ):
         event, team, _competitors, bracket = _completed_college_bracket(db_session)
 
@@ -97,23 +108,13 @@ class TestBirlingFinalization:
             raise RuntimeError('simulated team total failure')
 
         monkeypatch.setattr(Team, 'recalculate_points', fail_recalculation)
-        logger = logging.getLogger('services.birling_bracket')
-        was_disabled = logger.disabled
-        logger.disabled = False
-        try:
-            with caplog.at_level(logging.WARNING, logger=logger.name):
-                bracket.finalize_to_event_results()
-        finally:
-            logger.disabled = was_disabled
+        with pytest.raises(RuntimeError, match='simulated team total failure'):
+            bracket.finalize_to_event_results()
 
         db.session.expire_all()
-        assert EventResult.query.filter_by(event_id=event.id).count() == 4
-        assert db.session.get(type(event), event.id).status == 'completed'
+        assert EventResult.query.filter_by(event_id=event.id).count() == 0
+        assert db.session.get(type(event), event.id).status == 'pending'
         assert db.session.get(Team, team.id).total_points == Decimal('0')
-        assert any(
-            'college standings rebuild failed' in message
-            for message in caplog.messages
-        )
 
 
 class TestBirlingFinalizationRoute:
@@ -154,3 +155,56 @@ class TestBirlingFinalizationRoute:
                 category == 'success' and 'Bracket finalized with 4 placements.' in message
                 for category, message in session['_flashes']
             )
+
+    def test_partial_bracket_cannot_finalize_through_route(
+        self, app, db_session,
+    ):
+        from models import User
+
+        event, _team, competitors, bracket = _completed_college_bracket(db_session)
+        admin = User(username='partial_birling_admin', role='admin')
+        admin.set_password('testpass')
+        db_session.add(admin)
+        db_session.flush()
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session['_user_id'] = str(admin.id)
+        bracket.bracket_data['placements'].pop(str(competitors[-1].id))
+        bracket._save_bracket_data()
+
+        response = client.post(
+            f'/scheduling/{event.tournament_id}/event/{event.id}/birling/finalize'
+        )
+
+        assert response.status_code == 302
+        assert EventResult.query.filter_by(event_id=event.id).count() == 0
+        assert event.status == 'pending'
+
+    def test_published_bracket_cannot_be_reset_or_regenerated(
+        self, app, db_session,
+    ):
+        from models import User
+
+        event, _team, competitors, bracket = _completed_college_bracket(db_session)
+        admin = User(username='published_birling_admin', role='admin')
+        admin.set_password('testpass')
+        db_session.add(admin)
+        db_session.flush()
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session['_user_id'] = str(admin.id)
+        bracket._save_bracket_data()
+        bracket.finalize_to_event_results()
+        original_placements = dict(bracket.get_placements())
+
+        base = f'/scheduling/{event.tournament_id}/event/{event.id}/birling'
+        assert client.post(f'{base}/reset').status_code == 302
+        assert client.post(f'{base}/generate', data={}).status_code == 302
+
+        db.session.expire_all()
+        persisted = BirlingBracket(db.session.get(type(event), event.id))
+        assert persisted.get_placements() == original_placements
+        assert EventResult.query.filter_by(
+            event_id=event.id,
+            status='completed',
+        ).count() == len(competitors)

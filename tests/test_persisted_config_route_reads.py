@@ -309,6 +309,12 @@ class TestAsyncGenerateArtifactsChainsRelayAndSpillover:
 
         relay_calls = []
         spill_calls = []
+        spillover_conflicts = [{
+            "heat_ids": (10, 11),
+            "stand_types": ("obstacle_pole", "speed_climb"),
+            "gap": 1,
+            "required_gap": 3,
+        }]
 
         def _relay_spy(tournament, commit=True):
             relay_calls.append({"commit": commit, "tid": tournament.id})
@@ -320,7 +326,12 @@ class TestAsyncGenerateArtifactsChainsRelayAndSpillover:
                 "college_event_ids": list(college_event_ids or []),
                 "tid": tournament.id,
             })
-            return {"integrated_heats": 0, "events": 0, "message": "spy"}
+            return {
+                "integrated_heats": 0,
+                "events": 0,
+                "message": "spy",
+                "unavoidable_stand_conflicts": spillover_conflicts,
+            }
 
         def _build_spy(tournament, num_flights=None, commit=True):
             return 1
@@ -352,3 +363,4 @@ class TestAsyncGenerateArtifactsChainsRelayAndSpillover:
             f"spillover: got {spill_calls[0]['college_event_ids']!r}, "
             f"expected to include {cp_id}"
         )
+        assert result["spillover"]["unavoidable_stand_conflicts"] == spillover_conflicts

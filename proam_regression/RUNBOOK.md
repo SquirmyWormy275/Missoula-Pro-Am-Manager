@@ -67,22 +67,25 @@ never deleted automatically because their owner cannot be proven dead.
 Each session also makes one checked, token-scoped cleanup pass at the end; a
 failed database drop fails the run rather than leaving a false-green rig.
 
-**`rig.py` does not migrate its template.** After any new Alembic revision,
-every template above has to be upgraded by hand before its lane will run:
+**The templates are historical reference copies. Do not upgrade them in
+place.** `proam_regression/conftest.py::_prepare_clone` applies the checked
+era-1 reference repair and runs `flask db upgrade` against each disposable
+clone before current-code route probes. Raw-history tests deliberately inspect
+an untouched clone, and the pristine lane must remain pre-reseed so it can keep
+proving the c38 migration. A new Alembic revision therefore requires no
+template mutation; the lane output must show that its private clones reached
+the new head.
 
-    for d in proam_prod_mirror_p0 proam_prod_mirror_p0rev \
-             proam_prod_mirror_mt proam_prod_mirror_2026pristine; do
-      DATABASE_URL="postgresql://proam:proam@localhost:5432/$d" \
-      SECRET_KEY=<any 64 chars> python -m flask db upgrade
-    done
+The bootstrap script may prepare the reversed and multi-tournament templates
+to the checkout's then-current schema while first constructing them. That does
+not make later in-place upgrades safe or necessary. In particular, never run a
+blanket migration loop over all four templates.
 
-`tests/db_test_utils.py::_ensure_pg_template` does NOT have this hole, contrary
-to what this file said through D12-C commit F2. It calls `_chain_head()` and
-`_template_is_stale()` and drops and rebuilds `proam_unit_template` itself when
-the stamped revision is not head, so the PG unit lane self-heals across a new
-revision and needs no manual step. Verified at revision `t9b3c4d5e6f7`: the
-four parity templates above were stale and had to be upgraded by hand, and the
-unit template rebuilt on its own.
+`tests/db_test_utils.py::_ensure_pg_template` follows a different contract. It
+owns the synthetic `proam_unit_template`, checks its Alembic stamp, and rebuilds
+it automatically when stale. The PostgreSQL unit lane therefore self-heals
+across a new revision, while the production-shaped rig preserves its historical
+reference databases and migrates only test-owned clones.
 
 ## Where the evidence lands
 

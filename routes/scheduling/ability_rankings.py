@@ -13,6 +13,10 @@ from models.competitor import CollegeCompetitor, ProCompetitor
 from services import birling_rows
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 
 from . import _competitor_entered_event, _signed_up_competitors, scheduling_bp
 
@@ -21,6 +25,7 @@ from . import _competitor_entered_event, _signed_up_competitors, scheduling_bp
 # ---------------------------------------------------------------------------
 
 @scheduling_bp.route('/<int:tournament_id>/pro/ability-rankings', methods=['GET', 'POST'])
+@serialize_sqlite_schedule_writer
 def ability_rankings(tournament_id):
     """View and set per-event ability rankings for pro competitors."""
     from models.pro_event_rank import (
@@ -33,6 +38,7 @@ def ability_rankings(tournament_id):
     tournament = db.get_or_404(Tournament, tournament_id)
 
     if request.method == 'POST':
+        tournament = lock_tournament_schedule(tournament)
         # Parse order_{category}_{gender} fields — each is a comma-separated list
         # of competitor IDs in drag-and-drop rank order (position = rank).
         # Competitors not in the list are unranked (their existing rank is deleted).
@@ -145,16 +151,8 @@ def ability_rankings(tournament_id):
                 db.session.delete(r)
                 deleted_count += 1
 
-        db.session.commit()
-        invalidate_tournament_caches(tournament_id)
-        log_action('ability_rankings_saved', 'tournament', tournament_id, {
-            'saved': saved_count,
-            'cleared': deleted_count,
-        })
-
         # ── College birling seedings ────────────────────────────────────
         birling_saved = 0
-        birling_changed = False
         birling_refused = []
         birling_events = tournament.events.filter_by(
             event_type='college', scoring_type='bracket'
@@ -188,11 +186,14 @@ def ability_rankings(tournament_id):
                 birling_refused.append((bev, exc))
             else:
                 birling_saved += len(pre_seedings)
-                birling_changed = True
 
-        if birling_changed:
-            db.session.commit()
-            invalidate_tournament_caches(tournament_id)
+        db.session.commit()
+        invalidate_tournament_caches(tournament_id)
+        log_action('ability_rankings_saved', 'tournament', tournament_id, {
+            'saved': saved_count,
+            'cleared': deleted_count,
+            'birling_saved': birling_saved,
+        })
 
         total_saved = saved_count + birling_saved
         flash(f'Rankings saved ({total_saved} set, {deleted_count} cleared).', 'success')

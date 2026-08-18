@@ -1,7 +1,7 @@
 """Add immutable whole-field shadow review and issue evidence.
 
 Revision ID: a6e7f8a9b0c1
-Revises: z5d6e7f8a9b0
+Revises: a5e6f7a8b9c0
 Create Date: 2026-08-14
 
 These tables are scoring-inert.  They retain operator decisions and a
@@ -13,7 +13,7 @@ from alembic import op
 
 
 revision = "a6e7f8a9b0c1"
-down_revision = "z5d6e7f8a9b0"
+down_revision = "a5e6f7a8b9c0"
 branch_labels = None
 depends_on = None
 

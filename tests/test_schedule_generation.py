@@ -102,9 +102,23 @@ def test_run_preflight_autofix_reports_its_summary_numbers(db_session, monkeypat
     # passing while production crashes. If you change the production signature,
     # also update this lambda. See V2.13.0/V2.14.0/V2.14.5 mock-shape trilogy
     # in docs/solutions/test-failures/test-shape-matches-bug-shape-trilogy-2026-04-23.md.
+    schedule_calls = {'relay': [], 'spillover': []}
+
+    def _relay(_tournament, **kwargs):
+        schedule_calls['relay'].append(kwargs)
+        return {'placed': False}
+
+    def _spillover(_tournament, _ids, **kwargs):
+        schedule_calls['spillover'].append(kwargs)
+        return {'integrated_heats': 4}
+
+    monkeypatch.setattr(
+        'services.flight_builder.integrate_proam_relay_into_final_flight',
+        _relay,
+    )
     monkeypatch.setattr(
         'services.flight_builder.integrate_college_spillover_into_flights',
-        lambda _tournament, _ids: {'integrated_heats': 4},
+        _spillover,
     )
 
     result = run_preflight_autofix(tournament, saturday_ids=[999])
@@ -116,6 +130,10 @@ def test_run_preflight_autofix_reports_its_summary_numbers(db_session, monkeypat
     assert result['gear_pairs_completed'] == 1
     assert result['partner_summary']['assigned_pairs'] == 3
     assert result['spillover']['integrated_heats'] == 4
+    assert schedule_calls == {
+        'relay': [{'commit': False}],
+        'spillover': [{'commit': False}],
+    }
 
 
 def test_generate_tournament_schedule_artifacts_returns_error_for_missing_tournament():
@@ -137,13 +155,11 @@ def test_generate_tournament_schedule_artifacts_orchestrates_heat_and_flight_gen
     tournament = _make_tournament(db_session)
     success_event = _make_event(db_session, tournament, 'Success Event', event_type='pro')
     skipped_event = _make_event(db_session, tournament, 'Skip Event', event_type='pro')
-    error_event = _make_event(db_session, tournament, 'Error Event', event_type='college')
 
-    def _fake_generate(event):
+    def _fake_generate(event, *, allow_flight_replacement=False):
+        assert allow_flight_replacement is True
         if event.id == skipped_event.id:
             raise RuntimeError('No competitors entered for this event')
-        if event.id == error_event.id:
-            raise RuntimeError('kaboom')
         heat = Heat(event_id=event.id, heat_number=1, run_number=1)
         _db.session.add(heat)
         _db.session.flush()
@@ -164,8 +180,44 @@ def test_generate_tournament_schedule_artifacts_orchestrates_heat_and_flight_gen
     assert result['ok'] is True
     assert result['generated'] == 1
     assert result['skipped'] == 1
-    assert result['errors'] == ['kaboom']
+    assert result['errors'] == []
     assert result['flights'] == 2
+
+
+def test_generate_tournament_schedule_rolls_back_all_events_on_error(
+    db_session,
+    monkeypatch,
+):
+    from models import Heat
+    from services.schedule_generation import generate_tournament_schedule_artifacts
+
+    tournament = _make_tournament(db_session)
+    success_event = _make_event(
+        db_session, tournament, 'A Successful Event', event_type='pro',
+    )
+    error_event = _make_event(
+        db_session, tournament, 'Z Error Event', event_type='college',
+    )
+
+    def _fake_generate(event, *, allow_flight_replacement=False):
+        assert allow_flight_replacement is True
+        if event.id == error_event.id:
+            raise RuntimeError('kaboom')
+        _db.session.add(Heat(
+            event_id=event.id, heat_number=1, run_number=1,
+        ))
+        _db.session.flush()
+
+    monkeypatch.setattr(
+        'services.heat_generator.generate_event_heats', _fake_generate,
+    )
+
+    result = generate_tournament_schedule_artifacts(tournament.id)
+
+    assert result['ok'] is False
+    assert result['generated'] == 0
+    assert result['errors'] == ['kaboom']
+    assert Heat.query.filter_by(event_id=success_event.id).count() == 0
 
 
 def test_generate_tournament_schedule_rolls_back_partial_failed_event(
@@ -179,7 +231,8 @@ def test_generate_tournament_schedule_rolls_back_partial_failed_event(
     tournament = _make_tournament(db_session)
     failed_event = _make_event(db_session, tournament, 'Partial Failure', event_type='pro')
 
-    def _partial_failure(event):
+    def _partial_failure(event, *, allow_flight_replacement=False):
+        assert allow_flight_replacement is True
         _db.session.add(Heat(event_id=event.id, heat_number=1, run_number=1))
         _db.session.flush()
         raise RuntimeError('forced failure after flush')
@@ -188,10 +241,53 @@ def test_generate_tournament_schedule_rolls_back_partial_failed_event(
 
     result = generate_tournament_schedule_artifacts(tournament.id)
 
-    assert result['ok'] is True
+    assert result['ok'] is False
     assert result['generated'] == 0
     assert result['errors'] == ['forced failure after flush']
     assert Heat.query.filter_by(event_id=failed_event.id).count() == 0
+
+
+def test_generate_tournament_schedule_rolls_back_heats_when_flight_chain_fails(
+    db_session,
+    monkeypatch,
+):
+    from models import Heat
+    from services.schedule_generation import generate_tournament_schedule_artifacts
+
+    tournament = _make_tournament(db_session)
+    event = _make_event(db_session, tournament, 'Atomic Background Event')
+
+    def _generate(candidate, *, allow_flight_replacement=False):
+        assert allow_flight_replacement is True
+        _db.session.add(Heat(
+            event_id=candidate.id, heat_number=1, run_number=1,
+        ))
+        _db.session.flush()
+
+    monkeypatch.setattr('services.heat_generator.generate_event_heats', _generate)
+    monkeypatch.setattr(
+        'services.flight_builder.build_pro_flights',
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        'services.flight_builder.integrate_proam_relay_into_final_flight',
+        lambda *_args, **_kwargs: {'placed': False},
+    )
+    monkeypatch.setattr(
+        'services.flight_builder.integrate_college_spillover_into_flights',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError('forced spillover failure')
+        ),
+    )
+
+    result = generate_tournament_schedule_artifacts(tournament.id)
+
+    assert result['ok'] is False
+    assert result['generated'] == 0
+    assert result['errors'] == [
+        'flight build chain failed: forced spillover failure',
+    ]
+    assert Heat.query.filter_by(event_id=event.id).count() == 0
 
 
 def test_generate_event_heats_refuses_to_delete_completed_heat_without_score_rows(
@@ -211,6 +307,35 @@ def test_generate_event_heats_refuses_to_delete_completed_heat_without_score_row
         generate_event_heats(event)
 
     assert _db.session.get(Heat, heat.id) is heat
+
+
+def test_generate_event_heats_refuses_to_detach_pending_flight_assignment(
+    db_session,
+):
+    from models import Flight, Heat
+    from services.heat_generator import HeatGenerationSafetyError, generate_event_heats
+
+    tournament = _make_tournament(db_session)
+    event = _make_event(db_session, tournament, 'Flighted Pending Event')
+    flight = Flight(tournament_id=tournament.id, flight_number=1, status='pending')
+    _db.session.add(flight)
+    _db.session.flush()
+    heat = Heat(
+        event_id=event.id,
+        heat_number=1,
+        run_number=1,
+        status='pending',
+        flight_id=flight.id,
+        flight_position=1,
+    )
+    _db.session.add(heat)
+    _db.session.flush()
+
+    with pytest.raises(HeatGenerationSafetyError, match='already has heats assigned'):
+        generate_event_heats(event)
+
+    assert heat.flight_id == flight.id
+    assert heat.flight_position == 1
 
 
 def test_generate_event_heats_refuses_completed_score_rows_without_completed_heat(

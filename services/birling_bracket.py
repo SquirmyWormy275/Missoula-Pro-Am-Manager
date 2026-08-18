@@ -766,6 +766,28 @@ class BirlingBracket:
         """Get final placements (1st through 6th for Birling)."""
         return self.bracket_data['placements']
 
+    def is_complete(self) -> bool:
+        """Return whether every entrant has one unique contiguous placement."""
+        try:
+            competitor_ids = {
+                str(int(competitor['id']))
+                for competitor in self.bracket_data.get('competitors', [])
+            }
+            placement_ids = {
+                str(int(competitor_id))
+                for competitor_id in self.get_placements()
+            }
+            positions = sorted(
+                int(position) for position in self.get_placements().values()
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+        return (
+            bool(competitor_ids)
+            and placement_ids == competitor_ids
+            and positions == list(range(1, len(competitor_ids) + 1))
+        )
+
     def get_undoable_matches(self) -> set:
         """Return set of match_ids whose results can be undone.
 
@@ -953,44 +975,62 @@ class BirlingBracket:
         from services.scoring_engine import PLACEMENT_POINTS_DECIMAL
 
         placements = self.get_placements()
+        if not self.is_complete():
+            raise ValueError(
+                'Birling bracket is incomplete; every entrant must have one '
+                'placement before finalization.'
+            )
+
         competitors = {c['id']: c for c in self.bracket_data['competitors']}
 
-        for comp_id_str, position in placements.items():
-            comp_id = int(comp_id_str)
-            comp = competitors.get(comp_id, {})
-
-            result = EventResult.query.filter_by(
-                event_id=self.event.id,
-                competitor_id=comp_id
-            ).first()
-
-            if not result:
-                result = EventResult(
-                    event_id=self.event.id,
-                    competitor_id=comp_id,
-                    competitor_type=self.event.event_type,
-                    competitor_name=comp.get('name', 'Unknown')
+        published_results = EventResult.query.filter(
+            EventResult.event_id == self.event.id,
+            EventResult.status != 'pending',
+        ).all()
+        for result in published_results:
+            expected_position = placements.get(str(result.competitor_id))
+            if (
+                expected_position is None
+                or result.competitor_type != self.event.event_type
+                or result.final_position != expected_position
+            ):
+                raise ValueError(
+                    'Existing Birling scoring history does not match this '
+                    'bracket. Preserve the published results and repair the '
+                    'event manually.'
                 )
-                db.session.add(result)
 
-            result.final_position = position
-            result.status = 'completed'
+        try:
+            for comp_id_str, position in placements.items():
+                comp_id = int(comp_id_str)
+                comp = competitors.get(comp_id, {})
 
-            # Award placement points (1st=10 through 6th=1, 7th+=0)
-            idx = position - 1
-            if 0 <= idx < len(PLACEMENT_POINTS_DECIMAL):
-                result.points_awarded = PLACEMENT_POINTS_DECIMAL[idx]
-            else:
-                result.points_awarded = Decimal('0')
+                result = EventResult.query.filter_by(
+                    event_id=self.event.id,
+                    competitor_id=comp_id
+                ).first()
 
-        self.event.status = 'completed'
-        db.session.commit()
+                if not result:
+                    result = EventResult(
+                        event_id=self.event.id,
+                        competitor_id=comp_id,
+                        competitor_type=self.event.event_type,
+                        competitor_name=comp.get('name', 'Unknown')
+                    )
+                    db.session.add(result)
 
-        # Rebuild derived college standings after the authoritative result rows
-        # are durable. A failed rebuild must not erase an already finalized
-        # bracket, but it must be visible to operators rather than swallowed.
-        if self.event.event_type == 'college':
-            try:
+                result.final_position = position
+                result.status = 'completed'
+
+                idx = position - 1
+                if 0 <= idx < len(PLACEMENT_POINTS_DECIMAL):
+                    result.points_awarded = PLACEMENT_POINTS_DECIMAL[idx]
+                else:
+                    result.points_awarded = Decimal('0')
+
+            self.event.status = 'completed'
+
+            if self.event.event_type == 'college':
                 from models.competitor import CollegeCompetitor
                 from models.team import Team
                 from services.scoring_engine import _rebuild_individual_points
@@ -1004,15 +1044,10 @@ class BirlingBracket:
                         team_ids.add(comp.team_id)
                 for team in Team.query.filter(Team.id.in_(list(team_ids))).all():
                     team.recalculate_points()
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
-                logger.warning(
-                    'Birling finalization completed but college standings rebuild '
-                    'failed for event %s',
-                    self.event.id,
-                    exc_info=True,
-                )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
 
 
 def create_birling_bracket(event: Event, competitors: list, seeding: list = None):

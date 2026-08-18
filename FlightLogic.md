@@ -96,22 +96,24 @@ Spacing is measured in the **global heat sequence across all flights**, not with
 
 ### 3.3 Stand Conflict Rules
 
-**Cookie Stack and Standing Block** share the same 5 physical stands. These two events are mutually
-exclusive — they cannot run simultaneously, and no heat from one event should be scheduled within
-the same approximate flight slot as the other.
+The following event pairs share physical equipment and need reset space in the global Saturday
+order:
+
+- Cookie Stack / Standing Block
+- Hot Saw / Stock Saw
+- hand-saw events / Stock Saw
+- Obstacle Pole / Speed Climb
 
 | Rule | Detail |
 |------|--------|
 | Enforced in | `flight_builder.py` (`_CONFLICTING_STANDS` dict, `_calculate_heat_score`) |
-| Gap required | 8 heats minimum between a Cookie Stack heat and a Standing Block heat |
+| Gap required | 8 heats minimum between either side of every configured pair |
 | Enforcement type | Hard disqualification: score returns `-1.0`, blocking placement at that position |
 
 **NOTE:** This conflict is enforced during flight *ordering* but not during heat *generation*
 (`heat_generator.py` does not check it). Heats are generated first, then the flight builder orders
-them respecting the gap. As long as both events have heats, the builder will separate them.
-
-No other events currently have stand conflict rules. If a new conflict needs to be enforced, add
-the pair to `_CONFLICTING_STANDS` in `flight_builder.py` and update this document.
+them respecting the gap. Preflight reports configured pairs before flights exist and reports exact
+heat positions for any conflicts that remain in the built Saturday order.
 
 ### 3.4 Event Order and Variety
 
@@ -207,7 +209,8 @@ Some college events run on Saturday rather than Friday. These heats are generate
 college event flow but must be placed into Saturday pro flights.
 
 Overflow events are **judge-selected** using the Saturday Priority route. The judge decides which
-college events spill to Saturday (except Chokerman's Race, which is automatic).
+additional college events spill to Saturday. Both configured day-split events, Chokerman's Race
+and Speed Climb, are automatic because their Run 2 heats are mandatory Saturday work.
 
 After the judge selects overflow events, the integration route (`integrate_college_spillover_into_flights`)
 assigns those heats into the existing pro flights.
@@ -231,14 +234,37 @@ together at the end of the day creates a clean climax rather than scattering the
 
 ### 4.2 Other College Spillover Events
 
-All other college overflow events (Standing Block, Obstacle Pole, etc.) are distributed
-**round-robin** across all pro flights in alphabetical+gender order.
+All other college overflow events (Standing Block, Obstacle Pole, etc.) use the operator's saved
+placement mode:
 
+- **Round-robin** cycles through pro flights in flight-number order.
+- **Cluster** prefers the earliest flight with fewer than eight heats, then advances to the next.
+  If every flight is full, it uses the least-loaded flight as a deterministic fallback.
+
+For either mode, the planner simulates inserting each heat into every candidate flight and evaluates
+the resulting global Saturday order. It prioritizes competitor spacing using namespaced
+`HeatAssignment.uid` values, then placements that add no new shared-stand conflict. If every
+spacing-valid option has a physical conflict, it chooses the least severe deterministic fallback
+and reports the unavoidable conflict for preflight review.
+
+- Selected IDs are accepted only for college events in the current tournament.
 - Only heats without an existing `flight_id` are assigned (previously integrated heats are not moved).
 - Heats are ordered by `run_number` then `heat_number` within each event.
-- No competitor spacing check is applied to college overflow heats. The TD should be aware that
-  college competitors appearing in both Friday and Saturday events will have tighter overall
-  schedules.
+- Existing flight positions must be present, positive, and unique within each flight; integration
+  rejects malformed schedules instead of guessing their order.
+- Chokerman's Race is not affected by these choices; Run 2 remains the sealed show closer, and later
+  integrations insert ahead of an existing pending Chokerman closing block.
+- Once any flight has started, or any flighted heat is completed, new spillover cannot be integrated
+  because the running order is already operational or historical record.
+- Manual reorder controls must preserve the Chokerman Run 2 closing suffix and heat-number order.
+  They reject rather than commit an invalid closer, and all manual flight/roster editing freezes once
+  any flight starts. Dependent saw-block reassignment and gear-sharing heat synchronization freeze at
+  the same boundary. Event setup, Friday Feature selection, and Saturday priority also freeze there,
+  because they are inputs to the published running order. Scratches remain available through the
+  dedicated cascade workflow.
+- Primary schedule generation is one transaction: heat/flight generation, Pro-Am Relay placement,
+  college spillover, and saw-block assignment either all commit or all roll back. Saw-block assignment
+  is not deferred housekeeping because its stand decisions are part of the published running order.
 
 ### 4.3 Priority Order for Saturday Overflow
 
@@ -454,12 +480,12 @@ These are confirmed gaps. Do not assume the system handles these automatically.
 |------|-------|
 | Ability-based flight grouping | The normal flight-build workflow does not call `optimize_flight_for_ability()`. Local ProEventRank ordering and springboard slow-heat clustering occur during heat generation; predicted-time grouping remains a future STRATHMARK extension. |
 | Gear sharing re-check at flight time | Assumed clean from heat generation. A gear-conflict heat that slipped through will not be caught here. |
-| College-to-Saturday competitor spacing | No minimum spacing check is applied when college overflow heats are placed into pro flights. |
+| College-to-Saturday competitor spacing | Enforced by the spillover planner with namespaced competitor identities and a deterministic least-violation fallback when no perfect placement exists. |
 | Stand conflict check in heat generator | `_CONFLICTING_STANDS` is only enforced in flight ordering, not during initial heat generation. |
 | Dual-run pro events | No pro events currently require dual runs. If one is added, Run 2 heats will not be placed in flights without code changes. |
 | Friday Night Feature | No flight generation exists for Friday Night Feature events. |
-| Manual flight editing | Drag-and-drop heat reordering within flights is supported via SortableJS UI. Event order within the day schedule is also manually reorderable. |
-| Status validation on Flight.status | Any string can be written to `Flight.status`; the code does not enforce the allowed set. |
+| Manual flight editing | Drag-and-drop heat reordering within flights is supported before operations start. Once any flight starts, flight, roster, event setup, Friday Feature, and Saturday priority edits are frozen; scratches use the dedicated cascade. Separate display-order preferences remain serialized configuration. |
+| Cross-process SQLite schedule locking | SQLite writers are serialized within one app process. Multi-process production operation requires PostgreSQL, where the Tournament parent-row lock provides the cross-process contract. |
 
 ---
 
@@ -470,8 +496,8 @@ The correct sequence to produce a valid Saturday schedule is:
 1. **Configure events** — set up all pro events with stand types, competitor lists, payout structures.
 2. **Generate heats per event** — run heat generation for each pro event. This creates
    `run_number=1` heats (and `run_number=2` for dual-run college events if needed).
-3. **Run preflight checks** (optional but recommended) — verify no heat/table sync issues,
-   no odd partner pools.
+3. **Run preflight checks** — resolve blocking partner, position, stand, and mandatory
+   day-split issues before publishing the schedule.
 4. **Build pro flights** — call `build_pro_flights(tournament)`. This:
    - Deletes all existing flights.
    - Collects pro heats (run 1 only, excluding Partnered Axe).
@@ -483,11 +509,13 @@ The correct sequence to produce a valid Saturday schedule is:
    call `integrate_college_spillover_into_flights()`. This:
    - Automatically includes Chokerman's Race Run 2 heats, placed at the end of the last flight
      in run-1 heat-number order.
-   - Distributes other selected events round-robin across all flights.
+   - Distributes other selected events using the saved round-robin or cluster mode while checking
+     projected competitor spacing and shared-stand conflicts across the full Saturday order.
 
-**Rebuilding flights** at step 4 clears and recreates all flights. College overflow heats that
-were previously integrated (have a non-null `flight_id`) are preserved — the integration step
-skips heats that already have a flight assigned.
+**Rebuilding flights** at step 4 clears and recreates every pending flight and assignment. The
+active application workflows immediately re-run relay and college spillover integration in the
+same transaction, so no partial rebuilt schedule can commit. A direct service caller must perform
+that same chain. Rebuild is blocked after any flight or heat starts.
 
 ---
 
@@ -498,8 +526,8 @@ integration will also return early with no-flights message.
 
 **Only Partnered Axe heats exist:** One flight is created to hold the axe heats.
 
-**Chokerman's Race has no Run 2 heats:** Integration skips the event silently. This should not
-happen if heat generation was run correctly.
+**A configured day-split event has no Run 2 heats:** Integration fails closed. Generate both runs
+before rebuilding or integrating Saturday flights.
 
 **More Partnered Axe heats than flights:** Heats are distributed modulo the flight count — some
 flights will contain two axe heats. This is rare (should only be 4 show heats for 4+ flights).

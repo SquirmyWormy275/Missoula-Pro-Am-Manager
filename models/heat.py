@@ -1,7 +1,7 @@
 """
 Heat and Flight models for scheduling competition runs.
 """
-from datetime import datetime, timezone
+from datetime import timezone
 
 import sqlalchemy as sa
 
@@ -13,6 +13,7 @@ from database import db
 # this the wrong direction. It is here rather than inside the function because
 # a lazy import would hide that dependency from anyone reading the header.
 from services.entity_key import EntityKey, resolve_uids
+from services.time_utils import utc_now_naive
 
 from ._types import BIG_ID
 
@@ -70,6 +71,9 @@ class Heat(db.Model):
     __tablename__ = 'heats'
     __table_args__ = (
         db.UniqueConstraint('event_id', 'heat_number', 'run_number', name='uq_event_heat_run'),
+        db.UniqueConstraint(
+            'flight_id', 'flight_position', name='uq_heats_flight_position',
+        ),
         db.Index('ix_heats_event_status', 'event_id', 'status'),
         db.Index('ix_heats_flight_id', 'flight_id'),
         db.CheckConstraint('heat_number >= 1', name='ck_heats_heat_number_positive'),
@@ -413,10 +417,10 @@ class Heat(db.Model):
         """True if the heat is currently locked by another judge (non-expired)."""
         if not self.locked_by_user_id or not self.locked_at:
             return False
-        now = datetime.now(timezone.utc)
+        now = utc_now_naive()
         locked_at = self.locked_at
-        if locked_at.tzinfo is None:
-            locked_at = locked_at.replace(tzinfo=timezone.utc)
+        if locked_at.tzinfo is not None:
+            locked_at = locked_at.astimezone(timezone.utc).replace(tzinfo=None)
         return (now - locked_at).total_seconds() < HEAT_LOCK_TTL_SECONDS
 
     def acquire_lock(self, user_id: int) -> bool:
@@ -424,7 +428,10 @@ class Heat(db.Model):
         if self.is_locked() and self.locked_by_user_id != user_id:
             return False
         self.locked_by_user_id = user_id
-        self.locked_at = datetime.now(timezone.utc)
+        # The column is timezone-naive. Persisting an aware value lets
+        # PostgreSQL convert it through the session timezone before dropping
+        # the offset, which can make a new lock appear hours old.
+        self.locked_at = utc_now_naive()
         return True
 
     def release_lock(self, user_id: int) -> None:
@@ -439,6 +446,10 @@ class Flight(db.Model):
 
     __tablename__ = 'flights'
     __table_args__ = (
+        db.UniqueConstraint(
+            'tournament_id', 'flight_number',
+            name='uq_flights_tournament_number',
+        ),
         db.CheckConstraint('flight_number >= 1', name='ck_flights_flight_number_positive'),
         db.CheckConstraint(
             "status IN ('pending', 'in_progress', 'completed')",

@@ -1,7 +1,7 @@
 """Add scoring-inert STRATHMARK shadow operation state.
 
-Revision ID: z5d6e7f8a9b0
-Revises: y4c5d6e7f8a9
+Revision ID: a5e6f7a8b9c0
+Revises: z5d6e7f8a9b0
 Create Date: 2026-08-14
 
 Existing marks, predicted times, completed results, rankings, points, and
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "z5d6e7f8a9b0"
-down_revision = "y4c5d6e7f8a9"
+revision = "a5e6f7a8b9c0"
+down_revision = "z5d6e7f8a9b0"
 branch_labels = None
 depends_on = None
 

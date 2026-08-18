@@ -4,9 +4,13 @@ from flask import flash, redirect, render_template, request, session, url_for
 
 import config
 from database import db
-from models import Event, EventResult, Tournament
+from models import Event, EventResult, Flight, Tournament
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 from services.print_catalog import record_print
 
 from . import scheduling_bp
@@ -35,20 +39,44 @@ def _load_legacy_fnf_config(tournament_id: int) -> dict:
         return {'event_ids': [], 'notes': ''}
 
 
-def _load_fnf_config(tournament: Tournament) -> dict:
+def _load_fnf_config(
+    tournament: Tournament,
+    *,
+    caller_holds_lock: bool = False,
+) -> dict:
     """Load Friday Feature selections from DB-backed schedule_config."""
     schedule_config = tournament.get_schedule_config()
+    has_db_config = (
+        'friday_pro_event_ids' in schedule_config
+        or 'friday_feature_notes' in schedule_config
+    )
     event_ids = [
         int(event_id)
         for event_id in schedule_config.get('friday_pro_event_ids', [])
         if str(event_id).strip()
     ]
     notes = str(schedule_config.get('friday_feature_notes', '') or '')
-    if event_ids or notes:
+    if has_db_config:
         return {'event_ids': event_ids, 'notes': notes}
 
     legacy = _load_legacy_fnf_config(tournament.id)
     if legacy.get('event_ids') or legacy.get('notes'):
+        if not caller_holds_lock:
+            tournament = lock_tournament_schedule(tournament)
+            schedule_config = tournament.get_schedule_config()
+            has_db_config = (
+                'friday_pro_event_ids' in schedule_config
+                or 'friday_feature_notes' in schedule_config
+            )
+            event_ids = [
+                int(event_id)
+                for event_id in schedule_config.get('friday_pro_event_ids', [])
+                if str(event_id).strip()
+            ]
+            notes = str(schedule_config.get('friday_feature_notes', '') or '')
+            if has_db_config:
+                return {'event_ids': event_ids, 'notes': notes}
+
         schedule_config['friday_pro_event_ids'] = [
             int(event_id)
             for event_id in legacy.get('event_ids', [])
@@ -56,8 +84,9 @@ def _load_fnf_config(tournament: Tournament) -> dict:
         ]
         schedule_config['friday_feature_notes'] = str(legacy.get('notes', '') or '')
         tournament.set_schedule_config(schedule_config)
-        db.session.commit()
-        invalidate_tournament_caches(tournament.id)
+        if not caller_holds_lock:
+            db.session.commit()
+            invalidate_tournament_caches(tournament.id)
         return {
             'event_ids': schedule_config['friday_pro_event_ids'],
             'notes': schedule_config['friday_feature_notes'],
@@ -78,11 +107,27 @@ def _save_fnf_config(tournament: Tournament, data: dict) -> None:
 
 
 @scheduling_bp.route('/<int:tournament_id>/friday-night', methods=['GET', 'POST'])
+@serialize_sqlite_schedule_writer
 def friday_feature(tournament_id):
     """Configure Friday Night Feature events and Saturday college spillover."""
     from services.schedule_builder import COLLEGE_SATURDAY_PRIORITY
 
     tournament = db.get_or_404(Tournament, tournament_id)
+    if request.method == 'POST':
+        tournament = lock_tournament_schedule(tournament)
+        active_flight = Flight.query.filter(
+            Flight.tournament_id == tournament_id,
+            Flight.status != 'pending',
+        ).first()
+        if active_flight is not None:
+            flash(
+                'Friday Feature configuration is frozen after a flight starts.',
+                'error',
+            )
+            return redirect(url_for(
+                'scheduling.friday_feature',
+                tournament_id=tournament_id,
+            ))
 
     # FNF: pro events eligible for Friday Night
     eligible_names = set(config.FRIDAY_NIGHT_EVENTS)
@@ -97,7 +142,10 @@ def friday_feature(tournament_id):
         key=lambda e: priority_index[(e.name, e.gender)]
     )
 
-    fnf_config = _load_fnf_config(tournament)
+    fnf_config = _load_fnf_config(
+        tournament,
+        caller_holds_lock=request.method == 'POST',
+    )
     session_key = f'schedule_options_{tournament_id}'
     saved_opts = tournament.get_schedule_config() or session.get(session_key, {})
 

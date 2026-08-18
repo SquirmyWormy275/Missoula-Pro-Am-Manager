@@ -460,6 +460,8 @@ def export_results_job_status(tournament_id, job_id):
         result = job.get('result') or {}
         flights_built = int(result.get('flights_built') or 0)
         flash(f'Built {flights_built} flight(s).', 'success')
+        from routes.scheduling.spillover_feedback import flash_spillover_result
+        flash_spillover_result(result.get('spillover'), include_success=False)
         return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 
     path = job.get('result')

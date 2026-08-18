@@ -9,7 +9,10 @@ Ensures competitors have maximum rest between their events using tiered spacing:
 import json
 import logging
 import math
+import threading
 from collections import defaultdict
+from contextlib import contextmanager
+from functools import wraps
 
 from config import DAY_SPLIT_EVENT_NAMES
 from database import db
@@ -32,11 +35,67 @@ PARTNERED_AXE_SHOW_TEAM_COUNT = 4
 PLACEMENT_MODE_ROUNDROBIN = 'roundrobin'
 PLACEMENT_MODE_CLUSTER = 'cluster'
 VALID_PLACEMENT_MODES = {PLACEMENT_MODE_ROUNDROBIN, PLACEMENT_MODE_CLUSTER}
+DEFAULT_HEATS_PER_FLIGHT = 8
 
 # Phase 5: track LH flight-contention warnings from the most recent
 # build_pro_flights() call so the route handler can surface them to the
 # operator via flash. Keyed by tournament.id → list of warning dicts.
 _last_lh_flight_warnings: dict[int, list[dict]] = {}
+
+# SQLite ignores SELECT FOR UPDATE. Keep every schedule writer serialized by
+# tournament within this process while PostgreSQL uses a stable Tournament row
+# as the first lock in every write transaction.
+_sqlite_schedule_locks_guard = threading.Lock()
+_sqlite_schedule_locks: dict[tuple[str, int], threading.RLock] = {}
+
+
+@contextmanager
+def sqlite_schedule_writer_guard(tournament_or_id):
+    """Serialize one tournament's schedule writers when the backend is SQLite."""
+    tournament_id = int(getattr(tournament_or_id, 'id', tournament_or_id))
+    bind = db.session.get_bind()
+    if bind.dialect.name != 'sqlite':
+        yield
+        return
+
+    engine = getattr(bind, 'engine', bind)
+    lock_key = (str(engine.url), tournament_id)
+    with _sqlite_schedule_locks_guard:
+        lock = _sqlite_schedule_locks.setdefault(lock_key, threading.RLock())
+    with lock:
+        yield
+
+
+def serialize_sqlite_schedule_writer(func):
+    """Hold SQLite's per-tournament writer guard for an entire entry point."""
+    @wraps(func)
+    def serialized(*args, **kwargs):
+        tournament_or_id = args[0] if args else (
+            kwargs.get('tournament')
+            or kwargs.get('tournament_id')
+            or kwargs.get('target_tournament_id')
+        )
+        if tournament_or_id is None:
+            raise TypeError(
+                f'{func.__name__} requires a tournament or tournament_id'
+            )
+        with sqlite_schedule_writer_guard(tournament_or_id):
+            return func(*args, **kwargs)
+
+    return serialized
+
+
+def lock_tournament_schedule(tournament_or_id) -> Tournament:
+    """Acquire the canonical PostgreSQL parent lock for a schedule write."""
+    tournament_id = int(getattr(tournament_or_id, 'id', tournament_or_id))
+    return (
+        Tournament.query
+        .filter_by(id=tournament_id)
+        .order_by(Tournament.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
 
 
 def get_last_lh_flight_warnings(tournament_id: int) -> list[dict]:
@@ -113,7 +172,116 @@ EVENT_FLIGHT_CAP_SCORE_PENALTY = 500.0
 
 
 class FlightRebuildSafetyError(RuntimeError):
-    """Raised when a rebuild would rewrite published scoring history."""
+    """Raised when a schedule mutation would violate a race-day invariant."""
+
+    def __init__(self, message: str, *, reason: str = 'schedule_safety'):
+        super().__init__(message)
+        self.reason = reason
+
+
+def _is_chokerman_run2_heat(heat: Heat) -> bool:
+    """Return whether a heat is a flighted college Chokerman Run 2 closer."""
+    return (
+        heat.event is not None
+        and heat.event.event_type == 'college'
+        and heat.event.name == "Chokerman's Race"
+        and heat.run_number == 2
+    )
+
+
+def validate_chokerman_closer_invariant(
+    tournament: Tournament,
+    *,
+    flights: list[Flight] | None = None,
+    projected_order: list[Heat] | None = None,
+) -> dict:
+    """Require every flighted Chokerman Run 2 heat to close the final flight.
+
+    Routes may call this with only a tournament to validate persisted schedule
+    state. Scheduling code can pass its locked flights and projected heat order
+    so the exact same invariant validates an in-memory plan before it is flushed.
+    """
+    ordered_flights = list(flights) if flights is not None else (
+        Flight.query
+        .filter_by(tournament_id=tournament.id)
+        .order_by(Flight.flight_number, Flight.id)
+        .all()
+    )
+    ordered_flights.sort(key=lambda flight: (flight.flight_number, flight.id))
+
+    if projected_order is None:
+        flight_indexes = {
+            flight.id: index for index, flight in enumerate(ordered_flights)
+        }
+        if flight_indexes:
+            projected_order = (
+                Heat.query
+                .filter(Heat.flight_id.in_(list(flight_indexes)))
+                .all()
+            )
+            projected_order.sort(
+                key=lambda heat: (
+                    flight_indexes[heat.flight_id],
+                    heat.flight_position is None,
+                    heat.flight_position if heat.flight_position is not None else 0,
+                    heat.id,
+                )
+            )
+        else:
+            projected_order = []
+    else:
+        projected_order = list(projected_order)
+
+    closers = [heat for heat in projected_order if _is_chokerman_run2_heat(heat)]
+    if not closers:
+        return {
+            'valid': True,
+            'last_flight_id': ordered_flights[-1].id if ordered_flights else None,
+            'chokerman_run2_heat_ids': [],
+        }
+
+    last_flight_id = ordered_flights[-1].id if ordered_flights else None
+    first_closer_index = next(
+        index
+        for index, heat in enumerate(projected_order)
+        if _is_chokerman_run2_heat(heat)
+    )
+    closer_is_final_suffix = (
+        last_flight_id is not None
+        and all(heat.flight_id == last_flight_id for heat in closers)
+        and all(
+            _is_chokerman_run2_heat(heat)
+            for heat in projected_order[first_closer_index:]
+        )
+    )
+    if not closer_is_final_suffix:
+        raise FlightRebuildSafetyError(
+            "College Chokerman's Race Run 2 heats must form the final suffix "
+            'of the last flight.',
+            reason='chokerman_closer_suffix',
+        )
+
+    expected_closers = sorted(
+        closers,
+        key=lambda heat: (
+            heat.event.gender or '',
+            heat.event_id,
+            heat.heat_number,
+            heat.id,
+        ),
+    )
+    if [heat.id for heat in closers] != [heat.id for heat in expected_closers]:
+        raise FlightRebuildSafetyError(
+            "College Chokerman's Race Run 2 heats must preserve heat-number "
+            'order within the final suffix.',
+            reason='chokerman_closer_order',
+        )
+
+    return {
+        'valid': True,
+        'last_flight_id': last_flight_id,
+        'chokerman_run2_heat_ids': [heat.id for heat in closers],
+    }
 
 
 def _get_spacing(event: Event | None) -> tuple[int, int]:
@@ -122,6 +290,7 @@ def _get_spacing(event: Event | None) -> tuple[int, int]:
     return EVENT_SPACING_TIERS.get(st, (MIN_HEAT_SPACING, TARGET_HEAT_SPACING))
 
 
+@serialize_sqlite_schedule_writer
 def build_pro_flights(tournament: Tournament, num_flights: int = None, commit: bool = True) -> int:
     """
     Build flights for pro competition with event variety and competitor spacing.
@@ -146,12 +315,30 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None, commit: b
     Returns:
         Number of flights created
     """
+    lock_tournament_schedule(tournament)
+
     # A completed heat's flight and position are the published show record.
     # Reject before clearing any relationship so every caller, including async
     # and one-click paths, preserves exactly the same schedule snapshot.
-    existing_flight_ids = [
-        f.id for f in Flight.query.filter_by(tournament_id=tournament.id).with_entities(Flight.id).all()
-    ]
+    existing_flights = (
+        Flight.query
+        .filter_by(tournament_id=tournament.id)
+        .order_by(Flight.id)
+        .with_for_update()
+        .all()
+    )
+    active_flights = [flight for flight in existing_flights if flight.status != 'pending']
+    if active_flights:
+        blocked = ', '.join(
+            f'{flight.flight_number} ({flight.status})'
+            for flight in active_flights
+        )
+        raise FlightRebuildSafetyError(
+            'Cannot rebuild flights after a flight starts; blocked flight(s): '
+            f'{blocked}.'
+        )
+
+    existing_flight_ids = [flight.id for flight in existing_flights]
     if existing_flight_ids:
         completed_heat_count = Heat.query.filter(
             Heat.flight_id.in_(existing_flight_ids),
@@ -159,8 +346,17 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None, commit: b
         ).count()
         if completed_heat_count:
             raise FlightRebuildSafetyError(
-                'Cannot rebuild flights after scoring begins because completed '
+                'Flights cannot be rebuilt after scoring begins because completed '
                 'heat placements are historical records.'
+            )
+        active_heat_count = Heat.query.filter(
+            Heat.flight_id.in_(existing_flight_ids),
+            Heat.status == 'in_progress',
+        ).count()
+        if active_heat_count:
+            raise FlightRebuildSafetyError(
+                'Cannot rebuild flights while a heat is in progress because '
+                'its published placement is active race-day state.'
             )
 
     # Clear existing flights (null out Heat.flight_id first to satisfy FK constraints)
@@ -276,7 +472,7 @@ def build_pro_flights(tournament: Tournament, num_flights: int = None, commit: b
             )
             target_flights = clamped
     else:
-        heats_per_flight = 8
+        heats_per_flight = DEFAULT_HEATS_PER_FLIGHT
         target_flights = math.ceil(total_non_axe / heats_per_flight) if total_non_axe else 0
 
     # Pre-compute gear-sharing conflict pairs for adjacency penalty.
@@ -1283,6 +1479,7 @@ def build_flight_audit_report(tournament: Tournament) -> dict:
     }
 
 
+@serialize_sqlite_schedule_writer
 def integrate_college_spillover_into_flights(
     tournament: Tournament,
     college_event_ids: list[int] | None = None,
@@ -1315,14 +1512,19 @@ def integrate_college_spillover_into_flights(
             tournament.schedule_config['saturday_college_placement_mode'] so
             existing callers pick up the operator's UI choice automatically.
             - PLACEMENT_MODE_ROUNDROBIN ('roundrobin'): cycle through flights in
-              flight_number order, respecting MIN_HEAT_SPACING for any
-              competitor who also runs a pro event. Preserves pre-phase-2
-              behaviour for Obstacle Pole etc.
-            - PLACEMENT_MODE_CLUSTER ('cluster'): greedy-fill the first flight
-              with remaining capacity under the target heats_per_flight, then
-              spill to the next. Used when operators want Speed Climb to
-              cluster at the start of Saturday rather than distribute.
+              flight_number order.
+            - PLACEMENT_MODE_CLUSTER ('cluster'): prefer the earliest flight.
+            Both modes evaluate the projected global show order. Competitor
+            spacing is ranked first, then placements that add no new physical
+            stand-conflict identity, then the mode preference as a deterministic
+            fallback.
+
+    Returns:
+        Integration counts plus ignored_non_college_event_ids and any
+        unavoidable_stand_conflicts introduced by the selected placements.
     """
+    lock_tournament_schedule(tournament)
+
     if placement_mode is None:
         try:
             cfg = tournament.get_schedule_config() or {}
@@ -1336,7 +1538,18 @@ def integrate_college_spillover_into_flights(
         )
         placement_mode = PLACEMENT_MODE_ROUNDROBIN
 
-    selected_ids = set(int(v) for v in (college_event_ids or []))
+    requested_ids = set(int(v) for v in (college_event_ids or []))
+    resolved_requested = (
+        tournament.events.filter(Event.id.in_(requested_ids)).all()
+        if requested_ids else []
+    )
+    ignored_non_college_event_ids = sorted(
+        event.id for event in resolved_requested if event.event_type != 'college'
+    )
+    selected_events = [
+        event for event in resolved_requested
+        if event.event_type == 'college'
+    ]
 
     # Auto-add every DAY_SPLIT_EVENT_NAMES event (Chokerman + Speed Climb M/F).
     # Operators never have to tick these on the UI — Run 2 is non-negotiable
@@ -1345,58 +1558,295 @@ def integrate_college_spillover_into_flights(
         Event.event_type == 'college',
         Event.name.in_(list(DAY_SPLIT_EVENT_NAMES)),
     ).all()
-    for ev in mandatory_events:
-        selected_ids.add(ev.id)
+    events_by_id = {event.id: event for event in selected_events}
+    events_by_id.update((event.id, event) for event in mandatory_events)
+    events = list(events_by_id.values())
 
-    flights = Flight.query.filter_by(tournament_id=tournament.id).order_by(Flight.flight_number).all()
+    def _result(message, **values):
+        result = {
+            'integrated_heats': 0,
+            'skipped_completed': 0,
+            'events': 0,
+            'ignored_non_college_event_ids': ignored_non_college_event_ids,
+            'unavoidable_stand_conflicts': [],
+            'message': message,
+        }
+        result.update(values)
+        return result
+
+    flights = (
+        Flight.query
+        .filter_by(tournament_id=tournament.id)
+        .order_by(Flight.id)
+        .with_for_update()
+        .all()
+    )
+    flights.sort(key=lambda flight: (flight.flight_number, flight.id))
     if not flights:
-        return {'integrated_heats': 0, 'events': 0, 'message': 'No flights available.'}
+        return _result('No flights available.')
 
-    events = tournament.events.filter(Event.id.in_(selected_ids)).all() if selected_ids else []
-    if not events:
-        return {'integrated_heats': 0, 'events': 0, 'message': 'No selected spillover events.'}
+    for previous_flight, flight in zip(flights, flights[1:]):
+        if previous_flight.flight_number == flight.flight_number:
+            raise ValueError(
+                f'Tournament {tournament.id} has duplicate flight_number '
+                f'{flight.flight_number} on flights {previous_flight.id} and '
+                f'{flight.id}.'
+            )
 
     last_flight = flights[-1]
     integrated = 0
     skipped_completed = 0
     per_event = 0
     flight_idx = 0
+    flight_list_indexes = {flight.id: index for index, flight in enumerate(flights)}
+    flight_heats = {flight.id: [] for flight in flights}
+    batched_flight_heats = (
+        Heat.query
+        .filter(Heat.flight_id.in_(list(flight_list_indexes)))
+        .all()
+    )
+    batched_flight_heats.sort(
+        key=lambda heat: (
+            flight_list_indexes[heat.flight_id],
+            heat.flight_position is None,
+            heat.flight_position if heat.flight_position is not None else 0,
+            heat.id,
+        )
+    )
+    for heat in batched_flight_heats:
+        flight_heats[heat.flight_id].append(heat)
 
-    # Build a map of competitor_id -> approximate global heat position from pro heats already
-    # placed in flights. Used to enforce MIN_HEAT_SPACING for competitors who appear in both
-    # pro heats and college overflow heats.
-    competitor_last_position: dict[int, int] = {}
-    global_position = 0
     for flight in flights:
-        for heat in Heat.query.filter_by(flight_id=flight.id).order_by(Heat.flight_position).all():
-            for comp_id in heat.get_competitors():
-                competitor_last_position[int(comp_id)] = global_position
-            global_position += 1
+        seen_positions = {}
+        for heat in flight_heats[flight.id]:
+            position = heat.flight_position
+            if position is None:
+                raise ValueError(
+                    f'Flight {flight.flight_number} heat {heat.id} has missing '
+                    'flight_position.'
+                )
+            if position <= 0:
+                raise ValueError(
+                    f'Flight {flight.flight_number} heat {heat.id} has '
+                    f'non-positive flight_position {position}.'
+                )
+            if position in seen_positions:
+                raise ValueError(
+                    f'Flight {flight.flight_number} has duplicate '
+                    f'flight_position {position} for heats '
+                    f'{seen_positions[position]} and {heat.id}.'
+                )
+            seen_positions[position] = heat.id
 
-    # Cluster-mode needs a per-flight capacity target. Derive it from the current
-    # flight fill level so the cap reflects whatever heats_per_flight the flight
-    # build used (Phase 1 / Phase 3 compatible).
-    per_flight_counts: dict[int, int] = {}
-    for flight in flights:
-        per_flight_counts[flight.id] = Heat.query.filter_by(flight_id=flight.id).count()
-    target_heats_per_flight = max(per_flight_counts.values()) if per_flight_counts else 0
+    if not events:
+        message = 'No selected spillover events.'
+        if ignored_non_college_event_ids:
+            message += (
+                f' Ignored {len(ignored_non_college_event_ids)} selected '
+                'non-college event ID(s).'
+            )
+        return _result(message)
 
-    # Process Chokerman's Race LAST so it lands at the very end of the last flight
-    # (after any Speed Climb Run 2 heats that may have been placed there by the
-    # fallback paths). This preserves the FlightLogic.md §4.1 climax rule.
-    def _event_order_key(ev):
-        chokerman_last = 1 if ev.name == "Chokerman's Race" else 0
-        return (chokerman_last, ev.name, ev.gender or '')
+    def _candidate_insert_index(candidate_flight, candidate_heat):
+        placed_heats = flight_heats[candidate_flight.id]
+        if (
+            candidate_flight is not last_flight
+            or _is_chokerman_run2_heat(candidate_heat)
+        ):
+            return len(placed_heats)
+        insert_at = len(placed_heats)
+        while (
+            insert_at > 0
+            and _is_chokerman_run2_heat(placed_heats[insert_at - 1])
+            and placed_heats[insert_at - 1].status == 'pending'
+        ):
+            insert_at -= 1
+        return insert_at
 
+    def _projected_order(candidate_flight=None, candidate_heat=None):
+        ordered = []
+        for flight in flights:
+            placed_heats = flight_heats[flight.id]
+            if candidate_flight is flight and candidate_heat is not None:
+                insert_at = _candidate_insert_index(flight, candidate_heat)
+                ordered.extend(placed_heats[:insert_at])
+                ordered.append(candidate_heat)
+                ordered.extend(placed_heats[insert_at:])
+            else:
+                ordered.extend(placed_heats)
+        return ordered
+
+    validate_chokerman_closer_invariant(
+        tournament,
+        flights=flights,
+        projected_order=_projected_order(),
+    )
+
+    def _conflict_identity(conflict):
+        return tuple(conflict['heat_ids'])
+
+    def _spacing_cost(projected_order, candidate_heat):
+        candidate_position = next(
+            index for index, placed_heat in enumerate(projected_order)
+            if placed_heat is candidate_heat
+        )
+        violation_count = 0
+        total_shortfall = 0
+        candidate_uids = {assignment.uid for assignment in candidate_heat.assignments}
+        for competitor_uid in candidate_uids:
+            other_positions = [
+                index for index, placed_heat in enumerate(projected_order)
+                if placed_heat is not candidate_heat
+                and competitor_uid in {
+                    assignment.uid for assignment in placed_heat.assignments
+                }
+            ]
+            previous = [position for position in other_positions if position < candidate_position]
+            following = [position for position in other_positions if position > candidate_position]
+            neighboring_positions = []
+            if previous:
+                neighboring_positions.append(max(previous))
+            if following:
+                neighboring_positions.append(min(following))
+            for other_position in neighboring_positions:
+                gap = abs(candidate_position - other_position)
+                if gap < MIN_HEAT_SPACING:
+                    violation_count += 1
+                    total_shortfall += MIN_HEAT_SPACING - gap
+        return violation_count, total_shortfall
+
+    def _event_order_key(event):
+        chokerman_last = 1 if event.name == "Chokerman's Race" else 0
+        return (chokerman_last, event.name, event.gender or '')
+
+    event_heat_groups = []
     for event in sorted(events, key=_event_order_key):
         if event.name in DAY_SPLIT_EVENT_NAMES:
-            # Run 2 only — Run 1 stays on Friday's college schedule.
             heats = event.heats.filter_by(run_number=2).order_by(Heat.heat_number).all()
+            if not heats:
+                raise FlightRebuildSafetyError(
+                    f'Mandatory Saturday event {event.display_name} has no '
+                    'Run 2 heats. Generate both runs before building flights.'
+                )
         else:
             heats = event.heats.order_by(Heat.run_number, Heat.heat_number).all()
+        if heats:
+            event_heat_groups.append((event, heats))
 
-        if not heats:
-            continue
+    unplaced_heats = [
+        heat
+        for event, heats in event_heat_groups
+        for heat in heats
+        if heat.status != 'completed' and heat.flight_id is None
+    ]
+    nonpending_flights = [flight for flight in flights if flight.status != 'pending']
+    if unplaced_heats and nonpending_flights:
+        blocked = ', '.join(
+            f'{flight.flight_number} ({flight.status})'
+            for flight in nonpending_flights
+        )
+        raise FlightRebuildSafetyError(
+            'Cannot integrate new spillover because all candidate flights must '
+            f'be pending; blocked flight(s): {blocked}.'
+        )
+    nonpending_flight_heats = [
+        heat for heat in batched_flight_heats if heat.status != 'pending'
+    ]
+    if unplaced_heats and nonpending_flight_heats:
+        statuses = ', '.join(
+            f'{heat.id} ({heat.status})' for heat in nonpending_flight_heats
+        )
+        raise FlightRebuildSafetyError(
+            'Cannot integrate new spillover because all flighted heats must be '
+            f'pending; blocked heat(s): {statuses}.'
+        )
+    initial_order = _projected_order()
+    initial_conflict_ids = {
+        _conflict_identity(conflict) for conflict in find_stand_conflicts(initial_order)
+    }
+
+    def _choose_flight(heat):
+        nonlocal flight_idx
+
+        if placement_mode == PLACEMENT_MODE_CLUSTER:
+            preferred_flights = [
+                flight for flight in flights
+                if len(flight_heats[flight.id]) < DEFAULT_HEATS_PER_FLIGHT
+            ]
+            if not preferred_flights:
+                minimum_size = min(len(flight_heats[flight.id]) for flight in flights)
+                preferred_flights = [
+                    flight for flight in flights
+                    if len(flight_heats[flight.id]) == minimum_size
+                ]
+        else:
+            preferred_flights = [
+                flights[(flight_idx + offset) % len(flights)]
+                for offset in range(len(flights))
+            ]
+
+        current_conflict_ids = {
+            _conflict_identity(conflict)
+            for conflict in find_stand_conflicts(_projected_order())
+        }
+        candidates = []
+        for preference, candidate_flight in enumerate(preferred_flights):
+            projected_order = _projected_order(candidate_flight, heat)
+            spacing_count, spacing_shortfall = _spacing_cost(projected_order, heat)
+            projected_conflicts = find_stand_conflicts(projected_order)
+            new_conflicts = [
+                conflict for conflict in projected_conflicts
+                if _conflict_identity(conflict) not in current_conflict_ids
+            ]
+            stand_conflict_shortfall = sum(
+                _STAND_CONFLICT_GAP - conflict['gap']
+                for conflict in new_conflicts
+            )
+            rank = (
+                spacing_count > 0,
+                spacing_count,
+                spacing_shortfall,
+                len(new_conflicts) > 0,
+                len(new_conflicts),
+                stand_conflict_shortfall,
+                preference,
+            )
+            candidates.append((rank, candidate_flight))
+
+        target = min(candidates, key=lambda item: item[0])[1]
+        if placement_mode == PLACEMENT_MODE_ROUNDROBIN:
+            flight_idx = (flight_list_indexes[target.id] + 1) % len(flights)
+        return target
+
+    def _append_to_flight(heat, target):
+        placed_heats = flight_heats[target.id]
+        insert_at = _candidate_insert_index(target, heat)
+        if insert_at < len(placed_heats):
+            tail = placed_heats[insert_at:]
+            tail_positions = [tail_heat.flight_position for tail_heat in tail]
+
+            # Vacate the suffix before shifting it. The database enforces
+            # unique (flight_id, flight_position), so an in-place 2 -> 3
+            # update can collide with the row still occupying position 3.
+            # NULL is a transaction-local staging value on both supported
+            # engines and the preflight validation above guarantees these
+            # positions were present, positive, and unique before mutation.
+            for tail_heat in tail:
+                tail_heat.flight_position = None
+            db.session.flush()
+
+            heat.flight_id = target.id
+            heat.flight_position = tail_positions[0]
+            for tail_heat, old_position in zip(tail, tail_positions):
+                tail_heat.flight_position = old_position + 1
+            placed_heats.insert(insert_at, heat)
+        else:
+            positions = [placed.flight_position for placed in placed_heats]
+            heat.flight_id = target.id
+            heat.flight_position = max(positions, default=0) + 1
+            placed_heats.append(heat)
+
+    for event, heats in event_heat_groups:
         per_event += 1
         for heat in heats:
             if heat.status == 'completed':
@@ -1407,82 +1857,49 @@ def integrate_college_spillover_into_flights(
                 continue
             if event.name == "Chokerman's Race":
                 # Always place at end of last flight (show climax — sealed position).
-                heat.flight_id = last_flight.id
-                heat.flight_position = _next_flight_position(last_flight.id)
-                per_flight_counts[last_flight.id] = per_flight_counts.get(last_flight.id, 0) + 1
-                global_position += 1
-            elif placement_mode == PLACEMENT_MODE_CLUSTER:
-                # Cluster-at-front: pick the flight with the fewest heats
-                # placed so far, tie-breaking to the lowest flight_number.
-                # This makes spillover fill flight 1 first (respecting the
-                # pro-built balance), then flight 2, then flight 3, rather
-                # than distributing round-robin across all flights.
-                heat_comp_ids = [int(c) for c in heat.get_competitors()]
-                target = min(
-                    flights,
-                    key=lambda f: (per_flight_counts.get(f.id, 0), f.flight_number),
-                )
-                heat.flight_id = target.id
-                heat.flight_position = _next_flight_position(target.id)
-                per_flight_counts[target.id] = per_flight_counts.get(target.id, 0) + 1
-                for cid in heat_comp_ids:
-                    competitor_last_position[cid] = global_position
-                global_position += 1
+                _append_to_flight(heat, last_flight)
             else:
-                # PLACEMENT_MODE_ROUNDROBIN — existing behaviour, unchanged.
-                # Try flights in round-robin order, respecting MIN_HEAT_SPACING for
-                # any competitor who also appears in pro heats.
-                heat_comp_ids = [int(c) for c in heat.get_competitors()]
-                placed = False
-                for attempt in range(len(flights)):
-                    candidate = flights[(flight_idx + attempt) % len(flights)]
-                    candidate_pos = global_position
-                    spacing_ok = all(
-                        (candidate_pos - competitor_last_position[cid]) >= MIN_HEAT_SPACING
-                        for cid in heat_comp_ids
-                        if cid in competitor_last_position
-                    )
-                    if spacing_ok:
-                        heat.flight_id = candidate.id
-                        heat.flight_position = _next_flight_position(candidate.id)
-                        per_flight_counts[candidate.id] = per_flight_counts.get(candidate.id, 0) + 1
-                        for cid in heat_comp_ids:
-                            competitor_last_position[cid] = candidate_pos
-                        flight_idx = (flight_idx + attempt + 1) % len(flights)
-                        placed = True
-                        break
-
-                if not placed:
-                    # Fallback: place in original target regardless of spacing.
-                    target = flights[flight_idx % len(flights)]
-                    heat.flight_id = target.id
-                    heat.flight_position = _next_flight_position(target.id)
-                    per_flight_counts[target.id] = per_flight_counts.get(target.id, 0) + 1
-                    for cid in heat_comp_ids:
-                        competitor_last_position[cid] = global_position
-                    flight_idx = (flight_idx + 1) % len(flights)
-
-                global_position += 1
+                _append_to_flight(heat, _choose_flight(heat))
             integrated += 1
 
+    validate_chokerman_closer_invariant(
+        tournament,
+        flights=flights,
+        projected_order=_projected_order(),
+    )
     db.session.flush()
+    unavoidable_stand_conflicts = [
+        conflict for conflict in find_stand_conflicts(_projected_order())
+        if _conflict_identity(conflict) not in initial_conflict_ids
+    ]
     if commit:
         db.session.commit()
     message = 'College spillover heats integrated into flights.'
     if skipped_completed:
         message += f' {skipped_completed} completed heat(s) left unchanged.'
-    return {
-        'integrated_heats': integrated,
-        'skipped_completed': skipped_completed,
-        'events': per_event,
-        'message': message,
-    }
+    if ignored_non_college_event_ids:
+        message += (
+            f' Ignored {len(ignored_non_college_event_ids)} selected '
+            'non-college event ID(s).'
+        )
+    if unavoidable_stand_conflicts:
+        message += (
+            f' {len(unavoidable_stand_conflicts)} unavoidable stand conflict(s) '
+            'introduced.'
+        )
+    return _result(
+        message,
+        integrated_heats=integrated,
+        skipped_completed=skipped_completed,
+        events=per_event,
+        unavoidable_stand_conflicts=unavoidable_stand_conflicts,
+    )
 
 
+@serialize_sqlite_schedule_writer
 def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool = True) -> dict:
     """
-    Place a single pseudo-Heat representing Pro-Am Relay at the end of the
-    final flight.
+    Place a single pseudo-Heat representing Pro-Am Relay in the final flight.
 
     Phase 4 of the flight-fixes plan. Pro-Am Relay has no snake-draft heats —
     state lives in Event.event_state / Event.payouts as a JSON blob managed
@@ -1490,9 +1907,10 @@ def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool
     Heat row so heat-sheet rendering can show a "PRO-AM RELAY" card in the
     final flight without inventing new rendering plumbing.
 
-    Ordering: chain BEFORE integrate_college_spillover_into_flights so the
-    Chokerman Run 2 closer lands AFTER the relay block — preserving
-    FlightLogic.md §4.1 (Chokerman as show climax).
+    Ordering: the relay is inserted immediately before an existing college
+    Chokerman Run 2 suffix. This keeps reruns safe regardless of whether relay
+    placement or college spillover runs first while preserving Chokerman as
+    the show climax.
 
     Idempotent: wipes any existing Heat rows for the relay event before
     inserting a fresh pseudo-heat, so repeated calls don't duplicate.
@@ -1528,9 +1946,20 @@ def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool
     if status not in ('drawn', 'in_progress', 'completed') or not teams:
         return {'placed': False, 'reason': 'not_drawn', 'team_count': 0}
 
-    # Idempotency: wipe any existing relay Heat rows + their HeatAssignments
-    # so repeated rebuilds don't duplicate the pseudo-heat.
-    existing_heats = Heat.query.filter_by(event_id=relay_event.id).order_by(Heat.id).all()
+    # Lock the stable parent before any flight or heat row. PostgreSQL keeps
+    # this lock through the caller's outer transaction when commit=False.
+    lock_tournament_schedule(tournament)
+    flights = (
+        Flight.query
+        .filter_by(tournament_id=tournament.id)
+        .order_by(Flight.id)
+        .with_for_update()
+        .all()
+    )
+    flights.sort(key=lambda flight: (flight.flight_number, flight.id))
+    existing_heats = (
+        Heat.query.filter_by(event_id=relay_event.id).order_by(Heat.id).all()
+    )
     completed_heat = next((heat for heat in existing_heats if heat.status == 'completed'), None)
     if completed_heat is not None:
         # The pseudo-heat is still a heat-sheet record. Re-integrating
@@ -1543,6 +1972,58 @@ def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool
             'preserved_history': True,
         }
 
+    if not flights:
+        return {'placed': False, 'reason': 'no_flights', 'team_count': len(teams)}
+
+    flight_indexes = {
+        flight.id: index for index, flight in enumerate(flights)
+    }
+    flighted_heats = Heat.query.filter(
+        Heat.flight_id.in_(list(flight_indexes))
+    ).all()
+    flighted_heats.sort(
+        key=lambda heat: (
+            flight_indexes[heat.flight_id],
+            heat.flight_position is None,
+            heat.flight_position if heat.flight_position is not None else 0,
+            heat.id,
+        )
+    )
+
+    nonpending_flights = [flight for flight in flights if flight.status != 'pending']
+    if nonpending_flights:
+        blocked = ', '.join(
+            f'{flight.flight_number} ({flight.status})'
+            for flight in nonpending_flights
+        )
+        raise FlightRebuildSafetyError(
+            'Cannot integrate Pro-Am Relay because all flights must be pending; '
+            f'blocked flight(s): {blocked}.'
+        )
+
+    nonpending_heats = [heat for heat in flighted_heats if heat.status != 'pending']
+    if nonpending_heats:
+        blocked = ', '.join(
+            f'{heat.id} ({heat.status})' for heat in nonpending_heats
+        )
+        raise FlightRebuildSafetyError(
+            'Cannot integrate Pro-Am Relay because all flighted heats must be '
+            f'pending; blocked heat(s): {blocked}.'
+        )
+
+    # Ignore existing relay rows while validating the underlying show order.
+    # This permits a pending relay left after Chokerman by an older build to be
+    # repaired, but still rejects any non-relay heat that breaks the closer.
+    projected_without_relay = [
+        heat for heat in flighted_heats if heat.event_id != relay_event.id
+    ]
+    validate_chokerman_closer_invariant(
+        tournament,
+        flights=flights,
+        projected_order=projected_without_relay,
+    )
+
+    # Idempotency: wipe any existing pending relay Heat rows and assignments.
     existing_heat_ids = [heat.id for heat in existing_heats]
     if existing_heat_ids:
         HeatAssignment.query.filter(
@@ -1553,19 +2034,32 @@ def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool
         )
         db.session.flush()
 
-    flights = Flight.query.filter_by(tournament_id=tournament.id).order_by(
-        Flight.flight_number,
-    ).all()
-    if not flights:
-        return {'placed': False, 'reason': 'no_flights', 'team_count': len(teams)}
     last_flight = flights[-1]
+    final_flight_heats = [
+        heat for heat in projected_without_relay
+        if heat.flight_id == last_flight.id
+    ]
+    insert_index = next(
+        (
+            index for index, existing_heat in enumerate(final_flight_heats)
+            if _is_chokerman_run2_heat(existing_heat)
+        ),
+        len(final_flight_heats),
+    )
+
+    # Clear occupied slots before shifting the suffix. The database enforces
+    # unique (flight_id, flight_position), so an in-place 3 -> 4 update can
+    # collide with the row still occupying position 4. NULL is intentionally
+    # allowed as a transaction-local staging value on both supported engines.
+    for placed_heat in final_flight_heats:
+        placed_heat.flight_position = None
+    db.session.flush()
 
     heat = Heat(
         event_id=relay_event.id,
         heat_number=1,
         run_number=1,
         flight_id=last_flight.id,
-        flight_position=_next_flight_position(last_flight.id),
         status='pending',
     )
     # An empty roster, written the same way every other roster in this module
@@ -1574,6 +2068,22 @@ def integrate_proam_relay_into_final_flight(tournament: Tournament, commit: bool
     # guessing would be worse than reading it off the event.
     heat.set_roster(relay_event.event_type, [], {})
     db.session.add(heat)
+
+    resequenced_final_flight = list(final_flight_heats)
+    resequenced_final_flight.insert(insert_index, heat)
+    for position, placed_heat in enumerate(resequenced_final_flight, start=1):
+        placed_heat.flight_position = position
+
+    projected_order = [
+        placed_heat for placed_heat in projected_without_relay
+        if placed_heat.flight_id != last_flight.id
+    ]
+    projected_order.extend(resequenced_final_flight)
+    validate_chokerman_closer_invariant(
+        tournament,
+        flights=flights,
+        projected_order=projected_order,
+    )
 
     if commit:
         db.session.commit()

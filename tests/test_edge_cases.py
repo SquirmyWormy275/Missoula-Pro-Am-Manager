@@ -507,7 +507,7 @@ def test_score_value_boundaries_and_status_values(qa_env):
 
 
 def test_delete_scored_competitor_and_regenerate_scored_event(qa_env):
-    """Deleting a scored competitor should not orphan rows, and scored events stay immutable."""
+    """Scored competitor deletion and scored event regeneration are immutable."""
     app = qa_env["app"]
     client = qa_env["client"]
 
@@ -524,8 +524,8 @@ def test_delete_scored_competitor_and_regenerate_scored_event(qa_env):
         from models import EventResult
         from models.competitor import CollegeCompetitor
 
-        assert db.session.get(CollegeCompetitor, competitor_id) is None
-        assert db.session.get(EventResult, result_id) is None
+        assert db.session.get(CollegeCompetitor, competitor_id) is not None
+        assert db.session.get(EventResult, result_id) is not None
 
     tournament_id, event_id = _seed_boundary_event(app, competitor_count=3, max_stands=2)
     client.post(
@@ -558,6 +558,81 @@ def test_delete_scored_competitor_and_regenerate_scored_event(qa_env):
 
         heat_count_after = Heat.query.filter_by(event_id=event_id).count()
         assert heat_count_after == heat_count_before
+
+
+def test_delete_competitor_preserves_scratched_result_history(qa_env):
+    app = qa_env["app"]
+    client = qa_env["client"]
+    tournament_id, _, competitor_id, event_id, result_id = _seed_college_scored_competitor(app)
+
+    with app.app_context():
+        from database import db
+        from models import Event, EventResult
+
+        event = db.session.get(Event, event_id)
+        event.status = "pending"
+        event.is_finalized = False
+        result = db.session.get(EventResult, result_id)
+        result.status = "scratched"
+        result.result_value = None
+        result.run1_value = None
+        result.final_position = None
+        db.session.commit()
+
+    response = client.post(
+        f"/registration/{tournament_id}/college/competitor/{competitor_id}/delete",
+        data={},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        from database import db
+        from models import EventResult
+        from models.competitor import CollegeCompetitor
+
+        assert db.session.get(CollegeCompetitor, competitor_id) is not None
+        assert db.session.get(EventResult, result_id) is not None
+
+
+def test_active_flight_blocks_college_competitor_deletion(qa_env):
+    app = qa_env["app"]
+    client = qa_env["client"]
+    tournament_id, _, competitor_id, event_id, result_id = _seed_college_scored_competitor(app)
+
+    with app.app_context():
+        from database import db
+        from models import Event, EventResult, Flight
+
+        event = db.session.get(Event, event_id)
+        event.status = "pending"
+        event.is_finalized = False
+        result = db.session.get(EventResult, result_id)
+        result.status = "pending"
+        result.result_value = None
+        result.run1_value = None
+        result.final_position = None
+        db.session.add(Flight(
+            tournament_id=tournament_id,
+            flight_number=1,
+            status="in_progress",
+        ))
+        db.session.commit()
+
+    response = client.post(
+        f"/registration/{tournament_id}/college/competitor/{competitor_id}/delete",
+        data={},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        from database import db
+        from models import EventResult
+        from models.competitor import CollegeCompetitor
+
+        assert db.session.get(CollegeCompetitor, competitor_id) is not None
+        assert db.session.get(EventResult, result_id) is not None
 
 
 def test_pro_scratch_removes_competitor_from_generated_heat(qa_env):

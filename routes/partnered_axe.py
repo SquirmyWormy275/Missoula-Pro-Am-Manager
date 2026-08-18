@@ -1,6 +1,8 @@
 """
 Routes for Partnered Axe Throw prelims/finals management.
 """
+from functools import wraps
+
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -8,6 +10,10 @@ from database import db
 from models import Tournament
 from models.competitor import ProCompetitor
 from services.cache_invalidation import invalidate_tournament_caches
+from services.flight_builder import (
+    lock_tournament_schedule,
+    serialize_sqlite_schedule_writer,
+)
 from services.partnered_axe import (
     find_partnered_axe_throw,
     get_or_create_partnered_axe_throw,
@@ -22,6 +28,16 @@ _STALE_DATA_FLASH = (
 )
 
 bp = Blueprint('partnered_axe', __name__, url_prefix='/tournament/<int:tournament_id>/partnered-axe')
+
+
+def _partnered_axe_writer(func):
+    @wraps(func)
+    def locked(tournament_id, *args, **kwargs):
+        tournament = db.get_or_404(Tournament, tournament_id)
+        lock_tournament_schedule(tournament)
+        return func(tournament_id, *args, **kwargs)
+
+    return serialize_sqlite_schedule_writer(locked)
 
 
 def _eligible_pros(tournament_id: int, event_id: int, exclude_ids=None) -> list:
@@ -88,6 +104,7 @@ def dashboard(tournament_id):
 
 
 @bp.route('/enable', methods=['POST'])
+@_partnered_axe_writer
 def enable(tournament_id):
     """Explicit POST to create the Partnered Axe Throw event row."""
     db.get_or_404(Tournament, tournament_id)
@@ -98,6 +115,7 @@ def enable(tournament_id):
 
 
 @bp.route('/register-pair', methods=['POST'])
+@_partnered_axe_writer
 def register_pair(tournament_id):
     """Register a new pair."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -146,6 +164,7 @@ def prelims(tournament_id):
 
 
 @bp.route('/prelims/record', methods=['POST'])
+@_partnered_axe_writer
 def record_prelim(tournament_id):
     """Record a prelim result."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -183,6 +202,7 @@ def record_prelim(tournament_id):
 
 
 @bp.route('/advance-to-finals', methods=['POST'])
+@_partnered_axe_writer
 def advance_to_finals(tournament_id):
     """Advance top 4 to finals."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -219,6 +239,7 @@ def finals(tournament_id):
 
 
 @bp.route('/finals/record', methods=['POST'])
+@_partnered_axe_writer
 def record_final(tournament_id):
     """Record a final result."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -272,6 +293,7 @@ def results(tournament_id):
 
 
 @bp.route('/reset', methods=['POST'])
+@_partnered_axe_writer
 def reset(tournament_id):
     """Reset the event."""
     tournament = db.get_or_404(Tournament, tournament_id)
