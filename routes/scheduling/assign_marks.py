@@ -5,39 +5,39 @@ Provides a judge-facing page to assign STRATHMARK handicap start marks for any
 handicap-format event.  Three input paths are supported, dispatched via the
 ``action`` form field on POST:
 
-    action=strathmark    Run the live STRATHMARK HandicapCalculator (requires
-                         the strathmark package + a reachable Ollama endpoint).
+    action=strathmark    Run the deterministic STRATHMARK HandicapCalculator
+                         (requires the package and configured evidence access;
+                         no LLM provider participates in the numeric result).
     action=manual_save   Read per-row mark inputs from the table and write them
                          directly to EventResult.handicap_factor.  No external
-                         dependencies — works offline / on Railway where Ollama
-                         is unreachable.
+                         dependencies — works when STRATHMARK is unavailable.
     action=csv_import    Parse a pasted CSV/TSV block of "name,mark_seconds"
                          lines and apply by competitor name match.  Same offline
                          guarantee as manual_save.
 
-The two manual paths exist as race-day fallbacks: judges can pre-compute marks
-on a laptop where Ollama runs and either type or paste them in.
+The two manual paths exist as race-day fallbacks: judges can review marks
+pre-computed by the deterministic engine on an authorized workstation and
+either type or paste them in.
 
 URL:
     GET  /scheduling/<tid>/events/<eid>/assign-marks   — status page
     POST /scheduling/<tid>/events/<eid>/assign-marks   — assign (action-dispatched):
 
-        action=strathmark    Run the live STRATHMARK HandicapCalculator (legacy
-                             default; requires the strathmark package + a
-                             reachable Supabase backend).
+        action=strathmark    Run the deterministic STRATHMARK
+                             HandicapCalculator (legacy default; requires the
+                             package and configured evidence access).
         action=manual_save   Read per-row mark inputs from the inline edit
                              table and write them directly to
                              EventResult.handicap_factor.  No external
-                             dependencies — works offline / on Railway where
-                             Ollama is unreachable.
+                             dependencies — works when STRATHMARK is
+                             unavailable.
         action=upload_csv    Parse a pre-computed marks CSV file upload and
                              render a preview table for judge review.
         action=confirm_csv   Write the previewed CSV marks to EventResult.
 
 The two manual paths (manual_save + CSV) exist as race-day fallbacks: judges
-can pre-compute marks on a laptop where Ollama runs and either type them in
-or paste them via CSV upload, then save to a deployed Pro-Am Manager that
-has no Ollama access.
+can review marks pre-computed by the deterministic engine on an authorized
+workstation, then type them in or paste them via CSV upload.
 """
 from flask import flash, redirect, render_template, request, url_for
 

@@ -211,6 +211,11 @@ forbidden. Missoula owns official scoring. STRATHMARK receives only stable
 pseudonymous identities and eligible numeric settlement/void evidence through
 the separately authenticated shadow contract.
 
+Authoritative handicap numbers are deterministic. No LLM provider participates
+in numeric prediction, mark optimization, shadow receipt authority, or official
+scoring. Newer language models may assist engineering or optional reviewed
+narrative work, but they must remain outside these race-day authority paths.
+
 ## Production Parity
 
 Local SQLite success does not prove Railway/PostgreSQL behavior. Local Python

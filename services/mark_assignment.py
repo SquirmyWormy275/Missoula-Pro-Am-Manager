@@ -519,27 +519,24 @@ def _get_handicap_calculator(
     The STRATHMARK package is optional — if not installed or misconfigured,
     this returns None gracefully.
 
-    HandicapCalculator.__init__ accepts:
-      event_ceiling (Optional[int]), ollama_url (str),
-      wood_df (Optional[DataFrame]), results_df (Optional[DataFrame])
+    HandicapCalculator.__init__ accepts the numeric inputs used here:
+      event_ceiling (Optional[int]), wood_df (Optional[DataFrame]),
+      results_df (Optional[DataFrame])
 
     We always pass wood_df (inlined from `services/strathmark_wood_data`)
     so species hardness lookups work.  We pass results_df when available
     so the predictor cascade has cross-competitor data for baseline
     shrinkage, species affinity, and (if the [ml] extra is installed)
-    ML training.
+    ML training. No LLM provider configuration participates in this numeric
+    calculation boundary.
     """
     try:
-        import os
-
         from strathmark.calculator import HandicapCalculator  # type: ignore[import]
 
         from services.strathmark_wood_data import get_wood_dataframe
         wood_df = get_wood_dataframe()
 
-        ollama_url = os.environ.get('STRATHMARK_OLLAMA_URL', 'http://localhost:11434')
         kwargs: dict = {
-            'ollama_url': ollama_url,
             'wood_df': wood_df,
         }
         if event_ceiling is not None:
@@ -614,15 +611,15 @@ def _build_wood_profile(event: Event):
 # ---------------------------------------------------------------------------
 #
 # Workflow this enables:
-#   1. Judge runs STRATHMARK locally on a laptop with full Ollama + Gemini
-#      access — picks up the most accurate marks the cascade can produce.
+#   1. Judge runs the deterministic STRATHMARK numeric engine on an authorized
+#      workstation with the required evidence snapshot.
 #   2. Judge exports a CSV (competitor_name,proposed_mark) and uploads it
 #      to the deployed Pro-Am Manager on Railway.
 #   3. Route renders a preview table; judge can override individual marks;
 #      confirm writes them to EventResult.handicap_factor.
 #
-# This is the race-day safety net for when Railway can't reach Ollama AND
-# Gemini is unset / quota'd / blocked.
+# This is the race-day safety net when deployed STRATHMARK evidence access is
+# unavailable. It does not introduce an LLM dependency.
 
 # Required column variants we accept (case-insensitive header match).
 _CSV_NAME_COLUMNS = ('competitor_name', 'name', 'competitor')
