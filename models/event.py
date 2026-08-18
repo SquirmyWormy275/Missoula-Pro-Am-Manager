@@ -99,11 +99,13 @@ class Event(db.Model):
     @property
     def display_name(self):
         """Return event name with gender prefix if applicable."""
+        name = (self.name or '').strip()
+        lowered = name.casefold()
         if self.gender == 'M':
-            return f"Men's {self.name}"
-        elif self.gender == 'F':
-            return f"Women's {self.name}"
-        return self.name
+            return name if lowered.startswith("men's ") else f"Men's {name}"
+        if self.gender == 'F':
+            return name if lowered.startswith("women's ") else f"Women's {name}"
+        return name
 
     @property
     def is_hard_hit(self):
