@@ -2,6 +2,22 @@
 
 {% block title %}{{ event.display_name }} Results - {{ tournament.name }}{% endblock %}
 
+{% block extra_css %}
+<style>
+.event-report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+.event-report-header .btn { min-height: 44px; }
+@media (max-width: 575.98px) {
+    .event-report-header .btn { width: 100%; }
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
     <div class="row mb-4">
@@ -14,7 +30,7 @@
                     <li class="breadcrumb-item active">{{ event.display_name }}</li>
                 </ol>
             </nav>
-            <div class="d-flex justify-content-between align-items-center">
+            <div class="event-report-header">
                 <div>
                     <h1>
                         <i class="bi bi-trophy text-warning"></i>
@@ -28,7 +44,7 @@
                     </p>
                 </div>
                 <a href="{{ url_for('reporting.event_results_print', tournament_id=tournament.id, event_id=event.id) }}"
-                   class="btn btn-outline-secondary" target="_blank">
+                   class="btn btn-outline-secondary" target="_blank" rel="noopener">
                     <i class="bi bi-printer"></i> Print
                 </a>
             </div>
@@ -47,16 +63,16 @@
                         <table class="table table-hover">
                             <thead>
                                 <tr>
-                                    <th>Position</th>
-                                    <th>Competitor</th>
+                                    <th scope="col">Position</th>
+                                    <th scope="col">Competitor</th>
                                     {% if event.is_partnered %}
-                                    <th>Partner</th>
+                                    <th scope="col">Partner</th>
                                     {% endif %}
-                                    <th>Result</th>
+                                    <th scope="col">Result</th>
                                     {% if event.event_type == 'college' %}
-                                    <th>Points</th>
+                                    <th scope="col">Points</th>
                                     {% else %}
-                                    <th>Payout</th>
+                                    <th scope="col">Payout</th>
                                     {% endif %}
                                 </tr>
                             </thead>
@@ -72,6 +88,8 @@
                                             <span class="badge badge-bronze fs-5">3rd</span>
                                         {% elif r.final_position %}
                                             <span class="badge bg-secondary">{{ r.final_position }}{{ 'th' if r.final_position > 3 else ['st','nd','rd'][r.final_position-1] }}</span>
+                                        {% elif r.status in ('dnf', 'dq', 'scratched') %}
+                                            <span class="badge bg-secondary">{{ 'SCR' if r.status == 'scratched' else r.status|upper }}</span>
                                         {% else %}
                                             -
                                         {% endif %}
@@ -81,7 +99,9 @@
                                     <td>{{ r.partner_name or '-' }}</td>
                                     {% endif %}
                                     <td>
-                                        {% if r.result_value %}
+                                        {% if r.status in ('dnf', 'dq', 'scratched') %}
+                                            -
+                                        {% elif r.result_value is not none %}
                                             {% if event.scoring_type == 'time' %}
                                                 {{ "%.2f"|format(r.result_value) }}s
                                             {% elif event.scoring_type == 'hits' %}
@@ -129,7 +149,7 @@
 
         <!-- Event Info Sidebar -->
         <div class="col-lg-4">
-            <div class="card">
+            <div class="card mt-3 mt-lg-0">
                 <div class="card-header">
                     <h6 class="mb-0"><i class="bi bi-info-circle"></i> Event Info</h6>
                 </div>

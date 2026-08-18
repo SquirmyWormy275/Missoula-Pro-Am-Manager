@@ -13,7 +13,7 @@ not public CDNs.
 The source archives were obtained with `npm pack` at the exact versions above.
 Each package's unmodified `LICENSE` file is stored beside its runtime assets.
 `manifest.json` binds every served byte to its package, version, license, and
-SHA-256 digest. After an intentional upgrade, update the versioned directory,
+SHA-256 digest. After an intentional upgrade, update the package directory,
 license, manifest, template paths, and offline regression test together.
 
 Google-hosted fonts are intentionally not vendored. The UI and print layouts

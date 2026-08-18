@@ -59,7 +59,11 @@ Allowed partner-event shapes:
 - Jack and Jill: mixed-gender saw pair.
 - Double Buck: same-event saw pair; gender rules come from event config.
 - Partnered Axe Throw: managed by its dedicated prelim/final state machine, not
-  standard heat generation.
+  standard heat generation. Its authoritative pairs live in `Event.event_state`;
+  competitor partner fields are not a duplicate source of truth. Preflight must
+  prove that every entered competitor appears in exactly one state-machine pair,
+  every pair has a prelim score, and the finalists have been advanced before a
+  show card is built.
 - College partnered events: same enforcement standard as pro partnered events.
 
 ## Heat Generation
@@ -70,11 +74,22 @@ Heat generation owns event-level placement only. It must:
 - Respect event-specific capacity.
 - Use ability ordering before resource spreading when rankings exist.
 - Keep reciprocal partner units together as one stand unit.
-- Hold back invalid partnered entrants instead of placing them solo.
-- Write `Heat.competitors`, stand assignments, and `HeatAssignment` rows in sync.
+- Reject generation when a partnered entrant is invalid; do not publish a
+  partial event or show with that entrant omitted or placed solo.
+- Keep every competitor or partnered unit that shares the same declared gear in
+  a different heat. Expand the heat count when needed rather than forcing a
+  same-heat conflict.
+- Treat `HeatAssignment` as the authoritative roster and stand-assignment store;
+  use the `Heat` roster APIs rather than writing a second representation.
+- For dual-run events, assign every entrant to a different physical stand or
+  course in run 2, including a one-person heat.
 
-If code updates `Heat.competitors` directly, it must sync `HeatAssignment` before
-the state is considered valid.
+Generation must prove that every eligible entrant can be placed without a
+same-heat gear conflict before replacing an existing schedule. If event-specific
+constraints make a valid placement impossible, it fails without mutating the
+current heats. Direct event generation validates declarations relevant to the
+event and its gear family; malformed declarations for unrelated events remain a
+Preflight concern and do not block the current event.
 
 ## Flight Generation
 
@@ -134,18 +149,37 @@ Springboard rule:
 
 - Left-handed springboard cutters use the configured left-handed dummy stand.
 - The generator spreads left-handed cutters before the general fill.
-- Overflow is allowed only with an explicit operator warning.
+- The generator adds heats until no heat needs the left-handed dummy more than
+  once. It fails before replacement if the configured stand set cannot support
+  that layout.
 
 ## Preflight And Blocking
 
 Preflight is a safety gate, not a substitute for service-layer validation.
 
+Every synchronous and background full-show build runs a fresh pre-generation
+preflight while holding the schedule-writer lock. The pre-generation phase
+checks configured inputs; it must not treat not-yet-generated flights, relay,
+spillover, or saw blocks as input blockers. After generation, the same build
+validates the completed show before its one final commit. A failure in any phase
+rolls the entire request back.
+
 Blocking for generation:
 
 - Partnered-event blank, unresolved, self-reference, or nonreciprocal pairs.
+- Partnered Axe state that has missing/duplicate entrants, incomplete prelims,
+  or no confirmed finals bracket.
+- Invalid, unknown, self-referential, or unmapped gear-sharing declarations.
 - Invalid event capacity.
 - Missing required event configuration.
-- Heat/assignment sync corruption that would make printouts or scoring wrong.
+- Any placement that would put competitors sharing declared gear in the same
+  heat.
+- Generated-show corruption that would make printouts or scoring wrong.
+
+Completed Partnered Axe prelim rows are qualifier evidence, not immutable finals
+history. A first finals-card build may replace the preliminary show heats. Once a
+final score exists, a finals heat is completed, or the state reaches `completed`,
+the finals card is protected like every other scored event.
 
 Warning-only:
 

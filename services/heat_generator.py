@@ -4,6 +4,7 @@ Adapted from STRATHEX tournament_ui.py patterns.
 """
 import logging
 import math
+from collections import Counter
 from functools import wraps
 
 import config
@@ -12,7 +13,15 @@ from config import event_rank_category as _rank_category_for_event
 from database import db
 from models import Event, EventResult, Heat, HeatAssignment
 from models.competitor import CollegeCompetitor, ProCompetitor
-from services.gear_sharing import competitors_share_gear_for_event
+from services.gear_sharing import (
+    competitors_share_gear_for_event,
+    event_matches_gear_key,
+    get_family_events,
+    infer_equipment_categories,
+    normalize_event_text,
+    normalize_person_name,
+    strip_using_prefix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,25 +33,20 @@ logger = logging.getLogger(__name__)
 LH_SPRINGBOARD_STAND = 4
 # LIST_ONLY_EVENT_NAMES and _rank_category_for_event imported from config above.
 
-# Per-event gear-sharing violation log populated by the snake-draft fallbacks.
-# Routes call get_last_gear_violations(event.id) after generate_event_heats() to
-# surface a warning flash to the judge (gear audit fix G2/G3 — 2026-04-07).
+# Compatibility cache for routes that still ask about the old warning-only
+# fallback. Successful generation now guarantees this cache remains empty.
 _last_gear_violations: dict[int, list[dict]] = {}
 
-# Per-event left-handed springboard overflow log, populated by
-# _generate_springboard_heats() when LH cutter count exceeds heat count.
-# Separate from gear violations because the remediation is different
-# (reconfigure field sizes vs. rebuild gear pairs).
+# Compatibility cache for the old left-handed overflow warning. Springboard
+# generation now expands to one left-handed cutter per heat instead.
 _last_lh_overflow_warnings: dict[int, list[dict]] = {}
 
 # Per-event unpaired-partnered-competitor log, populated by
 # _build_partner_units() when a partnered-event entrant cannot be paired
 # (partner_name blank, unresolved against the event pool, self-reference, or
 # nonreciprocal).
-# When skip_unpaired=True (default) these competitors are HELD BACK from heat
-# generation rather than placed solo on a stand. Routes call
-# get_last_unpaired_partnered() after generate_event_heats() to surface a
-# warning flash + Preflight resolution prompt.
+# Generation records these details and raises HeatGenerationSafetyError before
+# replacing the existing layout.
 _last_unpaired_partnered: dict[int, list[dict]] = {}
 
 # Per-event log of entrants dropped by the gendered-event filter in
@@ -131,16 +135,12 @@ def assert_heat_regeneration_safe(
 
 
 def get_last_gear_violations(event_id: int) -> list[dict]:
-    """Return the gear-sharing violations recorded by the most recent
-    generate_event_heats(event) call for this event_id, or an empty list."""
+    """Return legacy warning details; safe successful generation leaves none."""
     return list(_last_gear_violations.get(event_id, []))
 
 
 def get_last_lh_overflow_warnings(event_id: int) -> list[dict]:
-    """Return the left-handed springboard overflow warnings recorded by the
-    most recent generate_event_heats(event) call for this event_id, or an
-    empty list.  Each entry is a dict with keys type, heat_index,
-    overflow_count, overflow_names."""
+    """Return legacy LH warnings; safe generation expands instead."""
     return list(_last_lh_overflow_warnings.get(event_id, []))
 
 
@@ -200,6 +200,327 @@ def _sort_by_ability(competitors: list, event: Event) -> list:
     )
 
 
+def _effective_heat_capacity(
+    event: Event,
+    configured_capacity: int,
+    stand_numbers: list[int],
+) -> int:
+    """Return the number of stand units that can physically run in one heat."""
+    capacity = configured_capacity
+    if stand_numbers:
+        capacity = min(capacity, len(stand_numbers))
+    if getattr(event, 'stand_type', None) == 'saw_hand':
+        capacity = min(capacity, 4)
+    return capacity
+
+
+def _format_candidate_names(entries: list[dict], *, limit: int = 5) -> str:
+    names = [str(entry.get('name') or entry.get('comp_name') or '').strip()
+             for entry in entries]
+    names = [name for name in names if name]
+    summary = ', '.join(names[:limit])
+    if len(names) > limit:
+        summary += f' (+{len(names) - limit} more)'
+    return summary or 'the affected entrants'
+
+
+def _event_and_gear_family(event: Event) -> list[Event]:
+    all_events = _get_tournament_events(event)
+    return [event, *get_family_events(event, all_events)]
+
+
+def _unmapped_key_targets_event(raw_key: str, relevant_events: list[Event]) -> bool:
+    """Recognize a mistyped current-event key without gating unrelated keys."""
+    normalized_key = normalize_event_text(raw_key)
+    if (
+        not normalized_key
+        or normalized_key.isdigit()
+        or len(normalized_key) < 4
+    ):
+        return False
+    for candidate in relevant_events:
+        for label in (candidate.name, candidate.display_name):
+            normalized_label = normalize_event_text(label)
+            if (
+                len(normalized_label) >= 4
+                and (
+                    normalized_label in normalized_key
+                    or normalized_key in normalized_label
+                )
+            ):
+                return True
+    return False
+
+
+def _free_text_targets_event(details: str, relevant_events: list[Event]) -> bool:
+    normalized_details = normalize_event_text(details)
+    for candidate in relevant_events:
+        labels = {
+            normalize_event_text(candidate.name),
+            normalize_event_text(candidate.display_name),
+        }
+        if any(label and len(label) >= 4 and label in normalized_details for label in labels):
+            return True
+    return any(
+        event_matches_gear_key(candidate, f'category:{category}')
+        for category in infer_equipment_categories(details)
+        for candidate in relevant_events
+    )
+
+
+def _validate_event_gear_declarations(
+    event: Event,
+    competitors: list[dict],
+) -> None:
+    """Reject incomplete declarations that could hide a current-event conflict."""
+    relevant_events = _event_and_gear_family(event)
+    model = CollegeCompetitor if event.event_type == 'college' else ProCompetitor
+    known_names = {
+        normalize_person_name(comp.name)
+        for comp in model.query.filter_by(
+            tournament_id=event.tournament_id,
+            status='active',
+        ).all()
+    }
+    invalid = []
+
+    for competitor in competitors:
+        sharing = competitor.get('gear_sharing') or {}
+        details = str(competitor.get('gear_sharing_details') or '').strip()
+        if details and not sharing and _free_text_targets_event(details, relevant_events):
+            invalid.append(competitor)
+            continue
+
+        self_name = normalize_person_name(
+            competitor.get('base_name') or competitor.get('name') or ''
+        )
+        for key, raw_partner in sharing.items():
+            key_matches = any(
+                event_matches_gear_key(candidate, key)
+                for candidate in relevant_events
+            )
+            if not key_matches:
+                if _unmapped_key_targets_event(key, relevant_events):
+                    invalid.append(competitor)
+                    break
+                continue
+
+            partner_text = str(raw_partner or '').strip()
+            if partner_text.lower().startswith('group:'):
+                continue
+            partner_name = strip_using_prefix(partner_text)
+            partner_norm = normalize_person_name(partner_name)
+            if (
+                not partner_norm
+                or partner_norm == self_name
+                or partner_norm not in known_names
+            ):
+                invalid.append(competitor)
+                break
+
+    if invalid:
+        raise HeatGenerationSafetyError(
+            f'Heat generation blocked for {event.display_name}: a gear declaration '
+            f'is incomplete or does not map to this event '
+            f'({_format_candidate_names(invalid)}). Resolve it in Preflight; the '
+            'previous heat layout was preserved.'
+        )
+
+
+def _validate_candidate_layout(
+    event: Event,
+    competitors: list[dict],
+    heats: list[list[dict]],
+    max_units_per_heat: int,
+    stand_numbers: list[int],
+    *,
+    unpaired_log: list[dict] | None = None,
+) -> None:
+    """Reject any candidate that cannot safely represent the event roster."""
+    unpaired = list(unpaired_log or [])
+    if unpaired:
+        _last_unpaired_partnered[event.id] = unpaired
+        raise HeatGenerationSafetyError(
+            f'Heat generation blocked for {event.display_name}: partnered '
+            f'entrants are not represented ({_format_candidate_names(unpaired)}). '
+            'Resolve partner declarations in Preflight before regenerating.'
+        )
+
+    gender_excluded = list(_last_gender_excluded.get(event.id, []))
+    if gender_excluded:
+        raise HeatGenerationSafetyError(
+            f'Heat generation blocked for {event.display_name}: entered '
+            f'competitors do not match the event gender '
+            f'({_format_candidate_names(gender_excluded)}). Correct the entries '
+            'before regenerating.'
+        )
+
+    if not heats or any(not heat for heat in heats):
+        raise HeatGenerationSafetyError(
+            f'Heat generation blocked for {event.display_name}: the candidate '
+            'contains an empty or missing heat. Correct the roster before regenerating.'
+        )
+
+    expected = Counter(comp.get('id') for comp in competitors)
+    represented = Counter(comp.get('id') for heat in heats for comp in heat)
+    missing_ids = sorted(comp_id for comp_id in expected if represented[comp_id] == 0)
+    duplicate_ids = sorted(comp_id for comp_id, count in represented.items() if count != 1)
+    unexpected_ids = sorted(comp_id for comp_id in represented if comp_id not in expected)
+    if missing_ids or duplicate_ids or unexpected_ids or represented != expected:
+        raise HeatGenerationSafetyError(
+            f'Heat generation blocked for {event.display_name}: every eligible '
+            'entrant must appear exactly once in run 1. The previous heat layout '
+            'was preserved.'
+        )
+
+    is_partnered = bool(getattr(event, 'is_partnered', False))
+    for heat_index, heat in enumerate(heats):
+        units = _rebuild_pair_units(heat, event)
+        if len(units) > max_units_per_heat:
+            raise HeatGenerationSafetyError(
+                f'Heat generation blocked for {event.display_name}: candidate '
+                f'heat {heat_index + 1} exceeds its physical stand capacity.'
+            )
+        if is_partnered and any(len(unit) != 2 for unit in units):
+            raise HeatGenerationSafetyError(
+                f'Heat generation blocked for {event.display_name}: candidate '
+                f'heat {heat_index + 1} contains an incomplete partner unit.'
+            )
+        partner_gender = getattr(event, 'partner_gender_requirement', None)
+        if is_partnered and partner_gender in {'mixed', 'same'}:
+            invalid_gender_unit = any(
+                (partner_gender == 'mixed' and unit[0].get('gender') == unit[1].get('gender'))
+                or (partner_gender == 'same' and unit[0].get('gender') != unit[1].get('gender'))
+                for unit in units
+            )
+            if invalid_gender_unit:
+                requirement = (
+                    'mixed-gender' if partner_gender == 'mixed' else 'same-gender'
+                )
+                raise HeatGenerationSafetyError(
+                    f'Heat generation blocked for {event.display_name}: candidate '
+                    f'heat {heat_index + 1} violates the {requirement} partner '
+                    'rule. The previous heat layout was preserved.'
+                )
+
+        for left_index, left_unit in enumerate(units):
+            for right_unit in units[left_index + 1:]:
+                conflict = any(
+                    _competitors_share_gear_for_event(left, right, event)
+                    for left in left_unit
+                    for right in right_unit
+                )
+                if conflict:
+                    raise HeatGenerationSafetyError(
+                        f'Heat generation blocked for {event.display_name}: '
+                        f'candidate heat {heat_index + 1} contains a gear-sharing '
+                        'conflict. The previous heat layout was preserved.'
+                    )
+
+        if getattr(event, 'stand_type', None) == 'springboard':
+            left_handed = [comp for comp in heat if comp.get('is_left_handed')]
+            if len(left_handed) > 1:
+                raise HeatGenerationSafetyError(
+                    f'Heat generation blocked for {event.display_name}: candidate '
+                    f'heat {heat_index + 1} requires the left-handed dummy more '
+                    'than once.'
+                )
+
+    if (
+        getattr(event, 'stand_type', None) == 'springboard'
+        and any(comp.get('is_left_handed') for comp in competitors)
+        and LH_SPRINGBOARD_STAND not in stand_numbers
+    ):
+        raise HeatGenerationSafetyError(
+            f'Heat generation blocked for {event.display_name}: stand '
+            f'{LH_SPRINGBOARD_STAND}, the left-handed dummy, is not configured '
+            'for this event.'
+        )
+
+
+def _run_one_stands(
+    event: Event,
+    heat_competitors: list[dict],
+    stand_numbers: list[int],
+) -> dict[int, int]:
+    """Build validated run-one stand assignments for one candidate heat."""
+    if getattr(event, 'is_partnered', False):
+        stands = {}
+        for stand_idx, unit in enumerate(_rebuild_pair_units(heat_competitors, event)):
+            stand_num = stand_numbers[stand_idx]
+            for comp in unit:
+                stands[comp['id']] = stand_num
+        return stands
+
+    if getattr(event, 'stand_type', None) == 'springboard':
+        left_handed = next(
+            (comp for comp in heat_competitors if comp.get('is_left_handed')),
+            None,
+        )
+        if left_handed is not None:
+            stands = {left_handed['id']: LH_SPRINGBOARD_STAND}
+            right_handed_stands = [
+                stand for stand in stand_numbers
+                if stand != LH_SPRINGBOARD_STAND
+            ]
+            right_handed = [
+                comp for comp in heat_competitors
+                if comp['id'] != left_handed['id']
+            ]
+            stands.update({
+                comp['id']: right_handed_stands[index]
+                for index, comp in enumerate(right_handed)
+            })
+            return stands
+
+    return {
+        comp['id']: stand_numbers[index]
+        for index, comp in enumerate(heat_competitors)
+    }
+
+
+def _build_candidate_heat_rows(
+    event: Event,
+    heats: list[list[dict]],
+    stand_numbers: list[int],
+) -> list[Heat]:
+    """Build every Heat and HeatAssignment row before replacing stored heats."""
+    candidate_rows = []
+    for heat_num, heat_competitors in enumerate(heats, start=1):
+        heat = Heat(event_id=event.id, heat_number=heat_num, run_number=1)
+        competitor_ids = [comp['id'] for comp in heat_competitors]
+        heat.set_roster(
+            event.event_type,
+            competitor_ids,
+            _run_one_stands(event, heat_competitors, stand_numbers),
+        )
+        candidate_rows.append(heat)
+
+    if not event.requires_dual_runs:
+        return candidate_rows
+
+    for heat_num, heat_competitors in enumerate(heats, start=1):
+        heat = Heat(event_id=event.id, heat_number=heat_num, run_number=2)
+        competitor_ids = [comp['id'] for comp in heat_competitors]
+        stands = {}
+        if getattr(event, 'is_partnered', False):
+            units = _rebuild_pair_units(heat_competitors, event)
+            reversed_stands = list(reversed(stand_numbers))
+            for unit_index, unit in enumerate(units):
+                for comp in unit:
+                    stands[comp['id']] = reversed_stands[unit_index]
+        else:
+            reversed_stands = list(reversed(stand_numbers))
+            stands = {
+                comp['id']: reversed_stands[index]
+                for index, comp in enumerate(heat_competitors)
+            }
+        heat.set_roster(event.event_type, competitor_ids, stands)
+        candidate_rows.append(heat)
+
+    return candidate_rows
+
+
 @_serialize_schedule_heat_generation
 def generate_event_heats(
     event: Event,
@@ -236,7 +557,19 @@ def generate_event_heats(
         raise HeatGenerationSafetyError(
             f'{event.display_name} is completed. Heat regeneration is blocked.'
         )
-    if EventResult.query.filter_by(event_id=event.id, status='completed').first() is not None:
+    if getattr(event, 'has_prelims', False):
+        from services.partnered_axe import partnered_axe_history_protection_reason
+
+        partnered_axe_reason = partnered_axe_history_protection_reason(event)
+        if partnered_axe_reason is not None:
+            raise HeatGenerationSafetyError(
+                f'{event.display_name} has {partnered_axe_reason}. '
+                'Heat regeneration is blocked.'
+            )
+    elif EventResult.query.filter_by(
+        event_id=event.id,
+        status='completed',
+    ).first() is not None:
         raise HeatGenerationSafetyError(
             f'{event.display_name} has scored results. Heat regeneration is blocked.'
         )
@@ -259,6 +592,15 @@ def generate_event_heats(
     # Get competitors for this event
     competitors = _get_event_competitors(event)
 
+    gender_excluded = list(_last_gender_excluded.get(event.id, []))
+    if gender_excluded:
+        raise HeatGenerationSafetyError(
+            f'Heat generation blocked for {event.display_name}: entered '
+            f'competitors do not match the event gender '
+            f'({_format_candidate_names(gender_excluded)}). Correct the entries '
+            'before regenerating.'
+        )
+
     if not competitors:
         raise ValueError(f"No competitors entered for {event.display_name}")
 
@@ -279,6 +621,8 @@ def generate_event_heats(
         db.session.flush()
         return 0
 
+    _validate_event_gear_declarations(event, competitors)
+
     # Get stand configuration; event.max_stands is authoritative when set
     stand_config = config.STAND_CONFIGS.get(event.stand_type, {})
     max_per_heat = event.max_stands if event.max_stands is not None else stand_config.get('total', 4)
@@ -288,247 +632,72 @@ def generate_event_heats(
             'Set max_stands to at least 1 before generating heats.'
         )
     max_per_heat = int(max_per_heat)
+    stand_numbers = _stand_numbers_for_event(event, max_per_heat, stand_config)
+    effective_capacity = _effective_heat_capacity(
+        event,
+        max_per_heat,
+        stand_numbers,
+    )
+    if effective_capacity <= 0:
+        raise HeatGenerationSafetyError(
+            f'{event.display_name} has no usable stands configured. Configure '
+            'at least one physical stand before generating heats.'
+        )
 
     # Calculate number of heats needed
-    num_heats = math.ceil(len(competitors) / max_per_heat)
+    num_heats = math.ceil(len(competitors) / effective_capacity)
 
-    # The helpers identify constraints they cannot satisfy without placing two
-    # people who share gear in the same heat.  Do this before deleting an
-    # existing layout, so an unsafe regeneration leaves that layout intact.
+    # Helpers expand locally until a gear-safe candidate exists. Build and
+    # validate that candidate before deleting an existing layout.
     gear_violations: list[dict] = []
     _last_gear_violations.pop(event.id, None)
 
-    # Per-event left-handed springboard overflow warnings recorded by
-    # _generate_springboard_heats when LH count > heat count.
+    # Kept for compatibility with the helper signature and route getter.
     lh_warnings: list[dict] = []
     _last_lh_overflow_warnings.pop(event.id, None)
 
     # Per-event unpaired-partnered-competitor list. Populated when a partnered
     # event entrant has a blank, unresolved, self-referential, or nonreciprocal
     # partner_name.
-    # Held-back competitors are excluded from heats so a partnered event never
-    # has a solo person on a stand. Surfaced via flash + Preflight.
+    # The final candidate validator treats any entry here as a hard blocker.
     unpaired_log: list[dict] = []
     _last_unpaired_partnered.pop(event.id, None)
 
     # Apply special constraints
     if event.stand_type == 'springboard':
-        heats = _generate_springboard_heats(competitors, num_heats, max_per_heat, stand_config, event=event,
+        heats = _generate_springboard_heats(competitors, num_heats, effective_capacity, stand_config, event=event,
                                             gear_violations=gear_violations,
                                             lh_warnings=lh_warnings)
     elif event.stand_type in ['saw_hand']:
-        heats = _generate_saw_heats(competitors, num_heats, max_per_heat, stand_config, event=event,
+        heats = _generate_saw_heats(competitors, num_heats, effective_capacity, stand_config, event=event,
                                     gear_violations=gear_violations,
                                     unpaired_log=unpaired_log)
     else:
-        heats = _generate_standard_heats(competitors, num_heats, max_per_heat, event=event,
+        heats = _generate_standard_heats(competitors, num_heats, effective_capacity, event=event,
                                          gear_violations=gear_violations,
                                          unpaired_log=unpaired_log)
 
-    forced_conflicts: list[dict] = []
-    if gear_violations:
-        forced_conflicts = [v for v in gear_violations if not v.get('reason')]
-        unplaced = [v for v in gear_violations if v.get('reason')]
-        if unplaced:
-            names = ', '.join(v.get('comp_name', '') for v in unplaced[:5])
-            extra = f' (+{len(unplaced) - 5} more)' if len(unplaced) > 5 else ''
-            raise HeatGenerationSafetyError(
-                f'Heat generation blocked for {event.display_name}: no safe '
-                f'springboard capacity for {names}{extra}. Resolve the roster '
-                'before regenerating.'
-            )
+    _validate_candidate_layout(
+        event,
+        competitors,
+        heats,
+        effective_capacity,
+        stand_numbers,
+        unpaired_log=unpaired_log,
+    )
+    # Build every HeatAssignment row while the stored layout still exists. Any
+    # invalid identity or stand mapping therefore fails before replacement.
+    candidate_heats = _build_candidate_heat_rows(event, heats, stand_numbers)
 
     # No safety blocker remains, so replacing the current layout is safe.
     _delete_event_heats(event.id)
 
     # Use actual heat count returned by the generator (saw events recalculate internally).
     actual_heat_count = len(heats)
-
-    # Validate: every competitor must appear in exactly one heat — UNLESS they
-    # were intentionally held back as an unpaired partnered-event entrant.
-    # Held-back IDs are tracked in unpaired_log so the warning below only fires
-    # for genuine snake-draft / gear-conflict misplacements.
-    placed_ids = {c['id'] for heat_comps in heats for c in heat_comps}
-    held_back_ids = {entry['comp_id'] for entry in unpaired_log}
-    expected_ids = {c['id'] for c in competitors}
-    missing = (expected_ids - placed_ids) - held_back_ids
-    if missing:
-        logger.warning(
-            'heat_generator: %d competitor(s) not placed in any heat for event %r: %s',
-            len(missing), event.display_name, sorted(missing),
-        )
-
-    # Create Heat objects
-    stand_numbers = _stand_numbers_for_event(event, max_per_heat, stand_config)
-    is_partnered = bool(getattr(event, 'is_partnered', False))
-    created_heats = []
-
-    # 'pro' or 'college'.  Hoisted above the build loop because each heat now
-    # writes its roster once, here, instead of writing JSON here and having a
-    # second pass copy it into the rows after the flush.
-    comp_type = event.event_type
-    for heat_num, heat_competitors in enumerate(heats, start=1):
-        heat = Heat(
-            event_id=event.id,
-            heat_number=heat_num,
-            run_number=1
-        )
-        heat_comp_ids = [c['id'] for c in heat_competitors]
-
-        # Stands accumulate in a plain dict and are written once, with the
-        # roster, at the bottom of this block.  They used to be pushed into the
-        # heat one at a time.  That was free while `set_stand_assignment` only
-        # edited a JSON blob, and stops being free the moment a roster write
-        # touches the `heat_assignments` rows: a six-competitor heat would tear
-        # its roster down and rebuild it seven times, once per stand, and
-        # resolve every competitor's uid again on each pass.  Nothing here needs
-        # the intermediate states, so nothing here should be paying for them.
-        stands = {}
-
-        # Assign stands.  For partnered events each PAIR shares one stand —
-        # both partners receive the same stand number.  Non-partnered events
-        # are one competitor per stand as before.
-        if is_partnered:
-            pair_units = _rebuild_pair_units(heat_competitors, event)
-            stand_idx = 0
-            for unit in pair_units:
-                stand_num = stand_numbers[stand_idx] if stand_idx < len(stand_numbers) else stand_idx + 1
-                for comp in unit:
-                    stands[comp['id']] = stand_num
-                stand_idx += 1
-        elif event.stand_type == 'springboard':
-            # Phase 5 rule: Dummy 4 is the LH-configured physical dummy. If any
-            # competitor in this springboard heat is left-handed, they get
-            # stand_number=4; the rest fill the remaining configured stands in
-            # competitor-list order. If no LH cutter is in the heat, fall
-            # through to the default per-index assignment so stand 4 still gets
-            # used.
-            #
-            # The right-handed stands are derived from the event's own stand
-            # list, not hardcoded. The original wrote them as a literal
-            # [1, 2, 3], which is only correct when the event runs exactly four
-            # stands. Measured on a copy of production: event 31, Pro 1-Board,
-            # is configured for five, and generating it with one LH cutter put
-            # competitors 12 and 45 both on stand 4 while stand 5 was never
-            # emitted. Two people to one springboard, and a block sized for five
-            # running four.
-            #
-            # Latent as the data ships, because no pro currently carries the
-            # flag. It arms from a single checkbox on the pro detail form, and
-            # nothing downstream checks for a doubled stand.
-            lh_comp = next((c for c in heat_competitors if c.get('is_left_handed')), None)
-            if lh_comp is not None and LH_SPRINGBOARD_STAND not in stand_numbers:
-                # The venue's left-hand dummy is stand 4. If this event is not
-                # configured to use stand 4 at all (a specific_stands override,
-                # or fewer than four stands), there is no LH dummy to assign and
-                # pinning anyone to it would send them to a stand the event is
-                # not running. Say so and fall through to the plain assignment
-                # rather than silently placing them somewhere wrong.
-                if lh_warnings is not None:
-                    lh_warnings.append({
-                        'type': 'lh_stand_not_in_event_stands',
-                        'heat_index': heat_num - 1,
-                        'lh_names': [lh_comp.get('name', '')],
-                        'event_stands': list(stand_numbers),
-                    })
-                lh_comp = None
-            if lh_comp is not None:
-                # Surface a heat-level warning if the heat has more than one LH
-                # cutter (overflow scenario) — only the first gets stand 4, the
-                # rest fall back to list-order assignment and will physically
-                # collide. This is rare but possible if LH_count > heat_count.
-                lh_comps_in_heat = [c for c in heat_competitors if c.get('is_left_handed')]
-                if len(lh_comps_in_heat) > 1 and lh_warnings is not None:
-                    lh_warnings.append({
-                        'type': 'multiple_lh_same_heat',
-                        'heat_index': heat_num - 1,
-                        'lh_count': len(lh_comps_in_heat),
-                        'lh_names': [c.get('name', '') for c in lh_comps_in_heat],
-                    })
-                # LH cutter goes on the left-hand dummy.
-                stands[lh_comp['id']] = LH_SPRINGBOARD_STAND
-                # Everyone else fills the event's other stands in order. Order
-                # is preserved rather than sorted so the assignment stays the
-                # same as it was for four-stand events, which is the case the
-                # crew has run before.
-                rh_stands = [s for s in stand_numbers if s != LH_SPRINGBOARD_STAND]
-                rh_stand_idx = 0
-                overflow_base = (max(stand_numbers) if stand_numbers
-                                 else LH_SPRINGBOARD_STAND)
-                for comp in heat_competitors:
-                    if comp['id'] == lh_comp['id']:
-                        continue
-                    if rh_stand_idx < len(rh_stands):
-                        stand_num = rh_stands[rh_stand_idx]
-                    else:
-                        # More cutters than the event has stands. The heat is
-                        # already over capacity and the admin has a separate
-                        # problem, but the numbers still have to be distinct:
-                        # the old else-arm here returned the loop index plus
-                        # one, which walks straight back over stands the loop
-                        # had already handed out.
-                        stand_num = (
-                            overflow_base + 1 + (rh_stand_idx - len(rh_stands)))
-                    stands[comp['id']] = stand_num
-                    rh_stand_idx += 1
-            else:
-                # No LH cutter — plain per-index assignment (stand 4 may still
-                # be used by whoever lands in index 3 of heat_competitors).
-                for i, comp in enumerate(heat_competitors):
-                    stand_num = stand_numbers[i] if i < len(stand_numbers) else i + 1
-                    stands[comp['id']] = stand_num
-        else:
-            for i, comp in enumerate(heat_competitors):
-                stand_num = stand_numbers[i] if i < len(stand_numbers) else i + 1
-                stands[comp['id']] = stand_num
-
-        heat.set_roster(comp_type, heat_comp_ids, stands)
-        db.session.add(heat)
-        created_heats.append(heat)
-
-    # For dual-run events, create second run heats
-    if event.requires_dual_runs:
-        for heat_num, heat_competitors in enumerate(heats, start=1):
-            heat = Heat(
-                event_id=event.id,
-                heat_number=heat_num,
-                run_number=2
-            )
-            heat_comp_ids = [c['id'] for c in heat_competitors]
-            stands = {}
-
-            # Swap stand assignments for run 2 (e.g., Course 1 <-> Course 2).
-            # Reverse only the stands actually used by THIS heat, not the full list.
-            if is_partnered:
-                pair_units = _rebuild_pair_units(heat_competitors, event)
-                stands_needed = len(pair_units)
-                run2_stands = list(reversed(stand_numbers[:stands_needed]))
-                for unit_idx, unit in enumerate(pair_units):
-                    s = run2_stands[unit_idx] if unit_idx < len(run2_stands) else unit_idx + 1
-                    for comp in unit:
-                        stands[comp['id']] = s
-                heat.set_roster(comp_type, heat_comp_ids, stands)
-                db.session.add(heat)
-                created_heats.append(heat)
-                continue
-            heat_size = len(heat_competitors)
-            run2_stands = list(reversed(stand_numbers[:heat_size]))
-            for i, comp in enumerate(heat_competitors):
-                stands[comp['id']] = run2_stands[i]
-
-            heat.set_roster(comp_type, heat_comp_ids, stands)
-            db.session.add(heat)
-            created_heats.append(heat)
+    db.session.add_all(candidate_heats)
 
     event.status = 'in_progress'
     db.session.flush()
-
-    # The `for heat in created_heats: heat.sync_assignments(comp_type)` pass
-    # that used to sit here is gone.  Every heat above already wrote its rows
-    # through `set_roster` before it was added to the session, so this loop had
-    # nothing left to copy: it re-read the JSON each heat had just been rendered
-    # from and handed it straight back, for one uid-resolution query per heat.
-    # The flush above is what puts the rows in the table, and it is still here.
 
     # Stock Saw: alternate solo-heat stands across 7 and 8 so consecutive
     # solos don't pile onto the same physical stand. Must run after the flush
@@ -542,9 +711,9 @@ def generate_event_heats(
             idx = w.get('heat_index')
             heat_id = None
             heat_number = None
-            if isinstance(idx, int) and 0 <= idx < len(created_heats):
-                heat_id = created_heats[idx].id
-                heat_number = created_heats[idx].heat_number
+            if isinstance(idx, int) and 0 <= idx < len(candidate_heats):
+                heat_id = candidate_heats[idx].id
+                heat_number = candidate_heats[idx].heat_number
             resolved_lh.append({
                 'type': w.get('type'),
                 'heat_id': heat_id,
@@ -557,30 +726,6 @@ def generate_event_heats(
                 w.get('overflow_count', 0), heat_id,
             )
         _last_lh_overflow_warnings[event.id] = resolved_lh
-
-    # Promote unpaired-partnered competitors so the route can flash + Preflight
-    # can offer a resolution UI. These competitors were intentionally HELD BACK
-    # from heat generation rather than placed solo on a stand. Each entry has:
-    # comp_id, comp_name, partner_name (raw), reason ('blank'|'unresolved'|
-    # 'self_reference'|'nonreciprocal').
-    if unpaired_log:
-        _last_unpaired_partnered[event.id] = list(unpaired_log)
-        for u in unpaired_log:
-            logger.warning(
-                'UNPAIRED PARTNERED ENTRANT: %s (event=%r, partner=%r, reason=%s) '
-                '— held back from heats, resolve in Preflight',
-                u.get('comp_name', ''), event.display_name,
-                u.get('partner_name', ''), u.get('reason', ''),
-            )
-
-    if forced_conflicts:
-        _last_gear_violations[event.id] = list(forced_conflicts)
-        names = ', '.join(v.get('comp_name', '') for v in forced_conflicts[:5])
-        extra = f' (+{len(forced_conflicts) - 5} more)' if len(forced_conflicts) > 5 else ''
-        logger.warning(
-            'FORCED GEAR-SHARING CONFLICT: %s%s (event=%r)',
-            names, extra, event.display_name,
-        )
 
     # Flush but do NOT commit — the calling route owns the transaction boundary and
     # will commit (or roll back) after all scheduling actions are complete.  This
@@ -681,6 +826,7 @@ def _get_event_competitors(event: Event) -> list:
             'gender': comp.gender,
             'is_left_handed': getattr(comp, 'is_left_handed_springboard', False),
             'gear_sharing': comp.get_gear_sharing() if hasattr(comp, 'get_gear_sharing') else {},
+            'gear_sharing_details': getattr(comp, 'gear_sharing_details', ''),
             'partner_name': _get_partner_name_for_event(comp, event)
         }
         if event.event_type == 'pro':
@@ -717,9 +863,8 @@ def _move_partial_heats_to_end(heats: list, sizes: list, max_per_heat: int) -> t
 
     Returns `(reordered_heats, old_to_new)` where `old_to_new[i]` is the new
     index of what used to be heat `i`. Identity mapping when no reorder runs
-    (single heat, all heats the same size, or any heat over capacity — the
-    last case being intentional springboard LH overflow that must stay pinned
-    to the final heat).
+    (single heat, all heats the same size, or any heat over capacity; the final
+    validator reports over-capacity candidates without reordering them first).
 
     Callers MUST use `old_to_new` to remap any side-channel data that carries
     pre-reorder heat indices (gear_violations, lh_warnings) — otherwise those
@@ -751,6 +896,56 @@ def _remap_violation_heat_indices(violations: list | None, old_to_new: dict[int,
             v['heat_index'] = old_to_new[idx]
 
 
+def _try_place_units(
+    units: list[list[dict]],
+    num_heats: int,
+    max_units_per_heat: int,
+    event: Event,
+) -> tuple[list[list[dict]], list[int]] | None:
+    """Try one deterministic snake pass without relaxing gear constraints."""
+    heats = [[] for _ in range(num_heats)]
+    units_used = [0] * num_heats
+    direction = 1
+    heat_idx = 0
+
+    for unit in units:
+        placed = False
+        examined = set()
+        while len(examined) < num_heats:
+            if heat_idx in examined:
+                heat_idx, direction = _advance_snake_index(
+                    heat_idx,
+                    direction,
+                    num_heats,
+                )
+                continue
+            examined.add(heat_idx)
+            has_conflict = any(
+                _has_gear_sharing_conflict(comp, heats[heat_idx], event)
+                for comp in unit
+            )
+            if units_used[heat_idx] < max_units_per_heat and not has_conflict:
+                heats[heat_idx].extend(unit)
+                units_used[heat_idx] += 1
+                placed = True
+                break
+            heat_idx, direction = _advance_snake_index(
+                heat_idx,
+                direction,
+                num_heats,
+            )
+
+        if not placed:
+            return None
+        heat_idx, direction = _advance_snake_index(
+            heat_idx,
+            direction,
+            num_heats,
+        )
+
+    return heats, units_used
+
+
 def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: int, event: Event = None,
                               gear_violations: list | None = None,
                               unpaired_log: list | None = None) -> list:
@@ -775,85 +970,34 @@ def _generate_standard_heats(competitors: list, num_heats: int, max_per_heat: in
 
     is_partnered = bool(event and getattr(event, 'is_partnered', False))
 
-    # For partnered events, num_heats must be recomputed from unit count:
-    # each pair takes 1 stand (not 2 competitor slots).  For solo events, the
-    # unit count equals the competitor count so this is a no-op.
-    if is_partnered:
-        num_heats = max(1, math.ceil(len(units) / max_per_heat))
+    minimum_heats = max(1, math.ceil(len(units) / max_per_heat))
+    if not is_partnered:
+        minimum_heats = max(minimum_heats, num_heats)
 
-    heats = [[] for _ in range(num_heats)]
-    stands_used = [0] * num_heats  # count of stands (units) per heat
+    # One unit per heat is always safe because gear is checked between units,
+    # never within a legitimate partner pair. Expand only as far as required.
+    for candidate_count in range(minimum_heats, max(minimum_heats, len(units)) + 1):
+        candidate = _try_place_units(
+            units,
+            candidate_count,
+            max_per_heat,
+            event,
+        )
+        if candidate is None:
+            continue
+        heats, stands_used = candidate
+        heats, old_to_new = _move_partial_heats_to_end(
+            heats,
+            stands_used,
+            max_per_heat,
+        )
+        _remap_violation_heat_indices(gear_violations, old_to_new)
+        return heats
 
-    # Snake draft distribution
-    direction = 1
-    heat_idx = 0
-
-    for unit in units:
-        placed = False
-
-        # First pass: look for a heat with capacity and no gear-sharing conflict.
-        #
-        # Both passes are bounded by heats EXAMINED, not by steps taken.
-        # _advance_snake_index BOUNCES at both boundaries: given (num_heats-1,
-        # +1) it returns (num_heats-1, -1), the same index. That bounce is what
-        # makes a snake draft a snake draft (0,1,2,2,1,0,0,...) and must stay,
-        # but it means a loop bounded by num_heats STEPS spends steps without
-        # examining a new heat, so it can run out while a heat still has a free
-        # stand. When the fallback ran out that way the unit was dropped with no
-        # heat, no gear violation, and nothing the operator could see.
-        examined = set()
-        while len(examined) < num_heats:
-            if heat_idx in examined:
-                heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
-                continue
-            examined.add(heat_idx)
-            if (
-                (stands_used[heat_idx] + 1) <= max_per_heat and
-                not any(_has_gear_sharing_conflict(comp, heats[heat_idx], event) for comp in unit)
-            ):
-                heats[heat_idx].extend(unit)
-                stands_used[heat_idx] += 1
-                placed = True
-                break
-            heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
-
-        # Fallback: place despite conflict if every heat conflicts/full.
-        # Record any gear-sharing conflict introduced here so the caller can
-        # surface a warning to the judge (gear audit fix G2 — 2026-04-07).
-        # Its own `examined` set: this pass must be able to revisit the heats
-        # the conflict-avoiding pass already rejected, since rejecting them is
-        # the whole reason it is running.
-        if not placed:
-            examined = set()
-            while len(examined) < num_heats:
-                if heat_idx in examined:
-                    heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
-                    continue
-                examined.add(heat_idx)
-                if (stands_used[heat_idx] + 1) <= max_per_heat:
-                    if gear_violations is not None:
-                        for comp in unit:
-                            if _has_gear_sharing_conflict(comp, heats[heat_idx], event):
-                                gear_violations.append({
-                                    'comp_id': comp.get('id'),
-                                    'comp_name': comp.get('name', ''),
-                                    'heat_index': heat_idx,
-                                })
-                    heats[heat_idx].extend(unit)
-                    stands_used[heat_idx] += 1
-                    placed = True
-                    break
-                heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
-
-        heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
-
-    # Re-order so any partial heat closes the event instead of opening it.
-    # Remap gear_violations heat indices in-place so the judge's flash points
-    # at the heat the competitor actually landed in after the reorder.
-    heats, old_to_new = _move_partial_heats_to_end(heats, stands_used, max_per_heat)
-    _remap_violation_heat_indices(gear_violations, old_to_new)
-
-    return heats
+    raise HeatGenerationSafetyError(
+        f'Heat generation blocked for {getattr(event, "display_name", "event")}: '
+        'no gear-safe heat layout represents every entrant.'
+    )
 
 
 def _first_token(value: str) -> str:
@@ -1083,171 +1227,120 @@ def _generate_springboard_heats(competitors: list, num_heats: int,
     """
     Generate springboard heats with left-handed cutter spreading.
 
-    Only one physical left-handed springboard dummy exists on site, so at most
-    ONE left-handed cutter can be in a single heat at a time.  Spread LH cutters
-    one per heat across heats 0..N-1.  If more LH cutters than heats exist,
-    overflow into the FINAL heat (per user rule, 2026-04-20) and log a warning
-    via lh_warnings so the admin knows there is dummy contention.
-
-    Slow-heat cutters still cluster starting at the final heat (unchanged).
+    Only one physical left-handed springboard dummy exists on site, so each
+    left-handed cutter needs a separate heat. Slow cutters remain clustered in
+    the closing heat block. If either gear or dummy capacity prevents a safe
+    placement, the event gains one heat and the deterministic pass is retried.
     """
-    heats = [[] for _ in range(num_heats)]
+    if not competitors:
+        return []
 
-    # Dedicated springboard buckets:
-    # - LH cutters: one per heat (spread), overflow to final heat with warning.
-    # - Slow-heat cutters: cluster into the dedicated slow heat.
-    left_handed = [c for c in competitors if c.get('is_left_handed', False)]
-    slow_heat = [c for c in competitors if c.get('is_slow_springboard', False)]
-
-    # Sort LH cutters by ability rank (1 = fastest). When LH_count > num_heats
-    # the tail of this list overflows into the final heat — we want the
-    # SLOWEST LH cutters to overflow (alongside any slow-heat-flagged cutters
-    # already clustering there), not whoever happens to be alphabetically
-    # last in registration order. Name-order overflow placement was the
-    # original V2.5.0 behaviour; tying the split point to ProEventRank means
-    # the fast LH cutters each get their own heat + LH dummy time-slot, and
-    # the slow LH cutters share the dedicated slow-heat block.
-    # Falls back gracefully to input order when no ranks exist for this
-    # tournament + category (that's _sort_by_ability's documented behaviour).
-    if left_handed:
-        left_handed = _sort_by_ability(left_handed, event)
-
-    slow_heat_idx = (num_heats - 1) if slow_heat else None
-
-    assigned_ids = set()
-
-    # --- LH spread ---
-    # One LH cutter per heat, heats 0..N-1.  Overflow spills into the final
-    # heat (heats[num_heats-1]), mixed with RH cutters there.  If the final
-    # heat also hits max_per_heat, any further LH cutters are unplaceable —
-    # surface them via gear_violations as a hard warning so the admin reacts.
-    if left_handed and num_heats > 0:
-        spread = left_handed[:num_heats]
-        overflow = left_handed[num_heats:]
-
-        for i, lh in enumerate(spread):
-            if len(heats[i]) < max_per_heat:
-                heats[i].append(lh)
-                assigned_ids.add(lh['id'])
-
-        if overflow:
-            final_idx = num_heats - 1
-            placed_overflow: list[str] = []
-            unplaced_overflow: list[str] = []
-            for lh in overflow:
-                if lh['id'] in assigned_ids:
-                    continue
-                if len(heats[final_idx]) < max_per_heat:
-                    heats[final_idx].append(lh)
-                    assigned_ids.add(lh['id'])
-                    placed_overflow.append(lh.get('name', ''))
-                else:
-                    unplaced_overflow.append(lh.get('name', ''))
-
-            if placed_overflow and lh_warnings is not None:
-                lh_warnings.append({
-                    'type': 'lh_overflow',
-                    'heat_index': final_idx,
-                    'overflow_count': len(placed_overflow),
-                    'overflow_names': placed_overflow,
-                })
-            if unplaced_overflow and gear_violations is not None:
-                for name in unplaced_overflow:
-                    gear_violations.append({
-                        'comp_id': None,
-                        'comp_name': name,
-                        'heat_index': final_idx,
-                        'reason': 'LH cutter unplaced — all heats at capacity',
-                    })
-
-    # --- Slow-heat cluster (unchanged behavior) ---
-    def _place_group(group: list, preferred_idx: int | None):
-        if not group:
-            return
-        remaining = [g for g in group if g['id'] not in assigned_ids]
-        if not remaining:
-            return
-
-        # Prefer one dedicated heat; overflow stays grouped into adjacent heats.
-        idx = preferred_idx if preferred_idx is not None else 0
-        while remaining:
-            candidate = None
-            for probe in list(range(idx, num_heats)) + list(range(0, idx)):
-                if len(heats[probe]) < max_per_heat:
-                    candidate = probe
-                    break
-            if candidate is None:
-                break
-            idx = candidate
-            capacity = max_per_heat - len(heats[idx])
-            take = remaining[:max(0, capacity)]
-            heats[idx].extend(take)
-            for comp in take:
-                assigned_ids.add(comp['id'])
-            remaining = remaining[len(take):]
-            idx += 1
-
-    _place_group(slow_heat, slow_heat_idx)
-
-    # Fill the remaining cutters with snake draft while respecting capacity.
-    # Sort by ability rank before the snake draft so each heat gets a skill mix.
-    remaining = _sort_by_ability(
-        [c for c in competitors if c['id'] not in assigned_ids], event
+    left_handed = _sort_by_ability(
+        [comp for comp in competitors if comp.get('is_left_handed')],
+        event,
     )
-    if not remaining:
-        return heats
+    slow_cutters = _sort_by_ability(
+        [comp for comp in competitors if comp.get('is_slow_springboard')],
+        event,
+    )
+    slow_ids = {comp['id'] for comp in slow_cutters}
+    regular_lh = [comp for comp in left_handed if comp['id'] not in slow_ids]
+    slow_lh = [comp for comp in left_handed if comp['id'] in slow_ids]
 
-    heat_idx = 0
-    direction = 1
-    for comp in remaining:
-        # First pass: find a heat with capacity AND no gear-sharing conflict.
-        # Springboards are the highest-stakes shared-equipment event, so this
-        # check matches the standard heat generator (gear audit fix G3).
-        placed = False
-        for _ in range(num_heats):
-            if (
-                len(heats[heat_idx]) < max_per_heat and
-                not _has_gear_sharing_conflict(comp, heats[heat_idx], event)
-            ):
-                heats[heat_idx].append(comp)
-                placed = True
-                break
-            heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
+    minimum_heats = max(
+        num_heats,
+        math.ceil(len(competitors) / max_per_heat),
+        len(left_handed),
+    )
 
-        # Fallback: place despite conflict if every heat conflicts/full.
-        # Record any gear-sharing conflict introduced here so the caller can
-        # surface a warning to the judge (gear audit fix G3 — 2026-04-07).
-        if not placed:
-            for _ in range(num_heats):
-                if len(heats[heat_idx]) < max_per_heat:
-                    if gear_violations is not None and _has_gear_sharing_conflict(comp, heats[heat_idx], event):
-                        gear_violations.append({
-                            'comp_id': comp.get('id'),
-                            'comp_name': comp.get('name', ''),
-                            'heat_index': heat_idx,
-                        })
+    for candidate_count in range(minimum_heats, len(competitors) + 1):
+        heats = [[] for _ in range(candidate_count)]
+        assigned_ids = set()
+
+        # Fast/non-slow LH cutters retain the established front-to-back ability
+        # order. Slow LH cutters use the closing slots without sharing a dummy.
+        for index, comp in enumerate(regular_lh):
+            heats[index].append(comp)
+            assigned_ids.add(comp['id'])
+        for offset, comp in enumerate(reversed(slow_lh), start=1):
+            heats[-offset].append(comp)
+            assigned_ids.add(comp['id'])
+
+        failed = False
+        for comp in slow_cutters:
+            if comp['id'] in assigned_ids:
+                continue
+            placed = False
+            for heat_idx in range(candidate_count - 1, -1, -1):
+                if (
+                    len(heats[heat_idx]) < max_per_heat
+                    and not _has_gear_sharing_conflict(comp, heats[heat_idx], event)
+                ):
                     heats[heat_idx].append(comp)
+                    assigned_ids.add(comp['id'])
                     placed = True
                     break
-                heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
+            if not placed:
+                failed = True
+                break
+        if failed:
+            continue
 
-        if not placed:
-            break
-        heat_idx, direction = _advance_snake_index(heat_idx, direction, num_heats)
-
-    # Re-order so any partial heat closes the event instead of opening it.
-    # Springboard isn't partnered, so competitor count == capacity-relevant size.
-    # The helper no-ops when any heat is over capacity (LH overflow stays put).
-    # Skip the reorder entirely when slow-heat cutters were placed — the slow
-    # cluster is intentionally pinned to the final heat and must not migrate.
-    # Remap gear_violations heat indices in-place after the reorder.
-    if not slow_heat:
-        heats, old_to_new = _move_partial_heats_to_end(
-            heats, [len(h) for h in heats], max_per_heat,
+        remaining = _sort_by_ability(
+            [comp for comp in competitors if comp['id'] not in assigned_ids],
+            event,
         )
-        _remap_violation_heat_indices(gear_violations, old_to_new)
+        direction = 1
+        heat_idx = 0
+        for comp in remaining:
+            placed = False
+            examined = set()
+            while len(examined) < candidate_count:
+                if heat_idx in examined:
+                    heat_idx, direction = _advance_snake_index(
+                        heat_idx,
+                        direction,
+                        candidate_count,
+                    )
+                    continue
+                examined.add(heat_idx)
+                if (
+                    len(heats[heat_idx]) < max_per_heat
+                    and not _has_gear_sharing_conflict(comp, heats[heat_idx], event)
+                ):
+                    heats[heat_idx].append(comp)
+                    assigned_ids.add(comp['id'])
+                    placed = True
+                    break
+                heat_idx, direction = _advance_snake_index(
+                    heat_idx,
+                    direction,
+                    candidate_count,
+                )
+            if not placed:
+                failed = True
+                break
+            heat_idx, direction = _advance_snake_index(
+                heat_idx,
+                direction,
+                candidate_count,
+            )
+        if failed or any(not heat for heat in heats):
+            continue
 
-    return heats
+        if not slow_cutters:
+            heats, old_to_new = _move_partial_heats_to_end(
+                heats,
+                [len(heat) for heat in heats],
+                max_per_heat,
+            )
+            _remap_violation_heat_indices(gear_violations, old_to_new)
+        return heats
+
+    raise HeatGenerationSafetyError(
+        f'Heat generation blocked for {getattr(event, "display_name", "springboard")}: '
+        'no gear-safe springboard layout represents every cutter.'
+    )
 
 
 def _generate_saw_heats(competitors: list, num_heats: int,
@@ -1458,13 +1551,33 @@ def _competitors_share_gear_for_event(comp1: dict, comp2: dict, event: Event) ->
     Passes all tournament events to enable cascade checking across gear
     families (e.g. sharing an axe for Springboard also conflicts in Underhand).
     """
+    all_events = _get_tournament_events(event)
+    events_to_check = [event, *get_family_events(event, all_events)]
+
+    # Group entries intentionally name the shared equipment, not another
+    # competitor. Compare the raw group token because person-name
+    # normalization removes the ``group:`` marker used by the generic helper.
+    def group_tokens(comp: dict) -> set[str]:
+        tokens = set()
+        sharing = comp.get('gear_sharing', {}) or {}
+        for key, value in sharing.items():
+            token = str(value or '').strip().lower()
+            if not token.startswith('group:'):
+                continue
+            if any(event_matches_gear_key(candidate, key) for candidate in events_to_check):
+                tokens.add(token)
+        return tokens
+
+    if group_tokens(comp1) & group_tokens(comp2):
+        return True
+
     return competitors_share_gear_for_event(
-        str(comp1.get('name', '')).strip(),
+        str(comp1.get('base_name') or comp1.get('name', '')).strip(),
         comp1.get('gear_sharing', {}) or {},
-        str(comp2.get('name', '')).strip(),
+        str(comp2.get('base_name') or comp2.get('name', '')).strip(),
         comp2.get('gear_sharing', {}) or {},
         event,
-        all_events=_get_tournament_events(event),
+        all_events=all_events,
     )
 
 

@@ -74,21 +74,20 @@ def test_event_page_integration_flashes_unavoidable_conflict(
 def test_one_click_generation_flashes_unavoidable_conflict(
         db_session, auth_client):
     tournament = _make_tournament(db_session)
+    summary = {
+        'ok': True,
+        'generated': 0,
+        'skipped_events': [],
+        'protected': [],
+        'flights': 2,
+        'relay': {'placed': False},
+        'spillover': _conflict_result(),
+    }
 
-    with patch('routes.scheduling.flights._generate_all_heats'), patch(
-        'routes.scheduling.flights._build_pro_flights_if_possible',
-        return_value=2,
-    ), patch(
-        'services.flight_builder.integrate_proam_relay_into_final_flight',
-        return_value={'placed': False},
-    ), patch(
-        'services.flight_builder.integrate_college_spillover_into_flights',
-        return_value=_conflict_result(),
-    ), patch(
-        'services.saw_block_assignment.trigger_saw_block_recompute',
-    ), patch('routes.scheduling.flights.log_action'), patch(
-        'routes.scheduling.flights.db.session.commit', side_effect=db_session.flush,
-    ):
+    with patch(
+        'routes.scheduling.flights.generate_tournament_schedule_artifacts',
+        return_value=summary,
+    ), patch('routes.scheduling.flights.log_action'):
         response = auth_client.post(
             f'/scheduling/{tournament.id}/flights/one-click-generate',
             follow_redirects=False,

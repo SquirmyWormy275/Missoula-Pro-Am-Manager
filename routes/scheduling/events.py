@@ -21,13 +21,18 @@ from services.flight_builder import (
     lock_tournament_schedule,
     serialize_sqlite_schedule_writer,
 )
+from services.schedule_generation import (
+    ScheduleBuildError,
+    generate_tournament_schedule_artifacts,
+    normalize_flight_sizing_input,
+    schedule_operator_messages,
+)
 
 from . import (
     _build_assignment_details,
     _build_pro_flights_if_possible,
     _build_signup_rows,
     _competitor_entered_event,
-    _generate_all_heats,
     _is_list_only_event,
     _load_competitor_lookup,
     _normalize_name,
@@ -166,7 +171,6 @@ def _resolve_num_flights_from_form(tournament, form):
 def _handle_event_list_post(
     tournament,
     saturday_college_event_ids,
-    generate_event_heats,
     build_pro_flights,
     integrate_college_spillover_into_flights,
 ):
@@ -182,69 +186,43 @@ def _handle_event_list_post(
 
     from services.flight_builder import integrate_proam_relay_into_final_flight
 
-    if action in {"generate_all", "rebuild_flights", "integrate_spillover"}:
+    if action == "generate_all":
+        flash_checkpoint = len(session.get("_flashes", []))
+        sizing = normalize_flight_sizing_input(request.form)
+        try:
+            summary = generate_tournament_schedule_artifacts(
+                tournament_id,
+                flight_sizing=sizing,
+            )
+        except ScheduleBuildError as exc:
+            _discard_success_flashes_since(flash_checkpoint)
+            flash(str(exc), 'error')
+        except Exception:
+            db.session.rollback()
+            _discard_success_flashes_since(flash_checkpoint)
+            from flask import current_app
+            current_app.logger.exception(
+                "Run Show generation failed for tournament %s", tournament_id,
+            )
+            flash(
+                "Run Show generation failed and was rolled back. Open "
+                "Preflight to review the show, then run Generate again.",
+                "error",
+            )
+        else:
+            for message in schedule_operator_messages(summary):
+                flash(message["message"], message["category"])
+            flash_spillover_result(summary.get("spillover"))
+            session[f"build_diff_{tournament_id}"] = summary["build_diff"]
+            session.modified = True
+            invalidate_tournament_caches(tournament_id)
+        return
+
+    if action in {"rebuild_flights", "integrate_spillover"}:
         tournament = lock_tournament_schedule(tournament)
     num_flights_override = _resolve_num_flights_from_form(tournament, request.form)
 
-    if action == "generate_all":
-        flash_checkpoint = len(session.get("_flashes", []))
-        try:
-            _generate_all_heats(tournament, generate_event_heats)
-            raw_sizing_mode = (request.form.get("flight_sizing_mode") or "").strip().lower()
-            if raw_sizing_mode and raw_sizing_mode != "count":
-                from .flights import _resolve_num_flights_from_persisted_config
-
-                num_flights_override = _resolve_num_flights_from_persisted_config(tournament)
-            pre_snap = _snapshot_flights(tournament_id)
-            flights = _build_pro_flights_if_possible(
-                tournament,
-                build_pro_flights,
-                num_flights=num_flights_override,
-                commit=False,
-            )
-            relay_result = None
-            integration = None
-            build_diff = None
-            if flights is not None:
-                # Phase 4: relay BEFORE spillover so Chokerman Run 2 closes.
-                relay_result = integrate_proam_relay_into_final_flight(
-                    tournament,
-                    commit=False,
-                )
-                integration = integrate_college_spillover_into_flights(
-                    tournament,
-                    saturday_college_event_ids,
-                    commit=False,
-                )
-                post_snap = _snapshot_flights(tournament_id)
-                build_diff = {
-                    "before_flight_count": len(pre_snap),
-                    "after_flight_count": len(post_snap),
-                    "total_heats": sum(post_snap.values()),
-                }
-            assign_saw_blocks(tournament, commit=False)
-            db.session.commit()
-        except Exception as exc:
-            db.session.rollback()
-            _discard_success_flashes_since(flash_checkpoint)
-            flash(f"Heat/flight generation failed and was rolled back: {exc}", "error")
-        else:
-            try:
-                if flights is not None:
-                    flash(f"Built {flights} pro flight(s).", "success")
-                    if relay_result.get("placed"):
-                        flash("Pro-Am Relay placed in the final flight.", "success")
-                    flash_spillover_result(integration)
-                    session[f"build_diff_{tournament_id}"] = build_diff
-                    session.modified = True
-                invalidate_tournament_caches(tournament_id)
-            except Exception as exc:
-                flash(
-                    f"Schedule was saved, but follow-up housekeeping failed: {exc}",
-                    "warning",
-                )
-
-    elif action == "rebuild_flights":
+    if action == "rebuild_flights":
         flash_checkpoint = len(session.get("_flashes", []))
         try:
             pre_snap = _snapshot_flights(tournament_id)
@@ -331,7 +309,6 @@ def _handle_event_list_post(
 def event_list(tournament_id):
     """Unified Events & Schedule page — heat status, schedule options, generation actions."""
     from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
-    from services.heat_generator import generate_event_heats
 
     tournament = db.get_or_404(Tournament, tournament_id)
     if request.method == "POST":
@@ -350,10 +327,6 @@ def event_list(tournament_id):
         _handle_event_list_post(
             tournament,
             saturday_college_event_ids,
-            lambda event: generate_event_heats(
-                event,
-                allow_flight_replacement=True,
-            ),
             build_pro_flights,
             integrate_college_spillover_into_flights,
         )
@@ -1141,7 +1114,6 @@ def reset_event_order(tournament_id):
 def _day_schedule_legacy(tournament_id):
     """Legacy day-schedule logic — kept for reference, no longer routed."""
     from services.flight_builder import build_pro_flights, integrate_college_spillover_into_flights
-    from services.heat_generator import generate_event_heats
     from services.schedule_builder import COLLEGE_SATURDAY_PRIORITY, build_day_schedule
 
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -1200,25 +1172,14 @@ def _day_schedule_legacy(tournament_id):
                     "success",
                 )
         elif action == "generate_all":
-            _generate_all_heats(
-                tournament,
-                lambda event: generate_event_heats(
-                    event,
-                    allow_flight_replacement=True,
-                ),
-            )
-            flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
-            if flights is not None:
-                flash(f"Built {flights} pro flight(s).", "success")
-                integration = integrate_college_spillover_into_flights(
-                    tournament, saved["saturday_college_event_ids"]
-                )
-                if integration["integrated_heats"] > 0:
-                    db.session.commit()
-                    flash(
-                        f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.",
-                        "success",
-                    )
+            try:
+                summary = generate_tournament_schedule_artifacts(tournament.id)
+            except ScheduleBuildError as exc:
+                flash(str(exc), "error")
+            else:
+                for message in schedule_operator_messages(summary):
+                    flash(message["message"], message["category"])
+                flash_spillover_result(summary.get("spillover"))
         elif action == "rebuild_flights":
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:

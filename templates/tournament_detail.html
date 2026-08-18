@@ -92,10 +92,78 @@
         margin-top: 1px;
     }
 
+    .workflow-stepper {
+        display: flex;
+        align-items: center;
+    }
+    .workflow-step {
+        flex: 1;
+        min-width: 0;
+        text-align: center;
+        text-decoration: none;
+    }
+    .workflow-connector {
+        width: 16px;
+        height: 2px;
+        flex-shrink: 0;
+    }
+    .workflow-step-label {
+        font-size: 0.7rem;
+        line-height: 1.25;
+    }
+    .admin-action-row,
+    .restore-form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+    }
+    .next-step-alert { border-radius: 8px !important; }
+
     @media (max-width: 991px) {
         .stat-item { padding: 0.65rem 1rem; }
         .stat-value { font-size: 1.25rem; }
         .stat-alerts { margin-left: 0; width: 100%; border-top: 1px solid var(--sx-border); }
+    }
+    @media (max-width: 575px) {
+        .workflow-stepper {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1rem 0.5rem;
+        }
+        .workflow-connector { display: none; }
+        .workflow-step-label {
+            min-height: 2.1rem;
+            padding-inline: 0.15rem;
+            white-space: normal;
+            overflow-wrap: normal;
+            word-break: normal;
+        }
+        .admin-action-row > *,
+        .restore-form > * {
+            width: 100%;
+        }
+        .admin-action-row .btn,
+        .restore-form .btn {
+            width: 100%;
+        }
+        .restore-form input[type="file"] {
+            max-width: none !important;
+        }
+        .next-step-alert {
+            display: grid !important;
+            grid-template-columns: auto minmax(0, 1fr);
+            align-items: start !important;
+        }
+        .next-step-alert > .btn,
+        .next-step-alert > .next-step-actions {
+            grid-column: 1 / -1;
+            width: 100%;
+        }
+        .next-step-alert > .btn { margin-top: 0.25rem; }
+        .next-step-actions .btn,
+        .next-step-actions form,
+        .next-step-actions form .btn { width: 100%; }
     }
 </style>
 {% endblock %}
@@ -217,59 +285,59 @@
                     {% set step4_done = stats.heats_generated > 0 %}
                     {% set step5_done = stats.flights_built %}
                     {% set step6_done = stats.completed_events > 0 %}
-                    <div class="d-flex align-items-center">
+                    <div class="workflow-stepper">
                         <a href="{{ url_for('main.tournament_setup', tournament_id=tournament.id) }}"
-                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                           class="workflow-step">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step1_done else 'bg-light border text-muted' }}"
                                  style="width: 40px; height: 40px;">
                                 <i class="bi {{ 'bi-check-lg' if step1_done else 'bi-gear' }}"></i>
                             </div>
-                            <div class="small {{ 'text-success fw-semibold' if step1_done else 'text-muted' }}" style="font-size: 0.7rem;">Setup</div>
+                            <div class="workflow-step-label {{ 'text-success fw-semibold' if step1_done else 'text-muted' }}">Setup</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step1_done else 'var(--sx-border-bright)' }};"></div>
+                        <div class="workflow-connector" style="background: {{ 'var(--sx-success)' if step1_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('registration.college_registration', tournament_id=tournament.id) }}"
-                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                           class="workflow-step">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step2_done else 'bg-light border text-muted' }}"
                                  style="width: 40px; height: 40px;">
                                 <i class="bi {{ 'bi-check-lg' if step2_done else 'bi-person-plus' }}"></i>
                             </div>
-                            <div class="small {{ 'text-success fw-semibold' if step2_done else 'text-muted' }}" style="font-size: 0.7rem;">Register</div>
+                            <div class="workflow-step-label {{ 'text-success fw-semibold' if step2_done else 'text-muted' }}">Register</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step2_done else 'var(--sx-border-bright)' }};"></div>
+                        <div class="workflow-connector" style="background: {{ 'var(--sx-success)' if step2_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('main.tournament_setup', tournament_id=tournament.id, tab='wood') }}"
-                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                           class="workflow-step">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step3_done else 'bg-light border text-muted' }}"
                                  style="width: 40px; height: 40px;">
                                 <i class="bi {{ 'bi-check-lg' if step3_done else 'bi-tools' }}"></i>
                             </div>
-                            <div class="small {{ 'text-success fw-semibold' if step3_done else 'text-muted' }}" style="font-size: 0.7rem;">Wood Specs</div>
+                            <div class="workflow-step-label {{ 'text-success fw-semibold' if step3_done else 'text-muted' }}">Wood Specs</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step3_done else 'var(--sx-border-bright)' }};"></div>
+                        <div class="workflow-connector" style="background: {{ 'var(--sx-success)' if step3_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}"
-                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                           class="workflow-step">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step4_done else 'bg-light border text-muted' }}"
                                  style="width: 40px; height: 40px;">
                                 <i class="bi {{ 'bi-check-lg' if step4_done else 'bi-layers' }}"></i>
                             </div>
-                            <div class="small {{ 'text-success fw-semibold' if step4_done else 'text-muted' }}" style="font-size: 0.7rem;">Heats &amp; Flights</div>
+                            <div class="workflow-step-label {{ 'text-success fw-semibold' if step4_done else 'text-muted' }}">Heats &amp; Flights</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step4_done else 'var(--sx-border-bright)' }};"></div>
+                        <div class="workflow-connector" style="background: {{ 'var(--sx-success)' if step4_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
-                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                           class="workflow-step">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step5_done else 'bg-light border text-muted' }}"
                                  style="width: 40px; height: 40px;">
                                 <i class="bi {{ 'bi-check-lg' if step5_done else 'bi-shield-check' }}"></i>
                             </div>
-                            <div class="small {{ 'text-success fw-semibold' if step5_done else 'text-muted' }}" style="font-size: 0.7rem;">Preflight</div>
+                            <div class="workflow-step-label {{ 'text-success fw-semibold' if step5_done else 'text-muted' }}">Preflight</div>
                         </a>
-                        <div class="flex-shrink-0" style="height: 2px; width: 16px; background: {{ 'var(--sx-success)' if step5_done else 'var(--sx-border-bright)' }};"></div>
+                        <div class="workflow-connector" style="background: {{ 'var(--sx-success)' if step5_done else 'var(--sx-border-bright)' }};"></div>
                         <a href="{{ url_for('reporting.all_results', tournament_id=tournament.id) }}"
-                           class="text-decoration-none text-center" style="flex: 1; min-width: 0;">
+                           class="workflow-step">
                             <div class="rounded-circle mx-auto d-flex align-items-center justify-content-center mb-1 {{ 'bg-success text-white' if step6_done else 'bg-primary text-white' }}"
                                  style="width: 40px; height: 40px;">
                                 <i class="bi bi-file-text"></i>
                             </div>
-                            <div class="small {{ 'text-success fw-semibold' if step6_done else 'text-primary fw-semibold' }}" style="font-size: 0.7rem;">Reports</div>
+                            <div class="workflow-step-label {{ 'text-success fw-semibold' if step6_done else 'text-primary fw-semibold' }}">Reports</div>
                         </a>
                     </div>
                 </div>
@@ -284,7 +352,7 @@
     <!-- ── RECOMMENDED NEXT STEP ────────────────────────────────── -->
     {% if tournament.status == 'setup' %}
         {% if stats.events == 0 %}
-        <div class="alert mb-4 d-flex align-items-center gap-3"
+        <div class="alert next-step-alert mb-4 d-flex align-items-center gap-3"
              style="background:rgba(59,142,232,0.12); border:1px solid rgba(59,142,232,0.35); border-left:4px solid var(--sx-info); border-radius:10px;">
             <i class="bi bi-arrow-right-circle-fill text-primary" style="font-size:1.5rem; flex-shrink:0;"></i>
             <div class="flex-grow-1">
@@ -295,7 +363,7 @@
                class="btn btn-primary btn-sm flex-shrink-0">Tournament Setup <i class="bi bi-arrow-right ms-1"></i></a>
         </div>
         {% elif stats.college_competitors == 0 %}
-        <div class="alert mb-4 d-flex align-items-center gap-3"
+        <div class="alert next-step-alert mb-4 d-flex align-items-center gap-3"
              style="background:rgba(59,142,232,0.12); border:1px solid rgba(59,142,232,0.35); border-left:4px solid var(--sx-info); border-radius:10px;">
             <i class="bi bi-arrow-right-circle-fill text-primary" style="font-size:1.5rem; flex-shrink:0;"></i>
             <div class="flex-grow-1">
@@ -306,7 +374,7 @@
                class="btn btn-primary btn-sm flex-shrink-0">Import Entries <i class="bi bi-arrow-right ms-1"></i></a>
         </div>
         {% elif stats.pro_competitors == 0 %}
-        <div class="alert mb-4 d-flex align-items-center gap-3"
+        <div class="alert next-step-alert mb-4 d-flex align-items-center gap-3"
              style="background:rgba(232,144,18,0.12); border:1px solid rgba(232,144,18,0.35); border-left:4px solid var(--sx-amber); border-radius:10px;">
             <i class="bi bi-arrow-right-circle-fill text-warning" style="font-size:1.5rem; flex-shrink:0;"></i>
             <div class="flex-grow-1">
@@ -317,7 +385,7 @@
                class="btn btn-warning btn-sm flex-shrink-0">Import Pro Entries <i class="bi bi-arrow-right ms-1"></i></a>
         </div>
         {% elif stats.heats_generated == 0 %}
-        <div class="alert mb-4 d-flex align-items-center gap-3"
+        <div class="alert next-step-alert mb-4 d-flex align-items-center gap-3"
              style="background:rgba(59,142,232,0.12); border:1px solid rgba(59,142,232,0.35); border-left:4px solid var(--sx-info); border-radius:10px;">
             <i class="bi bi-arrow-right-circle-fill text-primary" style="font-size:1.5rem; flex-shrink:0;"></i>
             <div class="flex-grow-1">
@@ -328,14 +396,14 @@
                class="btn btn-primary btn-sm flex-shrink-0">Events &amp; Heats <i class="bi bi-arrow-right ms-1"></i></a>
         </div>
         {% else %}
-        <div class="alert mb-4 d-flex align-items-center gap-3"
+        <div class="alert next-step-alert mb-4 d-flex align-items-center gap-3"
              style="background:rgba(45,168,94,0.10); border:1px solid rgba(45,168,94,0.35); border-left:4px solid var(--sx-success); border-radius:10px;">
             <i class="bi bi-check-circle-fill text-success" style="font-size:1.5rem; flex-shrink:0;"></i>
             <div class="flex-grow-1">
                 <div class="fw-bold" style="color:#5cd48a;">Ready for Game Day</div>
                 <div class="small text-muted">Run a Preflight Check to verify everything is in order, then print heat sheets and launch the kiosk display.</div>
             </div>
-            <div class="d-flex gap-2 flex-shrink-0 flex-wrap">
+            <div class="next-step-actions d-flex gap-2 flex-shrink-0 flex-wrap">
                 <a href="{{ url_for('scheduling.preflight_check', tournament_id=tournament.id) }}"
                    class="btn btn-outline-success btn-sm">Preflight Check</a>
                 <a href="{{ url_for('scheduling.heat_sheets', tournament_id=tournament.id) }}"
@@ -657,7 +725,7 @@
             </span>
         </div>
         <div class="card-body py-3">
-            <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <div class="admin-action-row mb-2">
                 <form method="POST"
                       action="{{ url_for('main.clone_tournament', tournament_id=tournament.id) }}"
                       data-confirm="Clone this tournament? A copy will be created with all events, teams, and competitor names (no results).">
@@ -685,7 +753,7 @@
             <div>
                 <form method="post" action="{{ url_for('reporting.restore_database', tournament_id=tournament.id) }}"
                       enctype="multipart/form-data"
-                      class="d-flex gap-2 align-items-center">
+                      class="restore-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input class="form-control form-control-sm" type="file"
                            name="backup_file" accept=".db" required style="max-width:280px;">

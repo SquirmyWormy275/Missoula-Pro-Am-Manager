@@ -5,42 +5,42 @@
       "package": "bootstrap",
       "version": "5.3.2",
       "license": "MIT",
-      "path": "bootstrap-5.3.2/bootstrap.min.css",
+      "path": "bootstrap/css/bootstrap.min.css",
       "sha256": "3017df4a76db5f01c2b99b603d88b03106df13bcfe18e67b7c13c2341d3a67df"
     },
     {
       "package": "bootstrap",
       "version": "5.3.2",
       "license": "MIT",
-      "path": "bootstrap-5.3.2/bootstrap.bundle.min.js",
+      "path": "bootstrap/js/bootstrap.bundle.min.js",
       "sha256": "82f64f62bb03c1bc1824b0f9c9e05f70dba33e146818e63cdf5c306c8cf3dedd"
     },
     {
       "package": "bootstrap-icons",
       "version": "1.11.1",
       "license": "MIT",
-      "path": "bootstrap-icons-1.11.1/bootstrap-icons.min.css",
+      "path": "bootstrap-icons/font/bootstrap-icons.min.css",
       "sha256": "e8c36e8eb75b57467b4bddbb3f350c5ce98c2f090a76c743ed7225ff0f3d1cc4"
     },
     {
       "package": "bootstrap-icons",
       "version": "1.11.1",
       "license": "MIT",
-      "path": "bootstrap-icons-1.11.1/fonts/bootstrap-icons.woff",
+      "path": "bootstrap-icons/font/fonts/bootstrap-icons.woff",
       "sha256": "4d4572ef314e1b734cdd6485f913b0396d81bedf4d216a47cfde0cdf32a9316e"
     },
     {
       "package": "bootstrap-icons",
       "version": "1.11.1",
       "license": "MIT",
-      "path": "bootstrap-icons-1.11.1/fonts/bootstrap-icons.woff2",
+      "path": "bootstrap-icons/font/fonts/bootstrap-icons.woff2",
       "sha256": "bacd70afda7da1deac2bbd49b5717a4dd133bcd59c379525d705b8492f678e95"
     },
     {
       "package": "sortablejs",
       "version": "1.15.2",
       "license": "MIT",
-      "path": "sortablejs-1.15.2/Sortable.min.js",
+      "path": "sortable/Sortable.min.js",
       "sha256": "ca68430703c4f5960e90735867c6e94d29b5a3de37107d8100e5a301007e9e6e"
     }
   ]

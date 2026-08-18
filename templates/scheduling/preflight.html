@@ -14,17 +14,17 @@
                     <li class="breadcrumb-item active">Preflight Check</li>
                 </ol>
             </nav>
-            <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex flex-wrap gap-3 justify-content-between align-items-center">
                 <div>
                     <h1 class="mb-0"><i class="bi bi-shield-check text-dark"></i> Preflight Check</h1>
                     <p class="text-muted mb-0">{{ tournament.name }} {{ tournament.year }}</p>
                 </div>
-                <div class="d-flex gap-2">
+                <div class="d-flex flex-wrap gap-2">
                     <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}" class="btn btn-outline-secondary">
                         <i class="bi bi-arrow-left"></i> Back to Events &amp; Schedule
                     </a>
                     {% if report.has_autofixable %}
-                    <form method="POST" data-confirm="Apply all auto-fixes now? This will sync heat assignments, assign missing partners, and integrate spillover heats.">
+                    <form method="POST" data-confirm="Apply all safe auto-fixes now? This will parse gear details, complete one-sided gear pairs, assign safe partners, and integrate spillover heats.">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="action" value="autofix">
                         <button class="btn btn-warning" type="submit">
@@ -37,14 +37,24 @@
         </div>
     </div>
 
-    {% if report.has_blockers %}
+    {% if report.pre_generation_blocking %}
     <div class="alert alert-danger d-flex align-items-start" role="alert">
         <i class="bi bi-shield-exclamation me-2 fs-4"></i>
         <div class="flex-grow-1">
-            <strong>{{ report.blocking|length }} hard blocker(s) — heat generation will hold these competitors back.</strong>
-            Resolve the items below before generating heats. Per DOMAIN_CONTRACT,
-            unresolved partners, self-references, non-reciprocal pairs, and heat sync
-            mismatches are not allowed to slip into the schedule.
+            <strong>The full show build is blocked by {{ report.pre_generation_blocking|length }} input blocker(s).</strong>
+            Resolve the items below before generating the show. No schedule changes will be committed
+            while unresolved partners, invalid pairings, or unsafe gear-sharing declarations remain.
+        </div>
+    </div>
+    {% endif %}
+
+    {% if report.post_generation_blocking %}
+    <div class="alert alert-warning d-flex align-items-start" role="alert">
+        <i class="bi bi-exclamation-triangle me-2 fs-4"></i>
+        <div class="flex-grow-1">
+            <strong>The current generated show has {{ report.post_generation_blocking|length }} schedule blocker(s).</strong>
+            These findings do not prevent a fresh full build. The new schedule will be committed only
+            if its relay, spillover, flight positions, closing order, and saw blocks pass validation.
         </div>
     </div>
     {% endif %}

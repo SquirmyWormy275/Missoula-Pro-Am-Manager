@@ -115,9 +115,8 @@ def _enroll(competitor, event):
 
 
 class TestLhAbilityOverflow:
-    def test_slowest_lh_cutters_land_in_final_overflow_heat(self, db_session):
-        """With 4 LH cutters + 3 heats, the slowest LH (rank 4) goes in the
-        final-heat overflow; the three fastest get their own heats."""
+    def test_ranked_lh_cutters_expand_in_ability_order(self, db_session):
+        """Four LH cutters receive four dummy time slots in ability order."""
         from models import Heat
         from services.heat_generator import generate_event_heats
 
@@ -152,26 +151,26 @@ class TestLhAbilityOverflow:
             )
             .all()
         )
-        assert len(heats) == 3, f"expected 3 heats, got {len(heats)}"
+        assert len(heats) == 4, f"expected 4 heats, got {len(heats)}"
 
-        # Each of the 3 heats gets exactly 1 LH cutter from the spread,
-        # but with 4 LH + 3 heats, one heat ALSO gets the overflow.
         final_heat = heats[-1]
         final_comp_ids = set(final_heat.get_competitors())
         assert lh_slow.id in final_comp_ids, (
-            f"LH slowest (rank 4) should land in the final-heat overflow, "
+            f"LH slowest (rank 4) should land in the final dummy slot, "
             f"got final heat comps {final_comp_ids}."
         )
 
-        # The three FAST LH cutters (ranks 1, 2, 3) get one per heat via spread.
-        # Fastest goes in heat 0 — the slow cutter overflow into heat 2 means
-        # heat 2 already has the rank-3 spread LH. We verify each fast LH ends
-        # up in SOME heat (not orphaned).
+        ordered_lh = []
         all_placed_lh = set()
         for h in heats:
+            heat_lh = []
             for cid in h.get_competitors():
                 if cid in {lh_fast.id, lh_mid1.id, lh_mid2.id, lh_slow.id}:
                     all_placed_lh.add(cid)
+                    heat_lh.append(cid)
+            assert len(heat_lh) == 1
+            ordered_lh.extend(heat_lh)
+        assert ordered_lh == [lh_fast.id, lh_mid1.id, lh_mid2.id, lh_slow.id]
         assert all_placed_lh == {
             lh_fast.id,
             lh_mid1.id,
@@ -204,7 +203,8 @@ class TestLhAbilityOverflow:
         # the no-ranks case and returns the input list unchanged.
         generate_event_heats(ev)
         heats = Heat.query.filter_by(event_id=ev.id, run_number=1).all()
-        assert len(heats) == 3
+        heats = sorted(heats, key=lambda heat: heat.heat_number)
+        assert len(heats) == 4
 
         # All 4 LH cutters placed somewhere.
         all_placed_lh = set()
@@ -213,6 +213,11 @@ class TestLhAbilityOverflow:
                 if cid in {lh1.id, lh2.id, lh3.id, lh4.id}:
                     all_placed_lh.add(cid)
         assert all_placed_lh == {lh1.id, lh2.id, lh3.id, lh4.id}
+        ordered_lh = [
+            next(cid for cid in heat.get_competitors() if cid in all_placed_lh)
+            for heat in heats
+        ]
+        assert ordered_lh == [lh1.id, lh2.id, lh3.id, lh4.id]
 
     def test_single_lh_with_rank_still_gets_stand_4(self, db_session):
         """Regression guard: ability-sort on a single-LH input list

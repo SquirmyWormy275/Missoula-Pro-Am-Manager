@@ -9,6 +9,8 @@ click-path fix rather than as advisory warnings.
 """
 from __future__ import annotations
 
+import json
+
 from config import DAY_SPLIT_EVENT_NAMES
 from models import Event, EventResult, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
@@ -20,14 +22,25 @@ from services.gear_sharing import (
 )
 from services.mark_assignment import is_mark_assignment_eligible
 
-# Issue codes that hard-block heat / flight generation. Anything not listed
-# here is advisory — generation can still run, the warning informs the
-# operator of a quality concern.
-BLOCKING_CODES = frozenset({
+# Input defects must be repaired before heat generation mutates the schedule.
+PRE_GENERATION_BLOCKING_CODES = frozenset({
+    'missing_partner_name',
     'unresolved_partner_name',
     'self_reference_partner',
     'non_reciprocal_partnership',
     'invalid_partner_gender',
+    'gear_details_not_parsed',
+    'gear_unmapped_event_keys',
+    'gear_unknown_partner_names',
+    'gear_self_reference',
+    'gear_partner_mismatch',
+    'partnered_axe_pair_state_invalid',
+    'partnered_axe_prelims_incomplete',
+    'partnered_axe_finals_not_advanced',
+})
+
+# These invariants can only be evaluated against the generated show layout.
+POST_GENERATION_BLOCKING_CODES = frozenset({
     'invalid_flight_position',
     'duplicate_flight_position',
     'duplicate_flight_number',
@@ -36,6 +49,12 @@ BLOCKING_CODES = frozenset({
     'chokerman_run2_partially_in_flights',
     'chokerman_run2_invalid_closer',
 })
+
+# Public aggregate retained for the Preflight page and existing callers that
+# need to answer the broad question "is any scheduling blocker present?".
+BLOCKING_CODES = (
+    PRE_GENERATION_BLOCKING_CODES | POST_GENERATION_BLOCKING_CODES
+)
 
 
 def get_blocking_issues(report: dict) -> list[dict]:
@@ -47,6 +66,24 @@ def get_blocking_issues(report: dict) -> list[dict]:
     """
     issues = report.get('issues') or []
     return [i for i in issues if i.get('code') in BLOCKING_CODES]
+
+
+def get_pre_generation_blocking_issues(report: dict) -> list[dict]:
+    """Return current input blockers that must be fixed before generation."""
+    issues = report.get('issues') or []
+    return [
+        issue for issue in issues
+        if issue.get('code') in PRE_GENERATION_BLOCKING_CODES
+    ]
+
+
+def get_post_generation_blocking_issues(report: dict) -> list[dict]:
+    """Return blockers evaluated against generated schedule artifacts."""
+    issues = report.get('issues') or []
+    return [
+        issue for issue in issues
+        if issue.get('code') in POST_GENERATION_BLOCKING_CODES
+    ]
 
 
 def _signed_up_pro_count(event: Event) -> int:
@@ -158,12 +195,19 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
             'unreviewed_marks': unreviewed_marks,
         })
 
-    # 2) Partner completeness for ALL partnered events (college + pro).
+    # 2) Partner completeness for ordinary partnered events (college + pro).
     # Previously pro-only — Jack & Jill / Double Buck / Pulp Toss / Peavey on
     # the college side had no odd-pool check, so a missing partner silently
     # placed the lone entrant solo on a stand at race time. Now both sides
     # are scanned.
-    partnered_events = tournament.events.filter_by(is_partnered=True).all()
+    all_partnered_events = tournament.events.filter_by(is_partnered=True).all()
+    partnered_events = [event for event in all_partnered_events if not event.has_prelims]
+    partnered_axe_events = [
+        event for event in all_partnered_events
+        if event.has_prelims
+        and not event.is_finalized
+        and event.status != 'completed'
+    ]
     for event in partnered_events:
         entered = _signed_up_count_for_event(event)
         if entered <= 1:
@@ -177,6 +221,101 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                 'autofix': True,
             })
 
+    # Partnered Axe owns its pair declarations in Event.event_state. Requiring
+    # duplicate competitor.partner fields creates false blockers; ignoring the
+    # state document would let missing pairs or unfinished prelims reach the
+    # show builder. Validate the authoritative document instead.
+    for event in partnered_axe_events:
+        pool = _signed_up_competitors_for_event(event)
+        if not pool:
+            continue
+        pool_ids = {comp.id for comp in pool}
+        raw_state = event.event_state or event.payouts
+        try:
+            state = json.loads(raw_state or '{}')
+        except (json.JSONDecodeError, TypeError):
+            state = None
+
+        pairs = state.get('pairs') if isinstance(state, dict) else None
+        stage = state.get('stage') if isinstance(state, dict) else None
+        represented_ids: list[int] = []
+        structurally_valid = isinstance(pairs, list) and stage in {
+            'prelims', 'finals', 'completed',
+        }
+        if structurally_valid:
+            for pair in pairs:
+                if not isinstance(pair, dict):
+                    structurally_valid = False
+                    break
+                member_ids = []
+                for key in ('competitor1', 'competitor2'):
+                    member = pair.get(key)
+                    member_id = member.get('id') if isinstance(member, dict) else None
+                    if not isinstance(member_id, int) or isinstance(member_id, bool):
+                        structurally_valid = False
+                        break
+                    member_ids.append(member_id)
+                if not structurally_valid or len(set(member_ids)) != 2:
+                    structurally_valid = False
+                    break
+                represented_ids.extend(member_ids)
+
+        pair_state_valid = (
+            structurally_valid
+            and len(represented_ids) == len(set(represented_ids))
+            and set(represented_ids) == pool_ids
+        )
+        if not pair_state_valid:
+            missing_names = [
+                comp.display_name for comp in pool if comp.id not in represented_ids
+            ]
+            names = ', '.join(missing_names[:5]) or 'review the registered pairs'
+            if len(missing_names) > 5:
+                names += f' (+{len(missing_names) - 5} more)'
+            issues.append({
+                'severity': 'high',
+                'code': 'partnered_axe_pair_state_invalid',
+                'title': 'Partnered Axe pair registration is incomplete',
+                'detail': (
+                    f'{event.display_name} pair registration does not represent '
+                    'every entered competitor exactly once. Complete pair '
+                    f'registration before building the show: {names}.'
+                ),
+                'autofix': False,
+                'event_ids': [event.id],
+            })
+            continue
+
+        unscored_pairs = [
+            pair for pair in pairs if pair.get('prelim_score') is None
+        ]
+        if unscored_pairs:
+            issues.append({
+                'severity': 'high',
+                'code': 'partnered_axe_prelims_incomplete',
+                'title': 'Partnered Axe prelims are incomplete',
+                'detail': (
+                    f'{event.display_name} has {len(unscored_pairs)} registered '
+                    'pair(s) without a preliminary score. Record every prelim '
+                    'before building the finals card.'
+                ),
+                'autofix': False,
+                'event_ids': [event.id],
+            })
+        elif stage == 'prelims':
+            issues.append({
+                'severity': 'high',
+                'code': 'partnered_axe_finals_not_advanced',
+                'title': 'Partnered Axe finalists are not confirmed',
+                'detail': (
+                    f'{event.display_name} prelims are scored, but the top four '
+                    'have not been advanced to finals. Confirm the finalists '
+                    'before building the show.'
+                ),
+                'autofix': False,
+                'event_ids': [event.id],
+            })
+
     # 2a) Unresolved partner names + non-reciprocal partnerships.
     # For every partnered-event entrant, attempt the same three-tier match the
     # heat generator runs (exact → first-name → Levenshtein ≤ 2). Flag any
@@ -188,13 +327,10 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
     non_reciprocal: list[dict] = []
     self_ref_partner: list[dict] = []
     invalid_partner_gender: list[dict] = []
+    missing_partner: list[dict] = []
     for event in partnered_events:
         pool = _signed_up_competitors_for_event(event)
-        if len(pool) <= 1:
-            continue
         # Build lookup by competitor id and by normalized name for fast checks.
-        by_id = {c.id: c for c in pool}
-        norm_to_comp = {normalize_alphanum(c.name): c for c in pool}
         for comp in pool:
             partners = comp.get_partners() if hasattr(comp, 'get_partners') else {}
             partner_name = ''
@@ -207,8 +343,12 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                         partner_name = str(raw).strip()
                         break
             if not partner_name:
-                # Blank partner — already counted by the odd-pool check via the
-                # pool-size parity, so don't double-emit. Continue.
+                missing_partner.append({
+                    'competitor_id': comp.id,
+                    'competitor_name': comp.display_name,
+                    'event_id': event.id,
+                    'event_name': event.display_name,
+                })
                 continue
             # Self-reference check.
             if normalize_alphanum(partner_name) == normalize_alphanum(comp.name):
@@ -292,6 +432,28 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                     'matched_partner_name': matched.display_name,
                     'partner_says': their_partner_name,
                 })
+    if missing_partner:
+        names = ', '.join(
+            f"{row['competitor_name']} ({row['event_name']})"
+            for row in missing_partner[:5]
+        )
+        suffix = (
+            f' (+{len(missing_partner) - 5} more)'
+            if len(missing_partner) > 5 else ''
+        )
+        issues.append({
+            'severity': 'high',
+            'code': 'missing_partner_name',
+            'title': 'Partner declaration is blank',
+            'detail': (
+                f'{len(missing_partner)} partnered-event entrant(s) have no '
+                f'partner declaration. Add reciprocal partners in registration '
+                f'before generating heats: {names}{suffix}.'
+            ),
+            'autofix': False,
+            'event_ids': sorted({row['event_id'] for row in missing_partner}),
+            'missing': missing_partner,
+        })
     if unresolved_pairs:
         names = ', '.join(
             f"{p['competitor_name']} → \"{p['partner_name']}\" ({p['event_name']})"
@@ -1146,7 +1308,15 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
     for item in issues:
         by_severity[item.get('severity', 'low')] = by_severity.get(item.get('severity', 'low'), 0) + 1
 
-    blocking = [i for i in issues if i.get('code') in BLOCKING_CODES]
+    pre_generation_blocking = [
+        issue for issue in issues
+        if issue.get('code') in PRE_GENERATION_BLOCKING_CODES
+    ]
+    post_generation_blocking = [
+        issue for issue in issues
+        if issue.get('code') in POST_GENERATION_BLOCKING_CODES
+    ]
+    blocking = pre_generation_blocking + post_generation_blocking
     return {
         'issue_count': len(issues),
         'issues': issues,
@@ -1154,4 +1324,6 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
         'has_autofixable': any(i.get('autofix') for i in issues),
         'blocking': blocking,
         'has_blockers': bool(blocking),
+        'pre_generation_blocking': pre_generation_blocking,
+        'post_generation_blocking': post_generation_blocking,
     }

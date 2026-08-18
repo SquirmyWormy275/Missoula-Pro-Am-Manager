@@ -17,6 +17,32 @@ from models import Event, EventResult, Heat, HeatAssignment
 from models.competitor import ProCompetitor
 
 
+def partnered_axe_history_protection_reason(event: Event) -> str | None:
+    """Return why a Partnered Axe final card is immutable, if finals started."""
+    raw = event.event_state or event.payouts
+    if not raw:
+        return None
+    try:
+        state = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        completed_result = EventResult.query.filter_by(
+            event_id=event.id,
+            status='completed',
+        ).first()
+        return 'unreadable scored Partnered Axe state' if completed_result else None
+    if not isinstance(state, dict):
+        return 'unreadable scored Partnered Axe state'
+    if state.get('stage') == 'completed':
+        return 'completed Partnered Axe finals'
+    finalists = state.get('finalists')
+    if isinstance(finalists, list) and any(
+        isinstance(pair, dict) and pair.get('final_score') is not None
+        for pair in finalists
+    ):
+        return 'scored finals'
+    return None
+
+
 class PartneredAxeThrow:
     """Manages the Partnered Axe Throw prelims/finals flow."""
 

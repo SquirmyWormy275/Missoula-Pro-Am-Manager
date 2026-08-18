@@ -6,6 +6,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENDOR_ROOT = REPO_ROOT / "static" / "vendor"
+SORTABLE_TEMPLATES = (
+    "templates/proam_relay/manual_teams.html",
+    "templates/scheduling/ability_rankings.html",
+    "templates/scheduling/events.html",
+    "templates/scheduling/heat_sheets_print.html",
+)
 
 
 # Regression: ISSUE-002 — public CDNs broke the offline operator shell.
@@ -49,14 +55,30 @@ def test_vendored_asset_manifest_matches_every_runtime_byte():
         assert hashlib.sha256(asset.read_bytes()).hexdigest() == entry["sha256"]
 
 
+def test_drag_and_drop_pages_use_the_manifest_backed_sortable_asset(client):
+    manifest = json.loads((VENDOR_ROOT / "manifest.json").read_text(encoding="utf-8"))
+    sortable = next(
+        entry for entry in manifest["assets"] if entry["package"] == "sortablejs"
+    )
+    template_reference = f"filename='vendor/{sortable['path']}'"
+
+    for relative_path in SORTABLE_TEMPLATES:
+        template = REPO_ROOT / relative_path
+        assert template_reference in template.read_text(encoding="utf-8")
+
+    response = client.get(f"/static/vendor/{sortable['path']}")
+    assert response.status_code == 200
+    assert hashlib.sha256(response.data).hexdigest() == sortable["sha256"]
+
+
 def test_login_renders_only_local_core_assets_and_self_only_csp(client):
     response = client.get("/auth/login")
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert "/static/vendor/bootstrap-5.3.2/bootstrap.min.css" in body
-    assert "/static/vendor/bootstrap-icons-1.11.1/bootstrap-icons.min.css" in body
-    assert "/static/vendor/bootstrap-5.3.2/bootstrap.bundle.min.js" in body
+    assert "/static/vendor/bootstrap/css/bootstrap.min.css" in body
+    assert "/static/vendor/bootstrap-icons/font/bootstrap-icons.min.css" in body
+    assert "/static/vendor/bootstrap/js/bootstrap.bundle.min.js" in body
     assert "https://cdn.jsdelivr.net" not in body
     assert "https://fonts.googleapis.com" not in body
 
