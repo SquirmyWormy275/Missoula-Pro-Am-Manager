@@ -4,7 +4,6 @@ from pathlib import Path
 
 from routes.demo_data import DEMO_TOURNAMENT_NAME
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
