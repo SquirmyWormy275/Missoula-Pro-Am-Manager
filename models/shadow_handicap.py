@@ -638,3 +638,23 @@ def _reject_append_only_change(_mapper, _connection, target):
 for _append_only_model in _APPEND_ONLY_MODELS:
     sa.event.listen(_append_only_model, "before_update", _reject_append_only_change)
     sa.event.listen(_append_only_model, "before_delete", _reject_append_only_change)
+
+    # Production databases receive equivalent triggers from Alembic.  The
+    # create_all test/bootstrap path must preserve the same direct-SQL guard;
+    # ORM listeners alone cannot intercept an UPDATE or DELETE issued as text.
+    for _operation in ("UPDATE", "DELETE"):
+        _table_name = _append_only_model.__tablename__
+        _trigger_name = f"trg_{_table_name}_append_only_{_operation.lower()}"
+        sa.event.listen(
+            _append_only_model.__table__,
+            "after_create",
+            sa.DDL(
+                f"""
+                CREATE TRIGGER {_trigger_name}
+                BEFORE {_operation} ON {_table_name}
+                BEGIN
+                    SELECT RAISE(ABORT, 'shadow evidence is append-only');
+                END
+                """
+            ).execute_if(dialect="sqlite"),
+        )
