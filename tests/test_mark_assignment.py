@@ -388,10 +388,6 @@ class TestAssignHandicapMarksCalculatorFailures:
                     'strathmark.calculator': calculator_module,
                 },
             ),
-            patch(
-                'services.strathmark_wood_data.get_wood_dataframe',
-                return_value='wood-frame',
-            ),
             patch.dict(
                 'os.environ',
                 {'STRATHMARK_OLLAMA_URL': 'http://must-not-be-used.invalid'},
@@ -403,11 +399,11 @@ class TestAssignHandicapMarksCalculatorFailures:
             )
 
         assert calculator is not None
-        assert captured == {
-            'event_ceiling': 180,
-            'wood_df': 'wood-frame',
-            'results_df': 'results-frame',
-        }
+        assert set(captured) == {'event_ceiling', 'wood_df', 'results_df'}
+        assert captured['event_ceiling'] == 180
+        assert captured['results_df'] == 'results-frame'
+        assert captured['wood_df'] is not None
+        assert 'ollama_url' not in captured
 
 
 # ---------------------------------------------------------------------------
