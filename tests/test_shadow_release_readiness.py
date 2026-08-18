@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
+import os
 from datetime import date
 from pathlib import Path
 
@@ -97,39 +99,9 @@ def _client(transport: RehearsalTransport) -> StrathmarkShadowClient:
 
 
 def _calculate_response(run: ShadowHandicapRun, competitor_ids: list[str]) -> dict:
-    core = {
-        "schema_version": "strathmark.shadow-receipt-core.v1",
-        "consumer_id": run.consumer_id,
-        "request_id": run.request_id,
-        "run_revision": run.run_revision,
-        "event_code": "UH",
-        "active_input": {"fingerprint": "a" * 64},
-        "predictions": [
-            {
-                "ordinal": ordinal,
-                "competitor_id": competitor_id,
-                "prediction_id": f"strathmark:prediction:rehearsal-{ordinal}",
-                "assigned_mark": mark,
-                "median_seconds": 40.0 + ordinal,
-                "interval": {"lower": 30.0, "upper": 55.0, "nominal": 0.9},
-                "warnings": [],
-            }
-            for ordinal, (competitor_id, mark) in enumerate(zip(competitor_ids, (0, 7)))
-        ],
-    }
-    core_json = json.dumps(core, sort_keys=True, separators=(",", ":"))
-    receipt = {
-        "core_json": core_json,
-        "core": core,
-        "status": {"trust": "recorded", "freshness": "current"},
-    }
-    return {
-        "schema_version": "strathmark.shadow-calculate-response.v1",
-        "trusted": True,
-        "receipt": receipt,
-        "status": dict(READY_STATUS),
-        "draft_predictions": [],
-    }
+    from tests.test_strathmark_shadow_adapter import _receipt_response
+
+    return _receipt_response(run, competitor_ids)
 
 
 @pytest.fixture()
@@ -215,9 +187,7 @@ def test_complete_shadow_dress_rehearsal_is_atomic_recoverable_and_scoring_inert
     assert restarted_receipt.core_json == first_receipt.core_json
     assert restarted_transport.calls == []
 
-    prediction_ids = {
-        row["prediction_id"] for row in first_receipt.core["predictions"]
-    }
+    prediction_ids = {row["prediction_id"] for row in first_receipt.core["predictions"]}
     review_shadow_sheet(
         run,
         actor=actor,
@@ -267,13 +237,15 @@ def test_complete_shadow_dress_rehearsal_is_atomic_recoverable_and_scoring_inert
     assert captured.outcome_count == 2
     assert captured.numeric_action_count == 1
     assert run.lifecycle == "outcomes-complete"
+    from tests.test_strathmark_shadow_adapter import _numeric_outcome_response
 
     transport.queue(
         "/v1/shadow/outcomes/apply",
-        {
-            "schema_version": "strathmark.shadow-numeric-outcome-response.v1",
-            "outcome": {"status": "recorded"},
-        },
+        _numeric_outcome_response(
+            run,
+            actor,
+            json.loads(run.settlement_outbox[-1].payload_json),
+        ),
     )
     delivered = deliver_shadow_settlement_outbox(client=client, commit=False)
     assert (delivered.recorded, delivered.retryable_failed) == (1, 0)
@@ -293,10 +265,11 @@ def test_complete_shadow_dress_rehearsal_is_atomic_recoverable_and_scoring_inert
     assert correction_payload["revisions"][0]["action"] == "void"
     transport.queue(
         "/v1/shadow/outcomes/apply",
-        {
-            "schema_version": "strathmark.shadow-numeric-outcome-response.v1",
-            "outcome": {"status": "recorded"},
-        },
+        _numeric_outcome_response(
+            run,
+            actor,
+            correction_payload,
+        ),
     )
     redelivery = deliver_shadow_settlement_outbox(client=client, commit=False)
     assert redelivery.recorded == 1
@@ -319,9 +292,7 @@ def test_complete_shadow_dress_rehearsal_is_atomic_recoverable_and_scoring_inert
 
 
 def test_release_docs_and_dependency_comments_describe_the_real_shadow_authority():
-    mark_workflow = (ROOT / "docs" / "MARK_ASSIGNMENT_WORKFLOW.md").read_text(
-        encoding="utf-8"
-    )
+    mark_workflow = (ROOT / "docs" / "MARK_ASSIGNMENT_WORKFLOW.md").read_text(encoding="utf-8")
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     release = (ROOT / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
     rollback = (ROOT / "docs" / "ROLLBACK_SOP.md").read_text(encoding="utf-8")
@@ -343,3 +314,47 @@ def test_release_docs_and_dependency_comments_describe_the_real_shadow_authority
     assert "STRATHMARK shadow" in rollback
     assert "python scripts/verify_strathmark_shadow_contract.py" in workflow
     assert "@9c021c5" not in requirements
+    assert [
+        line.strip() for line in requirements.splitlines() if line.strip() == "jsonschema==4.25.1"
+    ] == ["jsonschema==4.25.1"]
+    assert importlib.metadata.version("jsonschema") == "4.25.1"
+
+
+def test_installed_contract_rehearsal_executes_status_and_idempotent_numeric_outcome(
+    monkeypatch,
+):
+    from scripts import verify_strathmark_shadow_contract as verifier
+
+    monkeypatch.setattr(
+        verifier,
+        "_installed_distribution_provenance",
+        lambda: {
+            "commit_id": verifier.EXPECTED_STRATHMARK_COMMIT,
+            "direct_url": "https://github.com/SquirmyWormy275/STRATHMARK",
+            "distribution_path": "isolated-unit-test",
+        },
+    )
+
+    cwd_before = Path.cwd()
+    artifact_values = {
+        "STRATHMARK_PREDICTION_ENGINE": "legacy",
+        "STRATHMARK_PREDICTION_CORE_ARTIFACT": "C:/production/core.json",
+        "STRATHMARK_PREDICTION_RESIDUAL_ARTIFACT": "C:/production/residual",
+    }
+    for name, value in artifact_values.items():
+        monkeypatch.setenv(name, value)
+    result = verifier.verify()
+
+    assert Path.cwd() == cwd_before
+    assert {name: os.environ[name] for name in artifact_values} == artifact_values
+    assert result["distribution_commit"] == "da5c44d07311b226c1e9842104477efaf61253fa"
+    assert result["status_readiness"] == "ready"
+    assert result["numeric_outcome"] == "recorded"
+    assert result["numeric_outcome_retry"] == "duplicate"
+    assert result["network_used"] is False
+    assert result["production_data_used"] is False
+    assert all(result["data_isolation"].values())
+    assert result["data_isolation"]["temporary_missoula_database"] is True
+    assert result["data_isolation"]["missoula_database_migrated"] is True
+    assert result["data_isolation"]["calculate_payload_from_missoula_builder"] is True
+    assert result["data_isolation"]["numeric_payload_from_missoula_builder"] is True

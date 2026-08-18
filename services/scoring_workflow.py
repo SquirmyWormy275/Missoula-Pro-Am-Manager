@@ -23,8 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 def _capture_shadow_outcomes(event: Event, judge_user_id: int | None) -> None:
-    if event.handicap_authority_mode != 'shadow':
-        return
     from services.shadow_settlement import capture_shadow_outcome_revisions
 
     capture_shadow_outcome_revisions(event, actor_id=judge_user_id)

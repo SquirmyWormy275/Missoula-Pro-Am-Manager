@@ -117,31 +117,6 @@ def _push_strathmark_results(event: Event, tournament_id: int) -> None:
         )
 
 
-def _deliver_shadow_settlements(event: Event) -> None:
-    """Best-effort post-commit delivery; the durable local outbox is authoritative."""
-    if event.handicap_authority_mode != 'shadow':
-        return
-    try:
-        from services.shadow_settlement import deliver_shadow_settlement_outbox
-        from services.strathmark_shadow import (
-            ShadowClientConfig,
-            StrathmarkShadowClient,
-            shadow_configuration_status,
-        )
-
-        if shadow_configuration_status(current_app.config) != 'configured':
-            return
-        client = StrathmarkShadowClient(ShadowClientConfig.from_mapping(current_app.config))
-        deliver_shadow_settlement_outbox(client=client, limit=25, commit=True)
-    except Exception:
-        import logging as _logging
-
-        _logging.getLogger(__name__).error(
-            'STRATHMARK shadow settlement delivery failed; durable outbox retained',
-            exc_info=True,
-        )
-
-
 def _competitor_lookup(event: Event, competitor_ids: list[int]) -> dict:
     return competitor_lookup_for_event(event, competitor_ids)
 
@@ -677,7 +652,6 @@ def finalize_event(tournament_id, event_id):
         return redirect(url_for('scoring.event_results',
                                 tournament_id=tournament_id, event_id=event_id))
     _push_strathmark_results(event, tournament_id)
-    _deliver_shadow_settlements(event)
     if _is_async():
         return jsonify({'ok': True, 'message': outcome['message']})
     flash(text.FLASH['event_finalized'].format(event_name=event.display_name), 'success')
@@ -758,8 +732,6 @@ def enter_heat_results(tournament_id, heat_id):
 
         outcome = _save_heat_results_submission(tournament_id=tournament_id,
                                                 heat=heat, event=event)
-        if outcome.get('ok') and event.is_finalized:
-            _deliver_shadow_settlements(event)
         if _is_async():
             return jsonify({k: outcome[k] for k in
                             ('ok', 'message', 'redirect_url', 'category',

@@ -15,6 +15,7 @@ These are GitHub settings, not repo code:
 - Required checks should include:
   - `test`
   - `postgres-smoke`
+  - `unit-postgres`
   - `migration-safety`
   - `lint`
   - `pip-audit`
@@ -32,7 +33,9 @@ These are GitHub settings, not repo code:
 - For a STRATHMARK shadow change:
   - confirm the reviewed STRATHMARK contract commit is published and pinned
   - run `tests/test_shadow_release_readiness.py`
-  - run the installed-artifact contract rehearsal
+  - run `python scripts/verify_strathmark_shadow_contract.py`
+  - confirm it reports a migrated disposable Missoula database and exact
+    Missoula-built calculate/numeric payloads, not contract-example traffic
   - confirm shadow authority remains recommendation-only
   - confirm official mark fields are unchanged by the rehearsal
 
@@ -57,7 +60,17 @@ python -m py_compile app.py
 python -m pytest tests/test_postgres_runtime_smoke.py -q
 python -m pytest tests/test_pg_migration_safety.py -q
 python -m pytest tests/test_migration_integrity.py::TestMigrationIntegrity -q
+python -m pytest tests/test_migration_integrity.py::test_shadow_schema_repair_upgrades_an_existing_b7_database -q
+$env:PROAM_UNIT_PG = "1"
+python -m pytest tests/test_migration_integrity.py::test_shadow_schema_repair_round_trip_on_populated_b7_postgresql tests/test_shadow_settlement_workflow.py::test_postgres_workers_skip_a_locked_delivery_instead_of_double_sending -q
 ```
+
+The final command is fail-closed: it must connect to the isolated unit-test
+PostgreSQL service, assert the PostgreSQL dialect, create and remove a uniquely
+named disposable database, exercise populated b7 upgrade/downgrade/re-upgrade,
+and execute the concurrency proof. An unreachable server is a failure, not an
+accepted skip. Never point the `PROAM_UNIT_PG_*` variables at a production or
+shared database.
 
 Plus subsystem-specific tests for the changed area.
 
@@ -90,6 +103,10 @@ For a deliberately enabled STRATHMARK shadow deployment, also confirm:
 4. the whole-field export is checksummed and reports `importable: false`
 5. cloud mirror failure is advisory after local persistence
 6. numeric settlement/void stays separate from official scoring
+7. a bounded delivery command reports `status=complete`, or exits `2` with an
+   explicit `remaining_eligible` count before the next supervised batch
+8. a blocked delivery principal produces no remote call and does not roll back
+   official finalization
 
 ## Race-Day Hotfix Rules
 

@@ -30,6 +30,7 @@ from services.shadow_handicap_state import (
     derive_shadow_status,
     transition_shadow_run,
 )
+from services.strathmark_shadow import _ledger_request_id as _strathmark_ledger_request_id
 from tests.conftest import make_event, make_pro_competitor, make_tournament
 
 
@@ -39,6 +40,49 @@ def _canonical_json(value):
 
 def _sha256(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _ledger_request_id(run):
+    return _strathmark_ledger_request_id(run.consumer_id, run.request_id)
+
+
+def test_shadow_schema_keeps_outcome_identity_and_outbox_foreign_key_in_parity():
+    outcome_identity = ShadowOutcomeRevision.__table__.c.outcome_revision_id
+    outbox_outcome_identity = ShadowSettlementOutbox.__table__.c.outcome_revision_id
+
+    assert {fk.target_fullname for fk in outcome_identity.foreign_keys} == set()
+    assert {fk.target_fullname for fk in outbox_outcome_identity.foreign_keys} == {
+        "shadow_outcome_revisions.outcome_revision_id"
+    }
+
+
+def test_shadow_settlement_outbox_freezes_a_distinct_delivery_principal():
+    delivery_actor = ShadowSettlementOutbox.__table__.c.delivery_actor_id
+
+    assert delivery_actor.nullable is False
+    assert {fk.target_fullname for fk in delivery_actor.foreign_keys} == {"users.id"}
+
+
+def test_shadow_nonnull_timestamp_defaults_are_database_enforced():
+    timestamp_columns = {
+        "competitor_external_identities": ("reviewed_at", "created_at"),
+        "shadow_handicap_runs": ("created_at", "updated_at"),
+        "shadow_lifecycle_transitions": ("created_at",),
+        "shadow_receipt_revisions": ("received_at",),
+        "shadow_context_observations": ("captured_at",),
+        "shadow_outcome_revisions": ("created_at",),
+        "shadow_settlement_outbox": ("created_at",),
+        "shadow_field_reviews": ("created_at",),
+        "shadow_issue_artifacts": ("created_at",),
+    }
+
+    for table_name, column_names in timestamp_columns.items():
+        table = ShadowHandicapRun.metadata.tables[table_name]
+        for column_name in column_names:
+            column = table.c[column_name]
+            assert column.nullable is False
+            assert column.default is not None
+            assert column.server_default is not None, f"{table_name}.{column_name}"
 
 
 @pytest.fixture()
@@ -96,9 +140,7 @@ def _add_run(
     run_revision="missoula:run-revision:0001",
 ):
     tournament, event, _competitor, _result = shadow_subject
-    input_snapshot_json = _canonical_json(
-        {"schema_version": "strathmark.shadow-calculate.v1"}
-    )
+    input_snapshot_json = _canonical_json({"schema_version": "strathmark.shadow-calculate.v1"})
     run = ShadowHandicapRun(
         run_id=run_id,
         request_id=request_id,
@@ -202,7 +244,7 @@ def test_shadow_run_and_receipt_are_field_atomic_and_scoring_inert(
         core_json=core,
         core_sha256=_sha256(core),
         prediction_count=1,
-        ledger_request_id="strathmark:ledger-request:4f9504a2",
+        ledger_request_id=_ledger_request_id(run),
     )
     db_session.add(receipt)
     db_session.flush()
@@ -232,7 +274,7 @@ def test_receipt_and_context_rows_are_append_only(
         core_json=core,
         core_sha256=_sha256(core),
         prediction_count=0,
-        ledger_request_id="strathmark:ledger-request:append-only",
+        ledger_request_id=_ledger_request_id(run),
     )
     observation = ShadowContextObservation(
         observation_id="missoula:observation:venue:0001",
@@ -271,7 +313,7 @@ def test_database_trigger_rejects_direct_receipt_rewrite(
         core_json=core,
         core_sha256=_sha256(core),
         prediction_count=0,
-        ledger_request_id="strathmark:ledger-request:direct-rewrite",
+        ledger_request_id=_ledger_request_id(run),
     )
     db_session.add(receipt)
     db_session.flush()
@@ -370,6 +412,7 @@ def test_latest_outcome_revision_drives_derived_outcome_axis_and_outbox(
         payload_json=payload,
         payload_sha256=_sha256(payload),
         actor_id=admin_user.id,
+        delivery_actor_id=admin_user.id,
         delivery_status="pending",
     )
     db_session.add_all([outcome, outbox])

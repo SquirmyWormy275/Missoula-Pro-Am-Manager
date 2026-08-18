@@ -97,6 +97,13 @@ not-configured/invalid state; it must not fall back to another numeric engine.
 | Incorrect valid finish was recorded | Reconcile with reason and append a void/correction |
 | STRATHMARK unavailable before any receipt exists | Do not invent a shadow sheet; use the separately authorized official workflow if the show director chooses it |
 
+Numeric outcomes are committed to Missoula's durable outbox in the same local
+transaction as the operational result. Scoring and judge requests never wait
+for remote delivery. Run `python scripts/deliver_shadow_settlements.py --limit 25`
+as the separately supervised delivery command. Failed rows use a bounded
+exponential cooldown; exact STRATHMARK duplicate responses close the local row
+as recorded.
+
 ## Non-negotiable authority rule
 
 The shadow recommendation export is for evaluation and operational learning.

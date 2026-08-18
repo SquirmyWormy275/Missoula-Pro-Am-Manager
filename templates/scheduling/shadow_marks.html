@@ -20,6 +20,7 @@
         <h2 id="prepare-heading" class="h4">Prepare field snapshot</h2>
         <p>Freeze the current roster, run order, wood specification, and exclusive UTC evidence cutoff.</p>
         <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="prepare">
           <label for="prediction-as-of" class="form-label">Prediction cutoff (exclusive UTC date)</label>
           <input id="prediction-as-of" class="form-control mb-1" type="date" name="prediction_as_of" required>
@@ -57,6 +58,7 @@
       <div class="card-body">
         <h2 id="shadow-field" class="h4">Whole-field recommendations</h2>
         <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="expected_version" value="{{ run.lifecycle_version }}">
           <div class="table-responsive">
             <table class="table table-sm align-middle">
@@ -154,6 +156,7 @@
           </div>
 
           <form method="post" class="border-top pt-3" aria-describedby="reconcile-help">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="reconcile_outcomes">
             <input type="hidden" name="expected_outcome_token" value="{{ outcome_state_token }}">
             <label for="outcome-reason" class="form-label">Reason for reconciliation</label>
@@ -206,6 +209,7 @@
         <details class="mb-3">
           <summary>Record an Explicit unknown</summary>
           <form method="post" class="pt-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="record_context_unknown">
             <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
             <label class="form-label" for="unknown-context-factor">Factor</label>
@@ -227,6 +231,7 @@
         <details class="mb-3">
           <summary>Record venue</summary>
           <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="record_context_venue">
             <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
             <div class="col-md-6"><label class="form-label" for="venue-subject-id">Tournament-day ID</label><input class="form-control" id="venue-subject-id" name="subject_id" placeholder="missoula:tournament-day:…" maxlength="224" required></div>
@@ -238,6 +243,7 @@
         <details class="mb-3">
           <summary>Record material preparation</summary>
           <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="record_context_material">
             <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
             <div class="col-md-6"><label class="form-label" for="material-id">Material ID</label><input class="form-control" id="material-id" name="material_id" placeholder="missoula:material:…" maxlength="224" required></div>
@@ -252,6 +258,7 @@
         <details class="mb-3">
           <summary>Record weather window</summary>
           <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="record_context_weather">
             <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
             <div class="col-12"><label class="form-label" for="weather-subject-id">Time-window ID</label><input class="form-control" id="weather-subject-id" name="subject_id" placeholder="missoula:time-window:…" maxlength="224" required></div>
@@ -266,6 +273,7 @@
         <details class="mb-3">
           <summary>Record equipment and structured rest observation</summary>
           <form method="post" class="pt-3 row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="record_context_run_observation">
             <input type="hidden" name="expected_context_token" value="{{ context_state_token }}">
             <div class="col-md-6"><label class="form-label" for="run-subject-id">Run ID</label><input class="form-control" id="run-subject-id" name="subject_id" placeholder="missoula:run:…" maxlength="224" required></div>
@@ -293,12 +301,13 @@
       </div>
     </section>
 
-    {% if view.blockers and run.lifecycle not in ['superseded', 'cancelled'] %}
+    {% if view.blockers and run.lifecycle in ['prepared', 'preflight-approved', 'calculated', 'reviewed'] %}
       <section aria-labelledby="supersede-heading" class="card mb-3">
         <div class="card-body">
           <h2 id="supersede-heading" class="h4">Prepare a corrected field revision</h2>
           <p>This preserves the current receipt and audit history and links a new request to the superseded run.</p>
           <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="prepare">
             <label for="superseding-prediction-as-of" class="form-label">Prediction cutoff (exclusive UTC date)</label>
             <input id="superseding-prediction-as-of" class="form-control mb-3" type="date" name="prediction_as_of" value="{{ run.prediction_as_of }}" required>

@@ -5,7 +5,15 @@ from datetime import date
 import pytest
 
 from database import db
-from models import CompetitorExternalIdentity, Heat, HeatAssignment, ProCompetitor, WoodConfig
+from models import (
+    CompetitorExternalIdentity,
+    Heat,
+    HeatAssignment,
+    ProCompetitor,
+    ShadowHandicapRun,
+    User,
+    WoodConfig,
+)
 from services.shadow_context import (
     CONTEXT_SCHEMA_VERSION,
     FACTOR_MATRIX,
@@ -25,6 +33,7 @@ from tests.conftest import (
     make_pro_competitor,
     make_tournament,
 )
+from tests.db_test_utils import create_test_app, drop_test_db
 
 
 @pytest.fixture()
@@ -170,6 +179,113 @@ def test_known_unknown_and_append_only_correction_use_compare_and_swap(context_r
 
     assert corrected.corrects_observation_id == first.id
     assert (run.active_input_fingerprint, run.observation_fingerprint) == immutable_before
+
+
+def test_context_compare_and_swap_is_enforced_by_the_database():
+    """A stale independent session cannot append after another writer wins."""
+
+    app, db_handle = create_test_app(use_migrations=True)
+    first_context = None
+    try:
+        with app.app_context():
+            actor = User(username="context_cas_admin", role=User.ROLE_ADMIN)
+            actor.set_password("test-only")
+            db.session.add(actor)
+            tournament = make_tournament(db.session, year=2027)
+            event = make_event(
+                db.session,
+                tournament,
+                name="Context CAS Underhand",
+                event_type="pro",
+                gender="M",
+                stand_type="underhand",
+                scoring_type="time",
+                is_handicap=True,
+            )
+            db.session.flush()
+            run = ShadowHandicapRun(
+                run_id="missoula:shadow-run:context-cas",
+                request_id="missoula:request:context-cas",
+                consumer_id="missoula:consumer:context-cas",
+                tournament_id=tournament.id,
+                event_id=event.id,
+                event_occurrence_id=event.shadow_event_occurrence_id,
+                field_run_id="missoula:field-run:context-cas",
+                run_revision="missoula:run-revision:context-cas",
+                prediction_as_of=date(2027, 5, 8),
+                roster_fingerprint="1" * 64,
+                schedule_fingerprint="2" * 64,
+                wood_fingerprint="3" * 64,
+                active_input_fingerprint="4" * 64,
+                observation_schema_version="strathmark.shadow-observation-fingerprint.v1",
+                observation_fingerprint="5" * 64,
+                input_snapshot_json="{}",
+                input_snapshot_sha256="6" * 64,
+                created_by_id=actor.id,
+            )
+            db.session.add(run)
+            db.session.commit()
+            actor_id = actor.id
+            run_id = run.id
+
+        first_context = app.app_context()
+        first_context.push()
+        stale_run = db.session.get(ShadowHandicapRun, run_id)
+        stale_actor = db.session.get(User, actor_id)
+        stale_token = context_state_token(stale_run)
+        assert stale_run.context_version == 0
+
+        second_context = app.app_context()
+        second_context.push()
+        try:
+            current_run = db.session.get(ShadowHandicapRun, run_id)
+            current_actor = db.session.get(User, actor_id)
+            assert context_state_token(current_run) == stale_token
+            record_context_observation(
+                current_run,
+                factor="venue",
+                subject_type="tournament_day",
+                subject_id="missoula:tournament-day:context-cas",
+                value_state="unknown",
+                value=None,
+                source="operator_entered",
+                actor=current_actor,
+                expected_context_token=stale_token,
+            )
+            db.session.commit()
+        finally:
+            db.session.remove()
+            second_context.pop()
+
+        with pytest.raises(ShadowContextConflict, match="changed"):
+            record_context_observation(
+                stale_run,
+                factor="weather",
+                subject_type="time_window",
+                subject_id="missoula:time-window:context-cas",
+                value_state="unknown",
+                value=None,
+                source="operator_entered",
+                actor=stale_actor,
+                expected_context_token=stale_token,
+            )
+        db.session.rollback()
+        db.session.remove()
+        first_context.pop()
+        first_context = None
+
+        with app.app_context():
+            persisted_run = db.session.get(ShadowHandicapRun, run_id)
+            assert persisted_run.context_version == 1
+            assert [row.factor for row in persisted_run.context_observations] == ["venue"]
+    finally:
+        if first_context is not None:
+            db.session.remove()
+            first_context.pop()
+        with app.app_context():
+            db.session.remove()
+            db.engine.dispose()
+        drop_test_db(db_handle)
 
 
 def test_privacy_shape_and_derived_provenance_fail_closed(context_run):

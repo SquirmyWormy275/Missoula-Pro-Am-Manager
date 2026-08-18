@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from sqlalchemy import update
+from sqlalchemy.orm.attributes import set_committed_value
+
 from database import db
 from models import (
     CompetitorExternalIdentity,
@@ -211,6 +214,8 @@ def record_context_observation(
     if len(run.context_observations) >= MAX_CONTEXT_OBSERVATIONS_PER_RUN:
         raise ValueError("context observation capacity is exhausted for this run")
 
+    _claim_context_version(run)
+
     value_json = _canonical_json(normalized_value) if normalized_value is not None else None
     row = ShadowContextObservation(
         observation_id=f"missoula:context-observation:{uuid.uuid4()}",
@@ -383,7 +388,11 @@ def complete_context_stage(
     rows = []
     for factor in sorted(expected_factors):
         subject_type, subject_id = subjects[factor]
-        source = "system_recorded" if "system_recorded" in FACTOR_MATRIX[factor].allowed_sources else "operator_entered"
+        source = (
+            "system_recorded"
+            if "system_recorded" in FACTOR_MATRIX[factor].allowed_sources
+            else "operator_entered"
+        )
         rows.append(
             record_context_observation(
                 run,
@@ -413,7 +422,11 @@ def build_context_audit_export(
     _require_namespaced(actor.shadow_actor_id, "actor_id")
     if isinstance(cursor, bool) or not isinstance(cursor, int) or cursor < 0:
         raise ValueError("context export cursor must be a nonnegative integer")
-    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_CONTEXT_EXPORT_PAGE:
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= MAX_CONTEXT_EXPORT_PAGE
+    ):
         raise ValueError("context export limit is outside the allowed range")
     all_observations = sorted(run.context_observations, key=lambda row: row.id)
     page_observations = set(row.id for row in all_observations[cursor : cursor + limit])
@@ -461,9 +474,7 @@ def build_context_audit_export(
         "page": {
             "cursor": cursor,
             "limit": limit,
-            "next_cursor": (
-                cursor + limit if cursor + limit < len(all_observations) else None
-            ),
+            "next_cursor": (cursor + limit if cursor + limit < len(all_observations) else None),
             "total_observations": len(all_observations),
         },
     }
@@ -487,7 +498,41 @@ def context_state_token(run: ShadowHandicapRun) -> str:
         }
         for key, row in sorted(latest.items())
     ]
-    return _digest(_canonical_json(projection))
+    return _digest(
+        _canonical_json(
+            {
+                "context_version": run.context_version,
+                "observations": projection,
+                "run_id": run.run_id,
+            }
+        )
+    )
+
+
+def _claim_context_version(run: ShadowHandicapRun) -> None:
+    """Atomically reserve the next append revision in the current transaction."""
+
+    if run.id is None:
+        db.session.flush()
+    expected_version = run.context_version
+    if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+        raise ShadowContextConflict(
+            "context evidence changed while this task was open; reload and review again"
+        )
+    result = db.session.execute(
+        update(ShadowHandicapRun)
+        .where(
+            ShadowHandicapRun.id == run.id,
+            ShadowHandicapRun.context_version == expected_version,
+        )
+        .values(context_version=expected_version + 1)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        raise ShadowContextConflict(
+            "context evidence changed while this task was open; reload and review again"
+        )
+    set_committed_value(run, "context_version", expected_version + 1)
 
 
 def _latest_for_subject(run, factor, subject_type, subject_id):
@@ -690,7 +735,10 @@ def _validate_penalty_nonfinish(value):
 
 
 def _validate_provenance(source, formula, source_record_ids):
-    if not isinstance(source_record_ids, tuple) or len(source_record_ids) > MAX_CONTEXT_SOURCE_RECORDS:
+    if (
+        not isinstance(source_record_ids, tuple)
+        or len(source_record_ids) > MAX_CONTEXT_SOURCE_RECORDS
+    ):
         raise ValueError("source_record_ids must be a bounded tuple")
     for item in source_record_ids:
         _require_namespaced(item, "source_record_id")

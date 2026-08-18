@@ -15,8 +15,8 @@ _TRANSITIONS = {
     "preflight-approved": {"calculated", "superseded", "cancelled"},
     "calculated": {"reviewed", "superseded", "cancelled"},
     "reviewed": {"shadow-issued", "superseded", "cancelled"},
-    "shadow-issued": {"outcomes-complete", "superseded"},
-    "outcomes-complete": {"superseded"},
+    "shadow-issued": {"outcomes-complete"},
+    "outcomes-complete": set(),
     "superseded": set(),
     "cancelled": set(),
 }

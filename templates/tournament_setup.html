@@ -601,6 +601,7 @@
                                             <label class="btn btn-outline-info" style="font-size:0.7rem;padding:0.15rem 0.5rem"
                                                    for="setup_hf_college_{{ event.field_key }}_hdcp">Handicap</label>
                                         </div>
+                                        {% if event.stand_type in ['underhand', 'standing_block'] %}
                                         <div class="btn-group btn-group-sm mt-1 ms-4" role="group" aria-label="{{ event.name }} handicap authority">
                                             <input type="radio" class="btn-check"
                                                    name="handicap_authority_{{ event.field_key }}"
@@ -613,6 +614,7 @@
                                                    {% if existing_config.college_authority.get(event.name) == 'shadow' %}checked{% endif %}>
                                             <label class="btn btn-outline-warning" for="setup_ha_college_{{ event.field_key }}_shadow">Shadow only</label>
                                         </div>
+                                        {% endif %}
                                         {% endif %}
                                     </div>
                                     {% endfor %}
@@ -649,6 +651,7 @@
                                                         <strong>{{ event.name }}</strong>
                                                     </label>
                                                 </div>
+                                                {% if event.stand_type in ['underhand', 'standing_block'] and event.scoring_type != 'hits' %}
                                                 <div class="btn-group btn-group-sm" role="group" aria-label="{{ event.name }} handicap authority">
                                                     <input type="radio" class="btn-check"
                                                            name="handicap_authority_{{ event.field_key }}"
@@ -661,6 +664,7 @@
                                                            {% if existing_config.pro_authority.get(event.name) == 'shadow' %}checked{% endif %}>
                                                     <label class="btn btn-outline-warning" for="setup_ha_pro_{{ event.field_key }}_shadow">Shadow only</label>
                                                 </div>
+                                                {% endif %}
                                             </div>
                                             <div class="col-md-7">
                                                 {% if event.get('is_gendered', False) %}

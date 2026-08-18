@@ -162,6 +162,20 @@ jobs:
           PROAM_ALLOW_CI_SMOKE_DB_BUILD: "1"
         run: python scripts/ci_build_smoke_db.py
 
+      - name: Prove shadow migration repair and concurrent delivery on PostgreSQL
+        env:
+          FLASK_ENV: testing
+          SECRET_KEY: ci-unit-postgres-secret-key
+          PROAM_UNIT_PG: "1"
+          PROAM_UNIT_PG_HOST: localhost
+          PROAM_UNIT_PG_USER: postgres
+          PROAM_UNIT_PG_PASSWORD: postgres
+        run: >-
+          pytest
+          tests/test_migration_integrity.py::test_shadow_schema_repair_round_trip_on_populated_b7_postgresql
+          tests/test_shadow_settlement_workflow.py::test_postgres_workers_skip_a_locked_delivery_instead_of_double_sending
+          -q --tb=short -p no:randomly
+
       - name: Run the unit suite on PostgreSQL
         env:
           FLASK_ENV: testing
@@ -222,6 +236,7 @@ jobs:
           DATABASE_URL: sqlite:///test_migration.db
         run: |
           pytest tests/test_migration_integrity.py::TestMigrationIntegrity -q
+          pytest tests/test_migration_integrity.py::test_shadow_schema_repair_upgrades_an_existing_b7_database -q
           pytest tests/test_pg_migration_safety.py -q
 
   pip-audit:

@@ -5,14 +5,17 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import date
+from functools import wraps
 
 from flask import Response, abort, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 from sqlalchemy.orm.exc import StaleDataError
 
+import strings as text
 from database import db
 from models import Event, ShadowHandicapRun, Tournament, User
 from services.audit import log_action
+from services.flight_builder import lock_tournament_schedule, sqlite_schedule_writer_guard
 from services.shadow_context import (
     FACTOR_MATRIX,
     build_context_audit_export,
@@ -34,7 +37,6 @@ from services.shadow_operator import (
 from services.shadow_settlement import (
     CORRECTION_REASON_CODES,
     build_shadow_standings,
-    deliver_shadow_settlement_outbox,
     outcome_state_token,
     reconcile_shadow_outcomes,
 )
@@ -58,6 +60,19 @@ def _require_shadow_operator():
         abort(403)
 
 
+def _serialize_shadow_post(func):
+    """Join the shared SQLite writer protocol without locking read-only pages."""
+
+    @wraps(func)
+    def serialized(tournament_id, *args, **kwargs):
+        if request.method != "POST":
+            return func(tournament_id, *args, **kwargs)
+        with sqlite_schedule_writer_guard(tournament_id):
+            return func(tournament_id, *args, **kwargs)
+
+    return serialized
+
+
 def _shadow_client() -> StrathmarkShadowClient:
     try:
         config = ShadowClientConfig.from_mapping(current_app.config)
@@ -68,20 +83,6 @@ def _shadow_client() -> StrathmarkShadowClient:
 
 def _remote_status(run: ShadowHandicapRun):
     return _shadow_client().status(run, current_user)
-
-
-def _deliver_pending_outcomes() -> None:
-    """Best-effort delivery after local commit; local evidence remains authoritative."""
-
-    try:
-        from services.strathmark_shadow import shadow_configuration_status
-
-        if shadow_configuration_status(current_app.config) == "configured":
-            deliver_shadow_settlement_outbox(client=_shadow_client(), limit=25, commit=True)
-    except Exception:
-        current_app.logger.exception(
-            "STRATHMARK shadow settlement delivery failed; durable outbox retained"
-        )
 
 
 def _latest_run(event_id: int):
@@ -153,7 +154,9 @@ def _record_known_context_task(run: ShadowHandicapRun, action: str) -> int:
                 "material_id": subject_id,
                 "batch_id": request.form.get("batch_id", ""),
             },
-            source="scanned" if request.form.get("identity_source") == "scanned" else "operator_entered",
+            source="scanned"
+            if request.form.get("identity_source") == "scanned"
+            else "operator_entered",
             actor=current_user,
             expected_context_token=token,
         )
@@ -201,17 +204,20 @@ def _record_known_context_task(run: ShadowHandicapRun, action: str) -> int:
             expected_context_token=context_state_token(run),
         )
         return 2
-    raise ValueError("unknown context capture task")
+    raise ValueError(text.FLASH["shadow_unknown_context_task"])
 
 
 @scheduling_bp.route(
     "/<int:tournament_id>/events/<int:event_id>/shadow-marks",
     methods=["GET", "POST"],
 )
+@_serialize_shadow_post
 def shadow_marks(tournament_id: int, event_id: int):
     """Prepare, calculate, review, and issue one whole-field shadow sheet."""
 
     _require_shadow_operator()
+    if request.method == "POST":
+        lock_tournament_schedule(tournament_id)
     tournament, event = _load_event(tournament_id, event_id)
     run = _latest_run(event.id)
 
@@ -221,7 +227,7 @@ def shadow_marks(tournament_id: int, event_id: int):
             if action == "prepare":
                 cutoff_raw = (request.form.get("prediction_as_of") or "").strip()
                 if not cutoff_raw:
-                    raise ValueError("Choose the exclusive UTC prediction cutoff date.")
+                    raise ValueError(text.FLASH["shadow_cutoff_required"])
                 previous_run = run
                 run = prepare_shadow_run(
                     event,
@@ -251,9 +257,9 @@ def shadow_marks(tournament_id: int, event_id: int):
                     event.id,
                     {"run_id": run.run_id, "request_id": run.request_id},
                 )
-                flash("Shadow field snapshot prepared. Review the preflight summary.", "success")
+                flash(text.FLASH["shadow_field_prepared"], "success")
             elif run is None:
-                raise ValueError("Prepare a shadow field snapshot first.")
+                raise ValueError(text.FLASH["shadow_prepare_first"])
             elif action == "approve_preflight":
                 transition_shadow_run(
                     run,
@@ -264,11 +270,11 @@ def shadow_marks(tournament_id: int, event_id: int):
                 )
                 capture_preflight_context(run, event=event, actor=current_user)
                 db.session.commit()
-                flash("Preflight approved for this exact field revision.", "success")
+                flash(text.FLASH["shadow_preflight_approved"], "success")
             elif action == "calculate":
                 calculate_or_recover_shadow_run(run, client=_shadow_client())
                 db.session.commit()
-                flash("Trusted STRATHMARK receipt recorded.", "success")
+                flash(text.FLASH["shadow_receipt_recorded"], "success")
             elif action == "review":
                 review_shadow_sheet(
                     run,
@@ -278,7 +284,7 @@ def shadow_marks(tournament_id: int, event_id: int):
                     remote_status=_remote_status(run),
                 )
                 db.session.commit()
-                flash("Every recommendation, including zero, was explicitly reviewed.", "success")
+                flash(text.FLASH["shadow_sheet_reviewed"], "success")
             elif action == "issue":
                 issue_shadow_sheet(
                     run,
@@ -287,10 +293,10 @@ def shadow_marks(tournament_id: int, event_id: int):
                     remote_status=_remote_status(run),
                 )
                 db.session.commit()
-                flash("Entire shadow sheet issued and checksummed.", "success")
+                flash(text.FLASH["shadow_sheet_issued"], "success")
             elif action == "reconcile_outcomes":
                 if request.form.get("confirm_outcome_reconciliation") != "yes":
-                    raise ValueError("Confirm the outcome reconciliation before recording it.")
+                    raise ValueError(text.FLASH["shadow_reconcile_confirmation_required"])
                 result = reconcile_shadow_outcomes(
                     run,
                     event=event,
@@ -299,11 +305,10 @@ def shadow_marks(tournament_id: int, event_id: int):
                     reason_code=request.form.get("reason_code", ""),
                 )
                 db.session.commit()
-                _deliver_pending_outcomes()
                 flash(
-                    (
-                        f"Recorded {result.outcome_count} outcome correction(s); "
-                        f"{result.numeric_action_count} numeric settle/void action(s) queued."
+                    text.FLASH["shadow_outcomes_recorded"].format(
+                        outcome_count=result.outcome_count,
+                        numeric_action_count=result.numeric_action_count,
                     ),
                     "success",
                 )
@@ -327,7 +332,7 @@ def shadow_marks(tournament_id: int, event_id: int):
                     event.id,
                     {"run_id": run.run_id, "factor": factor, "value_state": "unknown"},
                 )
-                flash("Explicit unknown context recorded without changing V2 numbers.", "success")
+                flash(text.FLASH["shadow_unknown_context_recorded"], "success")
             elif action in {
                 "record_context_venue",
                 "record_context_weather",
@@ -343,13 +348,16 @@ def shadow_marks(tournament_id: int, event_id: int):
                     {"run_id": run.run_id, "task": action, "observation_count": recorded_count},
                 )
                 flash(
-                    f"Recorded {recorded_count} structured context observation(s).",
+                    text.FLASH["shadow_context_recorded"].format(
+                        recorded_count=recorded_count,
+                    ),
                     "success",
                 )
             else:
-                raise ValueError("Unknown shadow workflow action.")
+                raise ValueError(text.FLASH["shadow_unknown_action"])
         except (
             KeyError,
+            TypeError,
             ValueError,
             ShadowAdapterError,
             ShadowConcurrencyError,
@@ -442,7 +450,7 @@ def shadow_context_export(tournament_id: int, event_id: int, run_pk: int):
             cursor=cursor,
             limit=limit,
         )
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         abort(400, str(exc))
     log_action(
         "shadow_context_export_downloaded",

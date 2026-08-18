@@ -8,6 +8,7 @@ scoring.
 """
 
 import re
+import uuid
 
 import sqlalchemy as sa
 from sqlalchemy.orm import validates
@@ -65,8 +66,18 @@ class CompetitorExternalIdentity(db.Model):
     external_id = db.Column(db.String(224), nullable=False)
     status = db.Column(db.String(16), nullable=False)
     reviewed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    reviewed_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
-    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    reviewed_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
 
     competitor = db.relationship("Competitor")
     reviewed_by = db.relationship("User")
@@ -90,6 +101,7 @@ class ShadowHandicapRun(db.Model):
             name="ck_shadow_run_lifecycle",
         ),
         db.CheckConstraint("lifecycle_version >= 1", name="ck_shadow_run_lifecycle_version"),
+        db.CheckConstraint("context_version >= 0", name="ck_shadow_run_context_version"),
         db.Index("ix_shadow_run_event_created", "event_id", "created_at"),
         db.Index("ix_shadow_run_field_revision", "field_run_id", "run_revision"),
     )
@@ -134,6 +146,12 @@ class ShadowHandicapRun(db.Model):
         default=1,
         server_default=sa.text("1"),
     )
+    context_version = db.Column(
+        db.Integer,
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
     prediction_as_of = db.Column(db.Date, nullable=False)
     roster_fingerprint = db.Column(db.CHAR(64), nullable=False)
     schedule_fingerprint = db.Column(db.CHAR(64), nullable=False)
@@ -149,12 +167,18 @@ class ShadowHandicapRun(db.Model):
     issued_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     issued_at = db.Column(db.DateTime, nullable=True)
     supersession_reason_code = db.Column(db.String(64), nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
     updated_at = db.Column(
         db.DateTime,
         nullable=False,
         default=utc_now_naive,
         onupdate=utc_now_naive,
+        server_default=sa.func.now(),
     )
 
     supersedes = db.relationship("ShadowHandicapRun", remote_side=[id])
@@ -249,7 +273,12 @@ class ShadowLifecycleTransition(db.Model):
     run_version = db.Column(db.Integer, nullable=False)
     actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     reason_code = db.Column(db.String(64), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
 
     run = db.relationship("ShadowHandicapRun", back_populates="transitions")
 
@@ -277,7 +306,12 @@ class ShadowReceiptRevision(db.Model):
     core_sha256 = db.Column(db.CHAR(64), nullable=False)
     prediction_count = db.Column(db.Integer, nullable=False)
     ledger_request_id = db.Column(db.String(224), nullable=False)
-    received_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    received_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
 
     run = db.relationship("ShadowHandicapRun", back_populates="receipts")
 
@@ -287,7 +321,13 @@ class ShadowReceiptRevision(db.Model):
 
     @validates("ledger_request_id")
     def _validate_ledger_request_id(self, _key, value):
-        return _require_namespaced(value, "ledger_request_id")
+        try:
+            parsed = uuid.UUID(str(value))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError("ledger_request_id must be a canonical UUID") from exc
+        if str(parsed) != value:
+            raise ValueError("ledger_request_id must be a canonical UUID")
+        return value
 
 
 class ShadowContextObservation(db.Model):
@@ -328,7 +368,12 @@ class ShadowContextObservation(db.Model):
     value_json = db.Column(db.Text, nullable=True)
     source = db.Column(db.String(32), nullable=False)
     actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    captured_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    captured_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
     corrects_observation_id = db.Column(
         BIG_ID,
         db.ForeignKey("shadow_context_observations.id"),
@@ -371,11 +416,7 @@ class ShadowOutcomeRevision(db.Model):
     )
 
     id = db.Column(BIG_ID, primary_key=True, autoincrement=True)
-    outcome_revision_id = db.Column(
-        db.String(224),
-        db.ForeignKey("shadow_outcome_revisions.outcome_revision_id"),
-        nullable=False,
-    )
+    outcome_revision_id = db.Column(db.String(224), nullable=False)
     run_id = db.Column(
         BIG_ID,
         db.ForeignKey("shadow_handicap_runs.id", ondelete="CASCADE"),
@@ -404,7 +445,12 @@ class ShadowOutcomeRevision(db.Model):
     source = db.Column(db.String(32), nullable=False)
     actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     reason_code = db.Column(db.String(64), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
 
     run = db.relationship("ShadowHandicapRun", back_populates="outcome_revisions")
     event_result = db.relationship("EventResult")
@@ -445,12 +491,21 @@ class ShadowSettlementOutbox(db.Model):
         db.ForeignKey("shadow_handicap_runs.id", ondelete="CASCADE"),
         nullable=False,
     )
-    outcome_revision_id = db.Column(db.String(224), nullable=False)
+    outcome_revision_id = db.Column(
+        db.String(224),
+        db.ForeignKey("shadow_outcome_revisions.outcome_revision_id"),
+        nullable=False,
+    )
     schema_version = db.Column(db.String(80), nullable=False)
     action = db.Column(db.String(16), nullable=False)
     payload_json = db.Column(db.Text, nullable=False)
     payload_sha256 = db.Column(db.CHAR(64), nullable=False)
     actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    delivery_actor_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=False,
+    )
     delivery_status = db.Column(
         db.String(24),
         nullable=False,
@@ -461,10 +516,16 @@ class ShadowSettlementOutbox(db.Model):
     next_attempt_at = db.Column(db.DateTime, nullable=True)
     last_attempt_at = db.Column(db.DateTime, nullable=True)
     delivered_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
 
     run = db.relationship("ShadowHandicapRun", back_populates="settlement_outbox")
-    actor = db.relationship("User")
+    actor = db.relationship("User", foreign_keys=[actor_id])
+    delivery_actor = db.relationship("User", foreign_keys=[delivery_actor_id])
 
     @validates("outbox_id", "outcome_revision_id")
     def _validate_namespaced_ids(self, key, value):
@@ -498,7 +559,12 @@ class ShadowFieldReview(db.Model):
     decision_sha256 = db.Column(db.CHAR(64), nullable=False)
     prediction_count = db.Column(db.Integer, nullable=False)
     actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
 
     run = db.relationship("ShadowHandicapRun", back_populates="field_reviews")
     actor = db.relationship("User")
@@ -536,7 +602,12 @@ class ShadowIssueArtifact(db.Model):
     export_sha256 = db.Column(db.CHAR(64), nullable=False)
     prediction_count = db.Column(db.Integer, nullable=False)
     actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=utc_now_naive,
+        server_default=sa.func.now(),
+    )
 
     run = db.relationship("ShadowHandicapRun", back_populates="issue_artifacts")
     actor = db.relationship("User")

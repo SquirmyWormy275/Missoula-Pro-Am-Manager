@@ -12,6 +12,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import importlib.util
+import ipaddress
 import json
 import math
 import secrets
@@ -20,8 +22,13 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import date
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Mapping, Protocol
 from urllib import error, parse, request
+
+from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema.exceptions import SchemaError, ValidationError
 
 from database import db
 from models import (
@@ -46,8 +53,10 @@ REQUEST_DIGEST_SCHEMA_VERSION = "strathmark.shadow-request-digest.v1"
 ATTESTATION_AUDIENCE = "strathmark.shadow.v1"
 OBSERVATION_SCHEMA_VERSION = "strathmark.shadow-observation-fingerprint.v1"
 TARGET_CONTRACT = "single-elapsed-seconds.v1"
+SHADOW_CONSUMER_CONTRACT_DIGEST = "8b0a11a6613c74ad7a5e01f3fe99d6bbede8b94dc7cdffe27930b5d0193d90db"
 
 _EVENT_CODE = {"standing_block": "SB", "underhand": "UH"}
+_LEDGER_NAMESPACE = uuid.UUID("2f08f564-cae9-54bf-b488-7d5a19831f80")
 
 
 class ShadowAdapterError(RuntimeError):
@@ -111,6 +120,24 @@ class ShadowClientConfig:
         parsed = parse.urlparse(self.base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("STRATHMARK shadow URL must be an absolute HTTP(S) URL")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("STRATHMARK shadow URL must not contain credentials")
+        if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
+            raise ValueError("STRATHMARK shadow URL must contain only an origin")
+        try:
+            host = parsed.hostname
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("STRATHMARK shadow URL contains an invalid port") from exc
+        if host is None:
+            raise ValueError("STRATHMARK shadow URL must contain a host")
+        is_loopback = host.lower() == "localhost"
+        try:
+            is_loopback = is_loopback or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            pass
+        if parsed.scheme != "https" and not is_loopback:
+            raise ValueError("STRATHMARK shadow URL requires HTTPS except for explicit loopback")
         _require_namespaced(self.consumer_id, "consumer_id")
         for field, value in (
             ("service_token", self.service_token),
@@ -181,8 +208,9 @@ class UrllibShadowTransport:
             headers={**dict(headers), "Content-Length": str(len(body))},
             method="POST",
         )
+        opener = request.build_opener(request.ProxyHandler({}), _NoRedirectHandler())
         try:
-            with request.urlopen(req, timeout=timeout_seconds) as response:
+            with opener.open(req, timeout=timeout_seconds) as response:
                 raw = response.read(1_048_577)
                 if len(raw) > 1_048_576:
                     raise ShadowRemoteError("STRATHMARK response exceeded the local bound")
@@ -211,6 +239,14 @@ class UrllibShadowTransport:
         return value
 
 
+class _NoRedirectHandler(request.HTTPRedirectHandler):
+    """Never forward bearer or attestation credentials across a redirect."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        del req, fp, code, msg, headers, newurl
+        return None
+
+
 class StrathmarkShadowClient:
     def __init__(
         self,
@@ -230,7 +266,7 @@ class StrathmarkShadowClient:
             "current_active_fingerprint": None,
             "timeout_ms": 2000,
         }
-        return self._post(
+        response = self._post(
             path="/v1/shadow/receipts/lookup",
             action="shadow.receipt.lookup",
             subject_revision=run.run_revision,
@@ -238,6 +274,12 @@ class StrathmarkShadowClient:
             payload=payload,
             timeout_ms=2000,
         )
+        _validate_contract_component(
+            response,
+            "LookupResponse",
+            "receipt lookup response violates the reviewed STRATHMARK contract",
+        )
+        return response
 
     def calculate(
         self,
@@ -245,7 +287,7 @@ class StrathmarkShadowClient:
         actor: User,
         payload: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        return self._post(
+        response = self._post(
             path="/v1/shadow/calculate",
             action="shadow.calculate",
             subject_revision=run.run_revision,
@@ -253,6 +295,12 @@ class StrathmarkShadowClient:
             payload=payload,
             timeout_ms=int(payload.get("timeout_ms", 5000)),
         )
+        _validate_contract_component(
+            response,
+            "CalculateResponse",
+            "calculate response violates the reviewed STRATHMARK contract",
+        )
+        return response
 
     def status(self, run: ShadowHandicapRun, actor: User) -> Mapping[str, Any]:
         payload = {
@@ -272,6 +320,11 @@ class StrathmarkShadowClient:
             payload=payload,
             timeout_ms=2000,
         )
+        _validate_contract_component(
+            response,
+            "StatusResponse",
+            "status response violates the reviewed STRATHMARK contract",
+        )
         status = response.get("status")
         if not isinstance(status, dict):
             raise ShadowRemoteError("STRATHMARK status response is invalid")
@@ -283,7 +336,7 @@ class StrathmarkShadowClient:
         actor: User,
         payload: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        return self._post(
+        response = self._post(
             path="/v1/shadow/outcomes/apply",
             action="shadow.outcome.apply",
             subject_revision=run.run_revision,
@@ -291,6 +344,8 @@ class StrathmarkShadowClient:
             payload=payload,
             timeout_ms=int(payload.get("timeout_ms", 5000)),
         )
+        _validate_numeric_outcome_response(run, actor, payload, response)
+        return response
 
     def _post(
         self,
@@ -304,6 +359,10 @@ class StrathmarkShadowClient:
     ) -> Mapping[str, Any]:
         if self.config.consumer_id != payload.get("consumer_id"):
             raise ShadowIdentityError("configured consumer does not match the frozen run")
+        if not bool(actor.is_active_user):
+            raise ShadowIdentityError(
+                "an active authenticated user is required for shadow operation"
+            )
         if actor.role not in {User.ROLE_ADMIN, User.ROLE_JUDGE}:
             raise ShadowIdentityError("authenticated role is not authorized for shadow operation")
         request_digest = canonical_shadow_request_digest(payload)
@@ -372,6 +431,11 @@ def prepare_shadow_run(
         supersedes_run.event_id != event.id or supersedes_run.consumer_id != consumer_id
     ):
         raise ShadowIdentityError("a superseding run must belong to the same event and consumer")
+    if supersedes_run is not None and supersedes_run.lifecycle in {
+        "shadow-issued",
+        "outcomes-complete",
+    }:
+        raise ValueError("cannot supersede an issued or outcomes-complete shadow run")
 
     results = (
         EventResult.query.filter_by(event_id=event.id)
@@ -459,6 +523,10 @@ def calculate_or_recover_shadow_run(
 ) -> StoredShadowReceipt:
     """Return local receipt, lookup remote receipt, or calculate once then recover."""
 
+    event = db.session.get(Event, run.event_id)
+    if event is None:
+        raise ShadowUnsupportedEventError("shadow event no longer exists")
+    _validate_shadow_event(event)
     local = _local_receipt(run)
     if local is not None:
         return local
@@ -498,6 +566,7 @@ def _local_receipt(run: ShadowHandicapRun) -> StoredShadowReceipt | None:
     core = _validate_core_json(row.core_json)
     if hashlib.sha256(row.core_json.encode("utf-8")).hexdigest() != row.core_sha256:
         raise ShadowReceiptIntegrityError("persisted receipt digest mismatch")
+    _validate_receipt_contract(core)
     _validate_receipt_identity(run, core)
     return StoredShadowReceipt(
         core_json=row.core_json,
@@ -537,6 +606,7 @@ def _persist_remote_receipt(
     core = _validate_core_json(core_json)
     if core != supplied_core or _canonical_core_json(core) != core_json:
         raise ShadowReceiptIntegrityError("receipt core JSON is not canonical or self-consistent")
+    _validate_receipt_contract(core)
     prediction_count = _validate_receipt_identity(run, core)
     active_fingerprint = core.get("active_input", {}).get("fingerprint")
     _require_sha256(active_fingerprint, "receipt active fingerprint")
@@ -550,7 +620,7 @@ def _persist_remote_receipt(
         core_json=core_json,
         core_sha256=hashlib.sha256(core_json.encode("utf-8")).hexdigest(),
         prediction_count=prediction_count,
-        ledger_request_id=f"strathmark:ledger-request:{uuid.uuid5(uuid.NAMESPACE_URL, run.request_id)}",
+        ledger_request_id=_ledger_request_id(run.consumer_id, run.request_id),
     )
     run.receipts.append(row)
     run.active_input_fingerprint = active_fingerprint
@@ -583,28 +653,123 @@ def _load_frozen_input(run: ShadowHandicapRun) -> Mapping[str, Any]:
 
 
 def _validate_receipt_identity(run: ShadowHandicapRun, core: Mapping[str, Any]) -> int:
-    if core.get("schema_version") != "strathmark.shadow-receipt-core.v1":
-        raise ShadowReceiptIntegrityError("receipt schema mismatch")
-    for key, expected in (
-        ("consumer_id", run.consumer_id),
-        ("request_id", run.request_id),
-        ("run_revision", run.run_revision),
-    ):
+    input_payload = _load_frozen_input(run)
+    frozen_keys = (
+        "consumer_id",
+        "tournament_id",
+        "event_occurrence_id",
+        "field_run_id",
+        "operator_id",
+        "request_id",
+        "run_revision",
+        "event_code",
+        "target_contract",
+        "prediction_as_of",
+    )
+    for key in frozen_keys:
+        expected = input_payload[key]
         if core.get(key) != expected:
             raise ShadowReceiptIntegrityError(f"receipt {key} mismatch")
-    input_payload = _load_frozen_input(run)
+
     expected_ids = [row["competitor_id"] for row in input_payload["competitors"]]
+    projection = core["request_projection"]
+    _validate_embedded_fingerprint(projection, "receipt request projection fingerprint")
+    for key in frozen_keys:
+        if projection.get(key) != input_payload[key]:
+            raise ShadowReceiptIntegrityError(f"receipt request projection {key} mismatch")
+    if projection.get("schedule_fingerprint") != input_payload["schedule_fingerprint"]:
+        raise ShadowReceiptIntegrityError("receipt request projection schedule mismatch")
+    if projection.get("observation_schema_version") != input_payload["observation_schema_version"]:
+        raise ShadowReceiptIntegrityError("receipt request projection observation schema mismatch")
+    if projection.get("observation_fingerprint") != input_payload["observation_fingerprint"]:
+        raise ShadowReceiptIntegrityError("receipt request projection observation mismatch")
+    if projection.get("seed") != input_payload["seed"]:
+        raise ShadowReceiptIntegrityError("receipt request projection seed mismatch")
+    expected_projection_competitors = [
+        {
+            "competitor_id": row["competitor_id"],
+            "gender": row.get("gender") or "UNKNOWN",
+        }
+        for row in input_payload["competitors"]
+    ]
+    if projection["competitors"] != expected_projection_competitors:
+        raise ShadowReceiptIntegrityError("receipt request projection entrants mismatch")
+    expected_wood = {
+        "species": input_payload["wood"]["species"].strip().upper(),
+        "diameter_mm": input_payload["wood"]["diameter_mm"],
+        "quality": input_payload["wood"]["quality"],
+    }
+    if projection["wood"] != expected_wood:
+        raise ShadowReceiptIntegrityError("receipt request projection wood mismatch")
+
+    active_input = core["active_input"]
+    _validate_embedded_fingerprint(active_input, "receipt active input fingerprint")
+    for key in (
+        "tournament_id",
+        "event_occurrence_id",
+        "field_run_id",
+        "target_contract",
+        "schedule_fingerprint",
+    ):
+        if active_input.get(key) != input_payload[key]:
+            raise ShadowReceiptIntegrityError(f"receipt active input {key} mismatch")
+    for name, calculation in (
+        ("caller input", active_input["caller_input"]),
+        ("calculation input", core["calculation_input"]),
+    ):
+        if calculation.get("event_code") != input_payload["event_code"]:
+            raise ShadowReceiptIntegrityError(f"receipt {name} event mismatch")
+        if calculation.get("prediction_as_of") != input_payload["prediction_as_of"]:
+            raise ShadowReceiptIntegrityError(f"receipt {name} cutoff mismatch")
+        if calculation.get("seed") != input_payload["seed"]:
+            raise ShadowReceiptIntegrityError(f"receipt {name} seed mismatch")
+        if calculation.get("species") != expected_wood["species"]:
+            raise ShadowReceiptIntegrityError(f"receipt {name} wood species mismatch")
+        if calculation.get("diameter_mm") != expected_wood["diameter_mm"]:
+            raise ShadowReceiptIntegrityError(f"receipt {name} wood diameter mismatch")
+        projected_competitors = [
+            {"competitor_id": row["competitor_id"], "gender": row["gender"]}
+            for row in calculation["competitors"]
+        ]
+        expected_calculation_competitors = [
+            {
+                "competitor_id": row["competitor_id"],
+                "gender": row.get("gender") or "__MISSING__",
+            }
+            for row in input_payload["competitors"]
+        ]
+        if projected_competitors != expected_calculation_competitors:
+            raise ShadowReceiptIntegrityError(f"receipt {name} entrants mismatch")
+
+    observation = core["observation"]
+    if observation.get("schema_version") != input_payload["observation_schema_version"]:
+        raise ShadowReceiptIntegrityError("receipt observation schema mismatch")
+    if observation.get("fingerprint") != input_payload["observation_fingerprint"]:
+        raise ShadowReceiptIntegrityError("receipt observation fingerprint mismatch")
+    if active_input["evidence_snapshot"]["cutoff"] != input_payload["prediction_as_of"]:
+        raise ShadowReceiptIntegrityError("receipt active evidence cutoff mismatch")
+    if core["evidence_snapshot"]["cutoff"] != input_payload["prediction_as_of"]:
+        raise ShadowReceiptIntegrityError("receipt evidence cutoff mismatch")
+
     predictions = core.get("predictions")
-    if not isinstance(predictions, list) or not predictions:
-        raise ShadowReceiptIntegrityError("receipt predictions are incomplete")
-    actual_ids = [row.get("competitor_id") for row in predictions if isinstance(row, dict)]
-    if actual_ids != expected_ids or len(actual_ids) != len(predictions):
+    actual_ids = [row["competitor_id"] for row in predictions]
+    if actual_ids != expected_ids:
         raise ShadowReceiptIntegrityError("receipt prediction field does not match frozen entrants")
-    prediction_ids = [row.get("prediction_id") for row in predictions]
-    if any(not isinstance(value, str) or not value for value in prediction_ids):
-        raise ShadowReceiptIntegrityError("receipt prediction identity is missing")
+    if any(row["ordinal"] != ordinal for ordinal, row in enumerate(predictions)):
+        raise ShadowReceiptIntegrityError("receipt prediction ordinals are not contiguous")
+    if any(row["event_code"] != input_payload["event_code"] for row in predictions):
+        raise ShadowReceiptIntegrityError("receipt prediction event mismatch")
+    if any(row["evidence_cutoff"] != input_payload["prediction_as_of"] for row in predictions):
+        raise ShadowReceiptIntegrityError("receipt prediction cutoff mismatch")
+    prediction_ids = [row["prediction_id"] for row in predictions]
     if len(set(prediction_ids)) != len(prediction_ids):
         raise ShadowReceiptIntegrityError("receipt prediction identities are not unique")
+    diagnostics = core["evidence_diagnostics"]
+    if len(diagnostics) != len(expected_ids) or any(
+        row["ordinal"] != ordinal or row["competitor_id"] != expected_ids[ordinal]
+        for ordinal, row in enumerate(diagnostics)
+    ):
+        raise ShadowReceiptIntegrityError("receipt evidence diagnostics do not match the field")
     return len(predictions)
 
 
@@ -655,9 +820,10 @@ def _reviewed_competitors(event: Event, results: list[EventResult]) -> list[dict
 
 def _wood_payload(event: Event) -> dict[str, Any]:
     gender_suffix = f"_{event.gender}" if event.gender else "_M"
+    woodboss_stand_type = {"standing_block": "standing"}.get(event.stand_type, event.stand_type)
     keys = [
-        f"block_{event.stand_type}_{event.event_type}{gender_suffix}",
-        f"block_{event.stand_type}_{event.event_type}",
+        f"block_{woodboss_stand_type}_{event.event_type}{gender_suffix}",
+        f"block_{woodboss_stand_type}_{event.event_type}",
     ]
     row = (
         WoodConfig.query.filter(
@@ -712,6 +878,20 @@ def _canonical_core_json(value: Mapping[str, Any]) -> str:
     )
 
 
+def _contract_hash(value: Mapping[str, Any]) -> str:
+    """Match STRATHMARK canonical_hash without coercing integral floats."""
+
+    return hashlib.sha256(_canonical_core_json(value).encode("utf-8")).hexdigest()
+
+
+def _validate_embedded_fingerprint(value: Mapping[str, Any], field: str) -> None:
+    projection = dict(value)
+    supplied = _require_sha256(projection.pop("fingerprint", None), field)
+    observed = _contract_hash(projection)
+    if not hmac.compare_digest(observed, supplied):
+        raise ShadowReceiptIntegrityError(f"{field} mismatch")
+
+
 def _sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
@@ -747,6 +927,190 @@ def _validate_core_json(value: str) -> Mapping[str, Any]:
     if not isinstance(parsed, dict):
         raise ShadowReceiptIntegrityError("receipt JSON must be an object")
     return parsed
+
+
+@lru_cache(maxsize=1)
+def _consumer_contract_document() -> Mapping[str, Any]:
+    spec = importlib.util.find_spec("strathmark")
+    if spec is None or spec.origin is None:
+        raise ShadowReceiptIntegrityError("installed STRATHMARK contract is unavailable")
+    contract_path = (
+        Path(spec.origin).resolve().parent / "contracts" / ("shadow_consumer_v1.openapi.json")
+    )
+    checksum_path = contract_path.with_suffix(".sha256")
+    try:
+        raw = contract_path.read_text(encoding="utf-8")
+        document = json.loads(raw)
+        expected = checksum_path.read_text(encoding="utf-8").strip().lower()
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ShadowReceiptIntegrityError("installed STRATHMARK contract is unavailable") from exc
+    canonical = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    observed = hashlib.sha256(canonical).hexdigest()
+    if expected != SHADOW_CONSUMER_CONTRACT_DIGEST or not hmac.compare_digest(observed, expected):
+        raise ShadowReceiptIntegrityError("installed STRATHMARK contract digest mismatch")
+    try:
+        if not isinstance(document.get("components", {}).get("schemas"), dict):
+            raise KeyError("components.schemas")
+        return document
+    except (KeyError, SchemaError) as exc:
+        raise ShadowReceiptIntegrityError("installed STRATHMARK contract is invalid") from exc
+
+
+@lru_cache(maxsize=None)
+def _contract_component_validator(component: str) -> Draft202012Validator:
+    document = _consumer_contract_document()
+    try:
+        if component not in document["components"]["schemas"]:
+            raise KeyError(component)
+        schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": f"#/components/schemas/{component}",
+            "components": document["components"],
+        }
+        Draft202012Validator.check_schema(schema)
+        return Draft202012Validator(schema, format_checker=FormatChecker())
+    except (KeyError, SchemaError) as exc:
+        raise ShadowReceiptIntegrityError("installed STRATHMARK contract is invalid") from exc
+
+
+def _receipt_contract_validator() -> Draft202012Validator:
+    return _contract_component_validator("ReceiptCore")
+
+
+def _validate_receipt_contract(core: Mapping[str, Any]) -> None:
+    try:
+        _receipt_contract_validator().validate(dict(core))
+    except ValidationError as exc:
+        raise ShadowReceiptIntegrityError(
+            "receipt core violates the reviewed STRATHMARK contract"
+        ) from exc
+
+
+def _validate_contract_component(
+    value: Mapping[str, Any],
+    component: str,
+    detail: str,
+) -> None:
+    try:
+        _contract_component_validator(component).validate(dict(value))
+    except (TypeError, ValidationError) as exc:
+        raise ShadowReceiptIntegrityError(detail) from exc
+
+
+def _ledger_request_id(consumer_id: str, request_id: str) -> str:
+    return str(uuid.uuid5(_LEDGER_NAMESPACE, f"request:{consumer_id}:{request_id}"))
+
+
+def _validate_numeric_outcome_response(
+    run: ShadowHandicapRun,
+    actor: User,
+    payload: Mapping[str, Any],
+    response: Mapping[str, Any],
+) -> None:
+    detail = "numeric outcome response violates the reviewed STRATHMARK contract"
+    _validate_contract_component(response, "NumericOutcomeResponse", detail)
+    outcome = response["outcome"]
+    expected_text = (
+        ("outcome_revision_id", payload.get("outcome_revision_id")),
+        ("ledger_request_id", _ledger_request_id(run.consumer_id, run.request_id)),
+        ("caller_id", payload.get("consumer_id")),
+        ("actor", actor.shadow_actor_id),
+    )
+    for field, expected in expected_text:
+        actual = outcome.get(field)
+        if (
+            not isinstance(actual, str)
+            or not isinstance(expected, str)
+            or not hmac.compare_digest(actual, expected)
+        ):
+            raise ShadowReceiptIntegrityError(detail)
+    if outcome.get("reason_code") != payload.get("reason_code"):
+        raise ShadowReceiptIntegrityError(detail)
+    if outcome.get("status") not in {"recorded", "duplicate"}:
+        raise ShadowReceiptIntegrityError(detail)
+
+    receipt = load_local_shadow_receipt(run)
+    if receipt is None or not run.receipts:
+        raise ShadowReceiptIntegrityError(detail)
+    if not hmac.compare_digest(
+        str(run.receipts[-1].ledger_request_id),
+        _ledger_request_id(run.consumer_id, run.request_id),
+    ):
+        raise ShadowReceiptIntegrityError(detail)
+    predictions = {
+        row["prediction_id"]: row
+        for row in receipt.core.get("predictions", ())
+        if isinstance(row, dict) and isinstance(row.get("prediction_id"), str)
+    }
+    requested = payload.get("revisions")
+    returned = outcome.get("revisions")
+    if not isinstance(requested, list) or not isinstance(returned, list):
+        raise ShadowReceiptIntegrityError(detail)
+    if len(requested) != len(returned):
+        raise ShadowReceiptIntegrityError(detail)
+    returned_by_prediction = {row.get("prediction_id"): row for row in returned}
+    if len(returned_by_prediction) != len(returned):
+        raise ShadowReceiptIntegrityError(detail)
+
+    for revision in requested:
+        prediction_id = revision.get("prediction_id")
+        result = returned_by_prediction.get(prediction_id)
+        prediction = predictions.get(prediction_id)
+        if not isinstance(result, dict) or not isinstance(prediction, dict):
+            raise ShadowReceiptIntegrityError(detail)
+        for field in ("prediction_id", "competitor_id", "event_code", "action"):
+            actual = result.get(field)
+            expected = revision.get(field)
+            if (
+                not isinstance(actual, str)
+                or not isinstance(expected, str)
+                or not hmac.compare_digest(actual, expected)
+            ):
+                raise ShadowReceiptIntegrityError(detail)
+        expected_revision = revision.get("expected_revision")
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or result.get("revision") != expected_revision + 1
+        ):
+            raise ShadowReceiptIntegrityError(detail)
+        actual_time = revision.get("actual_time")
+        if not _same_contract_number(result.get("actual_time"), actual_time):
+            raise ShadowReceiptIntegrityError(detail)
+        supersedes = result.get("supersedes_revision_id")
+        if (expected_revision == 0 and supersedes is not None) or (
+            expected_revision > 0 and not isinstance(supersedes, str)
+        ):
+            raise ShadowReceiptIntegrityError(detail)
+        if revision.get("action") == "void":
+            if result.get("residual") is not None:
+                raise ShadowReceiptIntegrityError(detail)
+        else:
+            median = prediction.get("median_seconds")
+            residual = result.get("residual")
+            if not _is_contract_number(median) or not _is_contract_number(residual):
+                raise ShadowReceiptIntegrityError(detail)
+            expected_residual = float(actual_time) - float(median)
+            if not math.isclose(float(residual), expected_residual, rel_tol=0.0, abs_tol=1e-9):
+                raise ShadowReceiptIntegrityError(detail)
+
+
+def _is_contract_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
+def _same_contract_number(actual: Any, expected: Any) -> bool:
+    if actual is None or expected is None:
+        return actual is None and expected is None
+    return (
+        _is_contract_number(actual)
+        and _is_contract_number(expected)
+        and float(actual) == float(expected)
+    )
 
 
 def _http_error_detail(exc: error.HTTPError) -> str:

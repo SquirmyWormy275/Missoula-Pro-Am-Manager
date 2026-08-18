@@ -2,16 +2,18 @@
 Event configuration routes: event_list, setup_events, day_schedule, apply_saturday_priority,
 and all event-setup helper functions.
 """
+
 import json
 import os as _os
 import re
 
-from flask import flash, redirect, render_template, request, session, url_for
+from flask import abort, flash, redirect, render_template, request, session, url_for
+from flask_login import current_user
 
 import config
 import strings as text
 from database import db
-from models import Event, Flight, Heat, HeatAssignment, Tournament
+from models import Event, Flight, Heat, HeatAssignment, ShadowHandicapRun, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.audit import log_action
 from services.cache_invalidation import invalidate_tournament_caches
@@ -35,6 +37,22 @@ from . import (
 )
 from .spillover_feedback import flash_spillover_result
 
+SHADOW_HANDICAP_STAND_TYPES = frozenset({"underhand", "standing_block"})
+_LOCKED_SHADOW_LIFECYCLES = frozenset(
+    {
+        "prepared",
+        "preflight-approved",
+        "calculated",
+        "reviewed",
+        "shadow-issued",
+        "outcomes-complete",
+    }
+)
+
+
+class ShadowAuthorityLocked(ValueError):
+    """Raised when setup would rewrite authority for an active shadow run."""
+
 
 def _snapshot_flights(tournament_id: int) -> dict:
     """Capture per-flight heat counts for the build-diff modal."""
@@ -46,11 +64,11 @@ def _snapshot_flights(tournament_id: int) -> dict:
 
 def _discard_success_flashes_since(checkpoint: int) -> None:
     """Remove success messages emitted by work that was rolled back."""
-    flashes = list(session.get('_flashes', []))
+    flashes = list(session.get("_flashes", []))
     if len(flashes) <= checkpoint:
         return
-    session['_flashes'] = flashes[:checkpoint] + [
-        item for item in flashes[checkpoint:] if item[0] != 'success'
+    session["_flashes"] = flashes[:checkpoint] + [
+        item for item in flashes[checkpoint:] if item[0] != "success"
     ]
     session.modified = True
 
@@ -78,40 +96,50 @@ def _resolve_num_flights_from_form(tournament, form):
         _persist_flight_sizing_config,
     )
 
-    raw_mode = (form.get('flight_sizing_mode') or '').strip().lower()
+    raw_mode = (form.get("flight_sizing_mode") or "").strip().lower()
     if not raw_mode:
         return None  # Form did not include sizing fields — keep legacy behaviour.
     if raw_mode not in VALID_FLIGHT_SIZING_MODES:
-        raw_mode = FLIGHT_SIZING_DEFAULTS['mode']
+        raw_mode = FLIGHT_SIZING_DEFAULTS["mode"]
 
     try:
-        target_minutes = int(form.get('target_minutes_per_flight',
-                                      FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']))
+        target_minutes = int(
+            form.get(
+                "target_minutes_per_flight", FLIGHT_SIZING_DEFAULTS["target_minutes_per_flight"]
+            )
+        )
     except (TypeError, ValueError):
-        target_minutes = FLIGHT_SIZING_DEFAULTS['target_minutes_per_flight']
+        target_minutes = FLIGHT_SIZING_DEFAULTS["target_minutes_per_flight"]
     target_minutes = max(MINUTES_PER_FLIGHT_MIN, min(MINUTES_PER_FLIGHT_MAX, target_minutes))
 
     try:
-        minutes_per_heat = float(form.get('minutes_per_heat',
-                                          FLIGHT_SIZING_DEFAULTS['minutes_per_heat']))
+        minutes_per_heat = float(
+            form.get("minutes_per_heat", FLIGHT_SIZING_DEFAULTS["minutes_per_heat"])
+        )
     except (TypeError, ValueError):
-        minutes_per_heat = FLIGHT_SIZING_DEFAULTS['minutes_per_heat']
+        minutes_per_heat = FLIGHT_SIZING_DEFAULTS["minutes_per_heat"]
     minutes_per_heat = max(MINUTES_PER_HEAT_MIN, min(MINUTES_PER_HEAT_MAX, minutes_per_heat))
 
     try:
-        form_num_flights = int(form.get('num_flights', 0))
+        form_num_flights = int(form.get("num_flights", 0))
     except (TypeError, ValueError):
         form_num_flights = 0
 
     if raw_mode == FLIGHT_SIZING_MODE_MINUTES:
-        pro_heats_for_calc = Heat.query.join(Event).filter(
-            Event.tournament_id == tournament.id,
-            Event.event_type == 'pro',
-            Event.name != 'Partnered Axe Throw',
-            Heat.run_number == 1,
-        ).count()
+        pro_heats_for_calc = (
+            Heat.query.join(Event)
+            .filter(
+                Event.tournament_id == tournament.id,
+                Event.event_type == "pro",
+                Event.name != "Partnered Axe Throw",
+                Heat.run_number == 1,
+            )
+            .count()
+        )
         computed, _was_clamped = _compute_num_flights_from_duration(
-            pro_heats_for_calc, minutes_per_heat, target_minutes,
+            pro_heats_for_calc,
+            minutes_per_heat,
+            target_minutes,
         )
         resolved = computed if computed >= 1 else None
     else:  # 'count' mode
@@ -119,8 +147,13 @@ def _resolve_num_flights_from_form(tournament, form):
 
     try:
         _persist_flight_sizing_config(
-            tournament, raw_mode, target_minutes, minutes_per_heat,
-            form_num_flights if form_num_flights >= FLIGHT_COUNT_MIN else FLIGHT_SIZING_DEFAULTS['num_flights'],
+            tournament,
+            raw_mode,
+            target_minutes,
+            minutes_per_heat,
+            form_num_flights
+            if form_num_flights >= FLIGHT_COUNT_MIN
+            else FLIGHT_SIZING_DEFAULTS["num_flights"],
         )
         db.session.flush()
     except Exception:
@@ -130,7 +163,13 @@ def _resolve_num_flights_from_form(tournament, form):
     return resolved
 
 
-def _handle_event_list_post(tournament, saturday_college_event_ids, generate_event_heats, build_pro_flights, integrate_college_spillover_into_flights):
+def _handle_event_list_post(
+    tournament,
+    saturday_college_event_ids,
+    generate_event_heats,
+    build_pro_flights,
+    integrate_college_spillover_into_flights,
+):
     """Handle POST actions for event_list: generate_all, rebuild_flights, integrate_spillover.
 
     The active generate/rebuild pipelines flush each scheduling phase and commit
@@ -138,22 +177,23 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
     """
     from services.saw_block_assignment import assign_saw_blocks
 
-    action = request.form.get('action', '')
+    action = request.form.get("action", "")
     tournament_id = tournament.id
 
     from services.flight_builder import integrate_proam_relay_into_final_flight
 
-    if action in {'generate_all', 'rebuild_flights', 'integrate_spillover'}:
+    if action in {"generate_all", "rebuild_flights", "integrate_spillover"}:
         tournament = lock_tournament_schedule(tournament)
     num_flights_override = _resolve_num_flights_from_form(tournament, request.form)
 
-    if action == 'generate_all':
-        flash_checkpoint = len(session.get('_flashes', []))
+    if action == "generate_all":
+        flash_checkpoint = len(session.get("_flashes", []))
         try:
             _generate_all_heats(tournament, generate_event_heats)
-            raw_sizing_mode = (request.form.get('flight_sizing_mode') or '').strip().lower()
-            if raw_sizing_mode and raw_sizing_mode != 'count':
+            raw_sizing_mode = (request.form.get("flight_sizing_mode") or "").strip().lower()
+            if raw_sizing_mode and raw_sizing_mode != "count":
                 from .flights import _resolve_num_flights_from_persisted_config
+
                 num_flights_override = _resolve_num_flights_from_persisted_config(tournament)
             pre_snap = _snapshot_flights(tournament_id)
             flights = _build_pro_flights_if_possible(
@@ -168,41 +208,44 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
             if flights is not None:
                 # Phase 4: relay BEFORE spillover so Chokerman Run 2 closes.
                 relay_result = integrate_proam_relay_into_final_flight(
-                    tournament, commit=False,
+                    tournament,
+                    commit=False,
                 )
                 integration = integrate_college_spillover_into_flights(
-                    tournament, saturday_college_event_ids, commit=False,
+                    tournament,
+                    saturday_college_event_ids,
+                    commit=False,
                 )
                 post_snap = _snapshot_flights(tournament_id)
                 build_diff = {
-                    'before_flight_count': len(pre_snap),
-                    'after_flight_count': len(post_snap),
-                    'total_heats': sum(post_snap.values()),
+                    "before_flight_count": len(pre_snap),
+                    "after_flight_count": len(post_snap),
+                    "total_heats": sum(post_snap.values()),
                 }
             assign_saw_blocks(tournament, commit=False)
             db.session.commit()
         except Exception as exc:
             db.session.rollback()
             _discard_success_flashes_since(flash_checkpoint)
-            flash(f'Heat/flight generation failed and was rolled back: {exc}', 'error')
+            flash(f"Heat/flight generation failed and was rolled back: {exc}", "error")
         else:
             try:
                 if flights is not None:
-                    flash(f'Built {flights} pro flight(s).', 'success')
-                    if relay_result.get('placed'):
-                        flash('Pro-Am Relay placed in the final flight.', 'success')
+                    flash(f"Built {flights} pro flight(s).", "success")
+                    if relay_result.get("placed"):
+                        flash("Pro-Am Relay placed in the final flight.", "success")
                     flash_spillover_result(integration)
-                    session[f'build_diff_{tournament_id}'] = build_diff
+                    session[f"build_diff_{tournament_id}"] = build_diff
                     session.modified = True
                 invalidate_tournament_caches(tournament_id)
             except Exception as exc:
                 flash(
-                    f'Schedule was saved, but follow-up housekeeping failed: {exc}',
-                    'warning',
+                    f"Schedule was saved, but follow-up housekeeping failed: {exc}",
+                    "warning",
                 )
 
-    elif action == 'rebuild_flights':
-        flash_checkpoint = len(session.get('_flashes', []))
+    elif action == "rebuild_flights":
+        flash_checkpoint = len(session.get("_flashes", []))
         try:
             pre_snap = _snapshot_flights(tournament_id)
             flights = _build_pro_flights_if_possible(
@@ -216,68 +259,74 @@ def _handle_event_list_post(tournament, saturday_college_event_ids, generate_eve
             build_diff = None
             if flights is not None:
                 relay_result = integrate_proam_relay_into_final_flight(
-                    tournament, commit=False,
+                    tournament,
+                    commit=False,
                 )
                 integration = integrate_college_spillover_into_flights(
-                    tournament, saturday_college_event_ids, commit=False,
+                    tournament,
+                    saturday_college_event_ids,
+                    commit=False,
                 )
                 post_snap = _snapshot_flights(tournament_id)
                 build_diff = {
-                    'before_flight_count': len(pre_snap),
-                    'after_flight_count': len(post_snap),
-                    'total_heats': sum(post_snap.values()),
+                    "before_flight_count": len(pre_snap),
+                    "after_flight_count": len(post_snap),
+                    "total_heats": sum(post_snap.values()),
                 }
             assign_saw_blocks(tournament, commit=False)
             db.session.commit()
         except Exception as exc:
             db.session.rollback()
             _discard_success_flashes_since(flash_checkpoint)
-            flash(f'Flight rebuild failed and was rolled back: {exc}', 'error')
+            flash(f"Flight rebuild failed and was rolled back: {exc}", "error")
         else:
             try:
                 if flights is not None:
-                    flash(f'Rebuilt {flights} pro flight(s).', 'success')
-                    if relay_result.get('placed'):
-                        flash('Pro-Am Relay placed in the final flight.', 'success')
+                    flash(f"Rebuilt {flights} pro flight(s).", "success")
+                    if relay_result.get("placed"):
+                        flash("Pro-Am Relay placed in the final flight.", "success")
                     flash_spillover_result(integration)
-                    session[f'build_diff_{tournament_id}'] = build_diff
+                    session[f"build_diff_{tournament_id}"] = build_diff
                     session.modified = True
                 invalidate_tournament_caches(tournament_id)
             except Exception as exc:
                 flash(
-                    f'Schedule was saved, but follow-up housekeeping failed: {exc}',
-                    'warning',
+                    f"Schedule was saved, but follow-up housekeeping failed: {exc}",
+                    "warning",
                 )
 
-    elif action == 'integrate_spillover':
-        flash_checkpoint = len(session.get('_flashes', []))
+    elif action == "integrate_spillover":
+        flash_checkpoint = len(session.get("_flashes", []))
         try:
             relay_result = integrate_proam_relay_into_final_flight(
-                tournament, commit=False,
+                tournament,
+                commit=False,
             )
             integration = integrate_college_spillover_into_flights(
-                tournament, saturday_college_event_ids, commit=False,
+                tournament,
+                saturday_college_event_ids,
+                commit=False,
             )
             assign_saw_blocks(tournament, commit=False)
             db.session.commit()
         except Exception as exc:
             db.session.rollback()
             _discard_success_flashes_since(flash_checkpoint)
-            flash(f'Spillover integration failed and was rolled back: {exc}', 'error')
+            flash(f"Spillover integration failed and was rolled back: {exc}", "error")
         else:
             try:
-                if relay_result.get('placed'):
-                    flash('Pro-Am Relay placed in the final flight.', 'success')
+                if relay_result.get("placed"):
+                    flash("Pro-Am Relay placed in the final flight.", "success")
                 flash_spillover_result(integration)
                 invalidate_tournament_caches(tournament_id)
             except Exception as exc:
                 flash(
-                    f'Spillover was saved, but follow-up housekeeping failed: {exc}',
-                    'warning',
+                    f"Spillover was saved, but follow-up housekeeping failed: {exc}",
+                    "warning",
                 )
 
 
-@scheduling_bp.route('/<int:tournament_id>/events', methods=['GET', 'POST'])
+@scheduling_bp.route("/<int:tournament_id>/events", methods=["GET", "POST"])
 @serialize_sqlite_schedule_writer
 def event_list(tournament_id):
     """Unified Events & Schedule page — heat status, schedule options, generation actions."""
@@ -285,33 +334,35 @@ def event_list(tournament_id):
     from services.heat_generator import generate_event_heats
 
     tournament = db.get_or_404(Tournament, tournament_id)
-    if request.method == 'POST':
+    if request.method == "POST":
         tournament = lock_tournament_schedule(tournament)
-    session_key = f'schedule_options_{tournament_id}'
+    session_key = f"schedule_options_{tournament_id}"
 
-    all_pro = tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
-    all_college = tournament.events.filter_by(event_type='college').all()
+    all_pro = tournament.events.filter_by(event_type="pro").order_by(Event.name, Event.gender).all()
+    all_college = tournament.events.filter_by(event_type="college").all()
     # Load schedule config: prefer DB (persists across sessions), fall back to session
     db_config = tournament.get_schedule_config()
     saved = db_config if db_config else session.get(session_key, {})
 
     # ── POST: dispatch to action handler ─────────────────────────────────
-    if request.method == 'POST':
-        saturday_college_event_ids = [int(i) for i in saved.get('saturday_college_event_ids', [])]
+    if request.method == "POST":
+        saturday_college_event_ids = [int(i) for i in saved.get("saturday_college_event_ids", [])]
         _handle_event_list_post(
-            tournament, saturday_college_event_ids,
+            tournament,
+            saturday_college_event_ids,
             lambda event: generate_event_heats(
-                event, allow_flight_replacement=True,
+                event,
+                allow_flight_replacement=True,
             ),
             build_pro_flights,
             integrate_college_spillover_into_flights,
         )
-        return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+        return redirect(url_for("scheduling.event_list", tournament_id=tournament_id))
 
     # ── Normalise saved options ───────────────────────────────────────────
     saved = {
-        'friday_pro_event_ids': [int(i) for i in saved.get('friday_pro_event_ids', [])],
-        'saturday_college_event_ids': [int(i) for i in saved.get('saturday_college_event_ids', [])],
+        "friday_pro_event_ids": [int(i) for i in saved.get("friday_pro_event_ids", [])],
+        "saturday_college_event_ids": [int(i) for i in saved.get("saturday_college_event_ids", [])],
     }
 
     # ── Event data ────────────────────────────────────────────────────────
@@ -322,24 +373,28 @@ def event_list(tournament_id):
     event_progress = {e.id: _build_event_progress(e, entrant_counts[e.id]) for e in all_events}
 
     college_closed = [e for e in college_events if not _is_list_only_event(e)]
-    college_with_heats = sum(1 for e in college_closed if event_progress[e.id]['heat_count'] > 0)
+    college_with_heats = sum(1 for e in college_closed if event_progress[e.id]["heat_count"] > 0)
     college_heats_total = len(college_closed)
 
-    flights_built = Flight.query.join(Heat).join(Event).filter(
-        Event.tournament_id == tournament_id,
-        Event.event_type == 'pro'
-    ).count() > 0
-    pro_heats_exist = any(event_progress[e.id]['heat_count'] > 0 for e in pro_events)
+    flights_built = (
+        Flight.query.join(Heat)
+        .join(Event)
+        .filter(Event.tournament_id == tournament_id, Event.event_type == "pro")
+        .count()
+        > 0
+    )
+    pro_heats_exist = any(event_progress[e.id]["heat_count"] > 0 for e in pro_events)
 
     # ── Saturday spillover config summary ────────────────────────────────
-    sat_spillover_count = len(saved['saturday_college_event_ids'])
-    fnf_count = len(saved['friday_pro_event_ids'])
+    sat_spillover_count = len(saved["saturday_college_event_ids"])
+    fnf_count = len(saved["friday_pro_event_ids"])
 
-    build_diff = session.pop(f'build_diff_{tournament_id}', None)
+    build_diff = session.pop(f"build_diff_{tournament_id}", None)
     if build_diff:
         session.modified = True
 
     from services.schedule_status import build_schedule_status
+
     schedule_status = build_schedule_status(tournament)
 
     # Flight sizing — read from the same schedule_config that /flights/build
@@ -353,32 +408,35 @@ def event_list(tournament_id):
         MINUTES_PER_HEAT_MIN,
         _read_flight_sizing_config,
     )
+
     flight_sizing = _read_flight_sizing_config(tournament)
 
-    return render_template('scheduling/events.html',
-                           tournament=tournament,
-                           college_events=college_events,
-                           pro_events=pro_events,
-                           entrant_counts=entrant_counts,
-                           event_progress=event_progress,
-                           college_with_heats=college_with_heats,
-                           college_heats_total=college_heats_total,
-                           flights_built=flights_built,
-                           pro_heats_exist=pro_heats_exist,
-                           sat_spillover_count=sat_spillover_count,
-                           fnf_count=fnf_count,
-                           build_diff=build_diff,
-                           schedule_status=schedule_status,
-                           flight_sizing=flight_sizing,
-                           flight_count_min=FLIGHT_COUNT_MIN,
-                           flight_count_max=FLIGHT_COUNT_MAX,
-                           minutes_per_flight_min=MINUTES_PER_FLIGHT_MIN,
-                           minutes_per_flight_max=MINUTES_PER_FLIGHT_MAX,
-                           minutes_per_heat_min=MINUTES_PER_HEAT_MIN,
-                           minutes_per_heat_max=MINUTES_PER_HEAT_MAX)
+    return render_template(
+        "scheduling/events.html",
+        tournament=tournament,
+        college_events=college_events,
+        pro_events=pro_events,
+        entrant_counts=entrant_counts,
+        event_progress=event_progress,
+        college_with_heats=college_with_heats,
+        college_heats_total=college_heats_total,
+        flights_built=flights_built,
+        pro_heats_exist=pro_heats_exist,
+        sat_spillover_count=sat_spillover_count,
+        fnf_count=fnf_count,
+        build_diff=build_diff,
+        schedule_status=schedule_status,
+        flight_sizing=flight_sizing,
+        flight_count_min=FLIGHT_COUNT_MIN,
+        flight_count_max=FLIGHT_COUNT_MAX,
+        minutes_per_flight_min=MINUTES_PER_FLIGHT_MIN,
+        minutes_per_flight_max=MINUTES_PER_FLIGHT_MAX,
+        minutes_per_heat_min=MINUTES_PER_HEAT_MIN,
+        minutes_per_heat_max=MINUTES_PER_HEAT_MAX,
+    )
 
 
-@scheduling_bp.route('/<int:tournament_id>/events/setup', methods=['GET', 'POST'])
+@scheduling_bp.route("/<int:tournament_id>/events/setup", methods=["GET", "POST"])
 @serialize_sqlite_schedule_writer
 def setup_events(tournament_id):
     """Configure events for the tournament."""
@@ -387,66 +445,117 @@ def setup_events(tournament_id):
     college_closed_events = [_with_field_key(e) for e in config.COLLEGE_CLOSED_EVENTS]
     pro_events = [_with_field_key(e) for e in config.PRO_EVENTS]
 
-    if request.method == 'POST':
+    if request.method == "POST":
         tournament = lock_tournament_schedule(tournament)
         active_flight = Flight.query.filter(
             Flight.tournament_id == tournament_id,
-            Flight.status != 'pending',
+            Flight.status != "pending",
         ).first()
         if active_flight is not None:
             flash(
-                'Event configuration is frozen after a flight starts.',
-                'error',
+                "Event configuration is frozen after a flight starts.",
+                "error",
             )
-            return redirect(url_for(
-                'scheduling.setup_events',
-                tournament_id=tournament_id,
-            ))
-        action_scope = request.form.get('action_scope', 'both')  # 'college', 'pro', or 'both'
+            return redirect(
+                url_for(
+                    "scheduling.setup_events",
+                    tournament_id=tournament_id,
+                )
+            )
+        action_scope = request.form.get("action_scope", "both")  # 'college', 'pro', or 'both'
 
-        if action_scope in {'college', 'both'}:
-            skipped_college = _create_college_events(tournament, request.form, college_open_events, college_closed_events)
-            if skipped_college:
-                flash(
-                    f'Skipped removing {skipped_college} college event(s) because heats/results already exist.',
-                    'warning'
+        if not current_user.is_judge:
+            if action_scope in {"college", "both"}:
+                _assert_scorer_shadow_authority_submission_allowed(
+                    tournament,
+                    request.form,
+                    college_closed_events,
+                    event_type="college",
                 )
-        if action_scope in {'pro', 'both'}:
-            skipped_pro = _create_pro_events(tournament, request.form, pro_events)
-            if skipped_pro:
-                flash(
-                    f'Skipped removing {skipped_pro} pro event(s) because heats/results already exist.',
-                    'warning'
+            if action_scope in {"pro", "both"}:
+                _assert_scorer_shadow_authority_submission_allowed(
+                    tournament,
+                    request.form,
+                    pro_events,
+                    event_type="pro",
                 )
+
+        try:
+            if action_scope in {"college", "both"}:
+                skipped_college = _create_college_events(
+                    tournament,
+                    request.form,
+                    college_open_events,
+                    college_closed_events,
+                    preserve_omitted_authority=not current_user.is_judge,
+                )
+                if skipped_college:
+                    flash(
+                        f"Skipped removing {skipped_college} college event(s) because heats/results already exist.",
+                        "warning",
+                    )
+            if action_scope in {"pro", "both"}:
+                skipped_pro = _create_pro_events(
+                    tournament,
+                    request.form,
+                    pro_events,
+                    preserve_omitted_authority=not current_user.is_judge,
+                )
+                if skipped_pro:
+                    flash(
+                        f"Skipped removing {skipped_pro} pro event(s) because heats/results already exist.",
+                        "warning",
+                    )
+        except ShadowAuthorityLocked as exc:
+            db.session.rollback()
+            flash(str(exc), "error")
+            if request.form.get("return_to") == "setup":
+                return redirect(
+                    url_for(
+                        "main.tournament_setup",
+                        tournament_id=tournament_id,
+                        tab="events",
+                    )
+                )
+            return redirect(
+                url_for(
+                    "scheduling.setup_events",
+                    tournament_id=tournament_id,
+                )
+            )
 
         db.session.commit()
         invalidate_tournament_caches(tournament_id)
-        if action_scope == 'college':
-            flash('College event configuration saved.', 'success')
-        elif action_scope == 'pro':
-            flash('Pro event configuration saved.', 'success')
+        if action_scope == "college":
+            flash("College event configuration saved.", "success")
+        elif action_scope == "pro":
+            flash("Pro event configuration saved.", "success")
         else:
-            flash('College and pro event configurations saved.', 'success')
-        if request.form.get('return_to') == 'setup':
-            return redirect(url_for('main.tournament_setup', tournament_id=tournament_id, tab='events'))
-        return redirect(url_for('scheduling.setup_events', tournament_id=tournament_id))
+            flash("College and pro event configurations saved.", "success")
+        if request.form.get("return_to") == "setup":
+            return redirect(
+                url_for("main.tournament_setup", tournament_id=tournament_id, tab="events")
+            )
+        return redirect(url_for("scheduling.setup_events", tournament_id=tournament_id))
 
     existing_config = _get_existing_event_config(tournament)
 
-    return render_template('scheduling/setup_events.html',
-                           tournament=tournament,
-                           college_open_events=college_open_events,
-                           college_closed_events=college_closed_events,
-                           pro_events=pro_events,
-                           existing_config=existing_config,
-                           stand_configs=config.STAND_CONFIGS)
+    return render_template(
+        "scheduling/setup_events.html",
+        tournament=tournament,
+        college_open_events=college_open_events,
+        college_closed_events=college_closed_events,
+        pro_events=pro_events,
+        existing_config=existing_config,
+        stand_configs=config.STAND_CONFIGS,
+    )
 
 
 def _parse_stand_overrides(form_data):
     """Extract stands_{stand_type} overrides from form data. Returns dict of stand_type -> int."""
     overrides = {}
     for stand_type in config.STAND_CONFIGS:
-        raw = form_data.get(f'stands_{stand_type}')
+        raw = form_data.get(f"stands_{stand_type}")
         if raw:
             try:
                 val = int(raw)
@@ -457,7 +566,14 @@ def _parse_stand_overrides(form_data):
     return overrides
 
 
-def _create_college_events(tournament, form_data, college_open_events, college_closed_events):
+def _create_college_events(
+    tournament,
+    form_data,
+    college_open_events,
+    college_closed_events,
+    *,
+    preserve_omitted_authority=False,
+):
     """Create/update college events based on form configuration and remove deselected events."""
     selected_signatures = set()
     stand_overrides = _parse_stand_overrides(form_data)
@@ -465,90 +581,181 @@ def _create_college_events(tournament, form_data, college_open_events, college_c
     # Process OPEN events (check if each should be treated as CLOSED)
     for event_config in college_open_events:
         # Check if this event should be treated as CLOSED
-        is_open = form_data.get(f"open_{event_config['field_key']}", 'open') == 'open'
-        max_stands_override = stand_overrides.get(event_config.get('stand_type'))
+        is_open = form_data.get(f"open_{event_config['field_key']}", "open") == "open"
+        max_stands_override = stand_overrides.get(event_config.get("stand_type"))
 
         # Create gendered versions if applicable
-        if event_config.get('is_partnered') and event_config.get('partner_gender') == 'mixed':
+        if event_config.get("is_partnered") and event_config.get("partner_gender") == "mixed":
             # Mixed gender events are not gendered
-            event = _upsert_event(tournament, event_config, 'college', None, is_open, max_stands_override)
+            event = _upsert_event(
+                tournament, event_config, "college", None, is_open, max_stands_override
+            )
             selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
         else:
             # Create men's and women's versions
-            event_m = _upsert_event(tournament, event_config, 'college', 'M', is_open, max_stands_override)
-            event_f = _upsert_event(tournament, event_config, 'college', 'F', is_open, max_stands_override)
-            selected_signatures.add(_event_signature(event_m.name, event_m.event_type, event_m.gender))
-            selected_signatures.add(_event_signature(event_f.name, event_f.event_type, event_f.gender))
+            event_m = _upsert_event(
+                tournament, event_config, "college", "M", is_open, max_stands_override
+            )
+            event_f = _upsert_event(
+                tournament, event_config, "college", "F", is_open, max_stands_override
+            )
+            selected_signatures.add(
+                _event_signature(event_m.name, event_m.event_type, event_m.gender)
+            )
+            selected_signatures.add(
+                _event_signature(event_f.name, event_f.event_type, event_f.gender)
+            )
 
     # Process CLOSED events
     for event_config in college_closed_events:
-        if form_data.get(f"enable_{event_config['field_key']}") != 'on':
+        if form_data.get(f"enable_{event_config['field_key']}") != "on":
             continue
 
-        max_stands_override = stand_overrides.get(event_config.get('stand_type'))
+        max_stands_override = stand_overrides.get(event_config.get("stand_type"))
         is_handicap = (
-            form_data.get(f"handicap_format_{event_config['field_key']}", 'championship') == 'handicap'
-            if event_config.get('stand_type') in config.HANDICAP_ELIGIBLE_STAND_TYPES
-            and event_config.get('scoring_type') != 'hits'
+            form_data.get(f"handicap_format_{event_config['field_key']}", "championship")
+            == "handicap"
+            if event_config.get("stand_type") in config.HANDICAP_ELIGIBLE_STAND_TYPES
+            and event_config.get("scoring_type") != "hits"
             else False
         )
-        handicap_authority_mode = (
-            form_data.get(f"handicap_authority_{event_config['field_key']}", 'official')
-            if is_handicap
-            else 'official'
-        )
-        if event_config.get('is_partnered') and event_config.get('partner_gender') == 'mixed':
+        authority_field = f"handicap_authority_{event_config['field_key']}"
+        handicap_authority_mode = form_data.get(authority_field)
+        if not is_handicap:
+            handicap_authority_mode = "official"
+        elif handicap_authority_mode is None and not preserve_omitted_authority:
+            handicap_authority_mode = "official"
+        if event_config.get("is_partnered") and event_config.get("partner_gender") == "mixed":
             # Mixed-gender partnered events (Jack & Jill) are ONE event, not split by gender.
-            event = _upsert_event(tournament, event_config, 'college', None, False, max_stands_override, is_handicap, handicap_authority_mode)
+            event = _upsert_event(
+                tournament,
+                event_config,
+                "college",
+                None,
+                False,
+                max_stands_override,
+                is_handicap,
+                handicap_authority_mode,
+            )
             selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
-        elif event_config.get('is_gendered', True):
+        elif event_config.get("is_gendered", True):
             # Create men's and women's versions
-            event_m = _upsert_event(tournament, event_config, 'college', 'M', False, max_stands_override, is_handicap, handicap_authority_mode)
-            event_f = _upsert_event(tournament, event_config, 'college', 'F', False, max_stands_override, is_handicap, handicap_authority_mode)
-            selected_signatures.add(_event_signature(event_m.name, event_m.event_type, event_m.gender))
-            selected_signatures.add(_event_signature(event_f.name, event_f.event_type, event_f.gender))
+            event_m = _upsert_event(
+                tournament,
+                event_config,
+                "college",
+                "M",
+                False,
+                max_stands_override,
+                is_handicap,
+                handicap_authority_mode,
+            )
+            event_f = _upsert_event(
+                tournament,
+                event_config,
+                "college",
+                "F",
+                False,
+                max_stands_override,
+                is_handicap,
+                handicap_authority_mode,
+            )
+            selected_signatures.add(
+                _event_signature(event_m.name, event_m.event_type, event_m.gender)
+            )
+            selected_signatures.add(
+                _event_signature(event_f.name, event_f.event_type, event_f.gender)
+            )
         else:
-            event = _upsert_event(tournament, event_config, 'college', None, False, max_stands_override, is_handicap, handicap_authority_mode)
+            event = _upsert_event(
+                tournament,
+                event_config,
+                "college",
+                None,
+                False,
+                max_stands_override,
+                is_handicap,
+                handicap_authority_mode,
+            )
             selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
 
-    return _remove_deselected_events(tournament, 'college', selected_signatures)
+    return _remove_deselected_events(tournament, "college", selected_signatures)
 
 
-def _create_pro_events(tournament, form_data, pro_events):
+def _create_pro_events(
+    tournament,
+    form_data,
+    pro_events,
+    *,
+    preserve_omitted_authority=False,
+):
     """Create/update pro events based on form configuration and remove deselected events."""
     selected_signatures = set()
     stand_overrides = _parse_stand_overrides(form_data)
 
     for event_config in pro_events:
         # Check if this event is enabled
-        if form_data.get(f"enable_{event_config['field_key']}") != 'on':
+        if form_data.get(f"enable_{event_config['field_key']}") != "on":
             continue
 
-        max_stands_override = stand_overrides.get(event_config.get('stand_type'))
+        max_stands_override = stand_overrides.get(event_config.get("stand_type"))
         is_handicap = (
-            form_data.get(f"handicap_format_{event_config['field_key']}", 'championship') == 'handicap'
-            if event_config.get('stand_type') in config.HANDICAP_ELIGIBLE_STAND_TYPES
-            and event_config.get('scoring_type') != 'hits'
+            form_data.get(f"handicap_format_{event_config['field_key']}", "championship")
+            == "handicap"
+            if event_config.get("stand_type") in config.HANDICAP_ELIGIBLE_STAND_TYPES
+            and event_config.get("scoring_type") != "hits"
             else False
         )
-        handicap_authority_mode = (
-            form_data.get(f"handicap_authority_{event_config['field_key']}", 'official')
-            if is_handicap
-            else 'official'
-        )
-        if event_config.get('is_gendered', False):
+        authority_field = f"handicap_authority_{event_config['field_key']}"
+        handicap_authority_mode = form_data.get(authority_field)
+        if not is_handicap:
+            handicap_authority_mode = "official"
+        elif handicap_authority_mode is None and not preserve_omitted_authority:
+            handicap_authority_mode = "official"
+        if event_config.get("is_gendered", False):
             # Check which genders are enabled
-            if form_data.get(f"enable_{event_config['field_key']}_M") == 'on':
-                event_m = _upsert_event(tournament, event_config, 'pro', 'M', False, max_stands_override, is_handicap, handicap_authority_mode)
-                selected_signatures.add(_event_signature(event_m.name, event_m.event_type, event_m.gender))
-            if form_data.get(f"enable_{event_config['field_key']}_F") == 'on':
-                event_f = _upsert_event(tournament, event_config, 'pro', 'F', False, max_stands_override, is_handicap, handicap_authority_mode)
-                selected_signatures.add(_event_signature(event_f.name, event_f.event_type, event_f.gender))
+            if form_data.get(f"enable_{event_config['field_key']}_M") == "on":
+                event_m = _upsert_event(
+                    tournament,
+                    event_config,
+                    "pro",
+                    "M",
+                    False,
+                    max_stands_override,
+                    is_handicap,
+                    handicap_authority_mode,
+                )
+                selected_signatures.add(
+                    _event_signature(event_m.name, event_m.event_type, event_m.gender)
+                )
+            if form_data.get(f"enable_{event_config['field_key']}_F") == "on":
+                event_f = _upsert_event(
+                    tournament,
+                    event_config,
+                    "pro",
+                    "F",
+                    False,
+                    max_stands_override,
+                    is_handicap,
+                    handicap_authority_mode,
+                )
+                selected_signatures.add(
+                    _event_signature(event_f.name, event_f.event_type, event_f.gender)
+                )
         else:
-            event = _upsert_event(tournament, event_config, 'pro', None, False, max_stands_override, is_handicap, handicap_authority_mode)
+            event = _upsert_event(
+                tournament,
+                event_config,
+                "pro",
+                None,
+                False,
+                max_stands_override,
+                is_handicap,
+                handicap_authority_mode,
+            )
             selected_signatures.add(_event_signature(event.name, event.event_type, event.gender))
 
-    return _remove_deselected_events(tournament, 'pro', selected_signatures)
+    return _remove_deselected_events(tournament, "pro", selected_signatures)
 
 
 def _upsert_event(
@@ -559,31 +766,51 @@ def _upsert_event(
     is_open,
     max_stands_override=None,
     is_handicap=False,
-    handicap_authority_mode='official',
+    handicap_authority_mode="official",
 ):
     """Create or update a single event from configuration."""
-    stand_config = config.STAND_CONFIGS.get(event_config.get('stand_type', ''), {})
+    stand_config = config.STAND_CONFIGS.get(event_config.get("stand_type", ""), {})
 
     event = tournament.events.filter_by(
-        name=event_config['name'],
-        event_type=event_type,
-        gender=gender
+        name=event_config["name"], event_type=event_type, gender=gender
     ).first()
+
+    if handicap_authority_mode is None and event is not None:
+        desired_authority = event.handicap_authority_mode
+    else:
+        desired_authority = (
+            "shadow"
+            if is_handicap
+            and handicap_authority_mode == "shadow"
+            and event_config.get("stand_type") in SHADOW_HANDICAP_STAND_TYPES
+            and event_config.get("scoring_type") != "hits"
+            else "official"
+        )
 
     if not event:
         event = Event(
             tournament_id=tournament.id,
-            name=event_config['name'],
+            name=event_config["name"],
             event_type=event_type,
-            gender=gender
+            gender=gender,
         )
         db.session.add(event)
+    else:
+        _assert_shadow_authority_change_allowed(
+            event,
+            desired_is_handicap=is_handicap,
+            desired_authority=desired_authority,
+        )
 
-    event.scoring_type = event_config['scoring_type']
-    event.scoring_order = 'highest_wins' if event_config['scoring_type'] in ['score', 'distance', 'hits'] else 'lowest_wins'
+    event.scoring_type = event_config["scoring_type"]
+    event.scoring_order = (
+        "highest_wins"
+        if event_config["scoring_type"] in ["score", "distance", "hits"]
+        else "lowest_wins"
+    )
     event.is_open = is_open
-    event.is_partnered = event_config.get('is_partnered', False)
-    event.partner_gender_requirement = event_config.get('partner_gender')
+    event.is_partnered = event_config.get("is_partnered", False)
+    event.partner_gender_requirement = event_config.get("partner_gender")
     # Both run flags are written, and both are written unconditionally so a
     # config change that turns one off actually turns it off. The triple flag
     # had no line here at all: config.py has declared requires_triple_runs on
@@ -593,30 +820,123 @@ def _upsert_event(
     # grid, the run3 CSV column, the T1/T2/T3 results table and the three-box
     # judge sheet all read this column, so all four quietly degraded to the
     # single-value layout.
-    event.requires_dual_runs = event_config.get('requires_dual_runs', False)
-    event.requires_triple_runs = event_config.get('requires_triple_runs', False)
-    event.stand_type = event_config.get('stand_type')
-    event.max_stands = max_stands_override if max_stands_override is not None else stand_config.get('total')
-    event.has_prelims = event_config.get('has_prelims', False)
-    event.is_handicap = is_handicap
-    event.handicap_authority_mode = (
-        handicap_authority_mode
-        if is_handicap and handicap_authority_mode == 'shadow'
-        else 'official'
+    event.requires_dual_runs = event_config.get("requires_dual_runs", False)
+    event.requires_triple_runs = event_config.get("requires_triple_runs", False)
+    event.stand_type = event_config.get("stand_type")
+    event.max_stands = (
+        max_stands_override if max_stands_override is not None else stand_config.get("total")
     )
+    event.has_prelims = event_config.get("has_prelims", False)
+    event.is_handicap = is_handicap
+    event.handicap_authority_mode = desired_authority
 
     return event
+
+
+def _assert_scorer_shadow_authority_submission_allowed(
+    tournament,
+    form_data,
+    event_configs,
+    *,
+    event_type,
+):
+    """Reject scorer attempts to create or change shadow authority.
+
+    Scorers retain their ordinary schedule-edit permission. An omitted authority
+    field is therefore treated as "leave the current authority unchanged" by
+    the create/update helpers, while an actual authority transition is reserved
+    for judges and administrators.
+    """
+
+    for event_config in event_configs:
+        field_key = event_config["field_key"]
+        if form_data.get(f"enable_{field_key}") != "on":
+            continue
+
+        is_handicap = (
+            form_data.get(f"handicap_format_{field_key}", "championship") == "handicap"
+            if event_config.get("stand_type") in config.HANDICAP_ELIGIBLE_STAND_TYPES
+            and event_config.get("scoring_type") != "hits"
+            else False
+        )
+        submitted_authority = form_data.get(f"handicap_authority_{field_key}")
+
+        if event_config.get("is_partnered") and event_config.get("partner_gender") == "mixed":
+            genders = (None,)
+        elif event_type == "pro" and event_config.get("is_gendered", False):
+            genders = tuple(
+                gender
+                for gender in ("M", "F")
+                if form_data.get(f"enable_{field_key}_{gender}") == "on"
+            )
+        elif event_type == "college" and event_config.get("is_gendered", True):
+            genders = ("M", "F")
+        else:
+            genders = (None,)
+
+        for gender in genders:
+            event = tournament.events.filter_by(
+                name=event_config["name"],
+                event_type=event_type,
+                gender=gender,
+            ).first()
+            current_authority = event.handicap_authority_mode if event is not None else "official"
+            if submitted_authority is None and is_handicap and event is not None:
+                desired_authority = current_authority
+            else:
+                desired_authority = (
+                    "shadow"
+                    if is_handicap
+                    and submitted_authority == "shadow"
+                    and event_config.get("stand_type") in SHADOW_HANDICAP_STAND_TYPES
+                    and event_config.get("scoring_type") != "hits"
+                    else "official"
+                )
+            if desired_authority != current_authority:
+                abort(403)
+
+
+def _assert_shadow_authority_change_allowed(
+    event,
+    *,
+    desired_is_handicap,
+    desired_authority,
+):
+    """Keep every active shadow run bound to its configured authority."""
+
+    current_state = (bool(event.is_handicap), event.handicap_authority_mode)
+    desired_state = (bool(desired_is_handicap), desired_authority)
+    if current_state == desired_state:
+        return
+
+    locked_run = (
+        ShadowHandicapRun.query.filter(
+            ShadowHandicapRun.event_id == event.id,
+            ShadowHandicapRun.lifecycle.in_(_LOCKED_SHADOW_LIFECYCLES),
+        )
+        .order_by(ShadowHandicapRun.created_at.desc(), ShadowHandicapRun.id.desc())
+        .first()
+    )
+    if locked_run is None:
+        return
+
+    raise ShadowAuthorityLocked(
+        text.FLASH["shadow_authority_locked"].format(
+            event_name=event.display_name,
+            lifecycle=locked_run.lifecycle,
+        )
+    )
 
 
 def _with_field_key(event_config):
     """Add a safe key used for form field names and IDs."""
     event = dict(event_config)
-    event['field_key'] = _field_key(event_config['name'])
+    event["field_key"] = _field_key(event_config["name"])
     return event
 
 
 def _field_key(name: str) -> str:
-    return re.sub(r'[^a-z0-9]+', '_', str(name).lower()).strip('_')
+    return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
 
 
 def _event_signature(name, event_type, gender):
@@ -624,7 +944,7 @@ def _event_signature(name, event_type, gender):
 
 
 def _normalize_person_name_local(value: str) -> str:
-    return str(value or '').strip().lower()
+    return str(value or "").strip().lower()
 
 
 def _remove_deselected_events(tournament, event_type, selected_signatures):
@@ -647,62 +967,58 @@ def _remove_deselected_events(tournament, event_type, selected_signatures):
 def _get_existing_event_config(tournament):
     """Build current configuration state for setup checkboxes/radios."""
     events = tournament.events.all()
-    has_any_college = any(e.event_type == 'college' for e in events)
+    has_any_college = any(e.event_type == "college" for e in events)
 
     open_state = {}
     for cfg in config.COLLEGE_OPEN_EVENTS:
-        matching = [e for e in events if e.event_type == 'college' and e.name == cfg['name']]
+        matching = [e for e in events if e.event_type == "college" and e.name == cfg["name"]]
         if matching:
-            open_state[cfg['name']] = bool(matching[0].is_open)
+            open_state[cfg["name"]] = bool(matching[0].is_open)
         else:
-            open_state[cfg['name']] = True
+            open_state[cfg["name"]] = True
 
     closed_enabled = {}
     for cfg in config.COLLEGE_CLOSED_EVENTS:
-        key = cfg['name']
-        matching = [e for e in events if e.event_type == 'college' and e.name == key]
+        key = cfg["name"]
+        matching = [e for e in events if e.event_type == "college" and e.name == key]
         closed_enabled[key] = bool(matching) if has_any_college else True
 
     pro_enabled = {}
     pro_gender = {}
     for cfg in config.PRO_EVENTS:
-        key = cfg['name']
-        matching = [e for e in events if e.event_type == 'pro' and e.name == key]
+        key = cfg["name"]
+        matching = [e for e in events if e.event_type == "pro" and e.name == key]
         pro_enabled[key] = bool(matching)
         pro_gender[key] = {
-            'M': any(e.gender == 'M' for e in matching),
-            'F': any(e.gender == 'F' for e in matching),
+            "M": any(e.gender == "M" for e in matching),
+            "F": any(e.gender == "F" for e in matching),
         }
 
     # Handicap vs. Championship state for eligible college CLOSED events
     college_handicap = {}
     college_authority = {}
     for cfg in config.COLLEGE_CLOSED_EVENTS:
-        if cfg.get('stand_type') not in config.HANDICAP_ELIGIBLE_STAND_TYPES:
+        if cfg.get("stand_type") not in config.HANDICAP_ELIGIBLE_STAND_TYPES:
             continue
-        if cfg.get('scoring_type') == 'hits':
+        if cfg.get("scoring_type") == "hits":
             continue
-        key = cfg['name']
-        matching = [e for e in events if e.event_type == 'college' and e.name == key]
+        key = cfg["name"]
+        matching = [e for e in events if e.event_type == "college" and e.name == key]
         college_handicap[key] = matching[0].is_handicap if matching else False
-        college_authority[key] = (
-            matching[0].handicap_authority_mode if matching else 'official'
-        )
+        college_authority[key] = matching[0].handicap_authority_mode if matching else "official"
 
     # Handicap vs. Championship state for eligible pro events
     pro_handicap = {}
     pro_authority = {}
     for cfg in config.PRO_EVENTS:
-        if cfg.get('stand_type') not in config.HANDICAP_ELIGIBLE_STAND_TYPES:
+        if cfg.get("stand_type") not in config.HANDICAP_ELIGIBLE_STAND_TYPES:
             continue
-        if cfg.get('scoring_type') == 'hits':
+        if cfg.get("scoring_type") == "hits":
             continue
-        key = cfg['name']
-        matching = [e for e in events if e.event_type == 'pro' and e.name == key]
+        key = cfg["name"]
+        matching = [e for e in events if e.event_type == "pro" and e.name == key]
         pro_handicap[key] = matching[0].is_handicap if matching else False
-        pro_authority[key] = (
-            matching[0].handicap_authority_mode if matching else 'official'
-        )
+        pro_authority[key] = matching[0].handicap_authority_mode if matching else "official"
 
     # Per-stand-type count overrides stored on existing events
     stand_counts = {}
@@ -711,77 +1027,81 @@ def _get_existing_event_config(tournament):
             stand_counts[event.stand_type] = event.max_stands
 
     return {
-        'college_open_state': open_state,
-        'college_closed_enabled': closed_enabled,
-        'pro_enabled': pro_enabled,
-        'pro_gender': pro_gender,
-        'college_handicap': college_handicap,
-        'pro_handicap': pro_handicap,
-        'college_authority': college_authority,
-        'pro_authority': pro_authority,
-        'stand_counts': stand_counts,
+        "college_open_state": open_state,
+        "college_closed_enabled": closed_enabled,
+        "pro_enabled": pro_enabled,
+        "pro_gender": pro_gender,
+        "college_handicap": college_handicap,
+        "pro_handicap": pro_handicap,
+        "college_authority": college_authority,
+        "pro_authority": pro_authority,
+        "stand_counts": stand_counts,
     }
 
 
-@scheduling_bp.route('/<int:tournament_id>/day-schedule', methods=['GET', 'POST'])
+@scheduling_bp.route("/<int:tournament_id>/day-schedule", methods=["GET", "POST"])
 def day_schedule(tournament_id):
     """Redirects to the unified Events & Schedule page."""
-    return redirect(url_for('scheduling.event_list', tournament_id=tournament_id), 301)
+    return redirect(url_for("scheduling.event_list", tournament_id=tournament_id), 301)
 
 
 # ---------------------------------------------------------------------------
 # Manual event ordering — drag-and-drop endpoints
 # ---------------------------------------------------------------------------
 
-@scheduling_bp.route('/<int:tournament_id>/events/reorder-friday', methods=['POST'])
+
+@scheduling_bp.route("/<int:tournament_id>/events/reorder-friday", methods=["POST"])
 @serialize_sqlite_schedule_writer
 def reorder_friday_events(tournament_id):
     """Save custom Friday event display order. Expects JSON {event_ids: [int, ...]}."""
     from flask import jsonify
+
     tournament = db.get_or_404(Tournament, tournament_id)
     tournament = lock_tournament_schedule(tournament)
     try:
         data = request.get_json(force=True)
-        event_ids = [int(eid) for eid in data.get('event_ids', [])]
+        event_ids = [int(eid) for eid in data.get("event_ids", [])]
     except (TypeError, ValueError, AttributeError):
-        return jsonify({'ok': False, 'error': 'Invalid event_ids'}), 400
+        return jsonify({"ok": False, "error": "Invalid event_ids"}), 400
 
     cfg = tournament.get_schedule_config()
-    cfg['friday_event_order'] = event_ids
+    cfg["friday_event_order"] = event_ids
     tournament.set_schedule_config(cfg)
     db.session.commit()
-    log_action('friday_event_order_set', 'tournament', tournament_id, {'order': event_ids})
+    log_action("friday_event_order_set", "tournament", tournament_id, {"order": event_ids})
     invalidate_tournament_caches(tournament_id)
 
     from services.saw_block_assignment import trigger_saw_block_recompute
+
     trigger_saw_block_recompute(tournament)
 
-    return jsonify({'ok': True})
+    return jsonify({"ok": True})
 
 
-@scheduling_bp.route('/<int:tournament_id>/events/reorder-saturday', methods=['POST'])
+@scheduling_bp.route("/<int:tournament_id>/events/reorder-saturday", methods=["POST"])
 @serialize_sqlite_schedule_writer
 def reorder_saturday_events(tournament_id):
     """Save custom Saturday event display order (fallback mode). Expects JSON {event_ids: [int, ...]}."""
     from flask import jsonify
+
     tournament = db.get_or_404(Tournament, tournament_id)
     tournament = lock_tournament_schedule(tournament)
     try:
         data = request.get_json(force=True)
-        event_ids = [int(eid) for eid in data.get('event_ids', [])]
+        event_ids = [int(eid) for eid in data.get("event_ids", [])]
     except (TypeError, ValueError, AttributeError):
-        return jsonify({'ok': False, 'error': 'Invalid event_ids'}), 400
+        return jsonify({"ok": False, "error": "Invalid event_ids"}), 400
 
     cfg = tournament.get_schedule_config()
-    cfg['saturday_event_order'] = event_ids
+    cfg["saturday_event_order"] = event_ids
     tournament.set_schedule_config(cfg)
     db.session.commit()
-    log_action('saturday_event_order_set', 'tournament', tournament_id, {'order': event_ids})
+    log_action("saturday_event_order_set", "tournament", tournament_id, {"order": event_ids})
     invalidate_tournament_caches(tournament_id)
-    return jsonify({'ok': True})
+    return jsonify({"ok": True})
 
 
-@scheduling_bp.route('/<int:tournament_id>/events/reset-order', methods=['POST'])
+@scheduling_bp.route("/<int:tournament_id>/events/reset-order", methods=["POST"])
 @serialize_sqlite_schedule_writer
 def reset_event_order(tournament_id):
     """Remove custom event ordering, reverting to config defaults.
@@ -790,30 +1110,32 @@ def reset_event_order(tournament_id):
     Without the day key, resets both.
     """
     from flask import jsonify
+
     tournament = db.get_or_404(Tournament, tournament_id)
     tournament = lock_tournament_schedule(tournament)
     cfg = tournament.get_schedule_config()
     try:
         data = request.get_json(force=True) or {}
-        day = data.get('day')
+        day = data.get("day")
     except Exception:
         day = None
-    if day == 'friday':
-        cfg.pop('friday_event_order', None)
-    elif day == 'saturday':
-        cfg.pop('saturday_event_order', None)
+    if day == "friday":
+        cfg.pop("friday_event_order", None)
+    elif day == "saturday":
+        cfg.pop("saturday_event_order", None)
     else:
-        cfg.pop('friday_event_order', None)
-        cfg.pop('saturday_event_order', None)
+        cfg.pop("friday_event_order", None)
+        cfg.pop("saturday_event_order", None)
     tournament.set_schedule_config(cfg)
     db.session.commit()
-    log_action('event_order_reset', 'tournament', tournament_id, {'day': day or 'both'})
+    log_action("event_order_reset", "tournament", tournament_id, {"day": day or "both"})
     invalidate_tournament_caches(tournament_id)
 
     from services.saw_block_assignment import trigger_saw_block_recompute
+
     trigger_saw_block_recompute(tournament)
 
-    return jsonify({'ok': True})
+    return jsonify({"ok": True})
 
 
 def _day_schedule_legacy(tournament_id):
@@ -825,12 +1147,15 @@ def _day_schedule_legacy(tournament_id):
     tournament = db.get_or_404(Tournament, tournament_id)
     friday_feature_names = set(config.FRIDAY_NIGHT_EVENTS)
     pro_events = [
-        event for event in tournament.events.filter_by(event_type='pro').order_by(Event.name, Event.gender).all()
+        event
+        for event in tournament.events.filter_by(event_type="pro")
+        .order_by(Event.name, Event.gender)
+        .all()
         if event.name in friday_feature_names
     ]
 
     priority_index = {priority: idx for idx, priority in enumerate(COLLEGE_SATURDAY_PRIORITY)}
-    college_events = tournament.events.filter_by(event_type='college').all()
+    college_events = tournament.events.filter_by(event_type="college").all()
     college_sat_options = []
     for event in college_events:
         key = (event.name, event.gender)
@@ -838,111 +1163,133 @@ def _day_schedule_legacy(tournament_id):
             college_sat_options.append(event)
     college_sat_options.sort(key=lambda e: priority_index[(e.name, e.gender)])
 
-    session_key = f'schedule_options_{tournament_id}'
+    session_key = f"schedule_options_{tournament_id}"
     saved = session.get(session_key, {})
 
-    if request.method == 'POST':
-        action = request.form.get('action', 'generate_schedule')
+    if request.method == "POST":
+        action = request.form.get("action", "generate_schedule")
         try:
-            friday_pro_event_ids = [int(eid) for eid in request.form.getlist('friday_pro_event_ids') if str(eid).strip()]
-            saturday_college_event_ids = [int(eid) for eid in request.form.getlist('saturday_college_event_ids') if str(eid).strip()]
+            friday_pro_event_ids = [
+                int(eid) for eid in request.form.getlist("friday_pro_event_ids") if str(eid).strip()
+            ]
+            saturday_college_event_ids = [
+                int(eid)
+                for eid in request.form.getlist("saturday_college_event_ids")
+                if str(eid).strip()
+            ]
         except (TypeError, ValueError):
-            flash('Invalid event ID in schedule submission.', 'error')
-            return redirect(url_for('scheduling.day_schedule', tournament_id=tournament_id))
+            flash("Invalid event ID in schedule submission.", "error")
+            return redirect(url_for("scheduling.day_schedule", tournament_id=tournament_id))
         saved = {
-            'friday_pro_event_ids': friday_pro_event_ids,
-            'saturday_college_event_ids': saturday_college_event_ids,
+            "friday_pro_event_ids": friday_pro_event_ids,
+            "saturday_college_event_ids": saturday_college_event_ids,
         }
         session[session_key] = saved
         session.modified = True
         # Persist to DB so config survives session expiry
         tournament.set_schedule_config(saved)
         db.session.commit()
-        if action == 'generate_schedule':
-            integration = integrate_college_spillover_into_flights(tournament, saved['saturday_college_event_ids'])
-            if integration['integrated_heats'] > 0:
+        if action == "generate_schedule":
+            integration = integrate_college_spillover_into_flights(
+                tournament, saved["saturday_college_event_ids"]
+            )
+            if integration["integrated_heats"] > 0:
                 db.session.commit()
                 flash(
                     f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.",
-                    'success'
+                    "success",
                 )
-        elif action == 'generate_all':
+        elif action == "generate_all":
             _generate_all_heats(
                 tournament,
                 lambda event: generate_event_heats(
-                    event, allow_flight_replacement=True,
+                    event,
+                    allow_flight_replacement=True,
                 ),
             )
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
-                flash(f'Built {flights} pro flight(s).', 'success')
-                integration = integrate_college_spillover_into_flights(tournament, saved['saturday_college_event_ids'])
-                if integration['integrated_heats'] > 0:
+                flash(f"Built {flights} pro flight(s).", "success")
+                integration = integrate_college_spillover_into_flights(
+                    tournament, saved["saturday_college_event_ids"]
+                )
+                if integration["integrated_heats"] > 0:
                     db.session.commit()
                     flash(
                         f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.",
-                        'success'
+                        "success",
                     )
-        elif action == 'rebuild_flights':
+        elif action == "rebuild_flights":
             flights = _build_pro_flights_if_possible(tournament, build_pro_flights)
             if flights is not None:
-                flash(f'Rebuilt {flights} pro flight(s).', 'success')
-                integration = integrate_college_spillover_into_flights(tournament, saved['saturday_college_event_ids'])
-                if integration['integrated_heats'] > 0:
+                flash(f"Rebuilt {flights} pro flight(s).", "success")
+                integration = integrate_college_spillover_into_flights(
+                    tournament, saved["saturday_college_event_ids"]
+                )
+                if integration["integrated_heats"] > 0:
                     db.session.commit()
                     flash(
                         f"Integrated {integration['integrated_heats']} college spillover heat(s) into Saturday flights.",
-                        'success'
+                        "success",
                     )
-        elif action == 'integrate_spillover':
-            integration = integrate_college_spillover_into_flights(tournament, saved['saturday_college_event_ids'])
+        elif action == "integrate_spillover":
+            integration = integrate_college_spillover_into_flights(
+                tournament, saved["saturday_college_event_ids"]
+            )
             db.session.commit()
-            flash(integration['message'], 'info')
-            if integration['integrated_heats'] > 0:
-                flash(f"Integrated {integration['integrated_heats']} heat(s) into flights.", 'success')
+            flash(integration["message"], "info")
+            if integration["integrated_heats"] > 0:
+                flash(
+                    f"Integrated {integration['integrated_heats']} heat(s) into flights.", "success"
+                )
     else:
         saved = {
-            'friday_pro_event_ids': [int(eid) for eid in saved.get('friday_pro_event_ids', [])],
-            'saturday_college_event_ids': [int(eid) for eid in saved.get('saturday_college_event_ids', [])],
+            "friday_pro_event_ids": [int(eid) for eid in saved.get("friday_pro_event_ids", [])],
+            "saturday_college_event_ids": [
+                int(eid) for eid in saved.get("saturday_college_event_ids", [])
+            ],
         }
 
     from .heat_sheets import _hydrate_schedule_for_display
+
     schedule = build_day_schedule(
         tournament,
-        friday_pro_event_ids=saved['friday_pro_event_ids'],
-        saturday_college_event_ids=saved['saturday_college_event_ids']
+        friday_pro_event_ids=saved["friday_pro_event_ids"],
+        saturday_college_event_ids=saved["saturday_college_event_ids"],
     )
-    has_schedule_overrides = bool(saved['friday_pro_event_ids'] or saved['saturday_college_event_ids'])
+    has_schedule_overrides = bool(
+        saved["friday_pro_event_ids"] or saved["saturday_college_event_ids"]
+    )
     detailed_schedule = _hydrate_schedule_for_display(tournament, schedule)
 
     return render_template(
-        'scheduling/day_schedule.html',
+        "scheduling/day_schedule.html",
         tournament=tournament,
         pro_events=pro_events,
         college_sat_options=college_sat_options,
-        selected_friday_pro_event_ids=saved['friday_pro_event_ids'],
-        selected_saturday_college_event_ids=saved['saturday_college_event_ids'],
+        selected_friday_pro_event_ids=saved["friday_pro_event_ids"],
+        selected_saturday_college_event_ids=saved["saturday_college_event_ids"],
         has_schedule_overrides=has_schedule_overrides,
         schedule=schedule,
-        detailed_schedule=detailed_schedule
+        detailed_schedule=detailed_schedule,
     )
 
 
 def _build_event_progress(event: Event, entrant_count: int) -> dict:
     """Build progress metrics for event list tables."""
     heat_count = event.heats.count()
-    completed_heats = event.heats.filter_by(status='completed').count()
-    results_completed = event.results.filter_by(status='completed').count()
+    completed_heats = event.heats.filter_by(status="completed").count()
+    results_completed = event.results.filter_by(status="completed").count()
     heat_pct = int((completed_heats / heat_count) * 100) if heat_count else 0
     result_pct = int((results_completed / entrant_count) * 100) if entrant_count else 0
     ready_to_finalize = entrant_count > 0 and results_completed >= entrant_count
     return {
-        'heat_count': heat_count,
-        'completed_heats': completed_heats,
-        'heat_pct': heat_pct,
-        'results_completed': results_completed,
-        'result_pct': result_pct,
-        'ready_to_finalize': ready_to_finalize,
+        "heat_count": heat_count,
+        "completed_heats": completed_heats,
+        "heat_pct": heat_pct,
+        "results_completed": results_completed,
+        "result_pct": result_pct,
+        "ready_to_finalize": ready_to_finalize,
     }
 
 
@@ -950,32 +1297,38 @@ def _build_event_progress(event: Event, entrant_count: int) -> dict:
 # #15 — College Saturday priority ordering
 # ---------------------------------------------------------------------------
 
-@scheduling_bp.route('/<int:tournament_id>/college/saturday-priority', methods=['POST'])
+
+@scheduling_bp.route("/<int:tournament_id>/college/saturday-priority", methods=["POST"])
 @serialize_sqlite_schedule_writer
 def apply_saturday_priority(tournament_id):
     """Re-number college event heats so COLLEGE_SATURDAY_PRIORITY_DEFAULT events run first."""
     import json as _json
+
     tournament = db.get_or_404(Tournament, tournament_id)
     tournament = lock_tournament_schedule(tournament)
 
     active_flight = Flight.query.filter(
         Flight.tournament_id == tournament_id,
-        Flight.status != 'pending',
+        Flight.status != "pending",
     ).first()
-    historical_heat = Heat.query.join(Event).filter(
-        Event.tournament_id == tournament_id,
-        Event.event_type == 'college',
-        Heat.status != 'pending',
-    ).first()
+    historical_heat = (
+        Heat.query.join(Event)
+        .filter(
+            Event.tournament_id == tournament_id,
+            Event.event_type == "college",
+            Heat.status != "pending",
+        )
+        .first()
+    )
     if active_flight is not None or historical_heat is not None:
         flash(
-            'Saturday priority cannot renumber heats after tournament operations start.',
-            'error',
+            "Saturday priority cannot renumber heats after tournament operations start.",
+            "error",
         )
-        return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+        return redirect(url_for("scheduling.event_list", tournament_id=tournament_id))
 
     # Load override file if present, else use default
-    order_path = _os.path.join('instance', f'saturday_priority_{tournament_id}.json')
+    order_path = _os.path.join("instance", f"saturday_priority_{tournament_id}.json")
     if _os.path.exists(order_path):
         try:
             with open(order_path) as f:
@@ -988,7 +1341,7 @@ def apply_saturday_priority(tournament_id):
     reordered = 0
     for event_name, gender in priority_tuples:
         matching = tournament.events.filter_by(
-            event_type='college',
+            event_type="college",
             name=event_name,
             gender=gender,
         ).all()
@@ -1000,9 +1353,17 @@ def apply_saturday_priority(tournament_id):
             reordered += len(heats)
 
     db.session.commit()
-    log_action('saturday_priority_applied', 'tournament', tournament_id, {
-        'priority_count': len(priority_tuples),
-    })
+    log_action(
+        "saturday_priority_applied",
+        "tournament",
+        tournament_id,
+        {
+            "priority_count": len(priority_tuples),
+        },
+    )
     invalidate_tournament_caches(tournament_id)
-    flash(f'Saturday priority applied to {reordered} heats across {len(priority_tuples)} event(s).', 'success')
-    return redirect(url_for('scheduling.event_list', tournament_id=tournament_id))
+    flash(
+        f"Saturday priority applied to {reordered} heats across {len(priority_tuples)} event(s).",
+        "success",
+    )
+    return redirect(url_for("scheduling.event_list", tournament_id=tournament_id))

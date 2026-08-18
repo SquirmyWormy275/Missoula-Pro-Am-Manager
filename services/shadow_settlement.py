@@ -8,6 +8,10 @@ import json
 import math
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
+
+from sqlalchemy import and_, exists, or_
+from sqlalchemy.orm import aliased
 
 from database import db
 from models import (
@@ -24,6 +28,8 @@ from models import (
 from services.shadow_context import capture_outcome_context
 from services.shadow_handicap_state import transition_shadow_run
 from services.strathmark_shadow import (
+    ShadowAdapterError,
+    ShadowIdentityError,
     ShadowRemoteError,
     StrathmarkShadowClient,
     load_local_shadow_receipt,
@@ -59,6 +65,8 @@ class SettlementDeliveryResult:
     attempted: int
     recorded: int
     retryable_failed: int
+    remaining_eligible: int
+    status: str
 
 
 def capture_shadow_outcome_revisions(
@@ -71,8 +79,6 @@ def capture_shadow_outcome_revisions(
 ) -> OutcomeCaptureResult:
     """Append operational outcomes and delivery intent in the caller's transaction."""
 
-    if event.handicap_authority_mode != "shadow":
-        return OutcomeCaptureResult(None, 0, 0, None)
     if reason_code is not None and reason_code not in CORRECTION_REASON_CODES:
         raise ValueError("choose a valid outcome correction reason")
     if run is None:
@@ -84,6 +90,8 @@ def capture_shadow_outcome_revisions(
             .order_by(ShadowHandicapRun.created_at.desc(), ShadowHandicapRun.id.desc())
             .first()
         )
+        if run is None and event.handicap_authority_mode != "shadow":
+            return OutcomeCaptureResult(None, 0, 0, None)
     elif run.event_id != event.id or run.lifecycle not in {
         "shadow-issued",
         "outcomes-complete",
@@ -201,6 +209,7 @@ def capture_shadow_outcome_revisions(
             payload_json=payload_json,
             payload_sha256=_digest(payload_json),
             actor_id=actor_id,
+            delivery_actor_id=_select_delivery_actor(run, actor).id,
             delivery_status="pending",
             attempt_count=0,
         )
@@ -208,12 +217,13 @@ def capture_shadow_outcome_revisions(
 
     if created:
         db.session.flush()
-        terminal_external_ids = {
-            external_id
-            for external_id, result in results_by_external.items()
-            if result.status in {"completed", "scratched", "dnf", "dq"}
-        }
-        if run.lifecycle == "shadow-issued" and len(terminal_external_ids) >= len(predictions):
+        terminal_statuses = {"completed", "scratched", "dnf", "dq"}
+        frozen_field_complete = all(
+            external_id in results_by_external
+            and results_by_external[external_id].status in terminal_statuses
+            for external_id in predictions
+        )
+        if run.lifecycle == "shadow-issued" and frozen_field_complete:
             transition_shadow_run(
                 run,
                 expected_version=run.lifecycle_version,
@@ -285,9 +295,7 @@ def build_shadow_standings(run: ShadowHandicapRun) -> tuple[dict, ...]:
     results = _result_external_identity_map(event)
     latest = _latest_outcomes(run)
     delivery_status = (
-        run.settlement_outbox[-1].delivery_status
-        if run.settlement_outbox
-        else "not-required"
+        run.settlement_outbox[-1].delivery_status if run.settlement_outbox else "not-required"
     )
     rows: list[dict] = []
     for prediction in sorted(
@@ -389,16 +397,38 @@ def deliver_shadow_settlement_outbox(
 
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
         raise ValueError("settlement delivery limit must be between 1 and 100")
-    rows = (
-        ShadowSettlementOutbox.query.filter(
-            ShadowSettlementOutbox.delivery_status.in_(("pending", "retryable-failed"))
+    now = utc_now_naive()
+    older = aliased(ShadowSettlementOutbox)
+    earlier_unrecorded = exists().where(
+        and_(
+            older.run_id == ShadowSettlementOutbox.run_id,
+            older.id < ShadowSettlementOutbox.id,
+            older.delivery_status != "recorded",
         )
-        .order_by(ShadowSettlementOutbox.id)
-        .limit(limit)
-        .all()
     )
+    eligible = ShadowSettlementOutbox.query.filter(
+        or_(
+            ShadowSettlementOutbox.delivery_status == "pending",
+            and_(
+                ShadowSettlementOutbox.delivery_status == "retryable-failed",
+                or_(
+                    ShadowSettlementOutbox.next_attempt_at.is_(None),
+                    ShadowSettlementOutbox.next_attempt_at <= now,
+                ),
+            ),
+        ),
+        ~earlier_unrecorded,
+    ).order_by(ShadowSettlementOutbox.id)
+    dialect = db.session.get_bind().dialect.name
+    if commit and dialect == "postgresql":
+        rows = []
+    else:
+        rows = eligible.limit(limit).all()
+
     attempted = recorded = failed = 0
-    for row in rows:
+
+    def deliver_one(row):
+        nonlocal attempted, recorded, failed
         if not hmac.compare_digest(_digest(row.payload_json), row.payload_sha256):
             raise ValueError("settlement outbox payload digest mismatch")
         payload = json.loads(row.payload_json)
@@ -406,24 +436,101 @@ def deliver_shadow_settlement_outbox(
             raise ValueError("settlement outbox payload schema mismatch")
         attempted += 1
         row.attempt_count += 1
-        row.last_attempt_at = utc_now_naive()
+        attempted_at = utc_now_naive()
+        row.last_attempt_at = attempted_at
         try:
-            response = client.apply_outcome(row.run, row.actor, payload)
+            response = client.apply_outcome(row.run, _delivery_actor(row), payload)
             outcome = response.get("outcome") if isinstance(response, dict) else None
-            if not isinstance(outcome, dict) or outcome.get("status") != "recorded":
+            if not isinstance(outcome, dict) or outcome.get("status") not in {
+                "recorded",
+                "duplicate",
+            }:
                 raise ShadowRemoteError("STRATHMARK did not record the numeric outcome")
-        except ShadowRemoteError:
+        except ShadowAdapterError:
             row.delivery_status = "retryable-failed"
+            row.next_attempt_at = attempted_at + timedelta(
+                seconds=_retry_delay_seconds(row.attempt_count)
+            )
             failed += 1
         else:
             row.delivery_status = "recorded"
             row.delivered_at = utc_now_naive()
+            row.next_attempt_at = None
             recorded += 1
-        if commit:
+
+    if commit and dialect == "postgresql":
+        # Claim exactly one row per transaction.  The lock remains held over
+        # the bounded remote call; another worker skips it and cannot attest
+        # the same immutable payload concurrently.
+        for _ in range(limit):
+            row = eligible.with_for_update(skip_locked=True).first()
+            if row is None:
+                break
+            deliver_one(row)
             db.session.commit()
-    if not commit:
-        db.session.flush()
-    return SettlementDeliveryResult(attempted, recorded, failed)
+    else:
+        for row in rows:
+            deliver_one(row)
+            if commit:
+                db.session.commit()
+        if not commit:
+            db.session.flush()
+    remaining_eligible = eligible.count()
+    status = "failed" if failed else "incomplete" if remaining_eligible else "complete"
+    return SettlementDeliveryResult(
+        attempted,
+        recorded,
+        failed,
+        remaining_eligible,
+        status,
+    )
+
+
+def _select_delivery_actor(run: ShadowHandicapRun, local_actor: User) -> User:
+    """Freeze a principal without letting optional shadow capture block scoring.
+
+    Prefer the attributable active admin/judge chain. If none exists, retain
+    the local actor as an explicitly blocked, auditable delivery principal.
+    ``_delivery_actor`` rejects that row before attestation or transport.
+    """
+
+    candidates = [local_actor]
+    candidates.extend(
+        db.session.get(User, actor_id) if actor_id is not None else None
+        for actor_id in (
+            run.issued_by_id,
+            run.reviewed_by_id,
+            run.created_by_id,
+        )
+    )
+    seen: set[int] = set()
+    for actor in candidates:
+        if actor is None or actor.id in seen:
+            continue
+        seen.add(actor.id)
+        if actor.role not in {User.ROLE_ADMIN, User.ROLE_JUDGE}:
+            continue
+        if not bool(actor.is_active_user):
+            continue
+        return actor
+    return local_actor
+
+
+def _delivery_actor(row: ShadowSettlementOutbox) -> User:
+    """Revalidate only the principal frozen with the immutable delivery intent."""
+
+    actor = row.delivery_actor
+    if actor is None:
+        raise ShadowIdentityError("shadow settlement has no frozen delivery principal")
+    if actor.role not in {User.ROLE_ADMIN, User.ROLE_JUDGE}:
+        raise ShadowIdentityError("shadow settlement delivery principal is unauthorized")
+    if not bool(actor.is_active_user):
+        raise ShadowIdentityError("shadow settlement delivery principal is disabled")
+    return actor
+
+
+def _retry_delay_seconds(attempt_count: int) -> int:
+    return min(300, 5 * (2 ** min(max(attempt_count - 1, 0), 6)))
 
 
 def _result_external_identity_map(event: Event) -> dict[str, EventResult]:

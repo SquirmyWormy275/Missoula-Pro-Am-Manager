@@ -57,15 +57,17 @@ class ShadowOperatorView:
     lifecycle: str
 
 
-def build_shadow_schedule_fingerprint(event: Event) -> str:
+def build_shadow_schedule_fingerprint(
+    event: Event,
+    *,
+    include_terminal_results: bool = False,
+) -> str:
     """Hash the ordered field, heat/run layout, stands, and flight order."""
 
-    results = (
-        EventResult.query.filter_by(event_id=event.id)
-        .filter(EventResult.status == "pending")
-        .order_by(EventResult.id)
-        .all()
-    )
+    results_query = EventResult.query.filter_by(event_id=event.id)
+    if not include_terminal_results:
+        results_query = results_query.filter(EventResult.status == "pending")
+    results = results_query.order_by(EventResult.id).all()
     heats = Heat.query.filter_by(event_id=event.id).order_by(
         Heat.heat_number,
         Heat.run_number,
@@ -78,7 +80,11 @@ def build_shadow_schedule_fingerprint(event: Event) -> str:
             {
                 "event_result_id": row.id,
                 "competitor_id": row.competitor_id,
-                "status": row.status,
+                # Scoring status is mutable outcome state, not schedule state.
+                # Normalize terminal rows when reconstructing the frozen field
+                # after issue so completed entrants are not mistaken for roster
+                # removals or schedule edits.
+                "status": "pending" if include_terminal_results else row.status,
             }
             for row in results
         ],
@@ -127,13 +133,14 @@ def build_shadow_operator_view(
     if event is None:
         blockers.append("The event no longer exists.")
     else:
+        issued = run.lifecycle in {"shadow-issued", "outcomes-complete"}
+        if not event.is_handicap or event.handicap_authority_mode != "shadow":
+            blockers.append("The event is not configured for shadow handicap mode.")
         try:
-            results = (
-                EventResult.query.filter_by(event_id=event.id)
-                .filter(EventResult.status == "pending")
-                .order_by(EventResult.id)
-                .all()
-            )
+            results_query = EventResult.query.filter_by(event_id=event.id)
+            if not issued:
+                results_query = results_query.filter(EventResult.status == "pending")
+            results = results_query.order_by(EventResult.id).all()
             current_roster = _sha256(_reviewed_competitors(event, results))
             if not hmac.compare_digest(current_roster, run.roster_fingerprint):
                 blockers.append("The field roster changed; prepare a new shadow run.")
@@ -145,7 +152,10 @@ def build_shadow_operator_view(
                 blockers.append("The wood specification changed; prepare a new shadow run.")
         except (TypeError, ValueError):
             blockers.append("The current wood specification is missing or invalid.")
-        current_schedule = build_shadow_schedule_fingerprint(event)
+        current_schedule = build_shadow_schedule_fingerprint(
+            event,
+            include_terminal_results=issued,
+        )
         if not hmac.compare_digest(current_schedule, run.schedule_fingerprint):
             blockers.append("The run order or schedule changed; prepare a new shadow run.")
 
@@ -212,6 +222,7 @@ def review_shadow_sheet(
     _require_version(run, expected_version)
     if run.lifecycle != "calculated":
         raise ShadowReviewError("only a calculated shadow sheet can be reviewed")
+    _require_shadow_authority(run, ShadowReviewError)
     view = build_shadow_operator_view(run, remote_status=remote_status)
     if view.blockers:
         raise ShadowReviewError("; ".join(view.blockers))
@@ -282,6 +293,7 @@ def issue_shadow_sheet(
     _require_version(run, expected_version)
     if run.lifecycle != "reviewed":
         raise ShadowIssueBlocked("the entire sheet must be reviewed before issue")
+    _require_shadow_authority(run, ShadowIssueBlocked)
     view = build_shadow_operator_view(run, remote_status=remote_status)
     if view.blockers:
         raise ShadowIssueBlocked("; ".join(view.blockers))
@@ -372,6 +384,16 @@ def verify_shadow_export(artifact: ShadowIssueArtifact) -> Mapping[str, Any]:
 def _require_operator(actor: User, error_type: type[ValueError]) -> None:
     if actor.role not in {User.ROLE_ADMIN, User.ROLE_JUDGE}:
         raise error_type("judge or admin role is required for shadow decisions")
+
+
+def _require_shadow_authority(
+    run: ShadowHandicapRun,
+    error_type: type[ValueError],
+) -> Event:
+    event = db.session.get(Event, run.event_id)
+    if event is None or not event.is_handicap or event.handicap_authority_mode != "shadow":
+        raise error_type("event is not configured for shadow handicap mode")
+    return event
 
 
 def _require_version(run: ShadowHandicapRun, expected_version: int) -> None:
