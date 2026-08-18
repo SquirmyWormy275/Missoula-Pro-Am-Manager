@@ -116,11 +116,17 @@ def preflight_json(tournament_id):
     saved = tournament.get_schedule_config() or session.get(session_key, {})
     saturday_ids = [int(eid) for eid in saved.get('saturday_college_event_ids', [])]
     report = build_preflight_report(tournament, saturday_ids)
+    pre_generation_blocking = report.get('pre_generation_blocking') or []
+    post_generation_blocking = report.get('post_generation_blocking') or []
     return jsonify({
         'issue_count': report['issue_count'],
         'severity': report['severity'],
         'has_blockers': report.get('has_blockers', False),
         'blocking_count': len(report.get('blocking') or []),
+        'pre_generation_has_blockers': bool(pre_generation_blocking),
+        'pre_generation_blocking_count': len(pre_generation_blocking),
+        'post_generation_has_blockers': bool(post_generation_blocking),
+        'post_generation_blocking_count': len(post_generation_blocking),
         'issues': [
             {
                 'severity': i['severity'],
@@ -156,9 +162,25 @@ def generation_job_status(tournament_id, job_id):
     job = get_job(job_id)
     if not job or int((job.get('metadata') or {}).get('tournament_id', -1)) != tournament_id:
         return json.dumps({'error': 'Job not found.'}), 404, {'Content-Type': 'application/json'}
+    status = job['status']
+    result = job['result']
+    error = job['error']
+    # Defensive compatibility for a queued job from an older process that
+    # returned ``ok: false`` instead of raising. New full-show jobs raise a
+    # ScheduleBuildError and are persisted as failed by background_jobs.
+    if (
+        status == 'completed'
+        and isinstance(result, dict)
+        and result.get('ok') is False
+    ):
+        status = 'failed'
+        error = (
+            result.get('message')
+            or 'Schedule generation failed. Open Preflight and run Generate again.'
+        )
     return json.dumps({
         'job_id': job['id'],
-        'status': job['status'],
-        'result': job['result'],
-        'error': job['error'],
+        'status': status,
+        'result': result,
+        'error': error,
     }), 200, {'Content-Type': 'application/json'}

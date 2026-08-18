@@ -60,7 +60,7 @@
 1. Competitors are sorted by **ProEventRank** ability ranking (rank 1 = best) via `_sort_by_ability()`. Unranked competitors sort to the end alphabetically. College events and pro events without rankings use registration order.
 2. For **partnered events**, `_build_partner_units()` groups recognized pairs into 2-person units. Units are then re-sorted by composite rank via `_sort_units_by_ability()` (best member's rank drives position).
 3. Units are placed using a snake draft: heat index bounces 0→N→0→N. Direction reverses at each end.
-4. **Gear-sharing conflict avoidance**: first pass tries to find a heat with capacity AND no gear conflict. If all heats conflict or are full, a fallback pass places despite conflict and records the violation for the route to surface as a warning.
+4. **Gear-sharing separation**: placement considers only heats with capacity and no declared gear conflict. College competitors are matched by their bare names rather than team-suffixed display names. When all existing heats conflict, generation expands the heat count and continues the snake draft. It never forces competitors sharing gear into the same heat; an invalid current-event declaration or unsatisfiable event fails before its existing schedule is replaced.
 
 **Springboard variant** (`_generate_springboard_heats`, lines 435-533):
 - Left-handed cutters are placed first into a dedicated heat (heat index 0).
@@ -126,9 +126,9 @@ See the Flight Builder section below.
 
 1. Calls `_get_event_competitors(event)` which re-scans ALL active competitors (not just existing EventResult rows) — catches new registrations.
 2. Creates missing `EventResult` rows for new entrants.
-3. Calls `_delete_event_heats(event.id)` which deletes all HeatAssignment rows then all Heat rows for the event.
-4. Generates new heats from scratch.
-5. Calls `flush()` — does NOT commit. The calling route owns the transaction.
+3. Builds and validates a complete conflict-free placement plan.
+4. Calls `_delete_event_heats(event.id)` only after that plan succeeds, deleting all HeatAssignment rows then all Heat rows for the event.
+5. Writes the new heats and calls `flush()` — it does NOT commit. The calling route owns the transaction.
 
 **Important:** Regeneration preserves EventResult data (scores, marks, positions) but replaces heat assignments. Every generation call joins the
 tournament schedule-writer lock. Standalone and bulk regeneration refuse any
@@ -178,7 +178,7 @@ the sync-check/sync-fix repair path have been removed, so there is no second cop
 
 Default 8 heats per flight. Can be overridden by the judge via `num_flights` form field — `heats_per_flight = ceil(total / num_flights)`.
 
-Partnered Axe Throw heats are inserted AFTER flight creation (one per flight, not counted in the 8-heat cap).
+Partnered Axe Throw heats are inserted AFTER flight creation (one per flight, not counted in the 8-heat cap). Pair coverage, prelim completion, and finalist advancement are validated from `Event.event_state`; ordinary competitor partner fields do not govern this state-machine event. Completed prelim result rows do not protect the first finals-card build, but any finals score, completed finals heat, or completed state does.
 
 #### C. College spillover integration
 
@@ -196,7 +196,12 @@ Partnered Axe Throw heats are inserted AFTER flight creation (one per flight, no
 
 `build_pro_flights()` can still commit when invoked as a standalone service. Every active route that builds the complete Saturday show passes `commit=False` through flight build, relay placement, and college spillover, then commits once after all three phases succeed. A spillover or closer-invariant failure therefore restores the pre-request flight assignments instead of leaving a rebuilt show without mandatory closing heats.
 
-Background builds use the same single-commit sequence. Operator success messages and build-diff snapshots are emitted only after that commit; failure paths roll back and discard success flashes from the failed attempt.
+Synchronous and background full-show builds use the same service sequence: a
+fresh input-phase preflight, heat generation, flight build, Pro-Am Relay,
+college spillover, saw-block assignment, and completed-show validation. They
+commit once after every phase succeeds. Operator success messages and build-diff
+snapshots are emitted only after that commit; any blocker or downstream failure
+rolls the whole build back and discards success messages from the failed attempt.
 
 ---
 
@@ -264,9 +269,10 @@ The only supported day-of competitor movement operation:
 | Rule | Intent | Actual Enforcement |
 |------|--------|--------------------|
 | **Heat size maximum** | Competitors per heat ≤ max_stands | Enforced during generation AND on move/add operations via `_max_per_heat()`. |
+| **Same-heat gear separation** | Every competitor or partnered unit sharing declared gear must run in a different heat | **ENFORCED.** Generation expands heat count instead of forcing a conflict and fails before replacing existing heats if no valid plan exists. Manual move, add, and flight-board drag reject conflicts. |
 | **Gear conflict in destination** | Moving/adding a competitor must not create a shared-gear conflict | **ENFORCED.** Manual move, add, and flight-board drag reject the conflict. |
 | **Cookie Stack / Standing Block shared stands** | Keep an eight-heat separation whenever another heat is available | The flight builder blocks the close placement while alternatives remain; if only conflicts remain, it deliberately schedules sequentially because a flight has one heat per slot. Heat generation is event-local. |
-| **Event.is_finalized guard on regeneration** | Finalized or scored events should not have heats regenerated | **ENFORCED.** Finalized and completed-result events are hard blocks. |
+| **Event.is_finalized guard on regeneration** | Finalized or scored events should not have heats regenerated | **ENFORCED.** Finalized and completed-result events are hard blocks. Partnered Axe prelim results are the deliberate exception until finals scoring starts. |
 | **Heat lock on mutations** | Locked heats should not be mutated by other judges | **ENFORCED** on scratch, add, delete, manual move, and flight-board drag operations. |
 | **HeatAssignment roster authority** | One durable roster source | Generation, move, scratch, add, and scoring readers use normalized rows directly. |
 | **Competitor spacing in college overflow** | College overflow should respect spacing | Implemented in `integrate_college_spillover_into_flights` with MIN_HEAT_SPACING check and fallback. |
@@ -355,7 +361,7 @@ Need to completely redo heat assignments for an event?
 
 ### Regeneration After Scoring
 
-Regeneration of a completed, finalized, or scored event is rejected by both the route and service.
+Regeneration of a completed, finalized, or scored event is rejected by both the route and service. Partnered Axe prelim scores remain mutable qualifier history for the first finals-card build; its card locks as soon as finals scoring or completed finals heat history exists.
 Completed heat placements and EventResult rows remain immutable. Use scratch for no-shows; before
 operations start, use add or move for roster corrections. After a flight starts, manual roster and
 running-order edits are also frozen.

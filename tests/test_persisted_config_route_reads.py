@@ -344,6 +344,9 @@ class TestAsyncGenerateArtifactsChainsRelayAndSpillover:
         ), patch(
             "services.flight_builder.integrate_college_spillover_into_flights",
             side_effect=_spill_spy,
+        ), patch(
+            "services.preflight.build_preflight_report",
+            return_value={"issues": []},
         ):
             result = generate_tournament_schedule_artifacts(tid)
 

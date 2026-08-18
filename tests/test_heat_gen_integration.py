@@ -241,8 +241,8 @@ class TestGenerateSimpleTimeEvent:
 
         assert ev.status == 'in_progress'
 
-    def test_forced_gear_conflict_rebuilds_and_records_the_warning(self, db_session):
-        """A capacity-feasible conflict is rebuilt and surfaced to the judge."""
+    def test_gear_conflict_expands_heat_count_without_a_warning(self, db_session):
+        """A feasible gear conflict expands instead of producing an unsafe heat."""
         t = _make_tournament(db_session)
         ev = _make_event(db_session, t, name='Underhand', stand_type='underhand',
                          max_stands=2)
@@ -259,9 +259,10 @@ class TestGenerateSimpleTimeEvent:
         generate_event_heats(ev)
 
         heats = _all_heats_for_event(ev.id)
-        assert len(heats) == 1
-        assert sorted(heats[0].get_competitors()) == sorted([first.id, second.id])
-        assert get_last_gear_violations(ev.id)
+        assert len(heats) == 2
+        assert sorted(_all_competitor_ids_from_heats(heats)) == sorted([first.id, second.id])
+        assert all(len(heat.get_competitors()) == 1 for heat in heats)
+        assert get_last_gear_violations(ev.id) == []
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +327,32 @@ class TestGenerateDualRunEvent:
                 stands_r2 = list(a2.values())
                 assert stands_r1 == list(reversed(stands_r2))
 
+    def test_solo_heat_changes_physical_stand_between_runs(self, db_session):
+        t = _make_tournament(db_session)
+        ev = _make_event(
+            db_session,
+            t,
+            name='Speed Climb',
+            stand_type='speed_climb',
+            max_stands=2,
+            requires_dual_runs=True,
+        )
+        climber = _make_pro(
+            db_session,
+            t,
+            'Solo Climber',
+            gender='M',
+            event_ids=[ev.id],
+        )
+
+        from services.heat_generator import generate_event_heats
+        generate_event_heats(ev)
+
+        run1 = _all_heats_for_event(ev.id, run_number=1)[0]
+        run2 = _all_heats_for_event(ev.id, run_number=2)[0]
+        assert run1.get_stand_assignments()[str(climber.id)] == 1
+        assert run2.get_stand_assignments()[str(climber.id)] == 2
+
 
 # ---------------------------------------------------------------------------
 # generate_event_heats — partnered event (Double Buck)
@@ -380,7 +407,7 @@ class TestGenerateSpringboardHeats:
 
     Rule (2026-04-20): only one physical LH springboard dummy on site, so at
     most one LH cutter per heat.  Spread LH cutters one per heat 0..N-1.
-    Overflow (more LH than heats) goes into the final heat with a warning.
+    Expand the event when the original heat count has too few dummy time slots.
     """
 
     def test_left_handed_spread_one_per_heat(self, db_session):
@@ -464,8 +491,147 @@ class TestGearSharingConflictAvoidance:
             assert not (alpha.id in comps and beta.id in comps), \
                 'Gear-sharing partners Alpha and Beta are in the same heat'
 
-    def test_gear_sharing_fallback_when_unavoidable(self, db_session):
-        """Unavoidable shared gear is placed and explicitly recorded."""
+    def test_college_team_suffixes_do_not_hide_named_gear_conflicts(self, db_session):
+        t = _make_tournament(db_session)
+        team = _make_team(db_session, t)
+        ev = _make_event(
+            db_session,
+            t,
+            name='Underhand',
+            event_type='college',
+            gender='M',
+            stand_type='underhand',
+            max_stands=2,
+        )
+        first = _make_college(
+            db_session,
+            t,
+            team,
+            'Alice',
+            event_ids=[ev.id],
+            gear_sharing={str(ev.id): 'Bob'},
+        )
+        second = _make_college(
+            db_session,
+            t,
+            team,
+            'Bob',
+            event_ids=[ev.id],
+            gear_sharing={str(ev.id): 'Alice'},
+        )
+
+        from services.heat_generator import generate_event_heats
+        generate_event_heats(ev)
+
+        rosters = [set(heat.get_competitors()) for heat in _all_heats_for_event(ev.id)]
+        assert len(rosters) == 2
+        assert all(not ({first.id, second.id} <= roster) for roster in rosters)
+
+    @pytest.mark.parametrize(
+        ('gear_sharing', 'details'),
+        [
+            ({'Underhand typo': 'Declaration B'}, ''),
+            ({'__current_event__': 'Missing Person'}, ''),
+            ({}, 'SHARING Underhand axe with Missing Person'),
+        ],
+        ids=[
+            'unmapped-current-event-key',
+            'unknown-current-event-partner',
+            'unparsed-current-event-details',
+        ],
+    )
+    def test_invalid_event_gear_declaration_preserves_existing_layout(
+        self,
+        db_session,
+        gear_sharing,
+        details,
+    ):
+        t = _make_tournament(db_session)
+        ev = _make_event(
+            db_session,
+            t,
+            name='Underhand',
+            stand_type='underhand',
+            max_stands=2,
+        )
+        first = _make_pro(
+            db_session,
+            t,
+            'Declaration A',
+            event_ids=[ev.id],
+            gear_sharing=gear_sharing,
+        )
+        second = _make_pro(
+            db_session,
+            t,
+            'Declaration B',
+            event_ids=[ev.id],
+        )
+        if '__current_event__' in gear_sharing:
+            first.gear_sharing = json.dumps({
+                str(ev.id): gear_sharing['__current_event__'],
+            })
+        first.gear_sharing_details = details
+
+        from models import Heat
+        old_heat = Heat(event_id=ev.id, heat_number=8, run_number=1)
+        old_heat.set_roster(
+            'pro',
+            [first.id, second.id],
+            {first.id: 1, second.id: 2},
+        )
+        db_session.add(old_heat)
+        db_session.flush()
+        old_heat_id = old_heat.id
+
+        from services.heat_generator import (
+            HeatGenerationSafetyError,
+            generate_event_heats,
+        )
+        with pytest.raises(HeatGenerationSafetyError, match='gear declaration'):
+            generate_event_heats(ev)
+
+        remaining = _all_heats_for_event(ev.id)
+        assert [heat.id for heat in remaining] == [old_heat_id]
+        assert remaining[0].heat_number == 8
+        assert remaining[0].get_competitors() == [first.id, second.id]
+
+    def test_invalid_gear_declaration_for_another_event_does_not_block(
+        self,
+        db_session,
+    ):
+        t = _make_tournament(db_session)
+        underhand = _make_event(
+            db_session,
+            t,
+            name='Underhand',
+            stand_type='underhand',
+            max_stands=2,
+        )
+        _make_event(
+            db_session,
+            t,
+            name='Hot Saw',
+            stand_type='hot_saw',
+            max_stands=2,
+        )
+        competitor = _make_pro(
+            db_session,
+            t,
+            'Scoped Declaration',
+            event_ids=[underhand.id],
+            gear_sharing={'Hot Saw typo': 'Missing Person'},
+        )
+
+        from services.heat_generator import generate_event_heats
+        generate_event_heats(underhand)
+
+        heats = _all_heats_for_event(underhand.id)
+        assert len(heats) == 1
+        assert heats[0].get_competitors() == [competitor.id]
+
+    def test_minimal_heat_conflict_expands_to_a_safe_layout(self, db_session):
+        """Two sharers on a five-stand event run in separate heats."""
         t = _make_tournament(db_session)
         ev = _make_event(db_session, t, name='Underhand', stand_type='underhand',
                          max_stands=5)
@@ -481,8 +647,226 @@ class TestGearSharingConflictAvoidance:
         from services.heat_generator import generate_event_heats, get_last_gear_violations
         generate_event_heats(ev)
 
-        assert len(_all_heats_for_event(ev.id)) == 1
-        assert get_last_gear_violations(ev.id)
+        heats = _all_heats_for_event(ev.id)
+        assert len(heats) == 2
+        assert all(len(heat.get_competitors()) == 1 for heat in heats)
+        assert get_last_gear_violations(ev.id) == []
+
+    def test_partnered_gear_group_expands_without_splitting_pairs(self, db_session):
+        t = _make_tournament(db_session)
+        ev = _make_event(
+            db_session,
+            t,
+            name='Double Buck',
+            stand_type='saw_hand',
+            max_stands=4,
+            is_partnered=True,
+            partner_gender_requirement='same',
+        )
+        pairs = [('Pair A1', 'Pair A2'), ('Pair B1', 'Pair B2')]
+        expected_pairs = []
+        for first_name, second_name in pairs:
+            first = _make_pro(
+                db_session,
+                t,
+                first_name,
+                event_ids=[ev.id],
+                partners={str(ev.id): second_name},
+                gear_sharing={str(ev.id): 'group:shared-saw'},
+            )
+            second = _make_pro(
+                db_session,
+                t,
+                second_name,
+                event_ids=[ev.id],
+                partners={str(ev.id): first_name},
+                gear_sharing={str(ev.id): 'group:shared-saw'},
+            )
+            expected_pairs.append({first.id, second.id})
+
+        from services.heat_generator import generate_event_heats
+        generate_event_heats(ev)
+
+        heat_rosters = [set(heat.get_competitors()) for heat in _all_heats_for_event(ev.id)]
+        assert len(heat_rosters) == 2
+        assert set(map(frozenset, heat_rosters)) == set(map(frozenset, expected_pairs))
+
+    def test_dual_run_expansion_keeps_run_rosters_mirrored(self, db_session):
+        t = _make_tournament(db_session)
+        ev = _make_event(
+            db_session,
+            t,
+            name='Speed Climb',
+            stand_type='speed_climb',
+            max_stands=2,
+            requires_dual_runs=True,
+        )
+        first = _make_pro(
+            db_session,
+            t,
+            'Climber A',
+            event_ids=[ev.id],
+            gear_sharing={str(ev.id): 'Climber B'},
+        )
+        second = _make_pro(
+            db_session,
+            t,
+            'Climber B',
+            event_ids=[ev.id],
+            gear_sharing={str(ev.id): 'Climber A'},
+        )
+
+        from services.heat_generator import generate_event_heats
+        generate_event_heats(ev)
+
+        run1 = _all_heats_for_event(ev.id, run_number=1)
+        run2 = _all_heats_for_event(ev.id, run_number=2)
+        assert len(run1) == len(run2) == 2
+        assert [heat.get_competitors() for heat in run1] == [
+            heat.get_competitors() for heat in run2
+        ]
+        assert sorted(_all_competitor_ids_from_heats(run1)) == sorted([first.id, second.id])
+
+    def test_invalid_partner_candidate_preserves_existing_layout(self, db_session):
+        t = _make_tournament(db_session)
+        ev = _make_event(
+            db_session,
+            t,
+            name='Double Buck',
+            stand_type='saw_hand',
+            max_stands=4,
+            is_partnered=True,
+            partner_gender_requirement='same',
+        )
+        first = _make_pro(
+            db_session,
+            t,
+            'Valid A',
+            event_ids=[ev.id],
+            partners={str(ev.id): 'Valid B'},
+        )
+        second = _make_pro(
+            db_session,
+            t,
+            'Valid B',
+            event_ids=[ev.id],
+            partners={str(ev.id): 'Valid A'},
+        )
+        _make_pro(db_session, t, 'Unpaired', event_ids=[ev.id])
+
+        from models import Heat
+        old_heat = Heat(event_id=ev.id, heat_number=1, run_number=1)
+        old_heat.set_roster('pro', [first.id, second.id], {first.id: 1, second.id: 1})
+        db_session.add(old_heat)
+        db_session.flush()
+        old_heat_id = old_heat.id
+        old_roster = old_heat.get_competitors()
+
+        from services.heat_generator import HeatGenerationSafetyError, generate_event_heats
+        with pytest.raises(HeatGenerationSafetyError, match='partner'):
+            generate_event_heats(ev)
+
+        remaining = _all_heats_for_event(ev.id)
+        assert [heat.id for heat in remaining] == [old_heat_id]
+        assert remaining[0].get_competitors() == old_roster
+
+    def test_invalid_partner_gender_preserves_existing_layout(self, db_session):
+        t = _make_tournament(db_session)
+        ev = _make_event(
+            db_session,
+            t,
+            name='Jack & Jill Sawing',
+            stand_type='saw_hand',
+            max_stands=4,
+            is_partnered=True,
+            partner_gender_requirement='mixed',
+        )
+        first = _make_pro(
+            db_session,
+            t,
+            'Same Gender A',
+            gender='M',
+            event_ids=[ev.id],
+            partners={str(ev.id): 'Same Gender B'},
+        )
+        second = _make_pro(
+            db_session,
+            t,
+            'Same Gender B',
+            gender='M',
+            event_ids=[ev.id],
+            partners={str(ev.id): 'Same Gender A'},
+        )
+
+        from models import Heat
+        old_heat = Heat(event_id=ev.id, heat_number=6, run_number=1)
+        old_heat.set_roster(
+            'pro',
+            [first.id, second.id],
+            {first.id: 1, second.id: 1},
+        )
+        db_session.add(old_heat)
+        db_session.flush()
+        old_heat_id = old_heat.id
+
+        from services.heat_generator import (
+            HeatGenerationSafetyError,
+            generate_event_heats,
+        )
+        with pytest.raises(HeatGenerationSafetyError, match='mixed-gender'):
+            generate_event_heats(ev)
+
+        remaining = _all_heats_for_event(ev.id)
+        assert [heat.id for heat in remaining] == [old_heat_id]
+        assert remaining[0].heat_number == 6
+        assert remaining[0].get_competitors() == [first.id, second.id]
+
+    def test_final_candidate_validation_precedes_heat_deletion(self, db_session, monkeypatch):
+        t = _make_tournament(db_session)
+        ev = _make_event(
+            db_session,
+            t,
+            name='Underhand',
+            stand_type='underhand',
+            max_stands=2,
+        )
+        first = _make_pro(
+            db_session,
+            t,
+            'Unsafe A',
+            event_ids=[ev.id],
+            gear_sharing={str(ev.id): 'Unsafe B'},
+        )
+        second = _make_pro(
+            db_session,
+            t,
+            'Unsafe B',
+            event_ids=[ev.id],
+            gear_sharing={str(ev.id): 'Unsafe A'},
+        )
+
+        from models import Heat
+        old_heat = Heat(event_id=ev.id, heat_number=9, run_number=1)
+        old_heat.set_roster('pro', [first.id], {first.id: 1})
+        db_session.add(old_heat)
+        db_session.flush()
+        old_heat_id = old_heat.id
+
+        def unsafe_candidate(competitors, *_args, **_kwargs):
+            return [competitors]
+
+        monkeypatch.setattr(
+            'services.heat_generator._generate_standard_heats',
+            unsafe_candidate,
+        )
+
+        from services.heat_generator import HeatGenerationSafetyError, generate_event_heats
+        with pytest.raises(HeatGenerationSafetyError, match='gear'):
+            generate_event_heats(ev)
+
+        remaining = _all_heats_for_event(ev.id)
+        assert [heat.id for heat in remaining] == [old_heat_id]
+        assert remaining[0].get_competitors() == [first.id]
 
 
 # ---------------------------------------------------------------------------
@@ -797,9 +1181,8 @@ class TestGenerateCollegeEvent:
             c = _make_college(db_session, t, team, f'M Comp {i}', gender='M',
                               event_ids=['Underhand Speed'])
             comp_ids.append(c.id)
-        # Female competitor should be excluded (gender='M' event)
-        _make_college(db_session, t, team, 'F Comp', gender='F',
-                      event_ids=['Underhand Speed'])
+        # A competitor who is not entered in this event remains out of its heats.
+        _make_college(db_session, t, team, 'F Comp', gender='F')
 
         from services.heat_generator import generate_event_heats
         num = generate_event_heats(ev)
@@ -808,6 +1191,33 @@ class TestGenerateCollegeEvent:
         heats = _all_heats_for_event(ev.id)
         assigned = _all_competitor_ids_from_heats(heats)
         assert sorted(assigned) == sorted(comp_ids)
+
+    def test_wrong_gender_entrant_blocks_instead_of_being_omitted(self, db_session):
+        t = _make_tournament(db_session)
+        team = _make_team(db_session, t)
+        ev = _make_event(
+            db_session,
+            t,
+            name='Underhand Speed',
+            event_type='college',
+            gender='M',
+            stand_type='underhand',
+            max_stands=5,
+        )
+        _make_college(
+            db_session,
+            t,
+            team,
+            'Wrong Division',
+            gender='F',
+            event_ids=['Underhand Speed'],
+        )
+
+        from services.heat_generator import HeatGenerationSafetyError, generate_event_heats
+        with pytest.raises(HeatGenerationSafetyError, match='event gender'):
+            generate_event_heats(ev)
+
+        assert _all_heats_for_event(ev.id) == []
 
 
 # ---------------------------------------------------------------------------

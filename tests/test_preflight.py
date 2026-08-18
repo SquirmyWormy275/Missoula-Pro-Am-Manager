@@ -1129,6 +1129,8 @@ class TestFullyValidTournament:
                                 stand_type='saw_hand', is_partnered=True)
         p1 = _make_pro(db_session, tournament, 'Pro A', event_ids=[partnered.id])
         p2 = _make_pro(db_session, tournament, 'Pro B', event_ids=[partnered.id])
+        p1.partners = json.dumps({str(partnered.id): p2.name})
+        p2.partners = json.dumps({str(partnered.id): p1.name})
         heat2 = _make_heat(db_session, partnered)
         _make_heat_assignment(db_session, heat2.id, p1.id)
         _make_heat_assignment(db_session, heat2.id, p2.id)
@@ -1393,9 +1395,13 @@ class TestBlockingCodes:
         }
         blocking = get_blocking_issues(report)
 
-        assert len(blocking) == 2
+        assert len(blocking) == 3
         codes = {b['code'] for b in blocking}
-        assert codes == {'unresolved_partner_name', 'non_reciprocal_partnership'}
+        assert codes == {
+            'unresolved_partner_name',
+            'non_reciprocal_partnership',
+            'gear_partner_mismatch',
+        }
 
     def test_clean_tournament_has_no_blockers(self, db_session, tournament):
         from services.preflight import build_preflight_report
