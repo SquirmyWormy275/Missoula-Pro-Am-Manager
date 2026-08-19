@@ -220,6 +220,29 @@ system radio-disable test.
     ORM refresh. The lock path now re-queries after commit and returns 404 when
     the row no longer exists.
 
+## Production Follow-Up Receipt
+
+The local scope above remains unchanged. A separate follow-up release closed
+the production-mirror, hosted-CI, deployment, and public-smoke gaps without
+relabeling the original synthetic rehearsal as production evidence.
+
+- PR #117 head `5a32eb901b5414d3b32d66c17e154502393dc264` merged without
+  drift as `bac84ea2396602abc95b61165c90b87c14e61129`.
+- GitHub Actions run `32302853628` passed `test`, `unit-postgres`,
+  `postgres-smoke`, `migration-safety`, `lint`, and `pip-audit`.
+- The final normal production-shaped PostgreSQL mirror lane passed at its
+  standing `205 passed, 6 skipped, 2 xfailed` matrix and removed every
+  token-owned clone.
+- Railway deployment `5977fb83-9048-4ee0-9bc2-835fd4385f80` reached
+  `SUCCESS` for the exact merge, ran `flask db upgrade`, and booted Gunicorn.
+- Commit-pinned public smoke passed 4/4 for health, active spectator HTML,
+  tournament `2` public standings JSON, and the login form. Health matched
+  version `2.14.16`, migration `a6b7c8d9e0f1`, and the exact merge SHA.
+- No production judge credential was used and no production write was made.
+  Authenticated production, physical-device, radio-disable, cross-device,
+  explicit STRATHMARK network-denial, and backup-recovery evidence remain
+  separate open gates.
+
 ## Uncertified Gates
 
 This receipt is substantial local evidence, not a 2027 certification claim.
@@ -232,9 +255,10 @@ The following gates remain open:
   recorded in the Domain Contract and configuration;
 - physical release-phone/device restart, cross-device queue transfer, and
   radio-disabled scoring rehearsals;
-- hosted exact-head GitHub Actions evidence;
-- a production-mirror PostgreSQL rehearsal;
-- deployment and production smoke evidence; and
+- an authenticated production judge-page check without an unapproved
+  production mutation;
+- an explicit browser scoring/build rehearsal with the optional STRATHMARK
+  network unavailable; and
 - approved backup recipient/key custody, least-privilege dump access, hosted
   encryption, retained-artifact decryption/restore, retention, and audit
   evidence.
