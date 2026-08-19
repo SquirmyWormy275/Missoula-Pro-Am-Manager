@@ -393,17 +393,12 @@ def test_dropped_gear_partner_is_not_scheduled_into_the_same_heat(client, sql):
 
 
 # ---------------------------------------------------------------------------
-# c08. The report cache's disk layer pickles live SQLAlchemy rows, so the
-#      college standings page 500s for a full TTL after a worker respawns
-#      services/report_cache.py, routes/reporting.py college_standings
+# c08. Historical defect: the former report-cache disk layer pickled live
+#      SQLAlchemy rows, so college standings could 500 after a worker respawn.
+#      The disk layer is now retired and PostgreSQL deliberately rebuilds.
 #
-#      Filed SEV2. Verified SEV3: the outage is self-limiting (it clears on
-#      the next TTL expiry or on any invalidate_tournament_caches call), the
-#      blast radius is one admin screen, and the /print variant and the
-#      spectator portal both stay 200 throughout. It is still a hard 500 on a
-#      page a judge reads between events, and the trigger, a gunicorn worker
-#      dying and respawning onto an already warm shelve file, needs nothing
-#      from the operator to happen.
+#      These regressions now prove the resolution: no disk persistence, no ORM
+#      payload leakage, and a fresh PostgreSQL rebuild after process reset.
 # ---------------------------------------------------------------------------
 
 RPT_URL = f"/reporting/{TID}/college/standings"
@@ -418,151 +413,82 @@ RPT_TOP_MAN_TEAM = "FVC-A"
 RPT_TOP_TEAM_SCHOOL = "Colorado State University"
 
 
-def _rpt_isolate(tmp_path):
-    """Point the report cache at a private shelve file and hand back a restore.
-
-    report_cache keeps its state in module globals, so without this a test
-    would write into the checkout's instance/ directory and leak entries into
-    whatever test runs next in the same process.
-    """
-    import services.report_cache as rc
-
-    saved = (rc._shelf_path, rc._shelf_resolved, dict(rc._cache))
-    rc._shelf_path = str(tmp_path / "cache")
-    rc._shelf_resolved = True
-    with rc._lock:
-        rc._cache.clear()
-
-    def _restore():
-        with rc._lock:
-            rc._cache.clear()
-            rc._cache.update(saved[2])
-        rc._shelf_path, rc._shelf_resolved = saved[0], saved[1]
-
-    return rc, _restore
-
-
-def _rpt_break_builders(monkeypatch):
-    """Make every database-side builder for this page explode.
-
-    Without this the test is vacuous: if the disk layer fails to serve the
-    second request, the route just rebuilds the payload from the database and
-    renders a perfectly good page, and the assertion passes while measuring
-    nothing.
-    """
+@pytest.mark.sev3
+def test_postgres_college_standings_rebuilds_after_process_reset_without_cache(
+        client, app, monkeypatch):
+    """PostgreSQL standings rebuild safely instead of sharing stale state."""
     from models.tournament import Tournament
+    from services import report_cache
 
-    def _boom(*args, **kwargs):
-        raise AssertionError(
-            "the route rebuilt the payload from the database; the disk cache "
-            "layer never served this request, so this test proves nothing")
+    calls = 0
+    original = Tournament.get_team_standings
 
-    for name in ('get_bull_of_woods', 'get_belle_of_woods',
-                 'get_bull_belle_with_tiebreak_data', 'get_team_standings'):
-        monkeypatch.setattr(Tournament, name, _boom)
+    def _counted(self, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(self, *args, **kwargs)
 
+    monkeypatch.setattr(Tournament, 'get_team_standings', _counted)
+    report_cache.reset_for_testing()
 
-@pytest.mark.sev3
-def test_college_standings_survives_a_worker_respawn_onto_a_warm_disk_cache(
-        client, app, tmp_path, monkeypatch):
-    """A judge reloading standings after a worker restart must get standings.
+    first = client.get(RPT_URL)
+    assert first.status_code == 200, first.status_code
+    body_before = first.get_data(as_text=True)
+    assert RPT_TOP_MAN in body_before
+    assert RPT_TOP_MAN_TEAM in body_before
+    assert RPT_TOP_TEAM_SCHOOL in body_before
+    assert client.get(RPT_PRINT_URL).status_code == 200
 
-    gunicorn runs the app with a single worker. When that worker dies and is
-    respawned, the module-level L1 dict dies with the process and the shelve
-    file in instance/report_cache does not. The new worker's first request for
-    this page reads the disk entry, gets back CollegeCompetitor objects that
-    are detached from every session, and dies in the template on c.team.
-    """
-    rc, restore = _rpt_isolate(tmp_path)
-    try:
-        first = client.get(RPT_URL)
-        assert first.status_code == 200, first.status_code
-        body_before = first.get_data(as_text=True)
-
-        # Controls. The page really renders competitor and team data, so a
-        # failure below is a cache failure and not an empty-roster artifact.
-        assert RPT_TOP_MAN in body_before
-        assert RPT_TOP_MAN_TEAM in body_before
-        assert RPT_TOP_TEAM_SCHOOL in body_before
-
-        # Control. The uncached print variant of the same data is fine, which
-        # localizes any failure below to the caching path.
-        assert client.get(RPT_PRINT_URL).status_code == 200
-
-        # Control. The disk layer actually engaged. On a machine where the
-        # instance directory is unwritable this assertion is the only thing
-        # standing between a green run and a meaningless one.
-        assert rc._shelf_get(RPT_KEY) is not None, (
-            "nothing reached the disk cache, so the worker-respawn path below "
-            "is not being exercised")
-
-        # The worker dies and respawns.
-        with rc._lock:
-            rc._cache.clear()
-        _rpt_break_builders(monkeypatch)
-
-        second = client.get(RPT_URL)
-        assert second.status_code == 200, (
-            f"standings returned {second.status_code} on the first request "
-            f"after a worker respawn, and will keep doing it until the cache "
-            f"entry expires")
-        body_after = second.get_data(as_text=True)
-        assert RPT_TOP_MAN in body_after
-        assert RPT_TOP_MAN_TEAM in body_after, (
-            "the page came back but the team column did not; a cached payload "
-            "that renders 'N/A' where a team code belongs is not a fix")
-        assert RPT_TOP_TEAM_SCHOOL in body_after
-        assert body_after.count("N/A") == body_before.count("N/A")
-    finally:
-        restore()
+    report_cache.reset_for_testing()
+    second = client.get(RPT_URL)
+    assert second.status_code == 200, second.status_code
+    body_after = second.get_data(as_text=True)
+    assert RPT_TOP_MAN in body_after
+    assert RPT_TOP_MAN_TEAM in body_after
+    assert RPT_TOP_TEAM_SCHOOL in body_after
+    assert body_after.count("N/A") == body_before.count("N/A")
+    assert calls == 3  # standings route twice, uncached print route once
+    assert report_cache.get(RPT_KEY) is None
+    with report_cache._lock:
+        assert RPT_KEY not in report_cache._cache
 
 
 @pytest.mark.sev3
-def test_the_cached_standings_payload_holds_no_live_database_rows(
-        client, app, tmp_path):
-    """Whatever is cached has to be able to outlive the session that built it."""
-    rc, restore = _rpt_isolate(tmp_path)
-    try:
-        assert client.get(RPT_URL).status_code == 200
-        with rc._lock:
-            payload = rc._cache[RPT_KEY]['value']
+def test_the_standings_payload_holds_no_live_database_rows(app):
+    """The serializer contract stays plain even when PostgreSQL bypasses cache."""
+    from database import db
+    from models.tournament import Tournament
+    from routes.reporting import _build_college_standings_payload
+    from services import report_cache
 
-        # Control: the payload is the real thing, not an empty dict that would
-        # trivially contain no entities.
-        assert payload['bull_tiebreak'], "no Bull rows to check"
-        assert payload['team_standings'], "no team rows to check"
-
-        assert not rc._contains_orm_entity(payload), (
-            "the standings payload still carries SQLAlchemy rows, so the disk "
-            "layer will hand a detached copy to the next worker")
-    finally:
-        restore()
+    tournament = db.session.get(Tournament, TID)
+    payload = _build_college_standings_payload(tournament)
+    assert payload['bull_tiebreak'], "no Bull rows to check"
+    assert payload['team_standings'], "no team rows to check"
+    assert not report_cache._contains_orm_entity(payload)
 
 
 @pytest.mark.sev3
-def test_the_report_cache_refuses_to_put_database_rows_on_disk(app, tmp_path):
-    """The guard, tested directly, so the next caller cannot repeat c08."""
+def test_postgres_report_cache_persists_neither_database_rows_nor_plain_data(
+        app, tmp_path):
+    """PostgreSQL never stores process-local or cross-process report state."""
     from models.competitor import CollegeCompetitor
+    from services import report_cache
 
-    rc, restore = _rpt_isolate(tmp_path)
-    try:
-        row = CollegeCompetitor.query.filter_by(tournament_id=TID).first()
-        assert row is not None, "no college competitor to build the probe from"
+    report_cache.reset_for_testing()
+    row = CollegeCompetitor.query.filter_by(tournament_id=TID).first()
+    assert row is not None, "no college competitor to build the probe from"
 
-        rc.set("reports:c08probe:entities", {"rows": [{"competitor": row}]}, 60)
-        assert rc._shelf_get("reports:c08probe:entities") is None, (
-            "a payload carrying a live database row reached the disk layer")
-        # L1 is not implicated and must keep working: the objects never leave
-        # the process that loaded them.
-        assert rc.get("reports:c08probe:entities") is not None
+    report_cache.set("reports:c08probe:entities", {"rows": [{"competitor": row}]}, 60)
+    report_cache.set("reports:c08probe:plain", {"rows": [{"name": row.name}]}, 60)
 
-        # Control: the guard is not a blanket refusal. Plain data still lands.
-        rc.set("reports:c08probe:plain", {"rows": [{"name": row.name}]}, 60)
-        assert rc._shelf_get("reports:c08probe:plain") is not None, (
-            "the disk layer stopped accepting plain data, which breaks the "
-            "whole point of having an L2")
-    finally:
-        restore()
+    assert report_cache.get("reports:c08probe:entities") is None
+    assert report_cache.get("reports:c08probe:plain") is None
+    assert report_cache._shelf_get("reports:c08probe:entities") is None
+    assert report_cache._shelf_get("reports:c08probe:plain") is None
+    with report_cache._lock:
+        assert report_cache._cache == {}
+    assert list(tmp_path.iterdir()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1578,7 +1504,8 @@ def _c21_scratch(client, competitor_id, competitor_type):
         f"{r.status_code} and no JSON: {r.data[:300]}")
     effects = body["effects"]
     form = {"effect_count": str(len(effects)),
-            "competitor_type": competitor_type}
+            "competitor_type": competitor_type,
+            "expected_effect_digest": body["effect_digest"]}
     for i, e in enumerate(effects):
         form[f"effect_type_{i}"] = e["effect_type"]
         form[f"affected_entity_id_{i}"] = str(e["affected_entity_id"])
@@ -1591,9 +1518,19 @@ def _c21_scratch(client, competitor_id, competitor_type):
 
 
 def _c21_undo(client, competitor_id, competitor_type):
+    preview = client.get(
+        f"/scoring/{TID}/competitor/{competitor_id}/scratch-preview"
+        f"?format=json&competitor_type={competitor_type}")
+    body = preview.get_json()
+    assert preview.status_code == 200 and body is not None, (
+        f"scratch-preview before undo returned {preview.status_code}: "
+        f"{preview.data[:300]}")
+    undo_token = body.get("undo_token")
+    assert undo_token, f"scratch-preview did not return an undo token: {body}"
     p = client.post(
         f"/scoring/{TID}/competitor/{competitor_id}/scratch-undo"
-        f"?competitor_type={competitor_type}")
+        f"?competitor_type={competitor_type}",
+        data={"expected_undo_token": undo_token})
     assert p.status_code in (200, 302), p.data[:400]
 
 
@@ -1782,12 +1719,12 @@ def test_a_heat_that_already_shipped_empty_is_not_touched_by_a_scratch(
 @pytest.mark.sev3
 def test_an_undo_does_not_reopen_a_heat_the_operator_scored_afterwards(
         client, sql):
-    """Positive control on the undo, and it is the sharp one.
+    """Undo must fail closed after the judge changes a scratched heat.
 
     Scratch one of a pair, score the survivor, then undo. The heat is
     'completed' because the JUDGE completed it, not because the cascade did.
-    A restore that blindly writes the snapshotted status back would reopen a
-    scored heat and throw away the completion the operator earned.
+    Restoring the scratched competitor would leave that person unscored in a
+    completed heat, so the correction must use an explicit operator workflow.
     """
     _, pair_ids = _c21_heat(sql, _C21_PAIR_HEAT)
     assert len(pair_ids) == 2, pair_ids
@@ -1800,17 +1737,30 @@ def test_an_undo_does_not_reopen_a_heat_the_operator_scored_afterwards(
         f"vacuity: the judge's own scoring did not complete heat "
         f"{_C21_PAIR_HEAT}: {scored_status}")
     assert scored_ids == [survivor], scored_ids
+    scored_result = sql(
+        "SELECT status, result_value FROM event_results "
+        "WHERE event_id = :e AND competitor_id = :c",
+        e=_C21_PAIR_EVENT,
+        c=survivor,
+    )[0]
 
     _c21_undo(client, scratched, "pro")
 
     after_status, after_ids = _c21_heat(sql, _C21_PAIR_HEAT)
-    assert scratched in after_ids, (
-        f"vacuity: the undo did not restore competitor {scratched}: "
-        f"{after_ids}")
+    assert after_ids == [survivor], (
+        f"unsafe undo restored competitor {scratched} after scoring: {after_ids}")
+    assert sql(
+        "SELECT status FROM pro_competitors WHERE id = :c",
+        c=scratched,
+    )[0][0] == "scratched"
     assert after_status == "completed", (
-        f"the undo reopened heat {_C21_PAIR_HEAT} to {after_status!r}. The "
-        f"judge completed that heat after the scratch and the undo threw it "
-        f"away.")
+        f"refused undo changed heat {_C21_PAIR_HEAT} to {after_status!r}.")
+    assert sql(
+        "SELECT status, result_value FROM event_results "
+        "WHERE event_id = :e AND competitor_id = :c",
+        e=_C21_PAIR_EVENT,
+        c=survivor,
+    )[0] == scored_result
 
 
 # ---------------------------------------------------------------------------
@@ -2890,6 +2840,39 @@ def _heat_rosters(sql, event_id):
     return event_rosters(sql, event_id)
 
 
+def _assert_no_cross_unit_gear_conflicts(sql, event_id):
+    """Prove that no two distinct stand units share declared gear in a heat."""
+    import services.heat_generator as hg
+    from database import db
+    from models import Event
+
+    event = db.session.get(Event, event_id)
+    competitors = {
+        comp["id"]: comp for comp in hg._get_event_competitors(event)
+    }
+    for heat_number, roster in enumerate(_heat_rosters(sql, event_id), start=1):
+        units = hg._rebuild_pair_units(
+            [competitors[comp_id] for comp_id in roster],
+            event,
+        )
+        for index, unit in enumerate(units):
+            other_members = [
+                comp
+                for other_index, other_unit in enumerate(units)
+                if other_index != index
+                for comp in other_unit
+            ]
+            for comp in unit:
+                assert not hg._has_gear_sharing_conflict(
+                    comp,
+                    other_members,
+                    event,
+                ), (
+                    f"event {event_id} heat {heat_number} placed "
+                    f"{comp['name']} with a distinct unit that shares gear"
+                )
+
+
 @pytest.mark.sev3
 def test_regenerating_double_buck_leaves_no_entrant_out_of_the_event(client, sql):
     """DEFECT. Two competitors vanish from the event on a plain regenerate.
@@ -2912,28 +2895,18 @@ def test_regenerating_double_buck_leaves_no_entrant_out_of_the_event(client, sql
 
 
 @pytest.mark.sev3
-def test_regenerating_double_buck_fills_the_third_heat(client, sql):
-    """DEFECT. 12 pairs over 3 heats of 4 stands is 4/4/4, not 4/4/3.
-
-    The filed symptom was an unbalanced field. The balance is a shadow of the
-    real event: the missing stand is missing because the pair that belonged on
-    it was thrown away, not because the draft distributed badly.
-    """
+def test_regenerating_double_buck_uses_the_minimal_gear_safe_layout(client, sql):
+    """Twelve pairs expand from three full heats to four conflict-free heats."""
     _generate_heats(client, sql, DB_EVENT)
     sizes = [len(r) for r in _heat_rosters(sql, DB_EVENT)]
-    assert sizes == [8, 8, 8], sizes
+    assert sizes == [6, 6, 6, 6], sizes
+    _assert_no_cross_unit_gear_conflicts(sql, DB_EVENT)
 
 
 @pytest.mark.sev3
-def test_a_pair_that_cannot_dodge_a_gear_conflict_is_flagged_not_deleted(client, sql, flashes):
-    """DEFECT. The fallback exists to place a unit ANYWAY and warn the judge.
-
-    services/heat_generator.py already carries that machinery: the fallback
-    records every forced gear-sharing conflict in gear_violations and the
-    generate-heats route turns it into a WARNING flash. The operator never
-    sees it, because the walk gives up before reaching the heat with room, so
-    nothing is placed and nothing is recorded. Silence here reads as success.
-    """
+def test_a_pair_that_cannot_fit_three_heats_expands_without_a_conflict(
+        client, sql, flashes):
+    """A constrained pair is conserved by expansion, never forced to share."""
     _generate_heats(client, sql, DB_EVENT)
 
     placed = [c for roster in _heat_rosters(sql, DB_EVENT) for c in roster]
@@ -2941,7 +2914,8 @@ def test_a_pair_that_cannot_dodge_a_gear_conflict_is_flagged_not_deleted(client,
         f"{[c for c in DB_DROPPED if c not in placed]} still not in any heat")
 
     msgs = [m for _c, m in flashes()]
-    assert any("gear-sharing conflict" in m for m in msgs), msgs
+    assert not any("gear-sharing conflict" in m for m in msgs), msgs
+    _assert_no_cross_unit_gear_conflicts(sql, DB_EVENT)
 
 
 # --- CONTROLS: the snake draft itself must not move ------------------------
@@ -2953,6 +2927,20 @@ def test_a_pair_that_cannot_dodge_a_gear_conflict_is_flagged_not_deleted(client,
 @pytest.mark.sev3
 def test_the_underhand_snake_draft_is_unchanged(client, sql):
     """CONTROL. 25 pros, 5 heats of 5, one gear conflict dodged in the draft."""
+    from database import db
+    from models import ProCompetitor
+
+    # The historical mirror contains one explicit wrong-gender entry in this
+    # men's event. Remove only that invalid entry in the disposable clone so
+    # this test isolates the snake ordering contract rather than the safety
+    # gate that correctly blocks regeneration on the unmodified mirror.
+    competitor = db.session.get(ProCompetitor, 2)
+    competitor.set_events_entered([
+        event_id for event_id in competitor.get_events_entered()
+        if int(event_id) != 32
+    ])
+    db.session.commit()
+
     _generate_heats(client, sql, 32)
     assert _heat_rosters(sql, 32) == [
         [1, 30, 32, 43, 44],
@@ -3021,13 +3009,7 @@ def _synthetic(n):
 
 @pytest.mark.sev3
 def test_a_unit_is_placed_while_any_heat_still_has_a_free_stand(monkeypatch):
-    """DEFECT, staged. The event 38 shape with the data taken out of it.
-
-    12 units, 3 heats, 4 stands. By the last unit the pointer sits on heat 0
-    heading down, so the first pass bounces (h0, h0, h1) and the fallback
-    bounces the other way (h2, h2, h1). Heat 0 has a free stand the whole
-    time and neither walk ever looks at it again.
-    """
+    """A constrained field expands instead of discarding or forcing a unit."""
     import services.heat_generator as hg
 
     safe = {0, 5, 6}
@@ -3042,8 +3024,8 @@ def test_a_unit_is_placed_while_any_heat_still_has_a_free_stand(monkeypatch):
 
     placed = sorted(c["id"] for h in heats for c in h)
     assert placed == list(range(12)), f"unit(s) {sorted(set(range(12)) - set(placed))} discarded"
-    assert sorted(len(h) for h in heats) == [4, 4, 4]
-    assert [v["comp_id"] for v in violations] == [11], violations
+    assert [len(h) for h in heats] == [3, 3, 3, 3]
+    assert violations == []
 
 
 @pytest.mark.sev3
@@ -3124,7 +3106,7 @@ def test_mens_underhand_speed_does_not_open_on_the_short_heat(client, sql):
     violates the rule. 13 cutters at the same cap would have produced 5/4/4
     and been reordered, because one heat would have touched the cap.
     """
-    _generate_heats(client, 9)
+    _generate_heats(client, sql, 9)
     rosters = _heat_rosters(sql, 9)
     assert sorted(c for r in rosters for c in r) == sorted(
         [100030, 100042, 100044, 100032, 100041, 100058, 100077,
@@ -3141,7 +3123,7 @@ def test_mens_underhand_speed_does_not_open_on_the_short_heat(client, sql):
 @pytest.mark.sev3
 def test_womens_underhand_speed_does_not_open_on_the_short_heat(client, sql):
     """DEFECT. The women's half of the same event, same shape, same cause."""
-    _generate_heats(client, 10)
+    _generate_heats(client, sql, 10)
     rosters = _heat_rosters(sql, 10)
     assert sorted(c for r in rosters for c in r) == sorted(
         [100034, 100071, 100072, 100048, 100070, 100083, 100092,
@@ -3246,31 +3228,31 @@ def test_the_cap_hitting_events_keep_their_shipped_order(client, sql):
     could only be reproduced by a database whose heap accident matched
     April 2026's.
     """
-    _generate_heats(client, 7)
+    _generate_heats(client, sql, 7)
     assert _heat_rosters(sql, 7) == [
         [100032, 100050, 100051, 100080, 100085], [100033, 100043, 100059, 100079, 100086],
         [100037, 100042, 100060, 100078], [100038, 100039, 100061, 100074]]
 
-    _generate_heats(client, 11)
+    _generate_heats(client, sql, 11)
     assert _heat_rosters(sql, 11) == [
         [100035, 100059, 100066, 100086, 100087], [100044, 100058, 100067, 100085], [100050, 100051, 100078, 100079]]
 
-    _generate_heats(client, 33)
+    _generate_heats(client, sql, 33)
     assert _heat_rosters(sql, 33) == [
         [2, 11, 12, 18, 19], [5, 9, 13, 17], [7, 8, 15, 16]]
 
-    _generate_heats(client, 43)
+    _generate_heats(client, sql, 43)
     assert _heat_rosters(sql, 43) == [
         [1, 26, 27, 42, 43], [8, 24, 29, 40, 47], [14, 23, 30, 38, 48],
         [6, 25, 28, 44], [15, 22, 31, 37], [18, 21, 32, 36],
         [19, 20, 33, 34]]
 
-    _generate_heats(client, 20)
+    _generate_heats(client, sql, 20)
     assert _heat_rosters(sql, 20) == [
         [100035, 100080], [100037, 100079], [100038, 100077], [100041, 100076], [100043, 100074],
         [100044, 100069], [100046, 100066], [100051, 100062], [100058, 100059], [100030]]
 
-    _generate_heats(client, 25)
+    _generate_heats(client, sql, 25)
     assert _heat_rosters(sql, 25) == [
         [100031, 100092], [100055, 100089], [100057, 100071], [100029]]
 
@@ -3284,7 +3266,7 @@ def test_the_uniform_all_partial_events_are_untouched(client, sql):
     """
     for eid, expect in ((17, [3, 3, 3]), (18, [3, 3]),
                         (30, [3, 3, 3]), (35, [3, 3, 3])):
-        _generate_heats(client, eid)
+        _generate_heats(client, sql, eid)
         rosters = _heat_rosters(sql, eid)
         sizes = [len(r) for r in rosters]
         assert not _opens_short(sizes), (eid, sizes)

@@ -2722,25 +2722,19 @@ def _insert_result(app, event_id, comp_id, name, ctype="pro"):
 @pytest.mark.sev2
 def test_generating_heats_says_out_loud_that_an_entered_competitor_was_left_out(
         client, sql, flashes):
-    """26 people are entered in event 32. 25 get a stand. Nobody is told.
-
-    Measured against v2026.final: the only flash is
-    ('success', "Generated 5 heat(s) for Men's Underhand.") and caplog holds
-    no heat_generator warning either.
-    """
+    """An explicit wrong-gender entry blocks replacement and names the entrant."""
+    before = event_rosters(sql, UH_M)
     said = _gen(client, flashes, UH_M)
 
-    # Vacuity guard: generation must actually have succeeded, or "no success
-    # flash" would satisfy this test for the wrong reason.
-    assert [m for cat, m in said if cat == "success"], (
-        f"heat generation did not succeed at all, so this test proves "
-        f"nothing about what it reports: {said}")
-    assert len(_placed_ids(sql, UH_M)) == 25, "the roster changed under the test"
+    assert not [m for cat, m in said if cat == "success"], (
+        f"generation reported success despite an invalid explicit entry: {said}")
+    assert event_rosters(sql, UH_M) == before, (
+        "the invalid entry replaced or modified the existing heat layout")
 
     warned = _named_in_a_warning(said, "Kate Page")
     assert warned, (
-        f"Kate Page is entered in event {UH_M} and was left out of every heat, "
-        f"and the operator was told nothing about it. Flashes: {said}")
+        f"Kate Page is explicitly entered in event {UH_M} with the wrong "
+        f"gender, but the blocking message did not name her. Flashes: {said}")
 
 
 @pytest.mark.sev2
@@ -2772,7 +2766,7 @@ def test_the_add_competitor_dropdown_does_not_offer_someone_the_server_refuses(
 
 
 @pytest.mark.sev2
-def test_the_generator_records_the_excluded_entrant_when_called_directly(app):
+def test_the_generator_records_the_excluded_entrant_when_called_directly(app, sql):
     """A route-only fix leaves every other caller of the service blind.
 
     services/schedule_generation.py, routes/scheduling/flights.py,
@@ -2782,6 +2776,7 @@ def test_the_generator_records_the_excluded_entrant_when_called_directly(app):
     from database import db
     from models import Event
     from services.heat_generator import (
+        HeatGenerationSafetyError,
         generate_event_heats,
         get_last_gender_excluded,
     )
@@ -2792,8 +2787,12 @@ def test_the_generator_records_the_excluded_entrant_when_called_directly(app):
         "WHERE event_id = :event_id"
     ), {"event_id": UH_M})
     db.session.commit()
-    generate_event_heats(event)
-    db.session.commit()
+    before = event_rosters(sql, UH_M)
+    with pytest.raises(HeatGenerationSafetyError, match="Kate Page"):
+        generate_event_heats(event)
+    db.session.rollback()
+    after = event_rosters(sql, UH_M)
+    assert after == before, "direct generation replaced the prior heat layout"
 
     recorded = get_last_gender_excluded(UH_M)
     ids = [r["comp_id"] for r in recorded]
@@ -2864,10 +2863,13 @@ def test_when_every_entrant_is_the_wrong_gender_the_operator_is_told_who(
 @pytest.mark.sev2
 def test_the_eligible_men_are_still_placed_when_a_wrong_gender_entrant_is_present(
         client, sql, flashes):
-    """The fix must report the excluded entrant, not start dropping people."""
-    _gen(client, flashes, UH_M)
+    """Blocking an invalid entry must preserve every eligible existing start."""
+    before = _placed_ids(sql, UH_M)
+    said = _gen(client, flashes, UH_M)
 
     placed = _placed_ids(sql, UH_M)
+    assert placed == before, "the blocked regeneration changed eligible starts"
+    assert not [m for cat, m in said if cat == "success"], said
     heats = sql("SELECT count(*) FROM heats WHERE event_id = :e", e=UH_M)[0][0]
     assert heats == 5, f"expected 5 heats of 5, got {heats}"
     assert len(placed) == 25, f"expected 25 men placed, got {len(placed)}"

@@ -4,33 +4,40 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import uuid
 from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
 
-from app import create_app
+from tests.db_test_utils import create_test_app, drop_test_db
 
 
 def _discover_routes() -> list[dict[str, object]]:
     """Return a normalized route list from the app URL map."""
-    app = create_app()
-    routes: list[dict[str, object]] = []
-    for rule in sorted(app.url_map.iter_rules(), key=lambda r: (r.endpoint, r.rule)):
-        methods = sorted(m for m in rule.methods if m not in {"HEAD", "OPTIONS"})
-        if not methods:
-            continue
-        method = "GET" if "GET" in methods else "POST"
-        routes.append(
-            {
-                "endpoint": rule.endpoint,
-                "rule": rule.rule,
-                "method": method,
-                "methods": methods,
-            }
-        )
-    return routes
+    app, db_handle = create_test_app()
+    try:
+        routes: list[dict[str, object]] = []
+        for rule in sorted(app.url_map.iter_rules(), key=lambda r: (r.endpoint, r.rule)):
+            methods = sorted(m for m in rule.methods if m not in {"HEAD", "OPTIONS"})
+            if not methods:
+                continue
+            method = "GET" if "GET" in methods else "POST"
+            routes.append(
+                {
+                    "endpoint": rule.endpoint,
+                    "rule": rule.rule,
+                    "method": method,
+                    "methods": methods,
+                }
+            )
+        return routes
+    finally:
+        from database import db
+
+        with app.app_context():
+            db.session.remove()
+            db.engine.dispose()
+        drop_test_db(db_handle)
 
 
 ROUTE_SPECS = _discover_routes()
@@ -39,7 +46,6 @@ _SOURCE_DB_ENV = os.environ.get("PROAM_ROUTE_SMOKE_SOURCE_DB", "").strip()
 SOURCE_DB = Path(_SOURCE_DB_ENV) if _SOURCE_DB_ENV else None
 if SOURCE_DB is not None and not SOURCE_DB.is_absolute():
     SOURCE_DB = PROJECT_ROOT / SOURCE_DB
-TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
 
 
 def _seed_minimal_smoke_data(app):
@@ -133,15 +139,14 @@ def _seed_minimal_smoke_data(app):
 
 
 @pytest.fixture()
-def smoke_env(monkeypatch):
+def smoke_env(monkeypatch, tmp_path):
     """Return an app/client backed by an isolated migrated database.
 
     A source database is copied only when PROAM_ROUTE_SMOKE_SOURCE_DB is set
     explicitly (CI supplies its synthetic fixture). Local runs default to the
     same deterministic seed path instead of reading instance/proam.db.
     """
-    TMP_ROOT.mkdir(exist_ok=True)
-    temp_dir = TMP_ROOT / f"route-smoke-{uuid.uuid4().hex}"
+    temp_dir = tmp_path / "route-smoke"
     temp_dir.mkdir()
     db_copy = temp_dir / "proam-copy.db"
 
@@ -174,6 +179,8 @@ def smoke_env(monkeypatch):
     monkeypatch.setenv("SECRET_KEY", "route-smoke-secret")
     monkeypatch.setenv("FLASK_ENV", "testing")
     monkeypatch.setenv("TESTING", "1")
+
+    from app import create_app
 
     app = create_app()
     app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)

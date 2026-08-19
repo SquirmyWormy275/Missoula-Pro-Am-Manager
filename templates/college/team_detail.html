@@ -199,6 +199,7 @@
                                 {% for member in members %}
                                 {% set ev_details = member_event_details.get(member.id, []) %}
                                 {% set already_entered_keys = ev_details | map(attribute='key') | list %}
+                                {% set undo_token = (undo_tokens_by_competitor_id|default({}, true)).get(member.id) %}
 
                                 <!-- Member row -->
                                 <tr class="{{ 'table-secondary' if member.status == 'scratched' else '' }}">
@@ -243,7 +244,7 @@
                                                 <i class="bi bi-slash-circle"></i> Scratch
                                             </button>
                                         </form>
-                                        {% elif member.id in undoable_scratch_ids|default([], true) %}
+                                        {% elif undo_token and current_user.is_authenticated and current_user.can_score %}
                                         {# The scratch is still inside the undo window. See the
                                            matching block in pro/dashboard.html: without it the
                                            window is unreachable, because the confirm redirect
@@ -256,6 +257,7 @@
                                               data-confirm="Undo the scratch for {{ member.name }}?">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <input type="hidden" name="competitor_type" value="college">
+                                            <input type="hidden" name="expected_undo_token" value="{{ undo_token }}">
                                             <button type="submit" class="btn btn-sm btn-outline-secondary">
                                                 <i class="bi bi-arrow-counterclockwise"></i> Undo
                                             </button>

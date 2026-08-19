@@ -218,3 +218,12 @@ class TestHealthEndpoint:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data['status'] == 'ok'
+
+    def test_health_reports_the_railway_git_commit(self, client, monkeypatch):
+        commit = 'a' * 40
+        monkeypatch.setenv('RAILWAY_GIT_COMMIT_SHA', commit)
+
+        resp = client.get('/health')
+
+        assert resp.status_code == 200
+        assert resp.get_json()['git_commit'] == commit

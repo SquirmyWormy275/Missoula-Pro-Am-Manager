@@ -3,6 +3,7 @@ Main routes for dashboard and navigation.
 """
 import json
 import logging
+import os
 import time
 from urllib.parse import urlsplit
 
@@ -50,8 +51,6 @@ def health():
         db_ok = True
         # Check if DB is at migration HEAD
         try:
-            import os
-
             from alembic.config import Config as AlembicConfig
             from alembic.script import ScriptDirectory
             from flask_migrate import current as alembic_current
@@ -77,6 +76,8 @@ def health():
         'migration_head': migration_head,
         'migration_rev': migration_current_rev,
         'version': '2.14.16',
+        'git_commit': os.environ.get('RAILWAY_GIT_COMMIT_SHA')
+                      or os.environ.get('GIT_COMMIT_SHA'),
     })
 
 
@@ -590,13 +591,14 @@ def pro_dashboard(tournament_id):
             })
     live_event_leaders = live_event_leaders[:5]
 
-    # Which scratched competitors can still be undone.  Without this the
+    # Current undo capabilities for scratched competitors.  Without this the
     # 30-minute undo window is unreachable from anywhere in the product:
     # scratch_confirm redirects here, the Scratch button is gated on
     # status == 'active', and the only Undo control that existed lived on the
-    # confirmation page that button leads to.  One bulk query, not one per row.
-    from services.scratch_cascade import find_undoable_scratches
-    undoable_scratch_ids = find_undoable_scratches(
+    # confirmation page that button leads to.  Batched reads avoid one query
+    # per roster row while giving each form the server-required token.
+    from services.scratch_cascade import find_undoable_scratch_tokens
+    undo_tokens_by_competitor_id = find_undoable_scratch_tokens(
         [c.id for c in competitors if c.status == 'scratched'], 'pro'
     )
 
@@ -607,7 +609,7 @@ def pro_dashboard(tournament_id):
                            total_fees=total_fees,
                            collected_fees=collected_fees,
                            top_earners=top_earners,
-                           undoable_scratch_ids=undoable_scratch_ids,
+                           undo_tokens_by_competitor_id=undo_tokens_by_competitor_id,
                            live_event_leaders=live_event_leaders)
 
 

@@ -9,23 +9,28 @@ redirect on HTML routes so the user gets a clear, actionable message.
 Found during /investigate on 2026-04-21.
 """
 
-import os
-
 import pytest
+
+from tests.db_test_utils import create_test_app, drop_test_db
 
 
 @pytest.fixture
-def csrf_app():
+def csrf_app(monkeypatch):
     """App with CSRF protection actually enabled (global conftest disables it)."""
-    os.environ.pop("WTF_CSRF_ENABLED", None)
-    from app import create_app
-
-    app = create_app()
+    monkeypatch.delenv("WTF_CSRF_ENABLED", raising=False)
+    app, db_handle = create_test_app()
     app.config["WTF_CSRF_ENABLED"] = True
+    app.config["WTF_CSRF_CHECK_DEFAULT"] = True
     app.config["TESTING"] = True
-    # Re-disable globally so other tests continue to run with CSRF off
-    os.environ["WTF_CSRF_ENABLED"] = "False"
-    yield app
+    try:
+        yield app
+    finally:
+        from database import db
+
+        with app.app_context():
+            db.session.remove()
+            db.engine.dispose()
+        drop_test_db(db_handle)
 
 
 def test_csrf_error_on_html_route_redirects_with_flash(csrf_app):

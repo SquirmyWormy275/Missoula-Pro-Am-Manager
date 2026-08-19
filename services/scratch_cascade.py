@@ -100,7 +100,239 @@ def _stable_number(raw_value):
         return str(raw_value)
 
 
-def _scratch_post_state_sha256(competitor, snapshot: dict) -> str:
+def _scratch_relay_post_state(
+    competitor,
+    snapshot: dict,
+    prefetched: dict | None = None,
+) -> list:
+    """Fingerprint relay draws while ignoring this competitor's reassignment."""
+    from database import db
+    from models.competitor import CollegeCompetitor
+    from models.event import Event
+    from models.relay import RelayState, RelayTeam, RelayTeamEvent, RelayTeamMember
+
+    relay_snapshots = [
+        entry
+        for entry in snapshot.get("relay_teams", [])
+        if isinstance(entry, dict)
+    ]
+    state_ids = sorted({
+        int(entry["relay_state_id"])
+        for entry in relay_snapshots
+        if entry.get("source") == "normalized"
+        and entry.get("relay_state_id") is not None
+    })
+    relay_state = []
+    for state_id in state_ids:
+        state = (
+            db.session.get(RelayState, state_id)
+            if prefetched is None
+            else prefetched["relay_states"].get(state_id)
+        )
+        if state is None:
+            relay_state.append({"relay_state_id": state_id, "state": None})
+            continue
+
+        if prefetched is None:
+            teams = (
+                RelayTeam.query.filter_by(relay_state_id=state_id)
+                .order_by(RelayTeam.team_number, RelayTeam.id)
+                .all()
+            )
+        else:
+            teams = prefetched["relay_teams_by_state"].get(state_id, [])
+        team_ids = [team.id for team in teams]
+        members_by_team = {team_id: [] for team_id in team_ids}
+        events_by_team = {team_id: [] for team_id in team_ids}
+        if team_ids:
+            if prefetched is None:
+                members = (
+                    RelayTeamMember.query.filter(
+                        RelayTeamMember.relay_team_id.in_(team_ids),
+                        RelayTeamMember.uid != competitor.uid,
+                    )
+                    .order_by(RelayTeamMember.relay_team_id, RelayTeamMember.uid)
+                    .all()
+                )
+            else:
+                members = [
+                    member
+                    for team_id in team_ids
+                    for member in prefetched["relay_members_by_team"].get(
+                        team_id, []
+                    )
+                    if member.uid != competitor.uid
+                ]
+            for member in members:
+                members_by_team[member.relay_team_id].append(member.uid)
+
+            if prefetched is None:
+                team_events = (
+                    RelayTeamEvent.query.filter(
+                        RelayTeamEvent.relay_team_id.in_(team_ids),
+                    )
+                    .order_by(RelayTeamEvent.relay_team_id, RelayTeamEvent.event_key)
+                    .all()
+                )
+            else:
+                team_events = [
+                    team_event
+                    for team_id in team_ids
+                    for team_event in prefetched["relay_events_by_team"].get(
+                        team_id, []
+                    )
+                ]
+            for team_event in team_events:
+                events_by_team[team_event.relay_team_id].append({
+                    "event_key": team_event.event_key,
+                    "result": _stable_number(team_event.result),
+                    "status": team_event.status,
+                })
+
+        relay_state.append({
+            "relay_state_id": state.id,
+            "event_id": state.event_id,
+            "status": state.status,
+            "teams": [
+                {
+                    "id": team.id,
+                    "team_number": team.team_number,
+                    "name": team.name,
+                    "total_time": _stable_number(team.total_time),
+                    "payout_settled": team.payout_settled,
+                    "version_id": team.version_id,
+                    "member_uids": members_by_team[team.id],
+                    "events": events_by_team[team.id],
+                }
+                for team in teams
+            ],
+        })
+
+    legacy_member_key = (
+        "college_members"
+        if isinstance(competitor, CollegeCompetitor)
+        else "pro_members"
+    )
+    legacy_event_ids = sorted({
+        int(entry["relay_event_id"])
+        for entry in relay_snapshots
+        if entry.get("source") == "legacy"
+        and entry.get("relay_event_id") is not None
+    })
+    for event_id in legacy_event_ids:
+        relay_event = (
+            db.session.get(Event, event_id)
+            if prefetched is None
+            else prefetched["legacy_events"].get(event_id)
+        )
+        try:
+            state = json.loads(relay_event.event_state or "{}")
+        except (AttributeError, json.JSONDecodeError, TypeError):
+            state = None
+        if isinstance(state, dict):
+            for team in state.get("teams", []):
+                if not isinstance(team, dict):
+                    continue
+                team[legacy_member_key] = [
+                    member
+                    for member in team.get(legacy_member_key, [])
+                    if not isinstance(member, dict)
+                    or member.get("id") != competitor.id
+                ]
+        relay_state.append({
+            "relay_event_id": event_id,
+            "legacy_state": state,
+        })
+
+    return relay_state
+
+
+def _prefetch_scratch_post_state(snapshots: list[dict]) -> dict:
+    """Load every row needed by a roster's scratch fingerprints in batches."""
+    from models.event import Event, EventResult
+    from models.heat import Heat
+    from models.relay import RelayState, RelayTeam, RelayTeamEvent, RelayTeamMember
+
+    def entries_for(key):
+        output = []
+        for snapshot in snapshots:
+            entries = snapshot.get(key, [])
+            if isinstance(entries, list):
+                output.extend(entry for entry in entries if isinstance(entry, dict))
+        return output
+
+    result_entries = entries_for("results")
+    heat_entries = entries_for("heats")
+    relay_entries = entries_for("relay_teams")
+    result_ids = {
+        entry.get("id") for entry in result_entries if entry.get("id") is not None
+    }
+    heat_ids = {
+        entry.get("heat_id")
+        for entry in heat_entries
+        if entry.get("heat_id") is not None
+    }
+    relay_state_ids = {
+        entry.get("relay_state_id")
+        for entry in relay_entries
+        if entry.get("source") == "normalized"
+        and entry.get("relay_state_id") is not None
+    }
+    legacy_event_ids = {
+        entry.get("relay_event_id")
+        for entry in relay_entries
+        if entry.get("source") == "legacy"
+        and entry.get("relay_event_id") is not None
+    }
+
+    def by_id(model, ids):
+        if not ids:
+            return {}
+        return {row.id: row for row in model.query.filter(model.id.in_(ids)).all()}
+
+    relay_states = by_id(RelayState, relay_state_ids)
+    relay_teams = (
+        RelayTeam.query.filter(RelayTeam.relay_state_id.in_(relay_state_ids))
+        .order_by(RelayTeam.relay_state_id, RelayTeam.team_number, RelayTeam.id)
+        .all()
+        if relay_state_ids else []
+    )
+    team_ids = {team.id for team in relay_teams}
+    relay_members = (
+        RelayTeamMember.query.filter(RelayTeamMember.relay_team_id.in_(team_ids))
+        .order_by(RelayTeamMember.relay_team_id, RelayTeamMember.uid)
+        .all()
+        if team_ids else []
+    )
+    relay_events = (
+        RelayTeamEvent.query.filter(RelayTeamEvent.relay_team_id.in_(team_ids))
+        .order_by(RelayTeamEvent.relay_team_id, RelayTeamEvent.event_key)
+        .all()
+        if team_ids else []
+    )
+
+    def grouped(rows, key):
+        output = {}
+        for row in rows:
+            output.setdefault(getattr(row, key), []).append(row)
+        return output
+
+    return {
+        "results": by_id(EventResult, result_ids),
+        "heats": by_id(Heat, heat_ids),
+        "relay_states": relay_states,
+        "relay_teams_by_state": grouped(relay_teams, "relay_state_id"),
+        "relay_members_by_team": grouped(relay_members, "relay_team_id"),
+        "relay_events_by_team": grouped(relay_events, "relay_team_id"),
+        "legacy_events": by_id(Event, legacy_event_ids),
+    }
+
+
+def _scratch_post_state_sha256(
+    competitor,
+    snapshot: dict,
+    prefetched: dict | None = None,
+) -> str:
     """Fingerprint state that reverse_cascade would otherwise overwrite."""
     from database import db
     from models.competitor import CollegeCompetitor
@@ -111,7 +343,12 @@ def _scratch_post_state_sha256(competitor, snapshot: dict) -> str:
     for result_snapshot in sorted(
         snapshot.get("results", []), key=lambda item: item.get("id") or 0,
     ):
-        result = db.session.get(EventResult, result_snapshot.get("id"))
+        result_id = result_snapshot.get("id")
+        result = (
+            db.session.get(EventResult, result_id)
+            if prefetched is None
+            else prefetched["results"].get(result_id)
+        )
         if result is None:
             result_state.append(None)
             continue
@@ -140,16 +377,21 @@ def _scratch_post_state_sha256(competitor, snapshot: dict) -> str:
     for heat_snapshot in sorted(
         snapshot.get("heats", []), key=lambda item: item.get("heat_id") or 0,
     ):
-        heat = db.session.get(Heat, heat_snapshot.get("heat_id"))
+        heat_id = heat_snapshot.get("heat_id")
+        heat = (
+            db.session.get(Heat, heat_id)
+            if prefetched is None
+            else prefetched["heats"].get(heat_id)
+        )
         if heat is None:
             heat_state.append(None)
             continue
         heat_state.append({
             "id": heat.id,
-            "version_id": heat.version_id,
-            "status": heat.status,
             "competitors": heat.get_competitors(),
             "stand_assignments": heat.get_stand_assignments(),
+            "version_id": heat.version_id,
+            "status": heat.status,
         })
 
     payload = {
@@ -168,6 +410,7 @@ def _scratch_post_state_sha256(competitor, snapshot: dict) -> str:
         },
         "results": result_state,
         "heats": heat_state,
+        "relay": _scratch_relay_post_state(competitor, snapshot, prefetched),
     }
     encoded = json.dumps(
         payload,
@@ -795,19 +1038,28 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                         continue
                     relay = ProAmRelay(tournament)
                     # Remove the competitor from all member lists in all teams.
+                    member_key = (
+                        "college_members"
+                        if isinstance(competitor, CollegeCompetitor)
+                        else "pro_members"
+                    )
                     teams = relay.relay_data.get("teams", [])
                     for team in teams:
-                        for list_key in ("pro_members", "college_members"):
-                            team[list_key] = [
-                                m for m in team.get(list_key, [])
-                                if m.get("id") != competitor.id
-                            ]
+                        team[member_key] = [
+                            member
+                            for member in team.get(member_key, [])
+                            if member.get("id") != competitor.id
+                        ]
                     snapshot["relay_teams"].append({
                         "source": "legacy",
                         "relay_event_id": relay_event_id,
                         "team_number": effect.metadata.get("team_number"),
                     })
-                    relay._save_relay_data(commit=False)
+                    # Preserve the store named by the effect and undo snapshot.
+                    # Projecting a complete legacy document here would clear
+                    # event_state and move the remaining roster into normalized
+                    # rows, leaving legacy undo unable to restore this member.
+                    relay_event.event_state = json.dumps(relay.relay_data)
                     effects_applied += 1
 
             elif effect.effect_type == "standings":
@@ -1043,12 +1295,55 @@ def find_undoable_scratch(competitor_id: int, competitor_type: str | None = None
     return scratch_entry
 
 
-def find_undoable_scratches(competitor_ids, competitor_type: str | None = None) -> set:
-    """The subset of competitor_ids whose scratch is still inside the window.
+def _scratch_entry_matches_current_state(
+    audit_entry,
+    competitor=None,
+    prefetched: dict | None = None,
+) -> bool:
+    """Return whether an audit still describes a safely reversible scratch."""
+    from database import db
+    from models.competitor import CollegeCompetitor, ProCompetitor
 
-    Read-only, one query for a whole page.  The rosters need this for every
-    scratched competitor in the table, and calling find_undoable_scratch per
-    row would put a query per competitor on the busiest screen of race day.
+    details = _scratch_audit_details(audit_entry)
+    snapshot = details.get("scratch_snapshot")
+    expected_state = details.get("scratch_post_state_sha256")
+    if not isinstance(snapshot, dict) or not isinstance(expected_state, str):
+        return False
+
+    if competitor is None:
+        comp_type = snapshot.get("competitor_type")
+        model = (
+            CollegeCompetitor
+            if comp_type == "college"
+            else ProCompetitor if comp_type == "pro" else None
+        )
+        if model is None:
+            return False
+        competitor = db.session.get(model, audit_entry.entity_id)
+    if competitor is None:
+        return False
+
+    try:
+        current_state = _scratch_post_state_sha256(
+            competitor,
+            snapshot,
+            prefetched,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+    return hmac.compare_digest(expected_state, current_state)
+
+
+def find_undoable_scratch_tokens(
+    competitor_ids,
+    competitor_type: str | None = None,
+) -> dict[int, str]:
+    """Return current undo tokens keyed by competitor id.
+
+    Read-only, with a fixed number of batched queries for a whole page.  The
+    rosters need this for every scratched competitor in the table, and calling
+    find_undoable_scratch per row would put queries per competitor on the
+    busiest screen of race day.
 
     Same cutoff and same snapshot-type filter as find_undoable_scratch, so an
     Undo button on a roster and the one on the confirmation page cannot
@@ -1058,7 +1353,7 @@ def find_undoable_scratches(competitor_ids, competitor_type: str | None = None) 
 
     ids = [int(c) for c in competitor_ids]
     if not ids:
-        return set()
+        return {}
 
     cutoff = utc_now_naive() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
     scratch_entries = (
@@ -1088,11 +1383,60 @@ def find_undoable_scratches(competitor_ids, competitor_type: str | None = None) 
             AuditLog.entity_id.in_(ids),
         ).all()
     )
-    return {
-        competitor_id
-        for competitor_id, entry in latest_by_competitor.items()
-        if entry.id not in consumed and scratch_undo_token(entry) is not None
+
+    from models.competitor import CollegeCompetitor, ProCompetitor
+
+    ids_by_type = {"college": set(), "pro": set()}
+    for competitor_id, entry in latest_by_competitor.items():
+        comp_type = _snapshot_competitor_type(entry)
+        if comp_type in ids_by_type:
+            ids_by_type[comp_type].add(competitor_id)
+    competitors = {
+        ("college", competitor.id): competitor
+        for competitor in CollegeCompetitor.query.filter(
+            CollegeCompetitor.id.in_(ids_by_type["college"])
+        ).all()
     }
+    competitors.update({
+        ("pro", competitor.id): competitor
+        for competitor in ProCompetitor.query.filter(
+            ProCompetitor.id.in_(ids_by_type["pro"])
+        ).all()
+    })
+
+    candidate_snapshots = [
+        details["scratch_snapshot"]
+        for entry in latest_by_competitor.values()
+        if entry.id not in consumed
+        and (details := _scratch_audit_details(entry))
+        and isinstance(details.get("scratch_snapshot"), dict)
+    ]
+    prefetched = _prefetch_scratch_post_state(candidate_snapshots)
+
+    tokens = {}
+    for competitor_id, entry in latest_by_competitor.items():
+        if entry.id in consumed:
+            continue
+        token = scratch_undo_token(entry)
+        competitor = competitors.get((
+            _snapshot_competitor_type(entry),
+            competitor_id,
+        ))
+        if (
+            token is not None
+            and _scratch_entry_matches_current_state(
+                entry,
+                competitor,
+                prefetched,
+            )
+        ):
+            tokens[competitor_id] = token
+    return tokens
+
+
+def find_undoable_scratches(competitor_ids, competitor_type: str | None = None) -> set:
+    """The compatible id-set view of ``find_undoable_scratch_tokens``."""
+    return set(find_undoable_scratch_tokens(competitor_ids, competitor_type))
 
 
 def reverse_cascade(
@@ -1249,9 +1593,9 @@ def reverse_cascade(
 
     expected_post_state = details.get("scratch_post_state_sha256")
     current_post_state = _scratch_post_state_sha256(comp, snapshot)
-    if (
-        not isinstance(expected_post_state, str)
-        or not hmac.compare_digest(expected_post_state, current_post_state)
+    if not (
+        isinstance(expected_post_state, str)
+        and hmac.compare_digest(expected_post_state, current_post_state)
     ):
         return {
             "success": False,

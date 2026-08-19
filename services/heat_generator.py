@@ -780,7 +780,11 @@ def _get_event_competitors(event: Event) -> list:
         excluded = [
             c for c in all_comps
             if c.gender != event.gender
-            and _competitor_entered_event(event, c.get_events_entered())
+            and _competitor_entered_event(
+                event,
+                c.get_events_entered(),
+                competitor_gender=c.gender,
+            )
         ]
         if excluded:
             _last_gender_excluded[event.id] = [
@@ -800,7 +804,11 @@ def _get_event_competitors(event: Event) -> list:
         all_comps = [c for c in all_comps if c.gender == event.gender]
 
     for comp in all_comps:
-        if not _competitor_entered_event(event, comp.get_events_entered()):
+        if not _competitor_entered_event(
+            event,
+            comp.get_events_entered(),
+            competitor_gender=comp.gender,
+        ):
             continue
         if comp.id in seen_ids:
             continue
@@ -1381,12 +1389,37 @@ def _normalize_name(value: str) -> str:
     return ''.join(ch for ch in str(value or '').lower() if ch.isalnum())
 
 
-def _competitor_entered_event(event: Event, entered_events: list) -> bool:
+def _college_event_name_is_gender_ambiguous(event: Event) -> bool:
+    """Return whether this neutral college name has both M and F event rows."""
+    if event.event_type != 'college' or event.gender not in {'M', 'F'}:
+        return False
+
+    target_name = _normalize_name(event.name)
+    matching_genders = {
+        candidate.gender
+        for candidate in _get_tournament_events(event)
+        if candidate.event_type == 'college'
+        and _normalize_name(candidate.name) == target_name
+    }
+    return {'M', 'F'}.issubset(matching_genders)
+
+
+def _competitor_entered_event(
+    event: Event,
+    entered_events: list,
+    *,
+    competitor_gender: str | None = None,
+) -> bool:
+    """Resolve IDs, qualified names, and legacy neutral college names."""
     entered = entered_events if isinstance(entered_events, list) else []
     target_id = str(event.id)
     target_name = _normalize_name(event.name)
     target_display_name = _normalize_name(event.display_name)
     aliases = {target_name, target_display_name}
+    use_competitor_gender = (
+        competitor_gender in {'M', 'F'}
+        and _college_event_name_is_gender_ambiguous(event)
+    )
 
     if event.event_type == 'pro':
         if target_name == 'springboard':
@@ -1407,6 +1440,12 @@ def _competitor_entered_event(event: Event, entered_events: list) -> bool:
         if value == target_id:
             return True
         normalized = _normalize_name(value)
+        if normalized == target_display_name and target_display_name != target_name:
+            return True
+        if normalized == target_name:
+            if use_competitor_gender:
+                return event.gender == competitor_gender
+            return True
         if normalized in aliases:
             return True
     return False
