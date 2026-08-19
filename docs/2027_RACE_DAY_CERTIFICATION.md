@@ -47,7 +47,7 @@ stand in for hosted CI, a production mirror, or production smoke evidence.
 | R27-004 | A prepared device can restart during WAN loss and open every scheduled heat page and local asset. | Domain Contract local-first boundary | Implemented | Bound manifest verifies content hashes; 2026-08-19 browser rehearsal prepared 15/15 items and cold-reloaded a heat with the local application origin stopped | Physical-device restart rehearsal on the approved 2027 schedule |
 | R27-005 | One request produces at most one committed scoring action across duplicate, lost-response, retry, reconnect, and transfer paths; request tombstones remain with tournament history. | Owner scoring integrity | Implemented | Durable receipts/tombstones, rollback and duplicate tests, eight PostgreSQL races, lifecycle FK tests, and two browser replays with matching UUID/SHA-256 receipts | Hosted exact-head run and production-like multi-device rehearsal |
 | R27-006 | Queues are inspectable and transferable as data, while replay authority remains bound to the issuing user and current role/tournament access; old entries stop automatic mutation. | Local-first and authorization controls | Implemented | Canonical LocalStorage queue; issuer/role/tournament/schedule binding; authenticated 8-30 day renewal; 30-day cutoff; export/import and stale-context tests; browser queue inspection | Physical cross-device transfer rehearsal and approved operator procedure |
-| R27-007 | Compatible concurrent operations survive; conflicting, duplicate, stale, and out-of-order operations receive deterministic outcomes without silent loss. | Owner workflows; Domain Contract | Implemented | Stale-writer fences cover relay, payout, partner, scratch, flight, Birling, scoring, and background completion; eight disposable PostgreSQL races passed; lock-only scoring version race passed in two browser sessions | Hosted PostgreSQL lane plus complete 2027 full-show adversarial rehearsal |
+| R27-007 | Compatible concurrent operations survive; conflicting, duplicate, stale, and out-of-order operations receive deterministic outcomes without silent loss. | Owner workflows; Domain Contract | Implemented | Stale-writer fences cover relay, payout, partner, scratch, flight, Birling, scoring, and background completion; eight disposable PostgreSQL races passed; lock-only scoring version race passed in two browser sessions; eight simultaneous same-account scoring GETs produced one atomic lock update and eight successful responses | Hosted PostgreSQL lane plus complete 2027 full-show adversarial rehearsal |
 | R27-008 | Background work reports failed, interrupted, expired, and completed truthfully and is scoped before tournament limits are applied. | Operator recovery integrity | Implemented | Boot ownership, heartbeat, interrupted reconciliation, atomic completion, truthful return-state tests, and tournament-scope tests passed | Hosted restart/reconciliation rehearsal with retained operator evidence |
 | R27-009 | SQLite backup is consistent; restore is quiesced, validated, journaled outside the DB, rollback-capable, and never reported ambiguously. | Existing SQLite recovery surface | Implemented | Process fence, consistent snapshot, restore package v2, schema/FK/index/trigger fingerprint, private permissions, WAL/SHM intent journal, quarantine, rollback, and 31 restore tests passed | Operator rehearsal on release hardware; provenance remains transport/host evidence, not a signature claim |
 | R27-010 | A PostgreSQL artifact is restored only into a runner-local disposable target and passes schema/migration checks before publication. | Production PostgreSQL boundary | Implemented | Workflow enforces a least-privilege dump URL, runner-local target guard, current-head schema checks, encrypted-only upload, and plaintext cleanup; local PostgreSQL drill passed | Hosted workflow run with the approved secrets and retained artifact evidence |
@@ -143,10 +143,13 @@ SQLite databases, a disposable local PostgreSQL database, and
 The follow-up local rehearsal is recorded in
 `docs/2027_FULL_DRESS_REHEARSAL.md`. It adds a deterministic guarded load
 harness, a passing 260-user operator-paced load gate, safe run-owned PostgreSQL
-cleanup, cold-cache request coalescing, anonymous public-request query
-reduction, 160 SQLite operations checks, 14 disposable PostgreSQL checks,
-migration safety evidence, a two-session stale-score conflict, responsive
-desktop/phone inspection, and a 15-of-15 origin-down offline reload.
+cleanup and migration-head template isolation, cold-cache request coalescing,
+anonymous public-request query reduction, deterministic full-response load
+measurement with activation, authentication, role, and endpoint gates, atomic
+heat-lock acquisition under simultaneous judge page loads, 160 SQLite
+operations checks, 14 disposable PostgreSQL checks, migration safety evidence,
+a two-session stale-score conflict, responsive desktop/phone inspection, and a
+15-of-15 origin-down offline reload.
 
 It does not change any `Owner decision` to `Certified` and does not stand in
 for a physical device, hosted CI, production mirror, deployment, production

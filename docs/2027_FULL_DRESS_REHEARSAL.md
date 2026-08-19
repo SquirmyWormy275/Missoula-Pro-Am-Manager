@@ -15,9 +15,10 @@ network integration.
 
 SQLite tests used migration-built temporary databases. PostgreSQL tests used
 unique disposable clones of `proam_unit_template` and ran serially. The
-rehearsal did not delete databases by prefix. PostgreSQL inventory was the same
-before and after the lanes: `proam_unit_44728_1` and
-`proam_unit_template`. The worktree default `instance/proam.db` did not exist
+rehearsal did not delete databases by prefix. The unit-test database namespace
+was the same before and after the lanes: `proam_unit_44728_1` and
+`proam_unit_template`. Other pre-existing local databases were outside this
+rehearsal and untouched. The worktree default `instance/proam.db` did not exist
 before or after the rehearsal.
 
 The retained browser fixture is a synthetic database outside the Git worktree:
@@ -35,11 +36,18 @@ The deterministic fixture contained:
   recovery.
 
 The load harness now migrates and seeds its own database, refuses
-`instance/proam.db`, refuses every pre-existing database path, releases its
-database and process-fence resources before starting the child server, and
-returns a failing process status when the latency, aggregate-error, or
-zero-server-error gate fails. Judge users establish independent authenticated
-sessions with the real CSRF-backed login flow before reading scoring pages.
+`instance/proam.db`, refuses every pre-existing database path, prevents the
+report output from aliasing either database, and requires an explicit flag to
+replace an existing report. Existing aliases are detected by file identity and
+authorized replacement is an atomic file swap, so the report writer never
+truncates an existing target. It releases database, process-fence, worker, and
+server-log resources on failure and returns a failing process status when any
+aggregate, role, endpoint, activation, authentication, error-rate,
+sample-count, or zero-server-error gate fails. Judge users establish
+independent authenticated sessions with the real CSRF-backed login flow before
+reading scoring pages. Every measured request rejects an unexpected redirect,
+and every timed response includes the full body transfer. Workload ordering and
+per-worker random streams use the recorded seed `2027`.
 
 ## Load Gate
 
@@ -55,27 +63,46 @@ judge-only pending-heat query, and concurrent cold public-cache misses rebuilt
 the same payload independently. The fixes skip the judge query for anonymous
 traffic and coalesce cache fills per key without serializing unrelated keys.
 
+The first run with exact activation and authentication accounting exposed a
+third defect rather than passing around it: concurrent judge GETs attempted
+optimistic ORM updates to acquire the same heat lock, producing three HTTP 500
+responses and a poisoned-session failure while rendering the error page. Heat
+lock acquisition is now one conditional database update; losing requests
+reload the winner and render a blocked form instead of racing the heat version.
+The global 500 handler also rolls back before consulting users or templates.
+
+A subsequent zero-error run exposed a harness timing defect: its shared ramp
+clock started before all 260 client threads were ready, so host scheduling
+delays inflated both the observed activation spread and response latency. A
+ready barrier now excludes client-launch overhead and releases every worker
+against one shared ramp epoch. Neither failed run is represented as a pass.
+
 The final operator-paced gate used the repository defaults intended to model
 real polling and entry cadence:
 
 | Metric | Result | Gate |
 |---|---:|---:|
 | Virtual users | 260 (200 spectator, 50 competitor, 10 judge) | n/a |
-| Ramp | 15.001 s actual | 15 s configured |
+| Worker activation spread | 14.999 s actual | 15 s ramp configured |
 | Steady state | 15 s | 15 s configured |
 | Requests | 342 | n/a |
 | Successful requests | 342 | n/a |
 | Errors | 0 (0.00%) | no more than 0.50% |
 | HTTP 5xx responses | 0 | 0 |
 | Throughput | 11.35 requests/s | informational |
-| Mean latency | 33.67 ms | informational |
-| p50 latency | 9.36 ms | informational |
-| p95 latency | 134.74 ms | no more than 800 ms |
-| p99 latency | 266.96 ms | informational |
-| Maximum latency | 575.96 ms | informational |
+| Mean latency | 32.51 ms | informational |
+| p50 latency | 7.73 ms | informational |
+| p95 latency | 154.50 ms | no more than 800 ms |
+| p99 latency | 361.72 ms | informational |
+| Maximum latency | 563.75 ms | informational |
 
-Role p95 latency was 80.64 ms for spectators, 48.24 ms for competitors, and
-266.96 ms for authenticated judges. The final gate passed.
+Role p95 latency was 56.65 ms for spectators, 47.21 ms for competitors, and
+282.90 ms for authenticated judges. All 260 configured users activated, all 10
+distinct judges authenticated, and all 11 expected endpoints received samples
+and passed their independent 800 ms p95 and 0.50% error-rate gates. The slowest
+endpoint p95 was 345.92 ms for the first scoring heat. The final gate passed.
+The external report `load-report-auth-final-v8.json` has SHA-256
+`df2d5209c206fdbfd7f0ff4257510e2782034438963adc9f8dca3f55ee6a01e0`.
 
 This passing paced run does not erase the zero-ramp result. The zero-ramp mode
 remains available as an explicit saturation test; it is not represented as the
@@ -83,12 +110,20 @@ expected human traffic shape.
 
 ## Automated Evidence
 
-- Rehearsal harness, cache, and anonymous-context focused lane: 28 passed.
-- Rehearsal safety module: 11 passed, including production-path refusal,
-  existing-path refusal, generated-database disposal, truthful gate status,
-  zero-server-error enforcement, CSRF token parsing, error classification,
-  configurable load shape, authenticated judge assignment, and no PostgreSQL
-  prefix sweep.
+- Broad focused regression lane: 249 passed across rehearsal safety,
+  infrastructure/cache, Flask reliability, spectator portals, API endpoints,
+  and migration/listener hygiene.
+- Rehearsal safety module: 33 passed, including database and report-path
+  refusal, generated-database disposal, aggregate/role/endpoint gate status,
+  hard-link/path-swap refusal, atomic report replacement, exact user activation
+  and judge authentication counts, minimum judge login samples,
+  zero-server-error enforcement, public/authenticated redirect rejection,
+  full-body timing, CSRF parsing, deterministic load streams, bounded thread
+  cleanup, and PostgreSQL template isolation.
+- Scoring and day-of-operations regression lane: 66 passed across concurrent
+  integration QA, scoring workflow, dual-timer entry, operator actions, and
+  stale/invalid edge cases. This includes an eight-session same-account heat
+  GET race that produced one lock/version update and eight HTTP 200 responses.
 - SQLite operations lane: 160 passed across daily backup, offline assets,
   offline scoring, reporting backup/export, restore, service-worker contract,
   shadow release readiness, tournament lifecycle portals, and end-to-end
@@ -150,6 +185,40 @@ system radio-disable test.
 7. Migration listener-hygiene tests could instantiate the default application
    database. They now bind a temporary SQLite database, release all handles and
    process fences, and assert the default database remains unchanged.
+8. Report output could alias and overwrite a protected or retained database.
+   Output paths are now checked before startup and publication, hard-link and
+   symlink aliases are rejected by file identity, existing reports require
+   explicit overwrite authorization, and replacement is atomic.
+9. Authenticated scoring redirects, partial-body timing, aggregate-only p95,
+   unseeded worker streams, and unbounded worker cleanup could produce a
+   misleading or stuck load receipt. The harness now rejects every unexpected
+   public or authenticated redirect, consumes complete responses, requires
+   every configured user to activate and every judge to authenticate, gates
+   every role and endpoint with minimum samples, records a deterministic seed,
+   and stops started workers in `finally`.
+10. Concurrent checkouts shared one mutable PostgreSQL schema template. Test
+    templates are now namespaced by migration head, construction is serialized
+    with a PostgreSQL advisory lock, and every template drop/create is checked.
+11. Per-key cache fill locks accumulated for the process lifetime. Idle locks
+    now retire automatically, while active readers retain the shared lock.
+12. Concurrent judge page loads used ordinary optimistic ORM writes to acquire
+    a heat lock, so simultaneous requests could raise `StaleDataError`. Lock
+    acquisition is now an atomic available-or-expired update, repeat ownership
+    checks are read-only, and losing judges render the existing blocked state.
+13. The 500 handler rendered against a failed SQLAlchemy transaction. It now
+    rolls back before API serialization, user lookup, or template rendering.
+14. Client-thread creation occurred inside the measured ramp and could delay
+    later virtual users. Every client now reaches a ready barrier before one
+    shared launch epoch begins the measured ramp.
+15. Redirect validation compared only paths after redirects had already been
+    followed. A same-origin redirect handler now blocks scheme, host, or port
+    changes before network follow, and final scheme/host/port/path must match.
+16. First-time report creation could leave a partial final file after a crash
+    or serialization error. New and replacement reports are now fully written
+    and flushed in a sibling temporary file before atomic publication.
+17. A heat deleted between route lookup and lock acquisition could fail during
+    ORM refresh. The lock path now re-queries after commit and returns 404 when
+    the row no longer exists.
 
 ## Uncertified Gates
 

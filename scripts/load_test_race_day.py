@@ -32,6 +32,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_DB_PATH = (PROJECT_ROOT / "instance" / "proam.db").resolve()
+JUDGE_USERNAME = "judge_loadtest_1"
+JUDGE_PASSWORD = "LoadTest123!"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -56,7 +58,9 @@ def _seed_race_day_data() -> dict:
 
     seed_rng = random.Random(2027)
     app = create_app()
-    with app.app_context():
+    app_context = app.app_context()
+    app_context.push()
+    try:
         tournament = (
             Tournament.query.filter(
                 Tournament.status.in_(["setup", "college_active", "pro_active"])
@@ -120,17 +124,21 @@ def _seed_race_day_data() -> dict:
             db.session.flush()
             pro.append(comp)
 
-        judges = User.query.filter_by(role=User.ROLE_JUDGE).count()
-        while judges < 10:
-            idx = judges + 1
+        judge_usernames = []
+        for idx in range(1, 11):
             username = f"judge_loadtest_{idx}"
-            if User.query.filter_by(username=username).first():
-                judges += 1
-                continue
-            user = User(username=username, role=User.ROLE_JUDGE, display_name=f"Judge {idx}")
-            user.set_password("LoadTest123!")
-            db.session.add(user)
-            judges += 1
+            user = User.query.filter_by(username=username).first()
+            if user is None:
+                user = User(
+                    username=username,
+                    role=User.ROLE_JUDGE,
+                    display_name=f"Judge {idx}",
+                )
+                db.session.add(user)
+            else:
+                user.role = User.ROLE_JUDGE
+            user.set_password(JUDGE_PASSWORD)
+            judge_usernames.append(username)
 
         existing_college_events = (
             Event.query.filter_by(tournament_id=tournament.id, event_type="college", status="completed")
@@ -261,9 +269,15 @@ def _seed_race_day_data() -> dict:
                 int(heat.id)
                 for heat in live_event.heats.order_by(Heat.heat_number).all()
             ],
-            "judge_username": "judge_loadtest_1",
+            "judge_username": JUDGE_USERNAME,
+            "judge_usernames": judge_usernames,
+            "judge_password": JUDGE_PASSWORD,
         }
-    _release_app(app)
+    finally:
+        try:
+            app_context.pop()
+        finally:
+            _release_app(app)
     return seed
 
 
@@ -276,7 +290,20 @@ class Stats:
     status_codes: dict[int, int] = field(default_factory=dict)
     error_kinds: dict[str, int] = field(default_factory=dict)
     error_paths: dict[str, int] = field(default_factory=dict)
+    path_requests: dict[str, int] = field(default_factory=dict)
+    path_errors: dict[str, int] = field(default_factory=dict)
+    path_latencies: dict[str, list[float]] = field(default_factory=dict)
+    activations: list[float] = field(default_factory=list)
+    authentications: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def activate(self, activated_at: float) -> None:
+        with self.lock:
+            self.activations.append(activated_at)
+
+    def authenticate(self) -> None:
+        with self.lock:
+            self.authentications += 1
 
     def add(
         self,
@@ -290,12 +317,17 @@ class Stats:
             self.total += 1
             if latency >= 0:
                 self.latencies.append(latency)
+            if path:
+                self.path_requests[path] = self.path_requests.get(path, 0) + 1
+                if latency >= 0:
+                    self.path_latencies.setdefault(path, []).append(latency)
             if status is None:
                 self.errors += 1
                 kind = error_kind or "request_error"
                 self.error_kinds[kind] = self.error_kinds.get(kind, 0) + 1
                 if path:
                     self.error_paths[path] = self.error_paths.get(path, 0) + 1
+                    self.path_errors[path] = self.path_errors.get(path, 0) + 1
             elif 200 <= status < 400:
                 self.success += 1
                 self.status_codes[status] = self.status_codes.get(status, 0) + 1
@@ -306,6 +338,7 @@ class Stats:
                 self.error_kinds[kind] = self.error_kinds.get(kind, 0) + 1
                 if path:
                     self.error_paths[path] = self.error_paths.get(path, 0) + 1
+                    self.path_errors[path] = self.path_errors.get(path, 0) + 1
 
 
 def _error_kind(exc: Exception) -> str:
@@ -321,6 +354,39 @@ def _error_kind(exc: Exception) -> str:
     return type(reason).__name__.lower()
 
 
+def _drain_http_error(exc: urllib.error.HTTPError) -> None:
+    try:
+        exc.read()
+    except Exception:
+        pass
+
+
+class CrossOriginRedirectError(RuntimeError):
+    pass
+
+
+def _url_origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urllib.parse.urlsplit(url)
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme.lower() == "https" else 80
+    return parsed.scheme.lower(), (parsed.hostname or "").lower(), port
+
+
+class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, base_url: str) -> None:
+        super().__init__()
+        self.allowed_origin = _url_origin(base_url)
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirect_url = urllib.parse.urljoin(req.full_url, newurl)
+        if _url_origin(redirect_url) != self.allowed_origin:
+            raise CrossOriginRedirectError(
+                f"Refused cross-origin redirect to {_url_origin(redirect_url)}"
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class _CsrfTokenParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -334,21 +400,51 @@ class _CsrfTokenParser(HTMLParser):
             self.token = attributes["value"]
 
 
+def _consume_measured_response(
+    response,
+    requested_url: str,
+    *,
+    authenticated: bool,
+) -> tuple[int | None, str | None]:
+    """Read the full response and reject lost authenticated sessions."""
+    response.read()
+    status = int(response.status)
+    final_url = urllib.parse.urlsplit(response.geturl())
+    expected_url = urllib.parse.urlsplit(requested_url)
+    final_target = (
+        *_url_origin(response.geturl()),
+        final_url.path,
+    )
+    expected_target = (
+        *_url_origin(requested_url),
+        expected_url.path,
+    )
+    if final_target == expected_target:
+        return status, None
+    if authenticated and final_url.path == "/auth/login":
+        return 401, "authentication_lost"
+    return None, "unexpected_redirect"
+
+
 def _worker(
     base_url: str,
     endpoints: list[str],
     stop_event: threading.Event,
     stats: Stats,
     timeout: float,
-    start_delay: float,
+    start_at: float,
     think_min: float,
     think_max: float,
     login_credentials: tuple[str, str] | None,
+    rng_seed: int,
 ) -> None:
-    rng = random.Random()
+    rng = random.Random(rng_seed)
+    start_delay = max(0.0, start_at - time.perf_counter())
     if start_delay and stop_event.wait(start_delay):
         return
+    stats.activate(time.perf_counter())
     opener = urllib.request.build_opener(
+        _SameOriginRedirectHandler(base_url),
         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
     )
     if login_credentials:
@@ -372,6 +468,7 @@ def _worker(
                     csrf_status = 401
                     csrf_error = "csrf_token_missing"
         except urllib.error.HTTPError as exc:
+            _drain_http_error(exc)
             csrf_status = int(exc.code)
         except Exception as exc:
             csrf_error = _error_kind(exc)
@@ -399,12 +496,13 @@ def _worker(
                 headers={"User-Agent": "race-day-load-test/1.0"},
             )
             with opener.open(login_request, timeout=timeout) as response:
-                _ = response.read(256)
+                response.read()
                 login_status = int(response.status)
-                if "/auth/login" in response.geturl():
+                if urllib.parse.urlsplit(response.geturl()).path == "/auth/login":
                     login_status = 401
                     login_error = "authentication_failed"
         except urllib.error.HTTPError as exc:
+            _drain_http_error(exc)
             login_status = int(exc.code)
         except Exception as exc:
             login_error = _error_kind(exc)
@@ -416,6 +514,7 @@ def _worker(
         )
         if login_status is None or not 200 <= login_status < 400:
             return
+        stats.authenticate()
 
     while not stop_event.is_set():
         path = rng.choice(endpoints)
@@ -423,17 +522,60 @@ def _worker(
         status = None
         error_kind = None
         try:
-            req = urllib.request.Request(f"{base_url}{path}", headers={"User-Agent": "race-day-load-test/1.0"})
+            request_url = f"{base_url}{path}"
+            req = urllib.request.Request(request_url, headers={"User-Agent": "race-day-load-test/1.0"})
             with opener.open(req, timeout=timeout) as resp:
-                _ = resp.read(256)
-                status = int(resp.status)
+                status, error_kind = _consume_measured_response(
+                    resp,
+                    request_url,
+                    authenticated=login_credentials is not None,
+                )
         except urllib.error.HTTPError as exc:
+            _drain_http_error(exc)
             status = int(exc.code)
         except Exception as exc:
             error_kind = _error_kind(exc)
         latency_ms = (time.perf_counter() - start) * 1000.0
         stats.add(latency_ms, status, error_kind=error_kind, path=f"GET {path}")
         stop_event.wait(rng.uniform(think_min, think_max))
+
+
+def _guarded_worker(
+    worker_errors: list[str],
+    worker_errors_lock: threading.Lock,
+    ready_barrier: threading.Barrier,
+    launch_event: threading.Event,
+    launch_clock: list[float],
+    start_delay: float,
+    base_url: str,
+    endpoints: list[str],
+    stop_event: threading.Event,
+    stats: Stats,
+    timeout: float,
+    think_min: float,
+    think_max: float,
+    login_credentials: tuple[str, str] | None,
+    rng_seed: int,
+) -> None:
+    try:
+        ready_barrier.wait(timeout=60)
+        launch_event.wait()
+        _worker(
+            base_url,
+            endpoints,
+            stop_event,
+            stats,
+            timeout,
+            launch_clock[0] + start_delay,
+            think_min,
+            think_max,
+            login_credentials,
+            rng_seed,
+        )
+    except Exception as exc:
+        with worker_errors_lock:
+            worker_errors.append(f"{type(exc).__name__}: {exc}")
+        stop_event.set()
 
 
 def _percentile(values: list[float], p: float) -> float:
@@ -448,9 +590,19 @@ def _passes_gate(
     report: dict,
     *,
     target_p95_ms: float,
+    target_role_p95_ms: float | None = None,
     max_error_rate: float,
     max_server_errors: int = 0,
 ) -> bool:
+    role_results = _role_gate_results(
+        report,
+        target_role_p95_ms=(
+            target_p95_ms
+            if target_role_p95_ms is None
+            else target_role_p95_ms
+        ),
+        max_error_rate=max_error_rate,
+    )
     server_errors = sum(
         count
         for code, count in report.get("status_codes", {}).items()
@@ -460,7 +612,85 @@ def _passes_gate(
         report["requests"]["error_rate"] <= max_error_rate
         and report["latency_ms"]["p95"] <= target_p95_ms
         and server_errors <= max_server_errors
+        and all(result["passed"] for result in role_results.values())
     )
+
+
+def _role_gate_results(
+    report: dict,
+    *,
+    target_role_p95_ms: float,
+    max_error_rate: float,
+) -> dict[str, dict]:
+    results = {}
+    users = report.get("users", {})
+    for role, summary in report.get("by_role", {}).items():
+        user_count = int(users.get(role, 0))
+        if user_count <= 0:
+            continue
+        minimum_requests = user_count * (3 if role == "judges" else 1)
+        request_count = int(summary.get("requests", 0))
+        error_count = int(summary.get("errors", 0))
+        activation_count = int(summary.get("activations", 0))
+        authentication_count = int(summary.get("authentications", 0))
+        error_rate = error_count / request_count if request_count else 1.0
+        p95_ms = float(summary.get("p95_ms", 0.0))
+        endpoint_results = {}
+        for path in report.get("load_shape", {}).get(
+            "expected_paths",
+            {},
+        ).get(role, []):
+            path_summary = summary.get("by_path", {}).get(path, {})
+            path_requests = int(path_summary.get("requests", 0))
+            path_errors = int(path_summary.get("errors", 0))
+            path_error_rate = (
+                path_errors / path_requests if path_requests else 1.0
+            )
+            path_p95_ms = float(path_summary.get("p95_ms", 0.0))
+            minimum_path_requests = (
+                user_count
+                if role == "judges" and path in {
+                    "GET /auth/login",
+                    "POST /auth/login",
+                }
+                else 1
+            )
+            endpoint_results[path] = {
+                "requests": path_requests,
+                "minimum_requests": minimum_path_requests,
+                "error_rate": path_error_rate,
+                "p95_ms": path_p95_ms,
+                "passed": (
+                    path_requests >= minimum_path_requests
+                    and path_error_rate <= max_error_rate
+                    and path_p95_ms <= target_role_p95_ms
+                ),
+            }
+        results[role] = {
+            "requests": request_count,
+            "minimum_requests": minimum_requests,
+            "configured_users": user_count,
+            "activations": activation_count,
+            "authentications": authentication_count,
+            "error_rate": error_rate,
+            "p95_ms": p95_ms,
+            "endpoints": endpoint_results,
+            "passed": (
+                request_count >= minimum_requests
+                and activation_count == user_count
+                and (
+                    role != "judges"
+                    or authentication_count == user_count
+                )
+                and error_rate <= max_error_rate
+                and p95_ms <= target_role_p95_ms
+                and all(
+                    result["passed"]
+                    for result in endpoint_results.values()
+                )
+            ),
+        }
+    return results
 
 
 def _run_load_test(
@@ -477,6 +707,8 @@ def _run_load_test(
     spectator_think: tuple[float, float] = (25.0, 35.0),
     competitor_think: tuple[float, float] = (20.0, 60.0),
     judge_think: tuple[float, float] = (3.0, 8.0),
+    judge_credentials: list[tuple[str, str]] | None = None,
+    seed: int = 2027,
 ) -> dict:
     user_counts = {
         "spectators": spectator_users,
@@ -513,53 +745,103 @@ def _run_load_test(
 
     stop_event = threading.Event()
     user_specs = []
+    judge_accounts = (
+        [(JUDGE_USERNAME, JUDGE_PASSWORD)]
+        if judge_credentials is None
+        else judge_credentials
+    )
+    if judge_users and not judge_accounts:
+        raise ValueError("At least one judge account is required for judge users.")
     role_specs = (
         (spectator_users, spectator_paths, spectator_stats, spectator_think, None),
         (competitor_users, competitor_paths, competitor_stats, competitor_think, None),
-        (
-            judge_users,
-            judge_paths,
-            judge_stats,
-            judge_think,
-            ("judge_loadtest_1", "LoadTest123!"),
-        ),
     )
     for count, paths, stats, (think_min, think_max), credentials in role_specs:
         for _ in range(count):
             user_specs.append((paths, stats, think_min, think_max, credentials))
+    for index in range(judge_users):
+        user_specs.append((
+            judge_paths,
+            judge_stats,
+            judge_think[0],
+            judge_think[1],
+            judge_accounts[index % len(judge_accounts)],
+        ))
 
-    random.shuffle(user_specs)
+    workload_rng = random.Random(seed)
+    workload_rng.shuffle(user_specs)
     users = []
+    worker_errors = []
+    worker_errors_lock = threading.Lock()
+    ready_barrier = threading.Barrier(len(user_specs) + 1)
+    launch_event = threading.Event()
+    launch_clock = [0.0]
     for index, (paths, stats, think_min, think_max, credentials) in enumerate(user_specs):
         start_delay = ramp_up_s * index / max(1, len(user_specs) - 1)
         users.append(threading.Thread(
-                target=_worker,
+                target=_guarded_worker,
                 args=(
+                    worker_errors,
+                    worker_errors_lock,
+                    ready_barrier,
+                    launch_event,
+                    launch_clock,
+                    start_delay,
                     base_url,
                     paths,
                     stop_event,
                     stats,
                     timeout_s,
-                    start_delay,
                     think_min,
                     think_max,
                     credentials,
+                    workload_rng.randrange(2**63),
                 ),
+                daemon=True,
+                name=f"race-day-user-{index + 1}",
             ))
 
-    start = time.time()
-    for thread in users:
-        thread.start()
-    remaining_ramp = max(0.0, ramp_up_s - (time.time() - start))
-    if remaining_ramp:
-        time.sleep(remaining_ramp)
-    ramp_finished = time.time()
-    if duration_s:
-        time.sleep(duration_s)
-    stop_event.set()
-    for thread in users:
-        thread.join()
-    elapsed = max(0.001, time.time() - start)
+    started_users = []
+    start = None
+    ramp_finished = None
+    try:
+        for thread in users:
+            thread.start()
+            started_users.append(thread)
+        ready_barrier.wait(timeout=60)
+        start = time.perf_counter()
+        launch_clock[0] = start
+        launch_event.set()
+        stop_event.wait(max(0.0, start + ramp_up_s - time.perf_counter()))
+        ramp_finished = time.perf_counter()
+        stop_event.wait(max(0.0, duration_s))
+    finally:
+        stop_event.set()
+        launch_event.set()
+        if start is None:
+            try:
+                ready_barrier.abort()
+            except threading.BrokenBarrierError:
+                pass
+        join_deadline = (
+            time.perf_counter()
+            + timeout_s
+            + max(maximum for _, maximum in think_times.values())
+            + 5.0
+        )
+        for thread in started_users:
+            thread.join(timeout=max(0.0, join_deadline - time.perf_counter()))
+        stuck = [thread.name for thread in started_users if thread.is_alive()]
+        if stuck:
+            raise RuntimeError(
+                f"{len(stuck)} load workers did not stop before the shutdown deadline."
+            )
+    if worker_errors:
+        raise RuntimeError(
+            "Load worker failed unexpectedly: " + "; ".join(worker_errors[:3])
+        )
+    assert start is not None and ramp_finished is not None
+    elapsed = max(0.001, time.perf_counter() - start)
 
     all_latencies = spectator_stats.latencies + competitor_stats.latencies + judge_stats.latencies
     total_requests = spectator_stats.total + competitor_stats.total + judge_stats.total
@@ -577,13 +859,37 @@ def _run_load_test(
             error_path_totals[path] = error_path_totals.get(path, 0) + count
 
     def role_summary(stats: Stats) -> dict:
+        path_summaries = {}
+        for path, requests in sorted(stats.path_requests.items()):
+            errors = stats.path_errors.get(path, 0)
+            path_summaries[path] = {
+                "requests": requests,
+                "errors": errors,
+                "error_rate": errors / requests if requests else 1.0,
+                "p95_ms": _percentile(stats.path_latencies.get(path, []), 0.95),
+            }
         return {
             "requests": stats.total,
             "errors": stats.errors,
+            "activations": len(stats.activations),
+            "authentications": stats.authentications,
+            "error_rate": (stats.errors / stats.total) if stats.total else 1.0,
             "p95_ms": _percentile(stats.latencies, 0.95),
             "error_kinds": dict(sorted(stats.error_kinds.items())),
             "error_paths": dict(sorted(stats.error_paths.items())),
+            "by_path": path_summaries,
         }
+
+    activation_times = (
+        spectator_stats.activations
+        + competitor_stats.activations
+        + judge_stats.activations
+    )
+    actual_ramp = (
+        max(activation_times) - min(activation_times)
+        if len(activation_times) > 1
+        else 0.0
+    )
 
     return {
         "duration_seconds": elapsed,
@@ -594,7 +900,18 @@ def _run_load_test(
         "load_shape": {
             "configured_steady_state_seconds": duration_s,
             "configured_ramp_up_seconds": ramp_up_s,
-            "actual_ramp_up_seconds": ramp_finished - start,
+            "actual_ramp_up_seconds": actual_ramp,
+            "ramp_wait_seconds": ramp_finished - start,
+            "seed": seed,
+            "expected_paths": {
+                "spectators": [f"GET {path}" for path in spectator_paths],
+                "competitors": [f"GET {path}" for path in competitor_paths],
+                "judges": [
+                    "GET /auth/login",
+                    "POST /auth/login",
+                    *[f"GET {path}" for path in judge_paths],
+                ],
+            },
             "think_time_seconds": {
                 role: list(values)
                 for role, values in think_times.items()
@@ -669,6 +986,7 @@ def _start_server(
         suffix=".log",
         delete=False,
     )
+    log_path = Path(log_handle.name)
     try:
         proc = subprocess.Popen(
             cmd,
@@ -677,9 +995,15 @@ def _start_server(
             stderr=subprocess.STDOUT,
             creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
         )
-    finally:
+    except Exception:
         log_handle.close()
-    return proc, Path(log_handle.name)
+        try:
+            log_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    log_handle.close()
+    return proc, log_path
 
 
 def _server_log_tail(path: Path, limit: int = 4000) -> str:
@@ -732,6 +1056,82 @@ def _resolve_synthetic_database(raw_path: str | None) -> tuple[Path, bool]:
     return Path(generated).resolve(), True
 
 
+def _report_path_aliases_database(
+    output_path: Path,
+    database_path: Path,
+) -> bool:
+    protected_paths = (PRODUCTION_DB_PATH, database_path.resolve())
+    for protected_path in protected_paths:
+        if output_path.resolve() == protected_path:
+            return True
+        if output_path.exists() and protected_path.exists():
+            try:
+                if os.path.samefile(output_path, protected_path):
+                    return True
+            except OSError:
+                pass
+    return False
+
+
+def _resolve_report_output(
+    raw_path: str,
+    *,
+    database_path: Path,
+    overwrite: bool,
+) -> Path:
+    """Resolve a report target without allowing database aliases."""
+    output_path = Path(os.path.abspath(Path(raw_path).expanduser()))
+    if _report_path_aliases_database(output_path, database_path):
+        raise ValueError("The report output path cannot be a database path.")
+    if output_path.exists() and not overwrite:
+        raise FileExistsError(
+            f"Report output already exists; refusing to overwrite: {output_path}"
+        )
+    return output_path
+
+
+def _write_report(
+    path: Path,
+    report: dict,
+    *,
+    overwrite: bool,
+    database_path: Path,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if _report_path_aliases_database(path, database_path):
+        raise ValueError("The report output path cannot be a database path.")
+
+    temp_handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        delete=False,
+    )
+    temp_path = Path(temp_handle.name)
+    try:
+        handle = temp_handle
+        json.dump(report, handle, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+        if _report_path_aliases_database(path, database_path):
+            raise ValueError("The report output path cannot be a database path.")
+        if overwrite:
+            os.replace(temp_path, path)
+        else:
+            os.link(temp_path, path)
+    finally:
+        if not temp_handle.closed:
+            temp_handle.close()
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _prepare_synthetic_database(path: Path) -> None:
     """Migrate an isolated SQLite database before importing app state."""
     for name in (
@@ -745,7 +1145,6 @@ def _prepare_synthetic_database(path: Path) -> None:
     os.environ["FLASK_ENV"] = "testing"
     os.environ["TESTING"] = "1"
     os.environ["SECRET_KEY"] = "race-day-load-rehearsal-only"
-    os.environ["WTF_CSRF_ENABLED"] = "False"
 
     from flask_migrate import upgrade
 
@@ -795,6 +1194,12 @@ def main() -> int:
         help="Worker process count for multiprocess mode (default: 4).",
     )
     parser.add_argument("--target-p95-ms", type=float, default=800.0, help="Pass/fail target for p95 latency.")
+    parser.add_argument(
+        "--target-role-p95-ms",
+        type=float,
+        default=800.0,
+        help="Pass/fail p95 target applied independently to each active role.",
+    )
     parser.add_argument("--max-error-rate", type=float, default=0.005, help="Pass/fail max error rate.")
     parser.add_argument(
         "--max-server-errors",
@@ -812,9 +1217,20 @@ def main() -> int:
     parser.add_argument("--judge-think-min", type=float, default=3.0)
     parser.add_argument("--judge-think-max", type=float, default=8.0)
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=2027,
+        help="Deterministic workload ordering and pacing seed (default: 2027).",
+    )
+    parser.add_argument(
         "--output",
         default=str(PROJECT_ROOT / "instance" / "load_test_report.json"),
         help="Path for JSON report output.",
+    )
+    parser.add_argument(
+        "--overwrite-output",
+        action="store_true",
+        help="Allow replacing an existing non-database report file.",
     )
     parser.add_argument(
         "--database",
@@ -838,6 +1254,13 @@ def main() -> int:
     database_path, generated = _resolve_synthetic_database(args.database)
     retain_database = bool(args.database or args.keep_database or args.seed_only)
     try:
+        output_path = None
+        if not args.seed_only:
+            output_path = _resolve_report_output(
+                args.output,
+                database_path=database_path,
+                overwrite=args.overwrite_output,
+            )
         _prepare_synthetic_database(database_path)
         seed = _seed_race_day_data()
 
@@ -845,7 +1268,6 @@ def main() -> int:
             print(json.dumps({
                 "database": str(database_path),
                 "synthetic": True,
-                "judge_password": "LoadTest123!",
                 **seed,
             }, indent=2))
             return 0
@@ -883,6 +1305,11 @@ def main() -> int:
                     args.competitor_think_max,
                 ),
                 judge_think=(args.judge_think_min, args.judge_think_max),
+                judge_credentials=[
+                    (username, seed["judge_password"])
+                    for username in seed["judge_usernames"]
+                ],
+                seed=args.seed,
             )
         finally:
             server.terminate()
@@ -900,6 +1327,7 @@ def main() -> int:
         passed = _passes_gate(
             report,
             target_p95_ms=args.target_p95_ms,
+            target_role_p95_ms=args.target_role_p95_ms,
             max_error_rate=args.max_error_rate,
             max_server_errors=args.max_server_errors,
         )
@@ -907,8 +1335,14 @@ def main() -> int:
             "server_mode": args.server,
             "workers": args.workers if args.server == "werkzeug-multiprocess" else 1,
             "target_p95_ms": args.target_p95_ms,
+            "target_role_p95_ms": args.target_role_p95_ms,
             "max_error_rate": args.max_error_rate,
             "max_server_errors": args.max_server_errors,
+            "role_results": _role_gate_results(
+                report,
+                target_role_p95_ms=args.target_role_p95_ms,
+                max_error_rate=args.max_error_rate,
+            ),
             "passed": passed,
         }
         report["fixture"] = {
@@ -920,9 +1354,13 @@ def main() -> int:
         if report["requests"]["errors"]:
             report["diagnostics"] = {"server_log_tail": server_log_tail}
 
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        assert output_path is not None
+        _write_report(
+            output_path,
+            report,
+            overwrite=args.overwrite_output,
+            database_path=database_path,
+        )
 
         print(json.dumps(report, indent=2))
         print(f"\nReport written to: {output_path}")

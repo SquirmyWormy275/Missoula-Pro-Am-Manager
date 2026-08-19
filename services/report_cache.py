@@ -19,6 +19,7 @@ import builtins
 import logging
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -26,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 _cache: dict = {}
 _lock = threading.Lock()
-_fill_locks: dict[str, threading.Lock] = {}
+_fill_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+    weakref.WeakValueDictionary()
+)
 _T = TypeVar('_T')
 
 # A cache miss records the generation for that key in the reading thread. If
@@ -215,6 +218,19 @@ def get_or_compute(key: str, ttl_seconds: int, builder: Callable[[], _T]) -> _T:
         value = builder()
         set(key, value, ttl_seconds)
         return value
+
+
+def reset_for_testing() -> None:
+    """Reset process-local state between isolated test applications."""
+    global _generation_counter, _shelf_path, _shelf_resolved
+    with _lock:
+        _cache.clear()
+        _fill_locks.clear()
+        _prefix_generations.clear()
+        _generation_counter = 0
+    _read_state.misses = {}
+    _shelf_path = None
+    _shelf_resolved = True
 
 
 def invalidate_prefix(prefix: str) -> None:

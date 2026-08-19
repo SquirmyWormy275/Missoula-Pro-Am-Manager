@@ -29,6 +29,7 @@ from flask import (
 )
 from flask_login import current_user, login_required
 from flask_wtf.csrf import CSRFError
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -56,6 +57,7 @@ from services.scoring_workflow import (
     revoke_heat_submission_receipts_for_undo,
     save_heat_results_submission,
 )
+from services.time_utils import utc_now_naive
 
 scoring_bp = Blueprint('scoring', __name__)
 
@@ -139,6 +141,43 @@ def _current_user_can_score_tournament(tournament_id: int) -> bool:
         return False
     user_tournament_id = getattr(current_user, 'tournament_id', None)
     return user_tournament_id is None or int(user_tournament_id) == int(tournament_id)
+
+
+def _acquire_heat_edit_lock(heat: Heat, user_id: int) -> tuple[Heat, bool]:
+    """Atomically acquire an available heat lock without an ORM version race."""
+    if heat.is_locked():
+        return heat, heat.locked_by_user_id == user_id
+
+    heat_id = heat.id
+    now = utc_now_naive()
+    expired_before = now - timedelta(seconds=config.HEAT_LOCK_TTL_SECONDS)
+    updated = (
+        Heat.query.filter(Heat.id == heat_id)
+        .filter(
+            or_(
+                Heat.locked_by_user_id.is_(None),
+                Heat.locked_at.is_(None),
+                Heat.locked_at <= expired_before,
+            )
+        )
+        .update(
+            {
+                Heat.locked_by_user_id: user_id,
+                Heat.locked_at: now,
+                Heat.version_id: Heat.version_id + 1,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.session.commit()
+    db.session.expire_all()
+    current_heat = db.session.get(Heat, heat_id, populate_existing=True)
+    if current_heat is None:
+        abort(404)
+    return current_heat, bool(updated) or (
+        current_heat.is_locked()
+        and current_heat.locked_by_user_id == user_id
+    )
 
 
 def _offline_build_id() -> str:
@@ -985,14 +1024,12 @@ def enter_heat_results(tournament_id, heat_id):
     lock_owner = None
     lock_blocked = False
     if user_id and not preparing_offline:
-        if heat.is_locked() and heat.locked_by_user_id != user_id:
+        heat, lock_acquired = _acquire_heat_edit_lock(heat, user_id)
+        if not lock_acquired:
             lock_blocked = True
             from models.user import User
             locker = db.session.get(User, heat.locked_by_user_id)
             lock_owner = locker.username if locker else f'User #{heat.locked_by_user_id}'
-        else:
-            heat.acquire_lock(user_id)
-            db.session.commit()
 
     competitor_ids = _normalized_heat_competitor_ids(heat)
     comp_lookup = _competitor_lookup(event, competitor_ids)

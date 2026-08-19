@@ -425,8 +425,8 @@ class Heat(db.Model):
 
     def acquire_lock(self, user_id: int) -> bool:
         """Attempt to acquire the edit lock. Returns True if successful."""
-        if self.is_locked() and self.locked_by_user_id != user_id:
-            return False
+        if self.is_locked():
+            return self.locked_by_user_id == user_id
         self.locked_by_user_id = user_id
         # The column is timezone-naive. Persisting an aware value lets
         # PostgreSQL convert it through the session timezone before dropping

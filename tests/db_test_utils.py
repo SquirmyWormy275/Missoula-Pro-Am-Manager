@@ -10,11 +10,12 @@ Import this from any test file:
     from tests.db_test_utils import create_test_app
 
 D14-B: set PROAM_UNIT_PG=1 to back the same factory with PostgreSQL instead
-of SQLite. A schema template database (proam_unit_template) is built once
-per interpreter via migrations, then every create_test_app() call clones it
-(createdb -T, ~100ms) and returns a connection string to a private
-throwaway database. Same engine as production: same locking, same NULL
-ordering, same jsonb.
+of SQLite. A schema template database namespaced by the Alembic head is built
+once per interpreter via migrations, then every create_test_app() call clones
+it (createdb -T, ~100ms) and returns a connection string to a private throwaway
+database. Advisory locking serializes template construction across concurrent
+checkouts. Same engine as production: same locking, same NULL ordering, same
+jsonb.
 
 Which engine runs when, and why (c44):
 
@@ -33,8 +34,10 @@ exactly two skips, both in the backup/restore path, both deliberate and
 documented at skip_unless_sqlite(). Any new divergence is a bug in one of
 the two, not an accepted cost of the split.
 """
+import hashlib
 import os
 import tempfile
+from contextlib import contextmanager
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-conftest')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
@@ -48,8 +51,9 @@ _PG_PORT = os.environ.get("PROAM_UNIT_PG_PORT", "5432")
 _PG_USER = os.environ.get("PROAM_UNIT_PG_USER", "proam")
 _PG_PASSWORD = os.environ.get("PROAM_UNIT_PG_PASSWORD", "proam")
 _PG_URL = f"postgresql://{_PG_USER}:{_PG_PASSWORD}@{_PG_HOST}:{_PG_PORT}"
-_PG_TEMPLATE = "proam_unit_template"
-_pg_template_ready = False
+_PG_TEMPLATE_PREFIX = "proam_unit_template"
+_PG_TEMPLATE_LOCK_ID = 0x50524F414D544D50
+_pg_template_ready: str | None = None
 _pg_counter = [0]
 
 
@@ -57,14 +61,7 @@ def _isolate_report_cache():
     """Clear process cache state and keep tests out of the production shelf."""
     from services import report_cache
 
-    with report_cache._lock:
-        report_cache._cache.clear()
-        report_cache._fill_locks.clear()
-        report_cache._prefix_generations.clear()
-        report_cache._generation_counter = 0
-    report_cache._read_state.misses = {}
-    report_cache._shelf_path = None
-    report_cache._shelf_resolved = True
+    report_cache.reset_for_testing()
 
 
 def _pg_run(sql, dbname="postgres"):
@@ -97,6 +94,38 @@ def _pg_preflight():
     )
 
 
+def _pg_template_name(head: str) -> str:
+    """Give each migration head an immutable, checkout-safe template."""
+    digest = hashlib.sha256(head.encode("utf-8")).hexdigest()[:12]
+    return f"{_PG_TEMPLATE_PREFIX}_{digest}"
+
+
+@contextmanager
+def _pg_template_lock():
+    """Serialize template inspection and construction across checkouts."""
+    import psycopg2
+
+    connection = psycopg2.connect(f"{_PG_URL}/postgres")
+    connection.autocommit = True
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SELECT pg_advisory_lock(%s)", (_PG_TEMPLATE_LOCK_ID,))
+        yield
+    finally:
+        try:
+            cursor.execute("SELECT pg_advisory_unlock(%s)", (_PG_TEMPLATE_LOCK_ID,))
+        finally:
+            cursor.close()
+            connection.close()
+
+
+def _require_pg_success(result, action: str) -> None:
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"{action} failed: {(result.stderr or '').strip() or '(no output)'}"
+        )
+
+
 _MIGRATIONS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'migrations')
 
@@ -111,8 +140,8 @@ def _chain_head():
     return ScriptDirectory(_MIGRATIONS_DIR).get_current_head()
 
 
-def _template_is_stale(head):
-    """True when proam_unit_template exists but is not stamped at `head`.
+def _template_is_stale(head, template_name):
+    """True when a template exists but is not stamped at `head`.
 
     The template is a real database that outlives the interpreter that built
     it, so "it exists" is not the same question as "it is the schema this
@@ -127,8 +156,10 @@ def _template_is_stale(head):
     all read as stale. Rebuilding costs one `flask db upgrade`; guessing
     wrong in the other direction costs a red lane nobody can explain.
     """
-    stamped = _pg_run("SELECT version_num FROM alembic_version",
-                      dbname=_PG_TEMPLATE)
+    stamped = _pg_run(
+        "SELECT version_num FROM alembic_version",
+        dbname=template_name,
+    )
     if stamped.returncode != 0:
         return True
     lines = stamped.stdout.split()
@@ -142,42 +173,63 @@ def _ensure_pg_template():
     stamped at anything other than the current chain head.
     """
     global _pg_template_ready
-    if _pg_template_ready:
-        return
+    head = _chain_head()
+    template_name = _pg_template_name(head)
+    if _pg_template_ready == template_name:
+        return template_name
     _pg_preflight()
     # Never sweep by prefix here. Another checkout may be running the same
     # suite, and this process cannot prove that an existing clone is orphaned.
     # Each factory call drops only the unique database name it created.
-    head = _chain_head()
-    probe = _pg_run(
-        f"SELECT 1 FROM pg_database WHERE datname='{_PG_TEMPLATE}'")
-    if probe.stdout.strip() == "1" and _template_is_stale(head):
-        _pg_run(f'DROP DATABASE IF EXISTS {_PG_TEMPLATE} (FORCE)')
+    with _pg_template_lock():
         probe = _pg_run(
-            f"SELECT 1 FROM pg_database WHERE datname='{_PG_TEMPLATE}'")
-    if probe.stdout.strip() != "1":
-        _pg_run(f'CREATE DATABASE {_PG_TEMPLATE}')
-        old = os.environ.get('DATABASE_URL')
-        os.environ['DATABASE_URL'] = f"{_PG_URL}/{_PG_TEMPLATE}"
-        try:
-            from flask_migrate import upgrade
+            f"SELECT 1 FROM pg_database WHERE datname='{template_name}'"
+        )
+        _require_pg_success(probe, f"probe template {template_name}")
+        if probe.stdout.strip() == "1" and _template_is_stale(
+            head,
+            template_name,
+        ):
+            dropped = _pg_run(
+                f'DROP DATABASE IF EXISTS {template_name} (FORCE)'
+            )
+            _require_pg_success(dropped, f"drop stale template {template_name}")
+            probe = _pg_run(
+                f"SELECT 1 FROM pg_database WHERE datname='{template_name}'"
+            )
+            _require_pg_success(probe, f"re-probe template {template_name}")
+        if probe.stdout.strip() != "1":
+            created = _pg_run(f'CREATE DATABASE {template_name}')
+            _require_pg_success(created, f"create template {template_name}")
+            old = os.environ.get('DATABASE_URL')
+            os.environ['DATABASE_URL'] = f"{_PG_URL}/{template_name}"
+            try:
+                from flask_migrate import upgrade
 
-            from app import create_app
-            _tapp = create_app()
-            with _tapp.app_context():
-                _db.engine.dispose()
-                upgrade(directory=_MIGRATIONS_DIR)
-                # createdb TEMPLATE requires zero connections to the source;
-                # drop ours and terminate any pooled stragglers.
-                _db.engine.dispose()
-            _pg_run("SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    f"WHERE datname = '{_PG_TEMPLATE}' AND pid <> pg_backend_pid()")
-        finally:
-            if old is None:
-                os.environ.pop('DATABASE_URL', None)
-            else:
-                os.environ['DATABASE_URL'] = old
-    _pg_template_ready = True
+                from app import create_app
+                _tapp = create_app()
+                with _tapp.app_context():
+                    _db.engine.dispose()
+                    upgrade(directory=_MIGRATIONS_DIR)
+                    # createdb TEMPLATE requires zero connections to the source;
+                    # drop ours and terminate any pooled stragglers.
+                    _db.engine.dispose()
+                terminated = _pg_run(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    f"WHERE datname = '{template_name}' "
+                    "AND pid <> pg_backend_pid()"
+                )
+                _require_pg_success(
+                    terminated,
+                    f"disconnect template {template_name}",
+                )
+            finally:
+                if old is None:
+                    os.environ.pop('DATABASE_URL', None)
+                else:
+                    os.environ['DATABASE_URL'] = old
+    _pg_template_ready = template_name
+    return template_name
 
 
 def _create_test_app_pg():
@@ -185,14 +237,14 @@ def _create_test_app_pg():
 
     Returns (app, handle) where handle is the throwaway database NAME
     (callers that os.unlink(db_path) get a no-op via drop_test_db)."""
-    _ensure_pg_template()
+    template_name = _ensure_pg_template()
     _pg_counter[0] += 1
     name = f"proam_unit_{os.getpid()}_{_pg_counter[0]}"
     import atexit
     atexit.register(lambda n=name: _pg_run(f'DROP DATABASE IF EXISTS {n} (FORCE)'))
-    r = _pg_run(f'CREATE DATABASE {name} TEMPLATE {_PG_TEMPLATE}')
+    r = _pg_run(f'CREATE DATABASE {name} TEMPLATE {template_name}')
     if r.returncode != 0:
-        raise RuntimeError(f"clone of {_PG_TEMPLATE} failed: {r.stderr}")
+        raise RuntimeError(f"clone of {template_name} failed: {r.stderr}")
     old = os.environ.get('DATABASE_URL')
     os.environ['DATABASE_URL'] = f"{_PG_URL}/{name}"
     try:
@@ -225,7 +277,10 @@ def drop_test_db(handle):
         except OSError:
             pass
         return
-    if handle.startswith("proam_unit_"):
+    if (
+        handle.startswith("proam_unit_")
+        and not handle.startswith(_PG_TEMPLATE_PREFIX)
+    ):
         _pg_run(f'DROP DATABASE IF EXISTS {handle} (FORCE)')
 
 

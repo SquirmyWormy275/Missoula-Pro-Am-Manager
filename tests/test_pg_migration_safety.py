@@ -442,7 +442,7 @@ class TestEngineConnectListenerHygiene:
     ``syntax error at or near "PRAGMA"`` on PG. It accounted for all 1,758
     divergences in the first full PG run of the unit suite.
 
-    These tests are cheap and need no database.
+    These tests are cheap and use only isolated temporary SQLite state.
     """
 
     def test_listener_registered_once_regardless_of_app_count(

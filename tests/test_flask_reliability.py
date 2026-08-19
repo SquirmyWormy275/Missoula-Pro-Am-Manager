@@ -102,6 +102,21 @@ class TestAppFactory:
     def test_upload_folder_exists(self, app):
         assert os.path.isdir(app.config['UPLOAD_FOLDER'])
 
+    def test_internal_error_rolls_back_before_rendering(self, app):
+        from werkzeug.exceptions import InternalServerError
+
+        error = InternalServerError()
+        with app.test_request_context('/synthetic-failure'):
+            handler = app._find_error_handler(error, [])
+            with (
+                patch('app.db.session.rollback') as rollback,
+                patch('app.render_template', return_value='error-page'),
+            ):
+                response = handler(error)
+
+        rollback.assert_called_once_with()
+        assert response == ('error-page', 500)
+
 
 # ===========================================================================
 # 2. CONFIGURATION
@@ -521,7 +536,9 @@ class TestHeatLocking:
         from models.heat import Heat
         h = Heat(event_id=1, heat_number=1)
         h.acquire_lock(1)
+        locked_at = h.locked_at
         assert h.acquire_lock(1)
+        assert h.locked_at == locked_at
 
     def test_blocked_different_user(self):
         from models.heat import Heat
@@ -593,6 +610,45 @@ class TestContextProcessor:
 
         unscored_count.assert_not_called()
         assert ctx.get('unscored_heats') == 0
+
+    @pytest.mark.parametrize(
+        ('username', 'expected_calls', 'expected_badge'),
+        [
+            (None, 0, 0),
+            ('viewer_user', 0, 0),
+            ('scorer_user', 0, 0),
+            ('judge_user', 1, 7),
+            ('admin_user', 1, 7),
+        ],
+    )
+    def test_sidebar_query_is_limited_to_judges_and_admins(
+        self,
+        app,
+        username,
+        expected_calls,
+        expected_badge,
+    ):
+        tid = _tid()
+        with app.test_request_context(f'/tournament/{tid}'):
+            from flask import request as _req
+            from flask_login import login_user
+
+            from models.user import User
+
+            _req.view_args = {'tournament_id': tid}
+            if username is not None:
+                login_user(User.query.filter_by(username=username).one())
+
+            with patch(
+                'services.sidebar_aggregator.unscored_heats_count',
+                return_value=7,
+            ) as unscored_count:
+                ctx = {}
+                for fn in app.template_context_processors[None]:
+                    ctx.update(fn())
+
+        assert unscored_count.call_count == expected_calls
+        assert ctx.get('unscored_heats') == expected_badge
 
 
 # ===========================================================================
