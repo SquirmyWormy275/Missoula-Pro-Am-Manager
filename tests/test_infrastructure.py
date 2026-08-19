@@ -11,6 +11,7 @@ Requirements:
     pytest (pip install pytest)
     All app dependencies installed.
 """
+import gc
 import json
 import threading
 import time
@@ -73,11 +74,9 @@ class TestReportCache:
     def _reset_cache(self):
         """Clear the module-level cache dict before each test."""
         from services import report_cache
-        with report_cache._lock:
-            report_cache._cache.clear()
+        report_cache.reset_for_testing()
         yield
-        with report_cache._lock:
-            report_cache._cache.clear()
+        report_cache.reset_for_testing()
 
     # -- Disable disk layer for deterministic unit tests --
     @pytest.fixture(autouse=True)
@@ -98,6 +97,76 @@ class TestReportCache:
         payload = {'scores': [1, 2, 3]}
         set('test:round_trip', payload, ttl_seconds=60)
         assert get('test:round_trip') == payload
+
+    def test_get_or_compute_coalesces_concurrent_cache_miss(self):
+        from services import report_cache
+
+        reader_count = 8
+        ready = threading.Barrier(reader_count)
+        builder_started = threading.Event()
+        release_builder = threading.Event()
+        calls = 0
+        calls_lock = threading.Lock()
+        results = []
+        worker_errors = []
+
+        def builder():
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+            builder_started.set()
+            assert release_builder.wait(timeout=10)
+            return {'standings': [1, 2, 3]}
+
+        def reader():
+            try:
+                ready.wait(timeout=10)
+                results.append(
+                    report_cache.get_or_compute('public:1', 60, builder)
+                )
+            except Exception as exc:
+                worker_errors.append(exc)
+
+        readers = [threading.Thread(target=reader) for _ in range(reader_count)]
+        for reader_thread in readers:
+            reader_thread.start()
+        assert builder_started.wait(timeout=10)
+        release_builder.set()
+        for reader_thread in readers:
+            reader_thread.join(timeout=10)
+
+        assert all(not reader_thread.is_alive() for reader_thread in readers)
+        assert worker_errors == []
+        assert calls == 1
+        assert results == [{'standings': [1, 2, 3]}] * reader_count
+
+    def test_get_or_compute_retires_idle_fill_lock(self):
+        from services import report_cache
+
+        assert report_cache.get_or_compute(
+            'public:retired',
+            60,
+            lambda: {'ready': True},
+        ) == {'ready': True}
+        gc.collect()
+
+        with report_cache._lock:
+            assert 'public:retired' not in report_cache._fill_locks
+
+    def test_get_or_compute_releases_key_after_builder_error(self):
+        from services import report_cache
+
+        def broken_builder():
+            raise RuntimeError('synthetic builder failure')
+
+        with pytest.raises(RuntimeError, match='synthetic builder failure'):
+            report_cache.get_or_compute('public:error', 60, broken_builder)
+
+        assert report_cache.get_or_compute(
+            'public:error',
+            60,
+            lambda: {'recovered': True},
+        ) == {'recovered': True}
 
     def test_ttl_expiry(self):
         """Value should expire after TTL elapses."""

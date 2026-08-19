@@ -12,7 +12,9 @@ The fixture below now SKIPs cleanly when SOURCE_DB is absent (CI default).
 from __future__ import annotations
 
 import re
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -653,6 +655,71 @@ def test_concurrent_scoring_simulation_documents_optimistic_locking(qa_env):
             .all()
         ]
         assert values == [21.5, 22.5, 23.5]
+
+
+def test_concurrent_heat_gets_atomically_acquire_one_edit_lock(qa_env):
+    """Same-account page opens must not race the heat version update."""
+    app = qa_env["app"]
+    seeded = _seed_heat_with_results(app)
+    worker_count = 8
+
+    with app.app_context():
+        from models import Heat, User
+
+        user_id = User.query.order_by(User.id).first().id
+        initial_version = db.session.get(Heat, seeded["heat_id"]).version_id
+
+    barrier = threading.Barrier(worker_count)
+
+    def open_heat():
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["_user_id"] = str(user_id)
+            session["_fresh"] = True
+        barrier.wait(timeout=10)
+        response = client.get(
+            f"/scoring/{seeded['tournament_id']}/heat/"
+            f"{seeded['heat_id']}/enter"
+        )
+        return response.status_code
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        statuses = list(executor.map(lambda _index: open_heat(), range(worker_count)))
+
+    assert statuses == [200] * worker_count
+    with app.app_context():
+        from models import Heat
+
+        heat = db.session.get(Heat, seeded["heat_id"])
+        assert heat.locked_by_user_id == user_id
+        assert heat.version_id == initial_version + 1
+
+
+def test_heat_deleted_during_lock_acquisition_returns_not_found(qa_env, monkeypatch):
+    app = qa_env["app"]
+    seeded = _seed_heat_with_results(app)
+
+    with app.app_context():
+        from werkzeug.exceptions import NotFound
+
+        from models import Heat, User
+        from models.heat import HeatAssignment
+        from routes.scoring import _acquire_heat_edit_lock
+
+        heat = db.session.get(Heat, seeded["heat_id"])
+        user_id = User.query.order_by(User.id).first().id
+        original_commit = db.session.commit
+
+        def commit_then_delete():
+            original_commit()
+            HeatAssignment.query.filter_by(heat_id=seeded["heat_id"]).delete()
+            Heat.query.filter_by(id=seeded["heat_id"]).delete()
+            original_commit()
+
+        monkeypatch.setattr(db.session, "commit", commit_then_delete)
+
+        with pytest.raises(NotFound):
+            _acquire_heat_edit_lock(heat, user_id)
 
 
 def test_day_of_operations_workflow(qa_env):

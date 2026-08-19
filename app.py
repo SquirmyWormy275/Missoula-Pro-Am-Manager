@@ -330,7 +330,12 @@ def _create_app_inner():
         # ORM logic per CLAUDE.md §6 development rule.
         from services.sidebar_aggregator import unscored_heats_count
         tid = request.view_args.get('tournament_id') if request.view_args else None
-        unscored_heats = unscored_heats_count(tid) if tid else 0
+        show_judge_sidebar = bool(
+            tid
+            and getattr(current_user, 'is_authenticated', False)
+            and getattr(current_user, 'is_judge', False)
+        )
+        unscored_heats = unscored_heats_count(tid) if show_judge_sidebar else 0
 
         # Public languages always available; restricted languages (Arapaho) only for judge/admin.
         available_languages = dict(text.PUBLIC_LANGUAGES)
@@ -603,6 +608,7 @@ def _create_app_inner():
 
     @app.errorhandler(500)
     def internal_error(error):
+        db.session.rollback()
         if request.path.startswith('/api/'):
             return jsonify({'error': 'Internal server error', 'status': 500}), 500
         return render_template('errors/500.html'), 500

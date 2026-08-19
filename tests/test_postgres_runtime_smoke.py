@@ -104,6 +104,8 @@ def test_scratch_cascade_row_lock_uses_postgresql_nowait(app):
 
         assert any('FOR UPDATE NOWAIT' in statement for statement in statements)
 
-        _db.session.delete(competitor)
+        # Tournament owns competitor lifecycle through delete-orphan. Deleting
+        # both rows explicitly makes SQLAlchemy issue duplicate DELETEs for the
+        # competitor and its identity spine on PostgreSQL.
         _db.session.delete(tournament)
         _db.session.commit()
