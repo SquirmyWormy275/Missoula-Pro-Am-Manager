@@ -367,11 +367,13 @@ def test_unassigned_competitor_and_all_scratched_heat_render_cleanly(qa_env):
 
         preview = client.get(f'{handoff.headers["Location"]}&format=json')
         assert preview.status_code == 200
-        effects = preview.get_json()["effects"]
+        preview_payload = preview.get_json()
+        effects = preview_payload["effects"]
         form = {
             "competitor_type": "pro",
             "return_event_id": str(event_id),
             "effect_count": str(len(effects)),
+            "expected_effect_digest": preview_payload["effect_digest"],
         }
         for index, effect in enumerate(effects):
             form.update({
@@ -695,7 +697,10 @@ def test_pro_scratch_removes_competitor_from_generated_heat(qa_env):
     effects = payload["effects"]
 
     # Step 2: confirm — send every effect back as "checked".
-    form = {"effect_count": str(len(effects))}
+    form = {
+        "effect_count": str(len(effects)),
+        "expected_effect_digest": payload["effect_digest"],
+    }
     for i, e in enumerate(effects):
         form[f"effect_type_{i}"] = e["effect_type"]
         form[f"affected_entity_id_{i}"] = str(e["affected_entity_id"])

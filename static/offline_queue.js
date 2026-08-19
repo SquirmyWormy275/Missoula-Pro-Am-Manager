@@ -1,44 +1,55 @@
-/**
- * Offline Queue Client
- * - Registers the service worker
- * - Shows/hides the offline status banner
- * - Handles sync-complete notifications from the SW
- * - Intercepts the score entry form to display offline feedback
- */
+/** Global service-worker registration and offline state surface. */
 (function () {
     'use strict';
 
-    // ── Service Worker Registration ──────────────────────────────────────────
+    function controllerMessage(message) {
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage(message);
+        }
+    }
+
+    function validatePreparedPackage() {
+        if (!window.ProAmOfflineContext) return;
+        controllerMessage({
+            type: 'validate-prepared-package',
+            context: window.ProAmOfflineContext
+        });
+    }
+
     function registerSW() {
         if (!('serviceWorker' in navigator)) return;
-        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function (err) {
-            console.warn('[ProAm SW] Registration failed:', err);
+        navigator.serviceWorker.register('/sw.js', {scope: '/'}).then(function () {
+            return navigator.serviceWorker.ready;
+        }).then(function () {
+            validatePreparedPackage();
+            controllerMessage({type: 'legacy-queue-status'});
+        }).catch(function (error) {
+            console.warn('[ProAm SW] Registration failed:', error);
         });
 
-        // Listen for sync messages from the SW
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+            validatePreparedPackage();
+        });
         navigator.serviceWorker.addEventListener('message', function (event) {
-            if (!event.data) return;
-            if (event.data.type === 'sync-complete') {
-                if (event.data.success > 0) {
-                    showSyncBanner(event.data.success || event.data.count || 0);
-                }
+            var data = event.data || {};
+            if (data.type === 'legacy-sync-complete' && data.success > 0) {
+                showSyncBanner(data.success);
             }
-            if (event.data.type === 'replay-failed') {
-                showReplayFailedBanner(event.data.count || 0, event.data.reasons || []);
+            if (data.type === 'legacy-sync-complete' && data.failed > 0) {
+                showReplayFailedBanner(data.failed, data.reasons || []);
             }
         });
     }
 
-    // ── Offline Banner ───────────────────────────────────────────────────────
-    function createBanner(id, html, bg, color) {
+    function createBanner(id, html, background, color) {
         var banner = document.createElement('div');
         banner.id = id;
         banner.innerHTML = html;
         banner.style.cssText = [
             'position:fixed', 'top:0', 'left:0', 'right:0',
-            'z-index:9999', 'background:' + bg, 'color:' + color,
+            'z-index:9999', 'background:' + background, 'color:' + color,
             'text-align:center', 'padding:8px 16px', 'font-size:14px',
-            'font-weight:600', 'box-shadow:0 2px 8px rgba(0,0,0,.3)',
+            'font-weight:600', 'box-shadow:0 2px 8px rgba(0,0,0,.3)'
         ].join(';');
         return banner;
     }
@@ -47,11 +58,11 @@
         if (document.getElementById('proam-offline-banner')) return;
         var banner = createBanner(
             'proam-offline-banner',
-            '<i class="bi bi-wifi-off"></i> &nbsp;Offline mode — scores will be queued and synced when connection restores.',
-            '#e89012', '#000'
+            '<i class="bi bi-wifi-off"></i> &nbsp;Offline mode - score submissions stay on this device until verified.',
+            '#e89012',
+            '#000'
         );
         document.body.insertBefore(banner, document.body.firstChild);
-        // Push content down so the banner doesn't cover the nav
         document.body.style.paddingTop = (
             parseInt(document.body.style.paddingTop || '0', 10) + 40
         ) + 'px';
@@ -59,129 +70,47 @@
 
     function hideOfflineBanner() {
         var banner = document.getElementById('proam-offline-banner');
-        if (banner) {
-            banner.remove();
-            document.body.style.paddingTop = Math.max(
-                0,
-                parseInt(document.body.style.paddingTop || '0', 10) - 40
-            ) + 'px';
-        }
+        if (!banner) return;
+        banner.remove();
+        document.body.style.paddingTop = Math.max(
+            0,
+            parseInt(document.body.style.paddingTop || '0', 10) - 40
+        ) + 'px';
     }
 
     function showSyncBanner(count) {
-        var msg = count === 1
-            ? '1 queued score has been synced successfully.'
-            : count + ' queued scores have been synced successfully.';
+        var message = count === 1 ?
+            '1 legacy queued score was verified and removed.' :
+            count + ' legacy queued scores were verified and removed.';
         var flash = document.createElement('div');
         flash.className = 'alert alert-success position-fixed shadow';
-        flash.style.cssText = 'top:70px;right:20px;z-index:9998;max-width:320px;';
-        flash.innerHTML = '<i class="bi bi-check-circle-fill"></i> ' + msg;
+        flash.style.cssText = 'top:70px;right:20px;z-index:9998;max-width:360px;';
+        flash.innerHTML = '<i class="bi bi-check-circle-fill"></i> ' + message;
         document.body.appendChild(flash);
         setTimeout(function () { flash.remove(); }, 6000);
     }
 
     function showReplayFailedBanner(count, reasons) {
-        // Remove any existing failure banner
         var existing = document.getElementById('proam-replay-failed-banner');
         if (existing) existing.remove();
-
-        var reasonText = '';
-        if (reasons.indexOf('csrf_expired') >= 0) {
-            reasonText = 'Session expired while offline. ';
-        }
-        if (reasons.indexOf('version_conflict') >= 0) {
-            reasonText += 'Another judge updated the same heat. ';
-        }
-
-        var msg = count === 1
-            ? '1 queued score failed to sync. '
-            : count + ' queued scores failed to sync. ';
-
+        var needsManual = reasons.indexOf('manual_reconciliation_required') >= 0;
+        var message = count === 1 ?
+            '1 legacy queued score remains on this device.' :
+            count + ' legacy queued scores remain on this device.';
+        if (needsManual) message += ' An old entry requires manual reconciliation.';
         var banner = document.createElement('div');
         banner.id = 'proam-replay-failed-banner';
-        banner.className = 'alert alert-danger position-fixed shadow';
-        banner.style.cssText = 'top:70px;right:20px;z-index:9998;max-width:400px;';
-        banner.innerHTML =
-            '<i class="bi bi-exclamation-triangle-fill"></i> ' + msg + reasonText +
-            '<br><button class="btn btn-sm btn-outline-light mt-2" id="proam-retry-sync">' +
-            '<i class="bi bi-arrow-clockwise"></i> Retry Sync</button>' +
-            '<button class="btn btn-sm btn-outline-secondary mt-2 ms-2" onclick="this.parentElement.remove()">' +
-            'Dismiss</button>';
+        banner.className = 'alert alert-warning position-fixed shadow';
+        banner.style.cssText = 'top:70px;right:20px;z-index:9998;max-width:420px;';
+        banner.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> ' + message;
         document.body.appendChild(banner);
-
-        // Wire up retry button
-        var retryBtn = document.getElementById('proam-retry-sync');
-        if (retryBtn) {
-            retryBtn.addEventListener('click', function () {
-                if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-                    navigator.serviceWorker.controller.postMessage({ type: 'manual-sync' });
-                }
-                banner.remove();
-            });
-        }
     }
 
-    // ── Score-entry form feedback when offline ───────────────────────────────
-    function patchScoreForm() {
-        // Only applies on the heat entry page
-        if (!/\/scoring\/\d+\/heat\/\d+\/enter/.test(window.location.pathname)) return;
-
-        document.addEventListener('submit', function (e) {
-            var form = e.target;
-            if (form.method && form.method.toLowerCase() !== 'post') return;
-            if (!/\/scoring\/\d+\/heat\/\d+\/enter/.test(form.action)) return;
-
-            if (!navigator.onLine) {
-                // Let the SW handle it; intercept the response to show feedback
-                e.preventDefault();
-                var data = new URLSearchParams(new FormData(form)).toString();
-                fetch(form.action, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: data,
-                }).then(function (resp) {
-                    return resp.json();
-                }).then(function (json) {
-                    if (json.offline) {
-                        showOfflineQueuedAlert(json.message || 'Score queued for sync.');
-                    }
-                }).catch(function () {
-                    showOfflineQueuedAlert('Score queued for sync when connection restores.');
-                });
-            }
-        }, true);
-    }
-
-    function showOfflineQueuedAlert(msg) {
-        var existing = document.getElementById('proam-offline-queued');
-        if (existing) existing.remove();
-        var alert = document.createElement('div');
-        alert.id = 'proam-offline-queued';
-        alert.className = 'alert alert-warning mt-3';
-        alert.innerHTML = '<i class="bi bi-clock-history"></i> ' + msg;
-        var container = document.querySelector('.container-fluid, .container, main');
-        if (container) {
-            container.insertBefore(alert, container.firstChild);
-        } else {
-            document.body.insertBefore(alert, document.body.firstChild);
-        }
-    }
-
-    // ── Init ─────────────────────────────────────────────────────────────────
     if (!navigator.onLine) showOfflineBanner();
     window.addEventListener('online', function () {
         hideOfflineBanner();
-        // Trigger manual replay in case Background Sync isn't supported
-        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-            navigator.serviceWorker.controller.postMessage({ type: 'manual-sync' });
-        }
+        validatePreparedPackage();
     });
     window.addEventListener('offline', showOfflineBanner);
-
     registerSW();
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', patchScoreForm);
-    } else {
-        patchScoreForm();
-    }
-})();
+}());

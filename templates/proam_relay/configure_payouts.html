@@ -33,6 +33,7 @@
 
           <form method="POST" id="relayPayoutForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="expected_payout_digest" value="{{ expected_payout_digest }}">
 
             <div class="table-responsive">
               <table class="table table-sm align-middle">

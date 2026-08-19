@@ -32,9 +32,9 @@ def test_worker_installs_fallback_and_retires_only_old_scoring_caches():
     assert "cache.addAll([OFFLINE_FALLBACK])" in source
     assert ".then(() => self.skipWaiting())" in source
     assert "offline.html optional" not in source
-    assert "key.startsWith(CACHE_PREFIX)" in source
-    assert "key !== CACHE_NAME" in source
-    assert "caches.delete(key)" in source
+    assert "name.startsWith(CACHE_PREFIX)" in source
+    assert "name !== CACHE_NAME" in source
+    assert "caches.delete(name)" in source
 
 
 def test_worker_never_caches_redirects_errors_or_non_html_score_responses():
@@ -44,38 +44,39 @@ def test_worker_never_caches_redirects_errors_or_non_html_score_responses():
     assert "!response.redirected" in source
     assert "response.url === request.url" in source
     assert "contentType.includes('text/html')" in source
-    assert "isCacheableScorePage(resp, req)" in source
+    assert "isCacheableScorePage(response, request)" in source
     assert "catch (_cacheErr)" in source
 
 
-def test_worker_intercepts_and_replays_only_same_origin_score_urls():
+def test_worker_keeps_new_score_posts_in_the_canonical_page_queue():
     source = _worker_source()
 
-    assert "function isSameOriginScoreEntryUrl(rawUrl)" in source
-    assert "url.origin === self.location.origin" in source
-    assert source.count("isScoreEntryRequest(req)") == 2
-    assert "isSameOriginScoreEntryUrl(entry.url)" in source
-    assert "failReasons.push('invalid_queue_target')" in source
-    assert "SCORE_ENTRY_PATTERN.test(req.url)" not in source
+    assert "handleScorePost" not in source
+    assert "objectStore('queue').add" not in source
+    assert "request.method !== 'GET' || !sameOrigin(request.url)" in source
+    assert "request.method === 'POST' && LOGOUT_PATTERN.test(request.url)" in source
+    assert "drain-legacy-queue" in source
+    assert "renewLegacyReplayToken" in source
 
 
 def test_worker_uses_exact_cached_page_then_static_fallback_then_bounded_503():
     source = _worker_source()
 
     assert source.count("const cache = await caches.open(CACHE_NAME)") == 2
-    assert "await cache.match(req)" in source
+    assert "await cache.match(request)" in source
     assert "await cache.match(OFFLINE_FALLBACK)" in source
-    assert "await caches.match(req)" not in source
+    assert "await caches.match(request)" not in source
     assert "status: 503" in source
     assert "Offline score page unavailable" in source
 
 
-def test_worker_queues_only_the_server_issued_hmac_replay_token():
+def test_worker_only_renews_legacy_entries_with_server_issued_replay_tokens():
     source = _worker_source()
 
-    assert "new URLSearchParams(body).get('replay_token')" in source
+    assert "params.set('replay_token', String(data.replay_token || ''))" in source
+    assert "'/scoring/api/replay-token'" in source
+    assert "legacy_issuer_session_mismatch" in source
     assert "generateReplayToken" not in source
-    assert "crypto.getRandomValues" not in source
 
 
 def test_service_worker_route_is_strict_javascript_and_not_cache_stale(client):

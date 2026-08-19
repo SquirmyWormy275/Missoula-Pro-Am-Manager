@@ -322,6 +322,7 @@ def test_release_docs_and_dependency_comments_describe_the_real_shadow_authority
     unit_postgres_job = workflow.split("  unit-postgres:\n", 1)[1].split("\n  lint:\n", 1)[0]
     assert verifier_install in test_job
     assert verifier_install in unit_postgres_job
+    assert "timeout-minutes: 30" in unit_postgres_job
     assert [
         line.strip() for line in requirements.splitlines() if line.strip() == "jsonschema==4.25.1"
     ] == ["jsonschema==4.25.1"]

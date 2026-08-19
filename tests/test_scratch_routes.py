@@ -177,7 +177,7 @@ def _auth_client(app, user):
 # ---------------------------------------------------------------------------
 
 
-def _build_effect_form(effects: list[dict]) -> dict:
+def _build_effect_form(effects: list[dict], effect_digest: str | None = None) -> dict:
     """Convert a list of effect dicts (from JSON preview) into POST form data."""
     data = {}
     for i, eff in enumerate(effects):
@@ -186,6 +186,8 @@ def _build_effect_form(effects: list[dict]) -> dict:
         data[f"affected_entity_type_{i}"] = eff["affected_entity_type"]
         data[f"effect_checked_{i}"] = "on"
     data["effect_count"] = str(len(effects))
+    if effect_digest is not None:
+        data["expected_effect_digest"] = effect_digest
     return data
 
 
@@ -213,6 +215,7 @@ class TestScratchPreviewGet:
             assert resp.status_code == 200
             data = json.loads(resp.data)
             assert "effects" in data
+            assert "effect_digest" in data
             assert isinstance(data["effects"], list)
             # At least one event_result effect expected
             types = [e["effect_type"] for e in data["effects"]]
@@ -293,9 +296,10 @@ class TestScratchConfirmPost:
             preview_resp = client.get(
                 f"/scoring/{t.id}/competitor/{comp_id}/scratch-preview"
             )
-            effects = json.loads(preview_resp.data)["effects"]
+            preview = json.loads(preview_resp.data)
+            effects = preview["effects"]
 
-            form_data = _build_effect_form(effects)
+            form_data = _build_effect_form(effects, preview['effect_digest'])
             resp = client.post(
                 f"/scoring/{t.id}/competitor/{comp_id}/scratch-confirm",
                 data=form_data,
@@ -310,6 +314,47 @@ class TestScratchConfirmPost:
 
             result_reloaded = db.session.get(EventResult, result_id)
             assert result_reloaded.status == "scratched"
+
+    def test_changed_effect_digest_rejects_stale_confirmation(self, app):
+        from database import db
+        from models.competitor import ProCompetitor
+
+        with app.app_context():
+            tournament = _seed_tournament(db)
+            user = _seed_admin(db)
+            competitor = _seed_pro(db, tournament)
+            first_event = _seed_event(db, tournament)
+            _seed_result(db, first_event, competitor)
+            db.session.commit()
+
+            client = _auth_client(app, user)
+            preview = client.get(
+                f'/scoring/{tournament.id}/competitor/{competitor.id}/scratch-preview',
+                headers={'Accept': 'application/json'},
+            ).get_json()
+            stale_form = _build_effect_form(
+                preview['effects'], preview['effect_digest']
+            )
+
+            second_event = _seed_event(db, tournament)
+            second_event.name = 'Late Added Event'
+            _seed_result(db, second_event, competitor)
+            db.session.commit()
+
+            response = client.post(
+                f'/scoring/{tournament.id}/competitor/{competitor.id}/scratch-confirm',
+                data=stale_form,
+                follow_redirects=False,
+            )
+
+            assert response.status_code == 302
+            db.session.expire_all()
+            assert db.session.get(ProCompetitor, competitor.id).status == 'active'
+            with client.session_transaction() as session:
+                assert any(
+                    'effects changed since you reviewed them' in message
+                    for _, message in session['_flashes']
+                )
 
     def test_happy_path_partial_effects_only_checked_execute(self, app):
         """Unchecked effects are not applied."""
@@ -331,7 +376,8 @@ class TestScratchConfirmPost:
             preview_resp = client.get(
                 f"/scoring/{t.id}/competitor/{comp_id}/scratch-preview"
             )
-            effects = json.loads(preview_resp.data)["effects"]
+            preview = json.loads(preview_resp.data)
+            effects = preview["effects"]
 
             # Build form but omit effect_checked for all effects (none checked)
             data = {}
@@ -341,6 +387,7 @@ class TestScratchConfirmPost:
                 data[f"affected_entity_type_{i}"] = eff["affected_entity_type"]
                 # No effect_checked_{i} key → unchecked
             data["effect_count"] = str(len(effects))
+            data["expected_effect_digest"] = preview["effect_digest"]
 
             resp = client.post(
                 f"/scoring/{t.id}/competitor/{comp_id}/scratch-confirm",
@@ -369,9 +416,15 @@ class TestScratchConfirmPost:
             db.session.commit()
 
             client = _auth_client(app, u)
+            preview = client.get(
+                f"/scoring/{t.id}/competitor/{comp_id}/scratch-preview"
+            ).get_json()
             resp = client.post(
                 f"/scoring/{t.id}/competitor/{comp_id}/scratch-confirm",
-                data={"effect_count": "0"},
+                data={
+                    "effect_count": "0",
+                    "expected_effect_digest": preview["effect_digest"],
+                },
                 follow_redirects=True,
             )
             assert resp.status_code == 200
@@ -410,9 +463,15 @@ class TestScratchConfirmPost:
             db.session.commit()
 
             client = _auth_client(app, u)
+            preview = client.get(
+                f"/scoring/{t.id}/competitor/{comp_id}/scratch-preview"
+            ).get_json()
             resp = client.post(
                 f"/scoring/{t.id}/competitor/{comp_id}/scratch-confirm",
-                data={"effect_count": "0"},
+                data={
+                    "effect_count": "0",
+                    "expected_effect_digest": preview["effect_digest"],
+                },
                 follow_redirects=False,
             )
             assert resp.status_code in (302, 303)
@@ -431,13 +490,19 @@ class TestScratchConfirmPost:
             db.session.commit()
 
             client = _auth_client(app, u)
+            preview = client.get(
+                f"/scoring/{t.id}/competitor/{comp_id}/scratch-preview"
+            ).get_json()
             with patch(
                 'services.scratch_cascade.execute_cascade',
                 side_effect=StaleDataError(),
             ):
                 resp = client.post(
                     f"/scoring/{t.id}/competitor/{comp_id}/scratch-confirm",
-                    data={"effect_count": "0"},
+                    data={
+                        "effect_count": "0",
+                        "expected_effect_digest": preview["effect_digest"],
+                    },
                     follow_redirects=False,
                 )
 
@@ -458,13 +523,19 @@ class TestScratchConfirmPost:
             db.session.commit()
 
             client = _auth_client(app, u)
+            preview = client.get(
+                f"/scoring/{t.id}/competitor/{comp_id}/scratch-preview"
+            ).get_json()
             with patch(
                 'services.scratch_cascade.execute_cascade',
                 side_effect=ScratchCascadeConflict("locked"),
             ):
                 resp = client.post(
                     f"/scoring/{t.id}/competitor/{comp_id}/scratch-confirm",
-                    data={"effect_count": "0"},
+                    data={
+                        "effect_count": "0",
+                        "expected_effect_digest": preview["effect_digest"],
+                    },
                     follow_redirects=False,
                 )
 
@@ -500,15 +571,37 @@ class TestScratchUndoPost:
             preview_resp = client.get(
                 f"/scoring/{t.id}/competitor/{comp_id}/scratch-preview"
             )
-            effects = json.loads(preview_resp.data)["effects"]
+            preview = json.loads(preview_resp.data)
             client.post(
                 f"/scoring/{t.id}/competitor/{comp_id}/scratch-confirm",
-                data=_build_effect_form(effects),
+                data=_build_effect_form(
+                    preview["effects"], preview["effect_digest"]
+                ),
             )
+
+            undo_preview = client.get(
+                f"/scoring/{t.id}/competitor/{comp_id}/scratch-preview?format=json"
+            ).get_json()
+            reviewed_page = client.get(
+                f"/scoring/{t.id}/competitor/{comp_id}/scratch-preview",
+                headers={"Accept": "text/html"},
+            )
+            assert b"Scratch Active" in reviewed_page.data
+            assert b'name="expected_undo_token"' in reviewed_page.data
+            assert b">Confirm Scratch<" not in reviewed_page.data
+
+            unreviewed = client.post(
+                f"/scoring/{t.id}/competitor/{comp_id}/scratch-undo",
+                follow_redirects=False,
+            )
+            assert unreviewed.status_code in (302, 303)
+            assert "scratch-preview" in unreviewed.location
+            assert db.session.get(ProCompetitor, comp_id).status == "scratched"
 
             # Now undo
             undo_resp = client.post(
                 f"/scoring/{t.id}/competitor/{comp_id}/scratch-undo",
+                data={"expected_undo_token": undo_preview["undo_token"]},
                 follow_redirects=False,
             )
             assert undo_resp.status_code in (302, 303)
@@ -575,6 +668,7 @@ class TestScratchUndoPost:
             ):
                 resp = client.post(
                     f"/scoring/{t.id}/competitor/{comp_id}/scratch-undo",
+                    data={"expected_undo_token": "test-token"},
                     follow_redirects=False,
                 )
 
@@ -601,6 +695,7 @@ class TestScratchUndoPost:
             ):
                 resp = client.post(
                     f"/scoring/{t.id}/competitor/{comp_id}/scratch-undo",
+                    data={"expected_undo_token": "test-token"},
                     follow_redirects=False,
                 )
 

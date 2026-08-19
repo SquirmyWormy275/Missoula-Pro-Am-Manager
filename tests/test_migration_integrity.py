@@ -800,8 +800,13 @@ def test_shadow_schema_repair_is_a_forward_revision_after_b7():
     migrations_dir = Path(__file__).resolve().parents[1] / "migrations"
     scripts = ScriptDirectory(str(migrations_dir))
     repair = scripts.get_revision(SHADOW_REPAIR_REVISION)
+    head = scripts.get_current_head()
+    lineage = {
+        revision.revision
+        for revision in scripts.iterate_revisions(head, "base")
+    }
 
-    assert scripts.get_current_head() == SHADOW_REPAIR_REVISION
+    assert SHADOW_REPAIR_REVISION in lineage
     assert repair.down_revision == "b7f8a9b0c1d2"
 
 

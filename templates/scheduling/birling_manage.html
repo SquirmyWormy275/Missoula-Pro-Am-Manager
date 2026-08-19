@@ -324,6 +324,7 @@
                                 <form method="POST" action="{{ url_for('scheduling.birling_record_fall', tournament_id=tournament.id, event_id=event.id) }}" class="d-grid">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                    <input type="hidden" name="expected_fall_digest" value="{{ match.fall_digest }}">
                                     <button type="submit" name="fall_winner_id" value="{{ match.competitor1 }}"
                                             class="btn btn-outline-primary btn-sm text-start">
                                         Fall to {{ name1 }}
@@ -332,6 +333,7 @@
                                 <form method="POST" action="{{ url_for('scheduling.birling_record_fall', tournament_id=tournament.id, event_id=event.id) }}" class="d-grid">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                    <input type="hidden" name="expected_fall_digest" value="{{ match.fall_digest }}">
                                     <button type="submit" name="fall_winner_id" value="{{ match.competitor2 }}"
                                             class="btn btn-outline-primary btn-sm text-start">
                                         Fall to {{ name2 }}
@@ -346,6 +348,7 @@
                                 <form method="POST" action="{{ url_for('scheduling.birling_record_match', tournament_id=tournament.id, event_id=event.id) }}">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                    <input type="hidden" name="expected_fall_digest" value="{{ match.fall_digest }}">
                                     <div class="d-grid gap-1">
                                         <button type="submit" name="winner_id" value="{{ match.competitor1 }}"
                                                 class="btn btn-outline-success btn-sm text-start">
@@ -415,6 +418,7 @@
                             <form method="POST" action="{{ url_for('scheduling.birling_undo_match', tournament_id=tournament.id, event_id=event.id) }}" style="display:inline">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <input type="hidden" name="match_id" value="{{ match.match_id }}">
+                                <input type="hidden" name="expected_undo_digest" value="{{ undo_match_digests.get(match.match_id, '') }}">
                                 <button type="submit" class="btn btn-link btn-sm p-0 text-muted"
                                         style="font-size:0.65rem; text-decoration:none"
                                         data-confirm="Undo this match result? Both competitors will be returned to this match."
@@ -556,6 +560,7 @@
         </a>
         <form method="POST" action="{{ url_for('scheduling.birling_reset', tournament_id=tournament.id, event_id=event.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="expected_bracket_digest" value="{{ bracket_state_digest }}">
             <button type="submit" class="btn btn-outline-danger btn-sm"
                     data-confirm="Reset the entire bracket? All match results will be lost.">
                 <i class="bi bi-arrow-counterclockwise me-1"></i> Reset Bracket

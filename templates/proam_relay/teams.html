@@ -60,11 +60,32 @@
                             </h6>
                             <ul class="list-group">
                                 {% for member in team.pro_members %}
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <span>{{ member.name }}</span>
-                                    <span class="badge {% if member.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">
-                                        {{ member.gender }}
-                                    </span>
+                                {% set choices = replacement_options['pro'].get(member.gender, []) %}
+                                <li class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span>{{ member.name }}</span>
+                                        <span class="badge {% if member.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">
+                                            {{ member.gender }}
+                                        </span>
+                                    </div>
+                                    {% if choices %}
+                                    <form action="{{ url_for('proam_relay.replace_competitor', tournament_id=tournament.id) }}" method="post" class="d-flex gap-2 mt-2">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="team_number" value="{{ team.team_number }}">
+                                        <input type="hidden" name="old_competitor_id" value="{{ member.id }}">
+                                        <input type="hidden" name="competitor_type" value="pro">
+                                        <input type="hidden" name="expected_relay_digest" value="{{ team_state_digests[team.team_number] }}">
+                                        <select class="form-select form-select-sm" name="new_competitor_id" aria-label="Replacement for {{ member.name }}" required>
+                                            <option value="" selected disabled>Replacement</option>
+                                            {% for candidate in choices %}
+                                            <option value="{{ candidate.id }}">{{ candidate.name }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary flex-shrink-0" title="Replace {{ member.name }}" aria-label="Replace {{ member.name }}">
+                                            <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
+                                        </button>
+                                    </form>
+                                    {% endif %}
                                 </li>
                                 {% endfor %}
                             </ul>
@@ -77,11 +98,32 @@
                             </h6>
                             <ul class="list-group">
                                 {% for member in team.college_members %}
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <span>{{ member.name }}</span>
-                                    <span class="badge {% if member.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">
-                                        {{ member.gender }}
-                                    </span>
+                                {% set choices = replacement_options['college'].get(member.gender, []) %}
+                                <li class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span>{{ member.name }}</span>
+                                        <span class="badge {% if member.gender == 'M' %}bg-primary{% else %}bg-info{% endif %}">
+                                            {{ member.gender }}
+                                        </span>
+                                    </div>
+                                    {% if choices %}
+                                    <form action="{{ url_for('proam_relay.replace_competitor', tournament_id=tournament.id) }}" method="post" class="d-flex gap-2 mt-2">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="team_number" value="{{ team.team_number }}">
+                                        <input type="hidden" name="old_competitor_id" value="{{ member.id }}">
+                                        <input type="hidden" name="competitor_type" value="college">
+                                        <input type="hidden" name="expected_relay_digest" value="{{ team_state_digests[team.team_number] }}">
+                                        <select class="form-select form-select-sm" name="new_competitor_id" aria-label="Replacement for {{ member.name }}" required>
+                                            <option value="" selected disabled>Replacement</option>
+                                            {% for candidate in choices %}
+                                            <option value="{{ candidate.id }}">{{ candidate.name }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary flex-shrink-0" title="Replace {{ member.name }}" aria-label="Replace {{ member.name }}">
+                                            <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
+                                        </button>
+                                    </form>
+                                    {% endif %}
                                 </li>
                                 {% endfor %}
                             </ul>

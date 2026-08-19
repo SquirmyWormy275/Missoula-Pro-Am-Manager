@@ -12,12 +12,16 @@ class BackgroundJob(db.Model):
         db.Index('ix_background_jobs_status', 'status'),
         db.Index('ix_background_jobs_submitted_at', 'submitted_at'),
         db.Index('ix_background_jobs_tournament_id', 'tournament_id'),
+        db.Index('ix_background_jobs_owner_boot_id', 'owner_boot_id'),
+        db.Index('ix_background_jobs_owner_heartbeat_at', 'owner_heartbeat_at'),
     )
 
     id = db.Column(db.String(32), primary_key=True)
     label = db.Column(db.String(120), nullable=False)
     status = db.Column(db.String(20), nullable=False)
     tournament_id = db.Column(db.Integer, nullable=True)
+    owner_boot_id = db.Column(db.String(32), nullable=True)
+    owner_heartbeat_at = db.Column(db.DateTime, nullable=True)
     submitted_at = db.Column(db.DateTime, nullable=False, default=utc_now_naive)
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)

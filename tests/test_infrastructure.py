@@ -55,6 +55,17 @@ def db_session(app):
 # ReportCache tests  (services/report_cache.py)
 # ===================================================================
 
+@pytest.fixture
+def l1_cache_enabled(app, monkeypatch):
+    """Exercise cache mechanics independently of the active test database."""
+    monkeypatch.setitem(
+        app.config,
+        'SQLALCHEMY_DATABASE_URI',
+        'sqlite:///:memory:',
+    )
+
+
+@pytest.mark.usefixtures('l1_cache_enabled')
 class TestReportCache:
     """Tests for the in-memory L1 TTL cache (disk layer bypassed)."""
 
@@ -120,6 +131,41 @@ class TestReportCache:
         # Other prefix untouched
         assert get('reports:2:standings') == 'data3'
 
+    def test_stale_reader_cannot_repopulate_after_invalidation(self):
+        from services import report_cache
+
+        cache_key = 'reports:1:standings'
+        reader_missed = threading.Event()
+        invalidation_finished = threading.Event()
+
+        def stale_reader():
+            assert report_cache.get(cache_key) is None
+            reader_missed.set()
+            assert invalidation_finished.wait(timeout=2)
+            report_cache.set(cache_key, 'stale', ttl_seconds=60)
+
+        reader = threading.Thread(target=stale_reader)
+        reader.start()
+        assert reader_missed.wait(timeout=2)
+
+        report_cache.invalidate_prefix('reports:1:')
+        invalidation_finished.set()
+        reader.join(timeout=2)
+
+        assert not reader.is_alive()
+        assert report_cache.get(cache_key) is None
+
+    def test_unrelated_invalidation_does_not_block_cache_fill(self):
+        from services import report_cache
+
+        cache_key = 'reports:1:standings'
+        assert report_cache.get(cache_key) is None
+
+        report_cache.invalidate_prefix('reports:2:')
+        report_cache.set(cache_key, 'fresh', ttl_seconds=60)
+
+        assert report_cache.get(cache_key) == 'fresh'
+
     def test_clear_via_invalidate_prefix_empty_string(self):
         """invalidate_prefix('') should match all keys."""
         from services.report_cache import get, invalidate_prefix, set
@@ -139,6 +185,31 @@ class TestReportCache:
         assert report_cache.get('api:standings-poll:1') is None
         assert report_cache._shelf_resolved is True
         assert report_cache._shelf_path is None
+
+    def test_disk_cache_is_disabled_across_process_boots(self, tmp_path, monkeypatch):
+        from services import report_cache
+
+        monkeypatch.setattr(report_cache, '_shelf_resolved', False)
+        monkeypatch.setattr(
+            report_cache,
+            '_shelf_path',
+            str(tmp_path / 'shared-cache'),
+        )
+
+        assert report_cache._get_shelf_path() is None
+        assert report_cache._shelf_path is None
+
+    def test_postgres_bypasses_process_local_cache(self, app, monkeypatch):
+        from services import report_cache
+
+        monkeypatch.setitem(
+            app.config,
+            'SQLALCHEMY_DATABASE_URI',
+            'postgresql://synthetic/not-connected',
+        )
+        with app.app_context():
+            report_cache.set('reports:9:standings', 'stale', ttl_seconds=60)
+            assert report_cache.get('reports:9:standings') is None
 
     def test_multiple_keys_independent(self):
         from services.report_cache import get, set
@@ -322,6 +393,24 @@ class TestBackgroundJobs:
         assert 'intentional test failure' in info['error']
         assert info['result'] is None
 
+    def test_ok_false_result_is_a_failed_job(self):
+        from services.background_jobs import get, submit
+
+        job_id = submit(
+            'truthful-failure',
+            lambda: {'ok': False, 'error': 'backup validation failed'},
+            metadata={'tournament_id': 1, 'kind': 'backup'},
+        )
+        deadline = time.time() + 2.0
+        info = get(job_id)
+        while info['status'] not in {'completed', 'failed'} and time.time() < deadline:
+            time.sleep(0.02)
+            info = get(job_id)
+
+        assert info['status'] == 'failed'
+        assert info['error'] == 'backup validation failed'
+        assert info['result']['ok'] is False
+
     def test_multiple_jobs_tracked_independently(self):
         from services.background_jobs import get, submit
         barrier = threading.Barrier(2, timeout=2.0)
@@ -345,6 +434,77 @@ class TestBackgroundJobs:
         assert info_a['label'] == 'job-a'
         assert info_b['label'] == 'job-b'
 
+    def test_executor_backlog_remains_queued_until_worker_starts(self, app):
+        from models.background_job import BackgroundJob
+        from services import background_jobs
+
+        release_first = threading.Event()
+        first_started = threading.Event()
+        second_started = threading.Event()
+        background_jobs.configure(1, app)
+
+        def blocking_job():
+            first_started.set()
+            release_first.wait(timeout=2.0)
+            return 'first'
+
+        try:
+            background_jobs.submit('worker-blocker', blocking_job)
+            assert first_started.wait(timeout=2.0)
+            queued_id = background_jobs.submit(
+                'executor-backlog',
+                lambda: (second_started.set(), 'second')[1],
+            )
+
+            with app.app_context():
+                row = _db.session.get(BackgroundJob, queued_id)
+                assert row.status == 'queued'
+                assert row.started_at is None
+
+            release_first.set()
+            assert second_started.wait(timeout=2.0)
+        finally:
+            release_first.set()
+            background_jobs.configure(2, app)
+
+    def test_terminal_persistence_retries_transient_database_failure(
+        self, app, monkeypatch,
+    ):
+        from sqlalchemy.exc import SQLAlchemyError
+
+        from models.background_job import BackgroundJob
+        from services import background_jobs
+
+        actual_persist = background_jobs._persist_job
+        terminal_attempts = []
+
+        def transient_terminal_failure(job_id, **updates):
+            if updates.get('status') in {'completed', 'failed'}:
+                terminal_attempts.append(updates['status'])
+                if len(terminal_attempts) == 1:
+                    raise SQLAlchemyError('transient terminal write failure')
+            return actual_persist(job_id, **updates)
+
+        monkeypatch.setattr(
+            background_jobs,
+            '_persist_job',
+            transient_terminal_failure,
+        )
+        job_id = background_jobs.submit('retry-terminal-write', lambda: 'done')
+
+        deadline = time.time() + 2.0
+        persisted_status = None
+        while time.time() < deadline:
+            with app.app_context():
+                _db.session.expire_all()
+                persisted_status = _db.session.get(BackgroundJob, job_id).status
+            if persisted_status == 'completed':
+                break
+            time.sleep(0.02)
+
+        assert terminal_attempts == ['completed', 'completed']
+        assert persisted_status == 'completed'
+
     def test_configure_changes_max_workers(self):
         from services import background_jobs
         old_executor = background_jobs._executor
@@ -367,6 +527,165 @@ class TestBackgroundJobs:
         assert rows[1]['id'] == first_id
         assert rows[0]['metadata']['tournament_id'] == 1
 
+    def test_list_recent_scopes_tournament_before_limit(self):
+        from services.background_jobs import list_recent, submit
+
+        wanted_id = submit(
+            'wanted-job', lambda: 'wanted', metadata={'tournament_id': 101},
+        )
+        for index in range(4):
+            submit(
+                f'other-job-{index}',
+                lambda value=index: value,
+                metadata={'tournament_id': 202},
+            )
+        time.sleep(0.1)
+
+        rows = list_recent(limit=1, tournament_id=101)
+
+        assert [row['id'] for row in rows] == [wanted_id]
+
+    def test_reconcile_marks_only_prior_boot_jobs_interrupted(self, app):
+        from datetime import timedelta
+
+        from models.background_job import BackgroundJob
+        from services import background_jobs
+        from services.time_utils import utc_now_naive
+
+        now = utc_now_naive()
+        with app.app_context():
+            prior = BackgroundJob(
+                id='prior-boot-job',
+                label='prior',
+                status='running',
+                owner_boot_id='old-boot',
+                owner_heartbeat_at=now - timedelta(seconds=31),
+            )
+            overlapping = BackgroundJob(
+                id='overlapping-boot-job',
+                label='overlapping',
+                status='running',
+                owner_boot_id='still-alive-boot',
+                owner_heartbeat_at=now - timedelta(seconds=2),
+            )
+            current = BackgroundJob(
+                id='current-boot-job',
+                label='current',
+                status='running',
+                owner_boot_id=background_jobs.boot_id(),
+                owner_heartbeat_at=now - timedelta(seconds=31),
+            )
+            _db.session.add_all([prior, overlapping, current])
+            _db.session.commit()
+            prior_id = prior.id
+            overlapping_id = overlapping.id
+            current_id = current.id
+
+        changed = background_jobs.reconcile_interrupted_jobs(
+            app,
+            now=now,
+            lease_timeout_seconds=30,
+        )
+
+        with app.app_context():
+            assert changed == 1
+            assert _db.session.get(BackgroundJob, prior_id).status == 'interrupted'
+            assert _db.session.get(BackgroundJob, prior_id).finished_at is not None
+            assert _db.session.get(BackgroundJob, overlapping_id).status == 'running'
+            assert _db.session.get(BackgroundJob, current_id).status == 'running'
+
+    def test_interrupted_job_rejects_late_owner_callback(self, app):
+        from models.background_job import BackgroundJob
+        from services import background_jobs
+
+        with app.app_context():
+            row = BackgroundJob(
+                id='late-callback-job',
+                label='late callback',
+                status='interrupted',
+                owner_boot_id=background_jobs.boot_id(),
+            )
+            _db.session.add(row)
+            _db.session.commit()
+            row_id = row.id
+
+        persisted = background_jobs._persist_job(
+            row_id,
+            status='completed',
+            result={'ok': True},
+            require_active_owner=True,
+        )
+
+        with app.app_context():
+            assert persisted is False
+            assert _db.session.get(BackgroundJob, row_id).status == 'interrupted'
+
+    @pytest.mark.parametrize(
+        'table_exists, columns',
+        [
+            (False, set()),
+            (True, {'id', 'status'}),
+        ],
+    )
+    def test_reconcile_defers_cleanly_before_boot_owner_migration(
+        self, app, monkeypatch, table_exists, columns,
+    ):
+        from services import background_jobs
+
+        class PreMigrationInspector:
+            def has_table(self, _table_name):
+                return table_exists
+
+            def get_columns(self, _table_name):
+                return [{'name': name} for name in columns]
+
+        monkeypatch.setattr(
+            background_jobs,
+            'inspect',
+            lambda _engine: PreMigrationInspector(),
+        )
+
+        assert background_jobs.reconcile_interrupted_jobs(app) == 0
+
+    def test_testing_app_never_starts_production_heartbeat(self, app, monkeypatch):
+        from services import background_jobs
+
+        monkeypatch.setitem(app.config, 'TESTING', True)
+        monkeypatch.setitem(
+            app.config,
+            'SQLALCHEMY_DATABASE_URI',
+            'postgresql://test-only/example',
+        )
+        monkeypatch.setattr(
+            background_jobs,
+            '_heartbeat_once',
+            lambda _app: pytest.fail('testing app started the production heartbeat'),
+        )
+
+        background_jobs.start_heartbeat(app)
+
+    def test_postgres_unit_mode_never_starts_production_heartbeat(
+        self, app, monkeypatch,
+    ):
+        from services import background_jobs
+
+        monkeypatch.setitem(app.config, 'TESTING', False)
+        monkeypatch.setitem(
+            app.config,
+            'SQLALCHEMY_DATABASE_URI',
+            'postgresql://test-only/example',
+        )
+        monkeypatch.delenv('FLASK_ENV', raising=False)
+        monkeypatch.delenv('TESTING', raising=False)
+        monkeypatch.setenv('PROAM_UNIT_PG', '1')
+        monkeypatch.setattr(
+            background_jobs,
+            '_heartbeat_once',
+            lambda _app: pytest.fail('PostgreSQL unit mode started a heartbeat'),
+        )
+
+        background_jobs.start_heartbeat(app)
+
     def test_jobs_are_persisted_to_database(self, app):
         from models.background_job import BackgroundJob
         from services.background_jobs import submit
@@ -385,6 +704,7 @@ class TestBackgroundJobs:
 # CacheInvalidation tests  (services/cache_invalidation.py)
 # ===================================================================
 
+@pytest.mark.usefixtures('l1_cache_enabled')
 class TestCacheInvalidation:
     """Tests for invalidate_tournament_caches()."""
 
@@ -423,6 +743,34 @@ class TestCacheInvalidation:
             # Other tournament untouched
             assert report_cache.get('reports:6:standings') == 'other'
 
+    def test_tournament_prefixes_do_not_match_larger_ids(self):
+        from services import report_cache
+        from services.cache_invalidation import invalidate_tournament_caches
+
+        keys = (
+            'reports:{tid}:standings',
+            'portal:college:{tid}',
+            'portal:pro:{tid}',
+            'api:standings-poll:{tid}',
+        )
+        with patch('services.report_cache._shelf_get', return_value=None), \
+             patch('services.report_cache._shelf_set'), \
+             patch('services.report_cache._shelf_delete_prefix'):
+            for tournament_id in (1, 10, 11):
+                for key in keys:
+                    report_cache.set(
+                        key.format(tid=tournament_id),
+                        f'tournament-{tournament_id}',
+                        ttl_seconds=60,
+                    )
+
+            invalidate_tournament_caches(1)
+
+            for key in keys:
+                assert report_cache.get(key.format(tid=1)) is None
+                assert report_cache.get(key.format(tid=10)) == 'tournament-10'
+                assert report_cache.get(key.format(tid=11)) == 'tournament-11'
+
     def test_invalidation_with_string_tournament_id(self):
         """Tournament ID is cast to int internally -- string input should work."""
         from services.cache_invalidation import invalidate_tournament_caches
@@ -437,9 +785,9 @@ class TestCacheInvalidation:
 
             expected_prefixes = [
                 'reports:7:',
-                'portal:college:7',
-                'portal:pro:7',
-                'api:standings-poll:7',
+                'portal:college:7:',
+                'portal:pro:7:',
+                'api:standings-poll:7:',
             ]
             actual_prefixes = [call.args[0] for call in mock_inv.call_args_list]
             assert actual_prefixes == expected_prefixes

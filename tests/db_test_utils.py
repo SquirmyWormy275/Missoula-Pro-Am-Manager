@@ -59,6 +59,9 @@ def _isolate_report_cache():
 
     with report_cache._lock:
         report_cache._cache.clear()
+        report_cache._prefix_generations.clear()
+        report_cache._generation_counter = 0
+    report_cache._read_state.misses = {}
     report_cache._shelf_path = None
     report_cache._shelf_resolved = True
 

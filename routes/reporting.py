@@ -36,17 +36,19 @@ from services.report_cache import get as cache_get
 from services.report_cache import set as cache_set
 from services.reporting_backup import sqlite_backup_download_plan, submit_database_backup_job
 from services.reporting_export import (
+    ExportArtifactError,
     build_chopping_export,
     build_chopping_json_payload,
     build_results_export,
     build_video_judge_export,
+    open_verified_export,
     resolve_completed_export_path,
     safe_download_name,
     submit_results_export_job,
     submit_video_judge_export_job,
 )
-from services.restore_workflow import prepare_sqlite_restore
 from services.restore_workflow import sqlite_schema_info as _restore_schema_info
+from services.restore_workflow import stage_sqlite_restore
 
 reporting_bp = Blueprint('reporting', __name__)
 
@@ -434,7 +436,10 @@ def export_results_job_status(tournament_id, job_id):
     job_kind = (job_meta or {}).get('kind') or ''
 
     if job['status'] != 'completed':
-        if job['status'] == 'failed':
+        if job['status'] == 'expired':
+            flash(f"Export expired: {job.get('error', 'Artifact unavailable')}", 'error')
+            return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
+        if job['status'] in {'failed', 'interrupted'}:
             flash(f"Export job failed: {job.get('error', 'Unknown error')}", 'error')
             if job_kind == 'build_pro_flights':
                 return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
@@ -464,18 +469,11 @@ def export_results_job_status(tournament_id, job_id):
         flash_spillover_result(result.get('spillover'), include_success=False)
         return redirect(url_for('scheduling.flight_list', tournament_id=tournament_id))
 
-    path = job.get('result')
-    if not path or not os.path.exists(path):
-        flash('Export file is no longer available.', 'error')
+    try:
+        artifact_handle = open_verified_export(job)
+    except ExportArtifactError as exc:
+        flash(f'Export expired: {exc}', 'error')
         return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
-
-    @after_this_request
-    def cleanup_file(response):
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-        return response
 
     # Download-name suffix depends on the kind of export the job produced.
     # Defaults to 'results.xlsx' for the original all-results job; other
@@ -486,7 +484,13 @@ def export_results_job_status(tournament_id, job_id):
     download_name = safe_download_name(
         tournament, suffix_by_kind.get(job_kind, 'results.xlsx')
     )
-    return send_file(path, as_attachment=True, download_name=download_name)
+    response = send_file(
+        artifact_handle,
+        as_attachment=True,
+        download_name=download_name,
+    )
+    response.call_on_close(artifact_handle.close)
+    return response
 
 
 @reporting_bp.route('/<int:tournament_id>/export-video-judge')
@@ -551,14 +555,29 @@ def backup_database(tournament_id):
         return redirect(url_for('main.tournament_detail', tournament_id=tournament_id))
 
     db_path = backup_plan['path']
-    log_action('database_backup_downloaded', 'tournament', tournament_id, {'path': db_path})
+    log_action('database_backup_downloaded', 'tournament', tournament_id, {
+        'sha256': backup_plan['sha256'],
+        'size_bytes': backup_plan['size_bytes'],
+    })
     db.session.commit()
-    return send_file(db_path, as_attachment=True, download_name=f'proam_backup_{tournament_id}.db')
+    response = send_file(
+        db_path,
+        as_attachment=True,
+        download_name=f'proam_backup_{tournament_id}.db',
+    )
+    if backup_plan.get('cleanup'):
+        def cleanup_backup_snapshot():
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
+        response.call_on_close(cleanup_backup_snapshot)
+    return response
 
 
 @reporting_bp.route('/<int:tournament_id>/restore', methods=['POST'])
 def restore_database(tournament_id):
-    """Restore SQLite database from an uploaded backup file."""
+    """Validate and stage a SQLite backup for offline maintenance."""
     db.get_or_404(Tournament, tournament_id)
     if not current_user.is_authenticated or not current_user.is_admin:
         abort(403)
@@ -588,20 +607,26 @@ def restore_database(tournament_id):
     f.save(temp_path)
 
     try:
-        restore_plan = prepare_sqlite_restore(
+        restore_plan = stage_sqlite_restore(
             upload_path=temp_path,
             db_uri=uri,
             instance_path=current_app.instance_path,
+            tournament_id=tournament_id,
+            actor=f'user:{current_user.id}',
+            source_filename=f.filename,
             malware_scan_enabled=bool(current_app.config.get('ENABLE_UPLOAD_MALWARE_SCAN', False)),
             malware_scan_command=current_app.config.get('MALWARE_SCAN_COMMAND', ''),
         )
-        db_path = restore_plan['target_path']
-        db.session.remove()
-        db.engine.dispose()
-        os.replace(temp_path, db_path)
-        log_action('database_restored', 'tournament', tournament_id, {'target_path': db_path})
+        log_action('database_restore_staged', 'tournament', tournament_id, {
+            'stage_id': restore_plan['stage_id'],
+            'source_sha256': restore_plan['source_sha256'],
+        })
         db.session.commit()
-        flash('Database restore complete.', 'success')
+        flash(
+            'Backup validated and staged for offline maintenance. '
+            f"Staging ID: {restore_plan['stage_id']}.",
+            'success',
+        )
     except Exception as exc:
         db.session.rollback()
         log_action('database_restore_failed', 'tournament', tournament_id, {
@@ -997,3 +1022,4 @@ def _send_ala_email(pdf_path, tournament, report):
     )
     if result.status != 'sent':
         raise RuntimeError(result.error or 'Email send failed.')
+    open_verified_export,

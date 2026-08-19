@@ -135,6 +135,12 @@ def _make_result(session, event, competitor, partner_name=None):
     return r
 
 
+def _claim_token(event, orphan, candidate):
+    from services.partner_matching import partner_claim_digest
+
+    return partner_claim_digest(event, orphan, candidate)
+
+
 # ---------------------------------------------------------------------------
 # Helper: build orphan detection dataset
 # ---------------------------------------------------------------------------
@@ -416,6 +422,7 @@ class TestPartnerQueueRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(frank.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(event, alice, frank),
             },
             follow_redirects=False,
         )
@@ -459,6 +466,23 @@ class TestPartnerQueueRoute:
         assert b"Alice" in response.data
         assert f"/scheduling/{t.id}/events/{ev.id}/partner-queue".encode() in response.data
 
+    def test_queue_embeds_candidate_specific_claim_tokens(
+        self, app, db_session, auth_client,
+    ):
+        tournament, event, _alice, _bob, carol = _setup_orphan_scenario(db_session)
+        db_session.commit()
+
+        response = auth_client.get(
+            f'/scheduling/{tournament.id}/events/{event.id}/partner-queue'
+        )
+
+        assert response.status_code == 200
+        assert b'name="expected_claim_digest"' in response.data
+        assert f'value="{carol.id}"'.encode() in response.data
+        assert b'name="expected_claim_digest" value=""' not in response.data
+        assert b'name="partner_claim"' in response.data
+        assert f'value="{carol.id}:'.encode() in response.data
+
     def test_queue_404_for_non_partnered_event(self, app, db_session, auth_client):
         """GET partner_queue on a non-partnered event returns 404."""
         from models.event import Event
@@ -480,6 +504,35 @@ class TestPartnerQueueRoute:
         assert resp.status_code == 404
 
 
+def test_partner_reassignment_acquires_tournament_writer_lock(
+    app, db_session, auth_client, monkeypatch,
+):
+    import routes.scheduling.partners as partner_routes
+
+    tournament, event, alice, _bob, carol = _setup_orphan_scenario(db_session)
+    db_session.commit()
+    calls = []
+
+    def recording_lock(tournament_or_id):
+        calls.append(int(getattr(tournament_or_id, 'id', tournament_or_id)))
+        return db_session.get(type(tournament), tournament.id)
+
+    monkeypatch.setattr(partner_routes, 'lock_tournament_schedule', recording_lock)
+    response = auth_client.post(
+        f'/scheduling/{tournament.id}/events/{event.id}/reassign-partner',
+        data={
+            'orphan_id': alice.id,
+            'orphan_type': 'pro',
+            'new_partner_id': carol.id,
+            'new_partner_type': 'pro',
+            'expected_claim_digest': 'stale-on-purpose',
+        },
+    )
+
+    assert response.status_code == 409
+    assert calls == [tournament.id]
+
+
 # ---------------------------------------------------------------------------
 # Route tests: POST reassign_partner
 # ---------------------------------------------------------------------------
@@ -487,14 +540,9 @@ class TestPartnerQueueRoute:
 
 class TestReassignPartnerRoute:
     def test_happy_path_reassigns_bidirectionally(
-        self, app, db_session, auth_client, monkeypatch
+        self, app, db_session, auth_client
     ):
         """POST reassign_partner updates both partners' JSON and redirects."""
-        audit_calls = []
-        monkeypatch.setattr(
-            "routes.scheduling.partners.log_action",
-            lambda *args, **kwargs: audit_calls.append((args, kwargs)),
-        )
         t, ev, alice, bob, carol = _setup_orphan_scenario(db_session)
         db_session.commit()
 
@@ -505,6 +553,7 @@ class TestReassignPartnerRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(carol.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(ev, alice, carol),
             },
             follow_redirects=False,
         )
@@ -518,26 +567,101 @@ class TestReassignPartnerRoute:
         carol_fresh = db.session.get(ProCompetitor, carol.id)
         assert alice_fresh.get_partners().get(str(ev.id)) == "Carol"
         assert carol_fresh.get_partners().get(str(ev.id)) == "Alice"
-        assert audit_calls == [
-            (
-                (
-                    "partner_reassigned",
-                    "event",
-                    ev.id,
-                    {
-                        "tournament_id": t.id,
-                        "event_id": ev.id,
-                        "event_name": ev.display_name,
-                        "orphan_id": alice.id,
-                        "orphan_type": "pro",
-                        "previous_partner_name": "Bob",
-                        "new_partner_id": carol.id,
-                        "new_partner_type": "pro",
-                    },
-                ),
-                {},
-            )
-        ]
+
+        # Discard anything merely pending in the request session, then prove
+        # the audit evidence was committed with the reassignment.
+        event_id = ev.id
+        event_name = ev.display_name
+        tournament_id = t.id
+        db.session.rollback()
+        from models.audit_log import AuditLog
+
+        audit = AuditLog.query.filter_by(
+            action="partner_reassigned",
+            entity_type="event",
+            entity_id=event_id,
+        ).one()
+        details = json.loads(audit.details_json)
+        assert details == {
+            "tournament_id": tournament_id,
+            "event_id": event_id,
+            "event_name": event_name,
+            "orphan_id": alice.id,
+            "orphan_type": "pro",
+            "previous_partner_name": "Bob",
+            "new_partner_id": carol.id,
+            "new_partner_type": "pro",
+        }
+
+    def test_omitted_claim_token_returns_409_without_mutation(
+        self, app, db_session, auth_client,
+    ):
+        t, ev, alice, _bob, carol = _setup_orphan_scenario(db_session)
+        db_session.commit()
+
+        response = auth_client.post(
+            f"/scheduling/{t.id}/events/{ev.id}/reassign-partner",
+            data={
+                "orphan_id": str(alice.id),
+                "orphan_type": "pro",
+                "new_partner_id": str(carol.id),
+                "new_partner_type": "pro",
+            },
+        )
+
+        assert response.status_code == 409
+        db.session.refresh(alice)
+        db.session.refresh(carol)
+        assert alice.get_partners()[str(ev.id)] == "Bob"
+        assert carol.get_partners().get(str(ev.id)) is None
+
+    def test_no_js_encoded_claim_reassigns_with_server_token(
+        self, app, db_session, auth_client,
+    ):
+        t, ev, alice, _bob, carol = _setup_orphan_scenario(db_session)
+        claim = f"{carol.id}:{_claim_token(ev, alice, carol)}"
+        db_session.commit()
+
+        response = auth_client.post(
+            f"/scheduling/{t.id}/events/{ev.id}/reassign-partner",
+            data={
+                "orphan_id": str(alice.id),
+                "orphan_type": "pro",
+                "new_partner_type": "pro",
+                "partner_claim": claim,
+            },
+        )
+
+        assert response.status_code in (302, 303)
+        db.session.refresh(alice)
+        db.session.refresh(carol)
+        assert alice.get_partners()[str(ev.id)] == "Carol"
+        assert carol.get_partners()[str(ev.id)] == "Alice"
+
+    def test_stale_claim_token_returns_409_without_mutation(
+        self, app, db_session, auth_client,
+    ):
+        t, ev, alice, _bob, carol = _setup_orphan_scenario(db_session)
+        stale_token = _claim_token(ev, alice, carol)
+        carol.set_partner(ev.id, "Dave")
+        db_session.commit()
+
+        response = auth_client.post(
+            f"/scheduling/{t.id}/events/{ev.id}/reassign-partner",
+            data={
+                "orphan_id": str(alice.id),
+                "orphan_type": "pro",
+                "new_partner_id": str(carol.id),
+                "new_partner_type": "pro",
+                "expected_claim_digest": stale_token,
+            },
+        )
+
+        assert response.status_code == 409
+        db.session.refresh(alice)
+        db.session.refresh(carol)
+        assert alice.get_partners()[str(ev.id)] == "Bob"
+        assert carol.get_partners()[str(ev.id)] == "Dave"
 
     def test_wrong_gender_flashes_error(self, app, db_session, auth_client):
         """POST reassign_partner with gender mismatch flashes error and does not update."""
@@ -565,6 +689,7 @@ class TestReassignPartnerRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(carol.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(ev, alice, carol),
             },
             follow_redirects=True,
         )
@@ -605,6 +730,7 @@ class TestReassignPartnerRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(grace.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(ev, alice, grace),
             },
             follow_redirects=True,
         )
@@ -651,6 +777,7 @@ class TestReassignPartnerRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(bob.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(event, alice, bob),
             },
             follow_redirects=True,
         )
@@ -671,6 +798,7 @@ class TestReassignPartnerRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(carol.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(ev, alice, carol),
             },
             follow_redirects=False,
         )
@@ -710,6 +838,7 @@ class TestReassignPartnerRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(carol.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(event, alice, carol),
             },
             follow_redirects=True,
         )
@@ -736,6 +865,7 @@ class TestReassignPartnerRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(dave.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(ev, alice, dave),
             },
             follow_redirects=True,
         )
@@ -762,6 +892,7 @@ class TestReassignPartnerRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(outsider.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(ev, alice, outsider),
             },
             follow_redirects=True,
         )
@@ -790,6 +921,7 @@ class TestReassignPartnerRoute:
                 "orphan_type": "pro",
                 "new_partner_id": str(dave.id),
                 "new_partner_type": "pro",
+                "expected_claim_digest": _claim_token(ev, alice, dave),
             },
             follow_redirects=True,
         )

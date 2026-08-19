@@ -36,8 +36,8 @@ def _discover_routes() -> list[dict[str, object]]:
 ROUTE_SPECS = _discover_routes()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _SOURCE_DB_ENV = os.environ.get("PROAM_ROUTE_SMOKE_SOURCE_DB", "").strip()
-SOURCE_DB = Path(_SOURCE_DB_ENV) if _SOURCE_DB_ENV else PROJECT_ROOT / "instance" / "proam.db"
-if not SOURCE_DB.is_absolute():
+SOURCE_DB = Path(_SOURCE_DB_ENV) if _SOURCE_DB_ENV else None
+if SOURCE_DB is not None and not SOURCE_DB.is_absolute():
     SOURCE_DB = PROJECT_ROOT / SOURCE_DB
 TMP_ROOT = PROJECT_ROOT / ".qa_tmp"
 
@@ -134,24 +134,28 @@ def _seed_minimal_smoke_data(app):
 
 @pytest.fixture()
 def smoke_env(monkeypatch):
-    """Return a fresh app/client pair backed by either a copied real DB
-    (local dev) or a freshly migrated + seeded DB (CI)."""
+    """Return an app/client backed by an isolated migrated database.
+
+    A source database is copied only when PROAM_ROUTE_SMOKE_SOURCE_DB is set
+    explicitly (CI supplies its synthetic fixture). Local runs default to the
+    same deterministic seed path instead of reading instance/proam.db.
+    """
     TMP_ROOT.mkdir(exist_ok=True)
     temp_dir = TMP_ROOT / f"route-smoke-{uuid.uuid4().hex}"
     temp_dir.mkdir()
     db_copy = temp_dir / "proam-copy.db"
 
-    use_real_db = SOURCE_DB.exists()
+    use_real_db = SOURCE_DB is not None and SOURCE_DB.exists()
     if use_real_db:
-        # D12-C commit F3: a copy of the developer database is only useful if
+        # D12-C commit F3: an explicitly supplied source is only useful if
         # the chain will run over it. Revision t9b3c4d5e6f7 refuses one that
         # holds a heat whose roster exists only in heats.competitors, which
         # any database stamped before D12-C commit E can be. Asking first
         # costs one chain replay per session; not asking cost 243 setup
         # errors, none of them about a route.
         #
-        # The fresh-DB branch below is the one CI has always taken, so
-        # falling back to it loses no coverage, and it replays the whole
+        # The fresh-DB branch is the baseline behavior, so falling back to it
+        # loses no coverage, and it replays the whole
         # chain itself, so a genuinely broken migration still fails loudly
         # there instead of hiding here. The only thing this can mask is a
         # bad source database, which is the thing it is reporting.
@@ -174,14 +178,13 @@ def smoke_env(monkeypatch):
     app = create_app()
     app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
 
-    # Migrate unconditionally, including the copied database.  A copy of
-    # instance/proam.db is stamped at whatever revision that developer's
-    # machine last ran, which is not necessarily head, and running these routes
-    # against a stale schema produces failures that look like route bugs.
+    # Migrate unconditionally, including an explicitly supplied copy. Its
+    # revision is not necessarily head, and running these routes against a
+    # stale schema produces failures that look like route bugs.
     # D12-C commit A is where this first bit: nine smoke tests failed with
     # "no such column: heat_assignments.uid" on a machine holding a dev
-    # database, and passed in CI, where SOURCE_DB does not exist and the
-    # fresh-DB branch below already migrated.  On a copy already at head this
+    # database, and passed in CI, where the seeded source is already at head.
+    # On a copy already at head this
     # is a no-op that costs one alembic_version read.
     from flask_migrate import upgrade
     migrations_dir = PROJECT_ROOT / "migrations"
@@ -409,7 +412,11 @@ def _run_smoke(route: dict[str, object], smoke_env) -> None:
 
     allowed = {200, 202, 301, 302, 403}
     if method == "POST":
-        allowed.add(400)
+        # Empty generic smoke payloads can be rejected by validation (400) or
+        # by a required stale-state token (409). Focused route tests prove the
+        # mutation contract; this suite proves every discovered route avoids a
+        # server error when called with a disposable authenticated fixture.
+        allowed.update({400, 409})
         allowed.update(_POST_ALLOWED_STATUS.get(endpoint, set()))
 
     assert response.status_code in allowed, (

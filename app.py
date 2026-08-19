@@ -28,6 +28,8 @@ import strings as text
 from database import db, init_db
 from services import reference_gate
 from services.background_jobs import configure as configure_jobs
+from services.background_jobs import reconcile_interrupted_jobs
+from services.background_jobs import start_heartbeat as start_job_heartbeat
 from services.logging_setup import (
     configure_error_monitoring,
     configure_logging,
@@ -278,6 +280,16 @@ def _create_app_inner():
 
     # Initialize database
     init_db(app)
+
+    # A SQLite restore is an offline operation. The web process holds a shared
+    # filesystem fence for its full lifetime; the maintenance command requires
+    # the exclusive form, so replacement cannot race open pools or background
+    # worker threads.
+    from services.restore_workflow import configure_sqlite_process_fence
+
+    configure_sqlite_process_fence(app)
+    reconcile_interrupted_jobs(app)
+    start_job_heartbeat(app)
 
     # Refuse writes that introduce a reference to the wrong competitor. Armed
     # on the session, not at the eight places that assign to Event.payouts or

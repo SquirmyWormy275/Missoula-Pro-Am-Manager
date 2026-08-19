@@ -84,6 +84,7 @@
                     </ul>
                     <form action="{{ url_for('proam_relay.draw_lottery', tournament_id=tournament.id) }}" method="POST">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="expected_relay_digest" value="{{ relay_state_digest }}">
                         <div class="mb-3">
                             <label class="form-label">Number of Teams</label>
                             {% set default_teams = [2, capacity.max_teams]|min %}
@@ -171,6 +172,7 @@
                         <form action="{{ url_for('proam_relay.redraw_lottery', tournament_id=tournament.id) }}" method="POST"
                               data-confirm="This will clear all teams and results. Are you sure?">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="expected_relay_digest" value="{{ relay_state_digest }}">
                             {% if capacity.max_teams > 0 %}
                             {% set default_redraw_n = [teams|length, capacity.max_teams]|min %}
                             <div class="mb-2">

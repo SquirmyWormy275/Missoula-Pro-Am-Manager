@@ -83,6 +83,8 @@ Heat generation owns event-level placement only. It must:
   use the `Heat` roster APIs rather than writing a second representation.
 - For dual-run events, assign every entrant to a different physical stand or
   course in run 2, including a one-person heat.
+- College Obstacle Pole is dual-run on Pole 1 / Pole 2 and uses the best time;
+  Pro Obstacle Pole is explicitly single-run.
 
 Generation must prove that every eligible entrant can be placed without a
 same-heat gear conflict before replacing an existing schedule. If event-specific
@@ -215,6 +217,11 @@ Authoritative handicap numbers are deterministic. No LLM provider participates
 in numeric prediction, mark optimization, shadow receipt authority, or official
 scoring. Newer language models may assist engineering or optional reviewed
 narrative work, but they must remain outside these race-day authority paths.
+
+Every accepted score request has a durable request-ID receipt. Score undo
+supersedes but does not delete that receipt. The receipt belongs to tournament
+history, retains the original heat ID even if an undone heat is regenerated,
+and loses replay authority without deletion if its issuing user is removed.
 
 ## Production Parity
 

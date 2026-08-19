@@ -47,6 +47,12 @@ These are GitHub settings, not repo code:
 - If touching deploy/runtime/config:
   - confirm `railway.toml` changes are intentional
   - confirm env var expectations are documented
+- If touching hosted backup/recovery:
+  - confirm `RAILWAY_PG_READONLY_DUMP_URL` belongs to the dedicated
+    non-superuser, read-only dump role
+  - confirm `BACKUP_AGE_RECIPIENT` is the owner-approved public recipient
+  - confirm the recovery private identity is held separately from GitHub,
+    Railway, the repository, and the application environment
 - If touching scoring/scheduling/reporting:
   - run targeted tests for the affected subsystem
 
@@ -61,6 +67,8 @@ python -m pytest tests/test_postgres_runtime_smoke.py -q
 python -m pytest tests/test_pg_migration_safety.py -q
 python -m pytest tests/test_migration_integrity.py::TestMigrationIntegrity -q
 python -m pytest tests/test_migration_integrity.py::test_shadow_schema_repair_upgrades_an_existing_b7_database -q
+python -m pytest tests/test_infrastructure.py tests/test_reporting_export.py -q
+python -m pytest tests/test_daily_backup_workflow.py -q
 $env:PROAM_UNIT_PG = "1"
 python -m pytest tests/test_migration_integrity.py::test_shadow_schema_repair_round_trip_on_populated_b7_postgresql tests/test_shadow_settlement_workflow.py::test_postgres_workers_skip_a_locked_delivery_instead_of_double_sending -q
 ```
@@ -81,6 +89,33 @@ For a service-worker/offline-scoring change, also verify on a demo database:
 3. a successful, non-redirected heat-entry page is available by its exact URL after the local server is stopped
 4. an uncached heat-entry URL shows the offline fallback rather than a browser network-error page
 5. queued POST evidence stays in the same browser profile and is reconciled through Offline Operations after reconnect
+
+## Hosted Backup Restore Proof
+
+The 2027 race-weekend dates are not yet configured. Do not add a date-specific
+schedule or claim race-weekend coverage until the owner approves the dates.
+
+Before merging a backup workflow change:
+
+1. Static workflow tests pass and confirm that production credentials occur
+   only in the role-verification and dump steps.
+2. A hosted run on the exact branch head verifies the dump role, creates the
+   dump without row output, restores it only to the runner-local PostgreSQL
+   service, suppresses and deletes `pg_restore` diagnostics, and passes
+   required-table, Alembic, and aggregate checks.
+3. The run uploads one `.age` ciphertext artifact and no plaintext dump. A
+   missing recipient, failed encryption, failed runner-local database removal,
+   or failed plaintext cleanup must produce no upload. The runner-local restore
+   must be dropped before the commit-pinned upload action executes.
+4. Evidence records the run URL, exact commit SHA, plaintext and ciphertext
+   SHA-256 digests, local restore result, and cleanup result.
+5. A designated recovery operator separately decrypts an artifact with the
+   approved private identity path and restores it into a disposable PostgreSQL
+   database according to `docs/ROLLBACK_SOP.md`.
+
+Do not mark hosted restore proof complete from static tests alone. Do not mark
+key custody or decryption proof complete until the separately held identity has
+been rehearsed by its owner.
 
 ## Deploy Verification
 
@@ -120,6 +155,9 @@ For a deliberately enabled STRATHMARK shadow deployment, also confirm:
 - [ ] CI green
 - [ ] PostgreSQL smoke green
 - [ ] migration safety green
+- [ ] hosted backup restored in runner-local PostgreSQL on the exact head
+- [ ] encrypted artifact contains ciphertext only
+- [ ] separately held recovery identity rehearsal recorded, or release blocked
 - [ ] rollback path documented
 - [ ] deploy verified in Railway logs
 - [ ] `/health` verified after deploy

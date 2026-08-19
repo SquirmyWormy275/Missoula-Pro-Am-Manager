@@ -9,16 +9,43 @@ Each team has 8 members:
 - 2 College Women
 """
 import copy
+import hashlib
+import hmac
 import json
 import math
 import random
+from functools import wraps
 
-from flask import has_app_context
+from flask import has_app_context, has_request_context
 
 from database import db
 from models import Event, EventResult, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.relay import RelayState, RelayTeam, RelayTeamEvent, RelayTeamMember
+
+
+class RelayStateConflict(RuntimeError):
+    """The relay state no longer matches the operator's reviewed snapshot."""
+
+
+def _relay_writer(func):
+    """Serialize a relay write and reload its snapshot after taking the lock."""
+    @wraps(func)
+    def locked(self, *args, **kwargs):
+        if not has_app_context():
+            return func(self, *args, **kwargs)
+
+        from services.flight_builder import (
+            lock_tournament_schedule,
+            sqlite_schedule_writer_guard,
+        )
+
+        with sqlite_schedule_writer_guard(self.tournament):
+            self.tournament = lock_tournament_schedule(self.tournament)
+            self.relay_data = self._load_relay_data()
+            return func(self, *args, **kwargs)
+
+    return locked
 
 
 def relay_payout_summary(tournament: Tournament) -> dict:
@@ -464,7 +491,73 @@ class ProAmRelay:
             'max_teams': max_teams,
         }
 
-    def run_lottery(self, num_teams: int = 2) -> dict:
+    @staticmethod
+    def _state_hash(payload) -> str:
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(',', ':'),
+            ensure_ascii=True,
+        ).encode('ascii')
+        return hashlib.sha256(encoded).hexdigest()
+
+    def state_digest(self) -> str:
+        """Digest the full relay roster/results snapshot for replacement writes."""
+        return self._state_hash({
+            'status': self.get_status(),
+            'teams': sorted(
+                self.get_teams(), key=lambda team: team.get('team_number', 0)
+            ),
+        })
+
+    def team_state_digest(self, team_number: int) -> str:
+        """Digest one team so writes to different teams remain compatible."""
+        team = next(
+            (
+                row for row in self.get_teams()
+                if row.get('team_number') == int(team_number)
+            ),
+            None,
+        )
+        return self._state_hash({'team_number': int(team_number), 'team': team})
+
+    def require_state_digest(
+        self,
+        expected_digest: str | None,
+        *,
+        team_number: int | None = None,
+    ) -> None:
+        """Reject a missing or stale full-state/team-state operator token."""
+        current = (
+            self.team_state_digest(team_number)
+            if team_number is not None
+            else self.state_digest()
+        )
+        if not expected_digest or not hmac.compare_digest(expected_digest, current):
+            raise RelayStateConflict(
+                'Relay state changed since this page was loaded. '
+                'Refresh and review the current relay before saving again.'
+            )
+
+    def require_request_state_digest(
+        self,
+        expected_digest: str | None,
+        *,
+        team_number: int | None = None,
+    ) -> None:
+        """Fence every HTTP mutation while preserving trusted setup callers."""
+        if has_request_context() or expected_digest is not None:
+            self.require_state_digest(
+                expected_digest,
+                team_number=team_number,
+            )
+
+    @_relay_writer
+    def run_lottery(
+        self,
+        num_teams: int = 2,
+        expected_digest: str | None = None,
+    ) -> dict:
         """
         Run the Pro-Am Relay lottery to create teams.
 
@@ -480,6 +573,8 @@ class ProAmRelay:
         Returns:
             Dict with lottery results
         """
+        self.require_request_state_digest(expected_digest)
+
         eligible_pro = self.get_eligible_pro_competitors()
         eligible_college = self.get_eligible_college_competitors()
 
@@ -561,7 +656,12 @@ class ProAmRelay:
             'message': f'Successfully drew {num_teams} team(s) of 8 competitors each.'
         }
 
-    def redraw_lottery(self, num_teams: int = 2) -> dict:
+    @_relay_writer
+    def redraw_lottery(
+        self,
+        num_teams: int = 2,
+        expected_digest: str | None = None,
+    ) -> dict:
         """Clear and redraw the lottery.
 
         The clear is in memory only. It used to be written through
@@ -577,6 +677,8 @@ class ProAmRelay:
         the previous state is restored in memory and the stored state was
         never modified at all.
         """
+        self.require_request_state_digest(expected_digest)
+
         previous = copy.deepcopy(self.relay_data)
         self.relay_data = {
             'status': 'not_drawn',
@@ -587,7 +689,10 @@ class ProAmRelay:
             'drawn_pro': []
         }
         try:
-            return self.run_lottery(num_teams=num_teams)
+            return self.run_lottery(
+                num_teams=num_teams,
+                expected_digest=expected_digest,
+            )
         except Exception:
             # Also covers a StaleDataError out of run_lottery's commit, where
             # the caller rolls back the session but this object would
@@ -603,7 +708,13 @@ class ProAmRelay:
         """Get the current lottery status."""
         return self.relay_data.get('status', 'not_drawn')
 
-    def record_total_time(self, team_number: int, total_time: float):
+    @_relay_writer
+    def record_total_time(
+        self,
+        team_number: int,
+        total_time: float,
+        expected_digest: str | None = None,
+    ):
         """
         Record the total relay time for a team directly.
 
@@ -611,6 +722,11 @@ class ProAmRelay:
             team_number: Team number
             total_time: Total relay time in seconds
         """
+        self.require_request_state_digest(
+            expected_digest,
+            team_number=team_number,
+        )
+
         teams = self.relay_data.get('teams', [])
         total_time = self._validated_relay_time(total_time)
         team = next((team for team in teams if team['team_number'] == team_number), None)
@@ -626,7 +742,14 @@ class ProAmRelay:
 
         self._save_relay_data()
 
-    def record_event_result(self, team_number: int, event_name: str, time_seconds: float):
+    @_relay_writer
+    def record_event_result(
+        self,
+        team_number: int,
+        event_name: str,
+        time_seconds: float,
+        expected_digest: str | None = None,
+    ):
         """
         Record a result for a team's event.
 
@@ -635,6 +758,11 @@ class ProAmRelay:
             event_name: One of the configured relay event keys
             time_seconds: Time in seconds
         """
+        self.require_request_state_digest(
+            expected_digest,
+            team_number=team_number,
+        )
+
         teams = self.relay_data.get('teams', [])
         if event_name not in self.RELAY_EVENTS:
             raise ValueError(f'Unknown relay event: {event_name}')
@@ -690,7 +818,12 @@ class ProAmRelay:
         completed = [t for t in teams if t.get('total_time') is not None]
         return sorted(completed, key=lambda t: t['total_time'])
 
-    def set_teams_manually(self, team_assignments: list[dict]) -> dict:
+    @_relay_writer
+    def set_teams_manually(
+        self,
+        team_assignments: list[dict],
+        expected_digest: str | None = None,
+    ) -> dict:
         """
         Set relay teams manually instead of using the lottery.
 
@@ -704,6 +837,7 @@ class ProAmRelay:
         Returns:
             Dict with result message.
         """
+        self.require_request_state_digest(expected_digest)
         if not team_assignments:
             raise ValueError("At least one team is required.")
 
@@ -817,8 +951,15 @@ class ProAmRelay:
             'message': f'Manually set {len(teams)} team(s).',
         }
 
-    def replace_competitor(self, team_number: int, old_competitor_id: int,
-                          new_competitor_id: int, competitor_type: str):
+    @_relay_writer
+    def replace_competitor(
+        self,
+        team_number: int,
+        old_competitor_id: int,
+        new_competitor_id: int,
+        competitor_type: str,
+        expected_digest: str | None = None,
+    ):
         """
         Replace a competitor on a team (e.g., due to injury).
 
@@ -828,6 +969,11 @@ class ProAmRelay:
             new_competitor_id: ID of replacement competitor
             competitor_type: 'pro' or 'college'
         """
+        self.require_request_state_digest(
+            expected_digest,
+            team_number=team_number,
+        )
+
         teams = self.relay_data.get('teams', [])
 
         # Get new competitor info. Filter on tournament_id + active status +

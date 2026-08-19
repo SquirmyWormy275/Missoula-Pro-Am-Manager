@@ -1,5 +1,6 @@
 """Database and route guards for concurrent flight-order writers."""
 import threading
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -57,6 +58,7 @@ def _event(tournament_id, name, event_type='pro'):
 
 def _seed_schedule(app, label, heat_counts=(2,)):
     from models import Flight, Heat, Tournament
+    from routes.scheduling.flights import flight_order_digest
 
     with app.app_context():
         tournament = Tournament(name=label, year=2029, status='setup')
@@ -101,6 +103,7 @@ def _seed_schedule(app, label, heat_counts=(2,)):
             'tournament_id': tournament.id,
             'flight_ids': [flight.id for flight in flights],
             'heat_ids_by_flight': heat_ids_by_flight,
+            'order_digests': [flight_order_digest(flight.id) for flight in flights],
         }
 
 
@@ -323,10 +326,14 @@ def test_single_reorder_locks_parent_and_swaps_under_unique_constraint(
     tournament_calls = _lock_calls_for_tournaments(monkeypatch)
     expected = list(reversed(seeded['heat_ids_by_flight'][0]))
 
+    from routes.scheduling.flights import flight_order_digest
+
+    with app.app_context():
+        expected_digest = flight_order_digest(seeded['flight_ids'][0])
     response = auth_client.post(
         f"/scheduling/{seeded['tournament_id']}/flights/"
         f"{seeded['flight_ids'][0]}/reorder",
-        json={'heat_ids': expected},
+        json={'heat_ids': expected, 'expected_digest': expected_digest},
     )
 
     assert response.status_code == 200
@@ -339,6 +346,166 @@ def test_single_reorder_locks_parent_and_swaps_under_unique_constraint(
             ).order_by(Heat.flight_position).all()
         ]
     assert actual == expected
+
+
+def test_stale_single_flight_reorder_is_rejected(app, auth_client):
+    from models import Heat
+    from routes.scheduling.flights import flight_order_digest
+
+    seeded = _seed_schedule(app, 'Stale Single Reorder', (3,))
+    original = seeded['heat_ids_by_flight'][0]
+    with app.app_context():
+        expected_digest = flight_order_digest(seeded['flight_ids'][0])
+
+    first_order = [original[1], original[0], original[2]]
+    first = auth_client.post(
+        f"/scheduling/{seeded['tournament_id']}/flights/"
+        f"{seeded['flight_ids'][0]}/reorder",
+        json={'heat_ids': first_order, 'expected_digest': expected_digest},
+    )
+    stale = auth_client.post(
+        f"/scheduling/{seeded['tournament_id']}/flights/"
+        f"{seeded['flight_ids'][0]}/reorder",
+        json={
+            'heat_ids': [original[0], original[2], original[1]],
+            'expected_digest': expected_digest,
+        },
+    )
+
+    assert first.status_code == 200
+    assert stale.status_code == 409
+    assert stale.get_json()['code'] == 'stale_flight_order'
+    with app.app_context():
+        assert [
+            heat.id for heat in Heat.query.filter_by(
+                flight_id=seeded['flight_ids'][0]
+            ).order_by(Heat.flight_position).all()
+        ] == first_order
+
+
+def test_single_reorder_returns_fresh_digest_for_consecutive_reorder(
+    app, auth_client,
+):
+    from models import Heat
+
+    seeded = _seed_schedule(app, 'Consecutive Single Reorders', (3,))
+    flight_id = seeded['flight_ids'][0]
+    original = seeded['heat_ids_by_flight'][0]
+    endpoint = (
+        f"/scheduling/{seeded['tournament_id']}/flights/{flight_id}/reorder"
+    )
+
+    first_order = [original[1], original[0], original[2]]
+    first = auth_client.post(
+        endpoint,
+        json={
+            'heat_ids': first_order,
+            'expected_digest': seeded['order_digests'][0],
+        },
+    )
+
+    assert first.status_code == 200
+    first_payload = first.get_json()
+    first_digest = first_payload['order_digests'][str(flight_id)]
+    assert first_digest != seeded['order_digests'][0]
+
+    second_order = [original[1], original[2], original[0]]
+    second = auth_client.post(
+        endpoint,
+        json={'heat_ids': second_order, 'expected_digest': first_digest},
+    )
+
+    assert second.status_code == 200
+    second_digest = second.get_json()['order_digests'][str(flight_id)]
+    assert second_digest != first_digest
+    with app.app_context():
+        assert [
+            heat.id for heat in Heat.query.filter_by(
+                flight_id=flight_id,
+            ).order_by(Heat.flight_position).all()
+        ] == second_order
+
+
+def test_bulk_reorder_returns_fresh_digests_for_consecutive_page_drags(
+    app, auth_client,
+):
+    seeded = _seed_schedule(app, 'Consecutive Bulk Reorders', (2, 2))
+    flight_ids = seeded['flight_ids']
+    original = seeded['heat_ids_by_flight']
+    endpoint = f"/scheduling/{seeded['tournament_id']}/flights/bulk-reorder"
+
+    first_orders = [list(reversed(ids)) for ids in original]
+    first = auth_client.post(
+        endpoint,
+        json={'flights': [
+            {
+                'flight_id': flight_id,
+                'heat_ids': heat_ids,
+                'expected_digest': seeded['order_digests'][index],
+            }
+            for index, (flight_id, heat_ids) in enumerate(
+                zip(flight_ids, first_orders, strict=True)
+            )
+        ]},
+    )
+
+    assert first.status_code == 200
+    first_digests = first.get_json()['order_digests']
+    assert set(first_digests) == {str(flight_id) for flight_id in flight_ids}
+    assert all(
+        first_digests[str(flight_id)] != seeded['order_digests'][index]
+        for index, flight_id in enumerate(flight_ids)
+    )
+
+    second = auth_client.post(
+        endpoint,
+        json={'flights': [
+            {
+                'flight_id': flight_id,
+                'heat_ids': original[index],
+                'expected_digest': first_digests[str(flight_id)],
+            }
+            for index, flight_id in enumerate(flight_ids)
+        ]},
+    )
+
+    assert second.status_code == 200
+    second_digests = second.get_json()['order_digests']
+    assert set(second_digests) == set(first_digests)
+    assert all(
+        second_digests[flight_id] != first_digests[flight_id]
+        for flight_id in first_digests
+    )
+
+
+def test_flights_page_applies_returned_order_digests_after_success():
+    template = Path('templates/pro/flights.html').read_text(encoding='utf-8')
+
+    assert 'function applyOrderDigests(orderDigests)' in template
+    assert 'grid.dataset.orderDigest = orderDigests[flightId];' in template
+    assert 'applyOrderDigests(data.order_digests);' in template
+
+
+def test_flight_lifecycle_cannot_skip_or_regress(app, auth_client):
+    from models import Flight
+
+    seeded = _seed_schedule(app, 'Monotonic Flight Lifecycle', (1,))
+    base = (
+        f"/scheduling/{seeded['tournament_id']}/flights/"
+        f"{seeded['flight_ids'][0]}"
+    )
+
+    out_of_order = auth_client.post(f'{base}/complete')
+    assert out_of_order.status_code == 302
+    with app.app_context():
+        assert db.session.get(Flight, seeded['flight_ids'][0]).status == 'pending'
+
+    assert auth_client.post(f'{base}/start').status_code == 302
+    assert auth_client.post(f'{base}/complete').status_code == 302
+    stale_start = auth_client.post(f'{base}/start')
+    assert stale_start.status_code == 302
+    with app.app_context():
+        assert db.session.get(Flight, seeded['flight_ids'][0]).status == 'completed'
 
 
 def test_bulk_reorder_locks_parent_rows_before_cross_flight_write(
@@ -355,8 +522,16 @@ def test_bulk_reorder_locks_parent_rows_before_cross_flight_write(
     response = auth_client.post(
         f"/scheduling/{seeded['tournament_id']}/flights/bulk-reorder",
         json={'flights': [
-            {'flight_id': seeded['flight_ids'][0], 'heat_ids': [second_heat]},
-            {'flight_id': seeded['flight_ids'][1], 'heat_ids': [first_heat]},
+            {
+                'flight_id': seeded['flight_ids'][0],
+                'heat_ids': [second_heat],
+                'expected_digest': seeded['order_digests'][0],
+            },
+            {
+                'flight_id': seeded['flight_ids'][1],
+                'heat_ids': [first_heat],
+                'expected_digest': seeded['order_digests'][1],
+            },
         ]},
     )
 
@@ -386,13 +561,17 @@ def test_uniqueness_race_returns_retryable_409(
             json={'flights': [{
                 'flight_id': seeded['flight_ids'][0],
                 'heat_ids': heat_ids,
+                'expected_digest': seeded['order_digests'][0],
             }]},
         )
     else:
         response = auth_client.post(
             f"/scheduling/{seeded['tournament_id']}/flights/"
             f"{seeded['flight_ids'][0]}/reorder",
-            json={'heat_ids': heat_ids},
+            json={
+                'heat_ids': heat_ids,
+                'expected_digest': seeded['order_digests'][0],
+            },
         )
 
     assert response.status_code == 409
@@ -817,7 +996,10 @@ def test_sqlite_reorder_waits_for_shared_schedule_guard(app):
         response_box['response'] = client.post(
             f"/scheduling/{seeded['tournament_id']}/flights/"
             f"{seeded['flight_ids'][0]}/reorder",
-            json={'heat_ids': list(reversed(seeded['heat_ids_by_flight'][0]))},
+            json={
+                'heat_ids': list(reversed(seeded['heat_ids_by_flight'][0])),
+                'expected_digest': seeded['order_digests'][0],
+            },
         )
         reorder_finished.set()
 
@@ -907,6 +1089,7 @@ def test_postgres_integration_and_reorder_serialize_on_flight_parent_rows(
                 f"{seeded['flight_ids'][1]}/reorder",
                 json={
                     'heat_ids': list(reversed(seeded['heat_ids_by_flight'][1])),
+                    'expected_digest': seeded['order_digests'][1],
                 },
             )
         except Exception as exc:  # pragma: no cover - asserted in parent thread
@@ -1028,6 +1211,7 @@ def test_postgres_partnered_axe_writer_holds_tournament_lock_through_commit(app)
 def test_postgres_birling_writer_holds_tournament_lock_through_commit(app):
     import routes.scheduling.birling as birling_routes
     from models import Event, Tournament
+    from services.birling_bracket import BirlingBracket
 
     with app.app_context():
         tournament = Tournament(
@@ -1048,6 +1232,7 @@ def test_postgres_birling_writer_holds_tournament_lock_through_commit(app):
         db.session.commit()
         tournament_id = tournament.id
         event_id = event.id
+        bracket_digest = BirlingBracket(event).bracket_state_digest()
 
     entered = threading.Event()
     release = threading.Event()
@@ -1065,6 +1250,7 @@ def test_postgres_birling_writer_holds_tournament_lock_through_commit(app):
             tournament_id,
             lambda client: client.post(
                 f'/scheduling/{tournament_id}/event/{event_id}/birling/reset',
+                data={'expected_bracket_digest': bracket_digest},
                 follow_redirects=False,
             ),
             entered,

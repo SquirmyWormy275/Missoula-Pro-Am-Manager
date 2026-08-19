@@ -124,6 +124,7 @@ jobs:
   # job, which only proves migrations apply and a handful of routes answer.
   unit-postgres:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       postgres:

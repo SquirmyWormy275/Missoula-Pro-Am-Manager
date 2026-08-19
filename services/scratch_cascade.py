@@ -8,10 +8,13 @@ scratch operation.  No DB writes are performed here.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import OperationalError
@@ -39,6 +42,182 @@ class CascadeEffect:
     affected_entity_id: int  # PK of the affected row
     affected_entity_type: str  # 'event_result' | 'competitor' | 'event'
     metadata: dict = field(default_factory=dict)
+
+
+def scratch_effect_digest(competitor, effects) -> str:
+    """Bind a scratch confirmation to the exact effects the judge reviewed."""
+    from models.competitor import CollegeCompetitor
+
+    canonical_effects = [
+        {
+            'effect_type': effect.effect_type,
+            'description': effect.description,
+            'affected_entity_id': effect.affected_entity_id,
+            'affected_entity_type': effect.affected_entity_type,
+            'metadata': effect.metadata,
+        }
+        for effect in effects
+    ]
+    canonical_effects.sort(key=lambda effect: (
+        effect['effect_type'],
+        effect['affected_entity_type'],
+        effect['affected_entity_id'],
+        effect['description'],
+    ))
+    payload = {
+        'competitor_id': competitor.id,
+        'competitor_type': (
+            'college' if isinstance(competitor, CollegeCompetitor) else 'pro'
+        ),
+        'competitor_status': competitor.status,
+        'effects': canonical_effects,
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(',', ':'),
+        ensure_ascii=True,
+        default=str,
+    ).encode('ascii')
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _canonical_json_value(raw_value):
+    if not isinstance(raw_value, str):
+        return raw_value
+    try:
+        return json.loads(raw_value)
+    except (json.JSONDecodeError, TypeError):
+        return raw_value
+
+
+def _stable_number(raw_value):
+    if raw_value is None:
+        return None
+    try:
+        return format(Decimal(str(raw_value)).normalize(), "f")
+    except (InvalidOperation, TypeError, ValueError):
+        return str(raw_value)
+
+
+def _scratch_post_state_sha256(competitor, snapshot: dict) -> str:
+    """Fingerprint state that reverse_cascade would otherwise overwrite."""
+    from database import db
+    from models.competitor import CollegeCompetitor
+    from models.event import EventResult
+    from models.heat import Heat
+
+    result_state = []
+    for result_snapshot in sorted(
+        snapshot.get("results", []), key=lambda item: item.get("id") or 0,
+    ):
+        result = db.session.get(EventResult, result_snapshot.get("id"))
+        if result is None:
+            result_state.append(None)
+            continue
+        result_state.append({
+            "id": result.id,
+            "version_id": result.version_id,
+            "status": result.status,
+            "status_reason": result.status_reason,
+            "result_value": _stable_number(result.result_value),
+            "run1_value": _stable_number(result.run1_value),
+            "run2_value": _stable_number(result.run2_value),
+            "run3_value": _stable_number(result.run3_value),
+            "best_run": _stable_number(result.best_run),
+            "t1_run1": _stable_number(result.t1_run1),
+            "t2_run1": _stable_number(result.t2_run1),
+            "t1_run2": _stable_number(result.t1_run2),
+            "t2_run2": _stable_number(result.t2_run2),
+            "tiebreak_value": _stable_number(result.tiebreak_value),
+            "points_awarded": _stable_number(result.points_awarded),
+            "payout_amount": _stable_number(result.payout_amount),
+            "payout_settled": result.payout_settled,
+            "final_position": result.final_position,
+        })
+
+    heat_state = []
+    for heat_snapshot in sorted(
+        snapshot.get("heats", []), key=lambda item: item.get("heat_id") or 0,
+    ):
+        heat = db.session.get(Heat, heat_snapshot.get("heat_id"))
+        if heat is None:
+            heat_state.append(None)
+            continue
+        heat_state.append({
+            "id": heat.id,
+            "version_id": heat.version_id,
+            "status": heat.status,
+            "competitors": heat.get_competitors(),
+            "stand_assignments": heat.get_stand_assignments(),
+        })
+
+    payload = {
+        "competitor": {
+            "id": competitor.id,
+            "type": (
+                "college" if isinstance(competitor, CollegeCompetitor) else "pro"
+            ),
+            "status": competitor.status,
+            "partners": _canonical_json_value(competitor.partners),
+            "total_earnings": (
+                None
+                if isinstance(competitor, CollegeCompetitor)
+                else _stable_number(competitor.total_earnings)
+            ),
+        },
+        "results": result_state,
+        "heats": heat_state,
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=str,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _scratch_audit_details(audit_entry) -> dict:
+    try:
+        details = json.loads(audit_entry.details_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return details if isinstance(details, dict) else {}
+
+
+def scratch_undo_token(audit_entry) -> str | None:
+    """Return the exact capability for one fingerprinted scratch audit row."""
+    details = _scratch_audit_details(audit_entry)
+    state_sha256 = details.get("scratch_post_state_sha256")
+    if not isinstance(state_sha256, str) or len(state_sha256) != 64:
+        return None
+    encoded = f"{audit_entry.id}:{state_sha256}".encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _append_scratch_audit(
+    *, action: str, competitor_id: int, judge_user_id: int | None, details: dict,
+):
+    """Append scratch evidence to the caller's transaction."""
+    from database import db
+    from models.audit_log import AuditLog
+    from models.user import User
+
+    actor_user_id = judge_user_id
+    if actor_user_id is not None and db.session.get(User, actor_user_id) is None:
+        actor_user_id = None
+    entry = AuditLog(
+        actor_user_id=actor_user_id,
+        action=action,
+        entity_type="competitor",
+        entity_id=competitor_id,
+        details_json=json.dumps(details, sort_keys=True, default=str),
+    )
+    db.session.add(entry)
+    db.session.flush()
+    return entry
 
 
 def _lock_cascade_rows(
@@ -440,7 +619,6 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
     from database import db
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.event import Event, EventResult
-    from services.audit import log_action
     from services.flight_builder import lock_tournament_schedule
     from services.proam_relay import ProAmRelay
     from services.scoring_engine import _rebuild_individual_points
@@ -766,21 +944,26 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
                 }
 
         # --- Audit log -------------------------------------------------------
-        log_action(
-            "competitor_scratched",
-            entity_type="competitor",
-            entity_id=competitor.id,
+        db.session.flush()
+        scratch_post_state_sha256 = _scratch_post_state_sha256(competitor, snapshot)
+        audit_entry = _append_scratch_audit(
+            action="competitor_scratched",
+            competitor_id=competitor.id,
+            judge_user_id=judge_user_id,
             details={
                 "judge_id": judge_user_id,
                 "effects": [e.description for e in effects],
                 "scratch_snapshot": snapshot,
+                "scratch_post_state_sha256": scratch_post_state_sha256,
             },
         )
+        undo_token = scratch_undo_token(audit_entry)
 
     return {
         "success": True,
         "message": f"Competitor scratched. {effects_applied} effect(s) applied.",
         "effects_applied": effects_applied,
+        "undo_token": undo_token,
         # Reported, not folded into "message": scratch_confirm discards
         # message entirely and builds its own flash, so anything written
         # there would never reach the operator.  The heats-page scratch
@@ -807,6 +990,17 @@ def _snapshot_competitor_type(audit_entry) -> str:
     return snapshot.get("competitor_type", "pro")
 
 
+def _consumed_scratch_ids(entries) -> set[int]:
+    consumed: set[int] = set()
+    for entry in entries:
+        restored_from = _scratch_audit_details(entry).get("restored_from")
+        try:
+            consumed.add(int(restored_from))
+        except (TypeError, ValueError):
+            continue
+    return consumed
+
+
 def find_undoable_scratch(competitor_id: int, competitor_type: str | None = None):
     """Return the AuditLog row an undo would restore from, or None.
 
@@ -823,7 +1017,7 @@ def find_undoable_scratch(competitor_id: int, competitor_type: str | None = None
     from models.audit_log import AuditLog
 
     cutoff = utc_now_naive() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
-    return next(
+    scratch_entry = next(
         (
             entry
             for entry in AuditLog.query.filter(
@@ -838,6 +1032,15 @@ def find_undoable_scratch(competitor_id: int, competitor_type: str | None = None
         ),
         None,
     )
+    if scratch_entry is None or scratch_undo_token(scratch_entry) is None:
+        return None
+    undo_entries = AuditLog.query.filter(
+        AuditLog.action == "scratch_undone",
+        AuditLog.entity_id == competitor_id,
+    ).all()
+    if scratch_entry.id in _consumed_scratch_ids(undo_entries):
+        return None
+    return scratch_entry
 
 
 def find_undoable_scratches(competitor_ids, competitor_type: str | None = None) -> set:
@@ -858,20 +1061,47 @@ def find_undoable_scratches(competitor_ids, competitor_type: str | None = None) 
         return set()
 
     cutoff = utc_now_naive() - timedelta(minutes=SCRATCH_UNDO_WINDOW_MINUTES)
-    return {
-        entry.entity_id
-        for entry in AuditLog.query.filter(
+    scratch_entries = (
+        AuditLog.query.filter(
             AuditLog.action == "competitor_scratched",
             AuditLog.entity_id.in_(ids),
             AuditLog.created_at >= cutoff,
+        )
+        .order_by(AuditLog.id.desc())
+        .all()
+    )
+    latest_by_competitor = {}
+    for entry in scratch_entries:
+        if (
+            entry.entity_id in latest_by_competitor
+            or (
+                competitor_type is not None
+                and _snapshot_competitor_type(entry) != competitor_type
+            )
+        ):
+            continue
+        latest_by_competitor[entry.entity_id] = entry
+
+    consumed = _consumed_scratch_ids(
+        AuditLog.query.filter(
+            AuditLog.action == "scratch_undone",
+            AuditLog.entity_id.in_(ids),
         ).all()
-        if competitor_type is None
-        or _snapshot_competitor_type(entry) == competitor_type
+    )
+    return {
+        competitor_id
+        for competitor_id, entry in latest_by_competitor.items()
+        if entry.id not in consumed and scratch_undo_token(entry) is not None
     }
 
 
-def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
-                    competitor_type: str | None = None) -> dict:
+def reverse_cascade(
+    competitor_id: int,
+    judge_user_id: int,
+    tournament,
+    competitor_type: str | None = None,
+    expected_undo_token: str | None = None,
+) -> dict:
     """Reverse a scratch cascade by restoring from the audit log snapshot.
 
     Only works within SCRATCH_UNDO_WINDOW_MINUTES of the original scratch.
@@ -893,7 +1123,6 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
     from models.audit_log import AuditLog
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.event import Event, EventResult
-    from services.audit import log_action
     from services.flight_builder import lock_tournament_schedule
 
     tournament = lock_tournament_schedule(tournament)
@@ -917,19 +1146,48 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
                     AuditLog.action == "competitor_scratched",
                     AuditLog.entity_id == competitor_id,
                 )
+                .order_by(AuditLog.id.desc())
                 .all()
                 if _matches_type(entry)
             ),
             None,
         )
         if any_entry is not None:
-            return {"success": False, "message": "Undo window expired"}
-        return {"success": False, "message": "No scratch to undo"}
+            cutoff = utc_now_naive() - timedelta(
+                minutes=SCRATCH_UNDO_WINDOW_MINUTES
+            )
+            if any_entry.created_at < cutoff:
+                return {
+                    "success": False,
+                    "message": "Undo window expired",
+                    "status_code": 409,
+                }
+            return {
+                "success": False,
+                "message": "Scratch is no longer undoable",
+                "status_code": 409,
+            }
+        return {
+            "success": False,
+            "message": "No scratch to undo",
+            "status_code": 409,
+        }
 
-    try:
-        details = json.loads(audit_entry.details_json or "{}")
-    except (json.JSONDecodeError, TypeError):
-        return {"success": False, "message": "Audit entry corrupt; cannot undo"}
+    details = _scratch_audit_details(audit_entry)
+    current_undo_token = scratch_undo_token(audit_entry)
+    if (
+        not expected_undo_token
+        or current_undo_token is None
+        or not hmac.compare_digest(expected_undo_token, current_undo_token)
+    ):
+        return {
+            "success": False,
+            "message": (
+                "Scratch undo review is missing or stale. Review the current "
+                "scratch state before trying again."
+            ),
+            "status_code": 409,
+        }
 
     snapshot = details.get("scratch_snapshot", {})
 
@@ -988,6 +1246,21 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
             and relay_snapshot.get("relay_team_id") is not None
         },
     )
+
+    expected_post_state = details.get("scratch_post_state_sha256")
+    current_post_state = _scratch_post_state_sha256(comp, snapshot)
+    if (
+        not isinstance(expected_post_state, str)
+        or not hmac.compare_digest(expected_post_state, current_post_state)
+    ):
+        return {
+            "success": False,
+            "message": (
+                "Scoring or schedule state changed after this scratch. "
+                "The scratch was not reversed."
+            ),
+            "status_code": 409,
+        }
 
     with db.session.begin_nested():
         # --- Restore competitor status ---------------------------------------
@@ -1230,10 +1503,10 @@ def reverse_cascade(competitor_id: int, judge_user_id: int, tournament,
             _rebuild_individual_points(list(affected_college_competitor_ids))
 
         # --- Audit log the undo ---------------------------------------------
-        log_action(
-            "scratch_undone",
-            entity_type="competitor",
-            entity_id=competitor_id,
+        _append_scratch_audit(
+            action="scratch_undone",
+            competitor_id=competitor_id,
+            judge_user_id=judge_user_id,
             details={
                 "judge_id": judge_user_id,
                 "restored_from": audit_entry.id,

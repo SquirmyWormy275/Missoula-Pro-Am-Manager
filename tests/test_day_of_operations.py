@@ -209,11 +209,13 @@ def _confirm_heat_scratch(client, tournament, event, competitor, heat):
 
     preview = client.get(f'{handoff.headers["Location"]}&format=json')
     assert preview.status_code == 200
-    effects = preview.get_json()["effects"]
+    preview_payload = preview.get_json()
+    effects = preview_payload["effects"]
     data = {
         "competitor_type": event.event_type,
         "return_event_id": str(event.id),
         "effect_count": str(len(effects)),
+        "expected_effect_digest": preview_payload["effect_digest"],
     }
     for index, effect in enumerate(effects):
         data.update({
@@ -296,11 +298,13 @@ class TestScratchCompetitor:
             follow_redirects=False,
         )
         preview = auth_client.get(f'{handoff.headers["Location"]}&format=json')
-        effects = preview.get_json()["effects"]
+        preview_payload = preview.get_json()
+        effects = preview_payload["effects"]
         data = {
             "competitor_type": "pro",
             "return_event_id": str(e.id),
             "effect_count": str(len(effects)),
+            "expected_effect_digest": preview_payload["effect_digest"],
         }
         for index, effect in enumerate(effects):
             data.update({

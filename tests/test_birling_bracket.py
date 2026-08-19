@@ -368,7 +368,10 @@ class TestUndoMatchResult:
         assert match['loser'] == comp2
 
         with patched_bracket_deps():
-            result = b.undo_match_result(match['match_id'])
+            result = b.undo_match_result(
+                match['match_id'],
+                expected_undo_digest=b.match_fall_digest(match['match_id']),
+            )
         assert result['undone'] is True
         assert match['winner'] is None
         assert match['loser'] is None
@@ -397,7 +400,12 @@ class TestUndoMatchResult:
         # Try to undo the first-round match — should fail (downstream played)
         with patched_bracket_deps():
             with pytest.raises(ValueError, match="downstream match"):
-                b.undo_match_result(first_round[0]['match_id'])
+                b.undo_match_result(
+                    first_round[0]['match_id'],
+                    expected_undo_digest=b.match_fall_digest(
+                        first_round[0]['match_id'],
+                    ),
+                )
 
     def test_undo_match_no_winner_raises(self):
         """Try to undo a match with no winner. Expect ValueError."""
@@ -405,4 +413,7 @@ class TestUndoMatchResult:
         match = b.bracket_data['bracket']['winners'][0][0]
         with patched_bracket_deps():
             with pytest.raises(ValueError, match="no result to undo"):
-                b.undo_match_result(match['match_id'])
+                b.undo_match_result(
+                    match['match_id'],
+                    expected_undo_digest=b.match_fall_digest(match['match_id']),
+                )

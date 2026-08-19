@@ -1,26 +1,22 @@
 """TTL cache for report payloads.
 
 Storage strategy (in priority order):
-  1. In-process memory dict — always used as L1 for speed.
-  2. Disk shelve in instance/report_cache/ — used as L2 so that cache entries
-     survive gunicorn worker recycling and Railway redeploys.  The disk layer
-     is skipped gracefully if the instance directory is not writable.
+  1. In-process memory dict for SQLite/local operation.
+  2. No cross-process disk layer. Report invalidation generations are
+     process-local, so sharing a shelf across overlapping boots would let an
+     old process repopulate stale data after a new process invalidates it.
+  3. PostgreSQL deployments bypass this cache. A rolling deployment can have
+     two live processes, and a write in one cannot invalidate memory in the
+     other without a shared generation store.
 
-Callers must hand this module plain data. Anything stored here has to survive
-a pickle round trip into a different process, and a SQLAlchemy-mapped instance
-does not: it pickles without complaint, unpickles without complaint, and comes
-back detached from any session, so the first attribute the reader touches that
-was not already loaded when the pickle was taken raises DetachedInstanceError.
-The failure lands far from the write, in whatever renders the value, and it
-repeats for every request until the entry ages out. ``set`` therefore refuses
-the disk layer for values that carry mapped instances and says so in the log.
+Callers should still hand this module plain data. Process-local mapped entities
+can expire with their SQLAlchemy session, so caching them is allowed only in L1
+for backward compatibility and emits a warning.
 """
 from __future__ import annotations
 
 import builtins
 import logging
-import os
-import shelve
 import threading
 import time
 
@@ -29,80 +25,85 @@ logger = logging.getLogger(__name__)
 _cache: dict = {}
 _lock = threading.Lock()
 
+# A cache miss records the generation for that key in the reading thread. If
+# an invalidation affecting the key lands before the reader calls set(), the
+# stale fill is discarded. Generations are prefix-specific so an update to one
+# tournament does not suppress a concurrent fill for another tournament.
+_generation_counter = 0
+_prefix_generations: dict[str, int] = {}
+_read_state = threading.local()
+
 # Resolved once on first use; None means disk layer is unavailable.
 _shelf_path: str | None = None
 _shelf_resolved = False
 
 
-def _get_shelf_path() -> str | None:
-    """Return the path prefix for the shelve file, or None if unavailable."""
-    global _shelf_path, _shelf_resolved
-    if _shelf_resolved:
-        return _shelf_path
-    _shelf_resolved = True
+def _cache_enabled() -> bool:
     try:
-        # Walk up from this file to find the instance/ directory.
-        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        cache_dir = os.path.join(base, 'instance', 'report_cache')
-        os.makedirs(cache_dir, exist_ok=True)
-        _shelf_path = os.path.join(cache_dir, 'cache')
-    except Exception as exc:
-        logger.debug('Disk cache unavailable: %s', exc)
-        _shelf_path = None
-    return _shelf_path
+        from flask import current_app, has_app_context
+    except ModuleNotFoundError:
+        return True
+    if not has_app_context():
+        return True
+    uri = str(current_app.config.get('SQLALCHEMY_DATABASE_URI', '')).lower()
+    return not (uri.startswith('postgresql://') or uri.startswith('postgres://'))
+
+
+def _matches_prefix(key: str, prefix: str) -> bool:
+    """Return whether ``key`` belongs to a delimited cache namespace.
+
+    A trailing colon is the tournament boundary. It matches both the namespace
+    root (for example ``portal:college:1``) and children below it, but never a
+    larger tournament ID such as ``portal:college:10``.
+    """
+    if not prefix:
+        return True
+    if prefix.endswith(':'):
+        return key == prefix[:-1] or key.startswith(prefix)
+    return key.startswith(prefix)
+
+
+def _generation_for_key_locked(key: str) -> int:
+    return max(
+        (
+            generation
+            for prefix, generation in _prefix_generations.items()
+            if _matches_prefix(key, prefix)
+        ),
+        default=0,
+    )
+
+
+def _miss_generations() -> dict[str, int]:
+    misses = getattr(_read_state, 'misses', None)
+    if misses is None:
+        misses = {}
+        _read_state.misses = misses
+    return misses
+
+
+def _get_shelf_path() -> str | None:
+    """Return ``None`` because cache generations are process-local."""
+    global _shelf_path, _shelf_resolved
+    _shelf_resolved = True
+    _shelf_path = None
+    return None
 
 
 def _shelf_get(key: str):
-    path = _get_shelf_path()
-    if not path:
-        return None
-    try:
-        with shelve.open(path, flag='c') as shelf:
-            item = shelf.get(key)
-        if not item:
-            return None
-        if item['expires_at'] < time.time():
-            _shelf_delete(key)
-            return None
-        return item['value']
-    except Exception as exc:
-        logger.debug('Disk cache read error for %s: %s', key, exc)
-        return None
+    return None
 
 
 def _shelf_set(key: str, value, expires_at: float) -> None:
-    path = _get_shelf_path()
-    if not path:
-        return
-    try:
-        with shelve.open(path, flag='c') as shelf:
-            shelf[key] = {'value': value, 'expires_at': expires_at}
-    except Exception as exc:
-        logger.debug('Disk cache write error for %s: %s', key, exc)
+    return None
 
 
 def _shelf_delete(key: str) -> None:
-    path = _get_shelf_path()
-    if not path:
-        return
-    try:
-        with shelve.open(path, flag='c') as shelf:
-            shelf.pop(key, None)
-    except Exception:
-        pass
+    return None
 
 
 def _shelf_delete_prefix(prefix: str) -> None:
-    path = _get_shelf_path()
-    if not path:
-        return
-    try:
-        with shelve.open(path, flag='c') as shelf:
-            doomed = [k for k in shelf.keys() if k.startswith(prefix)]
-            for k in doomed:
-                del shelf[k]
-    except Exception as exc:
-        logger.debug('Disk cache prefix-delete error: %s', exc)
+    return None
 
 
 # Deep enough for a report payload (dict -> list -> row dict -> entity), and
@@ -138,45 +139,61 @@ def _contains_orm_entity(value, depth: int = 0) -> bool:
 
 
 def get(key: str):
+    if not _cache_enabled():
+        return None
     now = time.time()
     with _lock:
+        generation = _generation_for_key_locked(key)
         item = _cache.get(key)
         if item:
             if item['expires_at'] >= now:
+                _miss_generations().pop(key, None)
                 return item['value']
             _cache.pop(key, None)
 
-    # L2: disk
-    value = _shelf_get(key)
-    if value is not None:
-        # Warm L1 — TTL already validated by _shelf_get.
-        with _lock:
+        # Keep disk access serialized with invalidation. A reader that starts
+        # after an invalidation cannot observe the pre-delete shelf entry.
+        value = _shelf_get(key)
+        if value is not None:
+            # Warm L1 — TTL already validated by _shelf_get.
             _cache[key] = {'value': value, 'expires_at': now + 60}
-    return value
+            _miss_generations().pop(key, None)
+            return value
+
+        _miss_generations()[key] = generation
+        return None
 
 
 def set(key: str, value, ttl_seconds: int) -> None:
+    if not _cache_enabled():
+        return
     ttl_seconds = max(1, int(ttl_seconds))
     expires_at = time.time() + ttl_seconds
+    contains_orm_entity = _contains_orm_entity(value)
+    miss_generation = _miss_generations().pop(key, None)
     with _lock:
+        if (
+            miss_generation is not None
+            and miss_generation != _generation_for_key_locked(key)
+        ):
+            logger.debug('Discarding stale cache fill for %s after invalidation.', key)
+            return
         _cache[key] = {'value': value, 'expires_at': expires_at}
-    if _contains_orm_entity(value):
-        # L1 is fine: the objects stay in the process that loaded them. L2 is
-        # not, for the reason spelled out in the module docstring. Keep the
-        # in-memory entry, refuse the disk one, and make the mistake loud
-        # rather than letting it surface later as a render-time 500.
-        logger.warning(
-            'Refusing disk cache write for %s: payload contains SQLAlchemy '
-            'entities, which unpickle detached. Serialize to plain data '
-            'before caching.', key)
-        return
-    _shelf_set(key, value, expires_at)
+        if contains_orm_entity:
+            logger.warning(
+                'Cache payload for %s contains SQLAlchemy entities. Serialize '
+                'to plain data so cached values do not outlive their session.', key)
+            return
+        _shelf_set(key, value, expires_at)
 
 
 def invalidate_prefix(prefix: str) -> None:
+    global _generation_counter
     with _lock:
-        doomed = [k for k in _cache.keys() if k.startswith(prefix)]
+        _generation_counter += 1
+        _prefix_generations[prefix] = _generation_counter
+        doomed = [k for k in _cache.keys() if _matches_prefix(k, prefix)]
         for key in doomed:
             _cache.pop(key, None)
-    _shelf_delete_prefix(prefix)
+        _shelf_delete_prefix(prefix)
 
