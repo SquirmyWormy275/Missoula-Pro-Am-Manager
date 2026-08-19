@@ -21,8 +21,7 @@ from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.school_captain import SchoolCaptain
 from routes.api import write_limit
-from services.report_cache import get as cache_get
-from services.report_cache import set as cache_set
+from services.report_cache import get_or_compute as cache_get_or_compute
 
 portal_bp = Blueprint('portal', __name__)
 
@@ -623,12 +622,7 @@ def _completed_result_counts_by_event(event_ids: list[int]) -> dict[int, int]:
 
 def _cached_public_payload(key: str, builder):
     ttl_seconds = max(1, int(current_app.config.get('PUBLIC_CACHE_TTL_SECONDS', 5)))
-    cached = cache_get(key)
-    if cached is not None:
-        return cached
-    payload = builder()
-    cache_set(key, payload, ttl_seconds)
-    return payload
+    return cache_get_or_compute(key, ttl_seconds, builder)
 
 
 def _build_college_spectator_payload(tournament: Tournament) -> dict:

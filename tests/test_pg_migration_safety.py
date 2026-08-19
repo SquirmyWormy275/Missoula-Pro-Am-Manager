@@ -445,20 +445,47 @@ class TestEngineConnectListenerHygiene:
     These tests are cheap and need no database.
     """
 
-    def test_listener_registered_once_regardless_of_app_count(self):
-
-
+    def test_listener_registered_once_regardless_of_app_count(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        isolated_db = tmp_path / 'listener-hygiene.db'
+        monkeypatch.setenv('DATABASE_URL', f'sqlite:///{isolated_db.as_posix()}')
+        monkeypatch.setenv('TESTING', '1')
         import app as app_module
+        from database import db
+
+        default_db = PROJECT_ROOT / 'instance' / 'proam.db'
+        default_before = (
+            default_db.exists(),
+            default_db.stat().st_size if default_db.exists() else 0,
+            default_db.stat().st_mtime_ns if default_db.exists() else 0,
+        )
 
         # Build several apps first: the leak this guards against only shows
         # up once more than one app exists in the process.
-        for _ in range(3):
-            try:
-                app_module.create_app()
-            except Exception:
-                # A build failure is a different test's problem; the listener
-                # is registered at import time either way.
-                pass
+        apps = []
+        try:
+            for _ in range(3):
+                apps.append(app_module.create_app())
+        finally:
+            for built_app in apps:
+                with built_app.app_context():
+                    db.session.remove()
+                    db.engine.dispose()
+                finalizer = built_app.extensions.get(
+                    'sqlite_process_fence_finalizer'
+                )
+                if finalizer is not None and finalizer.alive:
+                    finalizer()
+
+        default_after = (
+            default_db.exists(),
+            default_db.stat().st_size if default_db.exists() else 0,
+            default_db.stat().st_mtime_ns if default_db.exists() else 0,
+        )
+        assert default_after == default_before
 
         # 'connect' is a PoolEvents event; listening on Engine routes it to
         # the pool class hierarchy. Count our listener at the base class.

@@ -75,9 +75,11 @@ class TestReportCache:
         from services import report_cache
         with report_cache._lock:
             report_cache._cache.clear()
+            report_cache._fill_locks.clear()
         yield
         with report_cache._lock:
             report_cache._cache.clear()
+            report_cache._fill_locks.clear()
 
     # -- Disable disk layer for deterministic unit tests --
     @pytest.fixture(autouse=True)
@@ -98,6 +100,58 @@ class TestReportCache:
         payload = {'scores': [1, 2, 3]}
         set('test:round_trip', payload, ttl_seconds=60)
         assert get('test:round_trip') == payload
+
+    def test_get_or_compute_coalesces_concurrent_cache_miss(self):
+        from services import report_cache
+
+        reader_count = 8
+        ready = threading.Barrier(reader_count)
+        builder_started = threading.Event()
+        release_builder = threading.Event()
+        calls = 0
+        calls_lock = threading.Lock()
+        results = []
+
+        def builder():
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+            builder_started.set()
+            assert release_builder.wait(timeout=2)
+            return {'standings': [1, 2, 3]}
+
+        def reader():
+            ready.wait(timeout=2)
+            results.append(
+                report_cache.get_or_compute('public:1', 60, builder)
+            )
+
+        readers = [threading.Thread(target=reader) for _ in range(reader_count)]
+        for reader_thread in readers:
+            reader_thread.start()
+        assert builder_started.wait(timeout=2)
+        release_builder.set()
+        for reader_thread in readers:
+            reader_thread.join(timeout=2)
+
+        assert all(not reader_thread.is_alive() for reader_thread in readers)
+        assert calls == 1
+        assert results == [{'standings': [1, 2, 3]}] * reader_count
+
+    def test_get_or_compute_releases_key_after_builder_error(self):
+        from services import report_cache
+
+        def broken_builder():
+            raise RuntimeError('synthetic builder failure')
+
+        with pytest.raises(RuntimeError, match='synthetic builder failure'):
+            report_cache.get_or_compute('public:error', 60, broken_builder)
+
+        assert report_cache.get_or_compute(
+            'public:error',
+            60,
+            lambda: {'recovered': True},
+        ) == {'recovered': True}
 
     def test_ttl_expiry(self):
         """Value should expire after TTL elapses."""

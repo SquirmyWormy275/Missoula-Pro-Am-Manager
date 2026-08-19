@@ -579,6 +579,21 @@ class TestContextProcessor:
                 ctx.update(fn())
             assert ctx.get('unscored_heats', 0) == 0
 
+    def test_public_portal_skips_judge_sidebar_query(self, app):
+        tid = 99999
+        with app.test_request_context(f'/portal/spectator/{tid}'):
+            from flask import request as _req
+            _req.view_args = {'tournament_id': tid}
+            with patch(
+                'services.sidebar_aggregator.unscored_heats_count'
+            ) as unscored_count:
+                ctx = {}
+                for fn in app.template_context_processors[None]:
+                    ctx.update(fn())
+
+        unscored_count.assert_not_called()
+        assert ctx.get('unscored_heats') == 0
+
 
 # ===========================================================================
 # 12. EVENTRESULT METHODS

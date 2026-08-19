@@ -19,11 +19,15 @@ import builtins
 import logging
 import threading
 import time
+from collections.abc import Callable
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
 _cache: dict = {}
 _lock = threading.Lock()
+_fill_locks: dict[str, threading.Lock] = {}
+_T = TypeVar('_T')
 
 # A cache miss records the generation for that key in the reading thread. If
 # an invalidation affecting the key lands before the reader calls set(), the
@@ -185,6 +189,32 @@ def set(key: str, value, ttl_seconds: int) -> None:
                 'to plain data so cached values do not outlive their session.', key)
             return
         _shelf_set(key, value, expires_at)
+
+
+def get_or_compute(key: str, ttl_seconds: int, builder: Callable[[], _T]) -> _T:
+    """Return a cached value, coalescing concurrent fills for one key.
+
+    Public standings can receive a cold burst after a local restart. Without a
+    per-key fill lock, every reader repeats the same queries before the first
+    result reaches the cache. Different keys retain independent locks.
+    """
+    if not _cache_enabled():
+        return builder()
+
+    cached = get(key)
+    if cached is not None:
+        return cached
+
+    with _lock:
+        fill_lock = _fill_locks.setdefault(key, threading.Lock())
+
+    with fill_lock:
+        cached = get(key)
+        if cached is not None:
+            return cached
+        value = builder()
+        set(key, value, ttl_seconds)
+        return value
 
 
 def invalidate_prefix(prefix: str) -> None:

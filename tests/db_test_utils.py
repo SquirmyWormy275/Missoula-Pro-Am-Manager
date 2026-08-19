@@ -59,6 +59,7 @@ def _isolate_report_cache():
 
     with report_cache._lock:
         report_cache._cache.clear()
+        report_cache._fill_locks.clear()
         report_cache._prefix_generations.clear()
         report_cache._generation_counter = 0
     report_cache._read_state.misses = {}
@@ -144,13 +145,9 @@ def _ensure_pg_template():
     if _pg_template_ready:
         return
     _pg_preflight()
-    # Sweep clones orphaned by earlier runs (callers that os.unlink() the
-    # handle no-op on PG names, so crashes leave databases behind).
-    stale = _pg_run(
-        "SELECT datname FROM pg_database WHERE datname LIKE 'proam_unit_%' "
-        f"AND datname <> '{_PG_TEMPLATE}'")
-    for name in stale.stdout.split():
-        _pg_run(f'DROP DATABASE IF EXISTS {name} (FORCE)')
+    # Never sweep by prefix here. Another checkout may be running the same
+    # suite, and this process cannot prove that an existing clone is orphaned.
+    # Each factory call drops only the unique database name it created.
     head = _chain_head()
     probe = _pg_run(
         f"SELECT 1 FROM pg_database WHERE datname='{_PG_TEMPLATE}'")
@@ -208,6 +205,7 @@ def _create_test_app_pg():
             'WTF_CSRF_CHECK_DEFAULT': False,
             'SERVER_NAME': None,
         })
+        os.makedirs(_app.instance_path, exist_ok=True)
         with _app.app_context():
             _db.engine.dispose()
         _isolate_report_cache()
@@ -272,6 +270,11 @@ def create_test_app(*, use_migrations=False):
             'WTF_CSRF_CHECK_DEFAULT': False,
             'SERVER_NAME': None,
         })
+        # Fresh clones do not contain Flask's ignored instance directory.
+        # Recovery/export tests may create isolated artifacts there, so make
+        # the directory part of the test-app contract instead of relying on a
+        # developer's previous local run to have created it.
+        os.makedirs(_app.instance_path, exist_ok=True)
 
         # Verify the app is NOT pointing at the production DB
         uri = _app.config.get('SQLALCHEMY_DATABASE_URI', '')
