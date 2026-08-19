@@ -124,11 +124,24 @@ After merge to `main` and Railway deploy start:
 1. Confirm Railway runs `preDeployCommand = "flask db upgrade"`
 2. Confirm deploy logs show migration output
 3. Confirm app boot completes without config/runtime crash
-4. Confirm health check:
+4. Record the exact 40-character merge SHA, application version, and Alembic
+   head expected from the deployed release.
+5. Run the commit-pinned public smoke check without `--allow-unpinned`:
+
+   ```powershell
+   python scripts/smoke_test.py --expected-commit <merge-sha> --expected-version <version> --expected-migration <alembic-head>
+   ```
+
+6. Confirm health check:
    - `GET /health` returns `200`
    - `db` is `true`
-5. Confirm one authenticated judge page loads
-6. Confirm one public spectator/API page loads
+   - `migration_current` is `true`
+   - `migration_rev` matches the expected Alembic head
+   - `git_commit` matches the exact merge SHA
+7. Confirm one authenticated judge page loads. The public smoke script checks
+   the login form but does not satisfy this authenticated check.
+8. Confirm one public spectator/API page loads with the expected tournament
+   binding and standings schema.
 
 For a deliberately enabled STRATHMARK shadow deployment, also confirm:
 
@@ -160,4 +173,6 @@ For a deliberately enabled STRATHMARK shadow deployment, also confirm:
 - [ ] separately held recovery identity rehearsal recorded, or release blocked
 - [ ] rollback path documented
 - [ ] deploy verified in Railway logs
-- [ ] `/health` verified after deploy
+- [ ] exact commit, version, and migration smoke verified after deploy
+- [ ] authenticated judge page verified after deploy
+- [ ] tournament-bound public spectator/API response verified after deploy

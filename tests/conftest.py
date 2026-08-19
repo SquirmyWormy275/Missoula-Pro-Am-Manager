@@ -56,22 +56,24 @@ def pytest_configure(config):
     config._prod_db_before = _prod_db_fingerprint()
 
 
-def pytest_unconfigure(config):
-    """Verify production DB was not modified by the test session."""
-    before = getattr(config, '_prod_db_before', None)
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run if collection or execution touched the default database."""
+    before = getattr(session.config, '_prod_db_before', None)
     if before is None:
         return
     after = _prod_db_fingerprint()
     if before != after:
-        import warnings
-        warnings.warn(
-            f'\n\n*** PRODUCTION DATABASE MODIFIED BY TESTS ***\n'
+        message = (
+            f'*** PRODUCTION DATABASE MODIFIED BY TESTS ***\n'
             f'Before: exists={before[0]}, size={before[1]}, mtime={before[2]}\n'
             f'After:  exists={after[0]}, size={after[1]}, mtime={after[2]}\n'
             f'Path: {_PROD_DB_PATH}\n'
-            f'This should NEVER happen. Investigate immediately.\n',
-            stacklevel=1,
+            f'This should NEVER happen. Investigate immediately.'
         )
+        reporter = session.config.pluginmanager.get_plugin('terminalreporter')
+        if reporter is not None:
+            reporter.write_sep('=', message, red=True)
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 @pytest.fixture(autouse=True, scope='session')

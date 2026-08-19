@@ -32,8 +32,7 @@ from models import Event, Tournament
 from services.audit import log_action
 from services.background_jobs import get as get_job
 from services.print_catalog import record_print
-from services.report_cache import get as cache_get
-from services.report_cache import set as cache_set
+from services.report_cache import get_or_compute as cache_get_or_compute
 from services.reporting_backup import sqlite_backup_download_plan, submit_database_backup_job
 from services.reporting_export import (
     ExportArtifactError,
@@ -60,26 +59,15 @@ def _sqlite_schema_info(path: str) -> dict:
 
 def _cached_payload(key: str, builder):
     ttl = int(current_app.config.get('REPORT_CACHE_TTL_SECONDS', 60))
-    cached = cache_get(key)
-    if cached is not None:
-        return cached
-    payload = builder()
-    cache_set(key, payload, ttl)
-    return payload
+    return cache_get_or_compute(key, ttl, builder)
 
 
 def _serialize_bull_belle(rows: list) -> list:
     """Flatten get_bull_belle_with_tiebreak_data output into plain data.
 
-    This used to hand the cache the CollegeCompetitor rows themselves. The
-    cache has a disk layer, the disk layer pickles, and a mapped instance
-    comes back from a pickle detached from every session. Nothing complains
-    at write time and nothing complains at read time. It breaks later, in the
-    template, on the first attribute that was not already loaded when the
-    pickle was taken: ``c.team`` was never touched before ``cache_set`` ran,
-    so the standings page raised DetachedInstanceError and returned 500 on
-    every request from the moment a gunicorn worker respawned onto a warm
-    shelf until the entry aged out.
+    Report payloads must remain plain data. SQLite keeps them briefly in the
+    current process, while PostgreSQL intentionally rebuilds them because a
+    rolling deployment has no shared invalidation generation.
 
     The key names below match what the template already reads, so the flatten
     is invisible to it: Jinja resolves ``c.team.team_code`` against a dict by
@@ -106,7 +94,7 @@ def _serialize_bull_belle(rows: list) -> list:
 
 
 def _serialize_teams(teams: list) -> list:
-    """Flatten Team rows for the same reason as _serialize_bull_belle."""
+    """Flatten Team rows so the payload never retains mapped instances."""
     return [
         {
             'id': team.id,
@@ -138,6 +126,19 @@ def _serialize_competitors(competitors: list) -> list:
     ]
 
 
+def _build_college_standings_payload(tournament: Tournament) -> dict:
+    """Build a cache-safe standings payload from one attached tournament."""
+    return {
+        'bull': _serialize_competitors(tournament.get_bull_of_woods(10)),
+        'belle': _serialize_competitors(tournament.get_belle_of_woods(10)),
+        'bull_tiebreak': _serialize_bull_belle(
+            tournament.get_bull_belle_with_tiebreak_data('M', 10)),
+        'belle_tiebreak': _serialize_bull_belle(
+            tournament.get_bull_belle_with_tiebreak_data('F', 10)),
+        'team_standings': _serialize_teams(tournament.get_team_standings()),
+    }
+
+
 @reporting_bp.route('/<int:tournament_id>/college/standings')
 def college_standings(tournament_id):
     """View college standings (Bull/Belle of Woods and Team Standings).
@@ -152,15 +153,7 @@ def college_standings(tournament_id):
 
     payload = _cached_payload(
         f'reports:{tournament_id}:college_standings',
-        lambda: {
-            'bull': _serialize_competitors(tournament.get_bull_of_woods(10)),
-            'belle': _serialize_competitors(tournament.get_belle_of_woods(10)),
-            'bull_tiebreak': _serialize_bull_belle(
-                tournament.get_bull_belle_with_tiebreak_data('M', 10)),
-            'belle_tiebreak': _serialize_bull_belle(
-                tournament.get_bull_belle_with_tiebreak_data('F', 10)),
-            'team_standings': _serialize_teams(tournament.get_team_standings()),
-        }
+        lambda: _build_college_standings_payload(tournament),
     )
 
     # Events that are not finalized but have at least one completed result —

@@ -280,6 +280,31 @@ class TestReportCache:
             report_cache.set('reports:9:standings', 'stale', ttl_seconds=60)
             assert report_cache.get('reports:9:standings') is None
 
+    def test_postgres_get_or_compute_always_rebuilds(self, app, monkeypatch):
+        from services import report_cache
+
+        monkeypatch.setitem(
+            app.config,
+            'SQLALCHEMY_DATABASE_URI',
+            'postgresql://synthetic/not-connected',
+        )
+        built = []
+
+        def builder():
+            built.append(len(built) + 1)
+            return {'build': built[-1]}
+
+        with app.app_context():
+            assert report_cache.get_or_compute('reports:9:standings', 60, builder) == {
+                'build': 1,
+            }
+            assert report_cache.get_or_compute('reports:9:standings', 60, builder) == {
+                'build': 2,
+            }
+            assert report_cache.get('reports:9:standings') is None
+            with report_cache._lock:
+                assert report_cache._cache == {}
+
     def test_multiple_keys_independent(self):
         from services.report_cache import get, set
         set('key:alpha', 'AAA', ttl_seconds=60)
@@ -306,6 +331,36 @@ class TestReportCache:
             # At 0.5s it should still be alive (ttl = 1)
             mock_time.time.return_value = base_time + 0.5
             assert report_cache.get('test:min_ttl') == 'val'
+
+
+def test_collection_time_default_database_change_fails_the_session(monkeypatch):
+    from types import SimpleNamespace
+
+    from tests import conftest as suite_config
+
+    fingerprints = iter([(False, 0, 0), (True, 0, 1)])
+    monkeypatch.setattr(
+        suite_config,
+        '_prod_db_fingerprint',
+        lambda: next(fingerprints),
+    )
+    messages = []
+    reporter = SimpleNamespace(
+        write_sep=lambda *args, **kwargs: messages.append((args, kwargs)),
+    )
+    config = SimpleNamespace(
+        _prod_db_before=suite_config._prod_db_fingerprint(),
+        pluginmanager=SimpleNamespace(
+            get_plugin=lambda name: reporter if name == 'terminalreporter' else None,
+        ),
+    )
+    session = SimpleNamespace(config=config, exitstatus=pytest.ExitCode.OK)
+
+    suite_config.pytest_sessionfinish(session, pytest.ExitCode.OK)
+
+    assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
+    assert messages
+    assert 'PRODUCTION DATABASE MODIFIED' in messages[0][0][1]
 
 
 # ===================================================================

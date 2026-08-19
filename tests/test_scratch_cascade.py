@@ -306,6 +306,94 @@ class TestHappyPathRelayTeam:
         )
 
 
+def test_projectable_legacy_relay_stays_undoable_after_scratch(app):
+    from database import db
+    from models.relay import RelayState
+    from services.proam_relay import ProAmRelay
+    from services.scratch_cascade import (
+        compute_scratch_effects,
+        execute_cascade,
+        reverse_cascade,
+    )
+
+    with app.app_context():
+        tournament = _seed_base(db)
+        competitor = _seed_pro(db, tournament, name="Legacy Relay Pro")
+        college_competitor = _seed_college(
+            db, tournament, name="Colliding College Relay",
+        )
+        assert competitor.id == college_competitor.id
+        relay_event = _seed_event(
+            db, tournament, name="Pro-Am Relay", event_type="pro",
+        )
+        relay_event.event_state = _make_relay_state([{
+            "team_number": 1,
+            "name": "Team 1",
+            "pro_members": [{
+                "id": competitor.id,
+                "name": competitor.name,
+                "gender": competitor.gender,
+            }],
+            "college_members": [{
+                "id": college_competitor.id,
+                "name": college_competitor.name,
+                "gender": college_competitor.gender,
+            }],
+            "events": {
+                event_key: {"result": None, "status": "pending"}
+                for event_key in ProAmRelay.RELAY_EVENTS
+            },
+            "total_time": None,
+        }])
+        db.session.commit()
+
+        relay_effect = next(
+            effect for effect in compute_scratch_effects(competitor, tournament)
+            if effect.effect_type == "relay_team"
+        )
+        assert relay_effect.metadata["source"] == "legacy"
+
+        scratched = execute_cascade(
+            competitor,
+            [relay_effect],
+            judge_user_id=1,
+            tournament=tournament,
+        )
+        db.session.commit()
+
+        scratched_state = json.loads(relay_event.event_state)
+        assert scratched_state["teams"][0]["pro_members"] == []
+        assert scratched_state["teams"][0]["college_members"] == [{
+            "id": college_competitor.id,
+            "name": college_competitor.name,
+            "gender": college_competitor.gender,
+        }]
+        assert RelayState.query.filter_by(event_id=relay_event.id).first() is None
+
+        undo = reverse_cascade(
+            competitor.id,
+            judge_user_id=1,
+            tournament=tournament,
+            competitor_type="pro",
+            expected_undo_token=scratched["undo_token"],
+        )
+        db.session.commit()
+
+        assert undo["success"] is True
+        restored_state = json.loads(relay_event.event_state)
+        assert restored_state["teams"][0]["pro_members"] == [{
+            "id": competitor.id,
+            "name": competitor.name,
+            "gender": competitor.gender,
+        }]
+        assert restored_state["teams"][0]["college_members"] == [{
+            "id": college_competitor.id,
+            "name": college_competitor.name,
+            "gender": college_competitor.gender,
+        }]
+        assert competitor.status == "active"
+
+
 def test_normalized_relay_membership_is_scratched_and_undone(app):
     from database import db
     from models.relay import RelayState, RelayTeam, RelayTeamMember
@@ -419,6 +507,79 @@ def test_normalized_relay_undo_preserves_a_later_reassignment(app):
         assert RelayTeamMember.query.filter_by(
             relay_team_id=replacement_team.id, uid=competitor.uid,
         ).first() is not None
+
+
+def test_normalized_relay_undo_rejects_a_redrawn_team(app):
+    from database import db
+    from models.relay import RelayState, RelayTeam, RelayTeamMember
+    from services.scratch_cascade import (
+        compute_scratch_effects,
+        execute_cascade,
+        reverse_cascade,
+    )
+
+    with app.app_context():
+        tournament = _seed_base(db)
+        competitor = _seed_pro(db, tournament, name="Redrawn Relay Pro")
+        relay_event = _seed_event(db, tournament, name="Pro-Am Relay", event_type="pro")
+        relay_state = RelayState(event_id=relay_event.id, status="drawn")
+        db.session.add(relay_state)
+        db.session.flush()
+        original_team = RelayTeam(
+            relay_state_id=relay_state.id,
+            team_number=1,
+            name="Original Team",
+        )
+        db.session.add(original_team)
+        db.session.flush()
+        original_team_id = original_team.id
+        db.session.add(RelayTeamMember(
+            relay_state_id=relay_state.id,
+            relay_team_id=original_team_id,
+            uid=competitor.uid,
+        ))
+        db.session.commit()
+
+        relay_effect = next(
+            effect for effect in compute_scratch_effects(competitor, tournament)
+            if effect.effect_type == "relay_team"
+        )
+        scratched = execute_cascade(
+            competitor,
+            [relay_effect],
+            judge_user_id=1,
+            tournament=tournament,
+        )
+        db.session.commit()
+
+        db.session.delete(original_team)
+        db.session.commit()
+        redrawn_team = RelayTeam(
+            id=original_team_id,
+            relay_state_id=relay_state.id,
+            team_number=1,
+            name="Redrawn Team",
+        )
+        db.session.add(redrawn_team)
+        db.session.commit()
+
+        undo = reverse_cascade(
+            competitor.id,
+            judge_user_id=1,
+            tournament=tournament,
+            competitor_type="pro",
+            expected_undo_token=scratched["undo_token"],
+        )
+        db.session.commit()
+
+        assert undo["success"] is False
+        assert "changed" in undo["message"].lower()
+        assert competitor.status == "scratched"
+        assert RelayTeamMember.query.filter_by(
+            relay_state_id=relay_state.id,
+            uid=competitor.uid,
+        ).first() is None
+        assert db.session.get(RelayTeam, original_team_id).name == "Redrawn Team"
 
 
 class TestHappyPathAllEffectTypes:

@@ -42,12 +42,17 @@ def _loads(value):
 
 def _relay_state(sql):
     """Read the normalized relay projection through the race-day service."""
+    del sql
+    return _relay_service().relay_data
+
+
+def _relay_service():
+    """Return the current normalized relay service for digest-aware writes."""
     from database import db
     from models import Tournament
     from services.proam_relay import get_proam_relay
 
-    del sql
-    return get_proam_relay(db.session.get(Tournament, TID)).relay_data
+    return get_proam_relay(db.session.get(Tournament, TID))
 
 
 # ---------------------------------------------------------------------------
@@ -159,8 +164,10 @@ def test_failed_relay_redraw_leaves_the_announced_teams_intact(client, sql):
 
     # Ask for a draw the eligible pool cannot possibly fill. 99 teams needs
     # 198 pro men; the tournament has 25 eligible pros in total.
+    expected_digest = _relay_service().state_digest()
     r = client.post(f"/tournament/{TID}/proam-relay/redraw",
-                    data={"num_teams": "99"})
+                    data={"num_teams": "99",
+                          "expected_relay_digest": expected_digest})
     assert r.status_code in (200, 302), r.data[:400]
 
     after = _relay_state(sql)
@@ -193,8 +200,10 @@ def test_a_redraw_that_can_succeed_still_replaces_the_teams(client, sql):
     before = _relay_state(sql)
     assert len(before.get("teams", [])) == 3, before.get("status")
 
+    expected_digest = _relay_service().state_digest()
     r = client.post(f"/tournament/{TID}/proam-relay/redraw",
-                    data={"num_teams": "2"})
+                    data={"num_teams": "2",
+                          "expected_relay_digest": expected_digest})
     assert r.status_code in (200, 302), r.data[:400]
 
     after = _relay_state(sql)
@@ -252,9 +261,11 @@ def test_public_relay_results_page_survives_recorded_total_times(app, client, sq
     for team in teams:
         number = team["team_number"]
         seconds = RELAY_TOTAL_TIMES.get(number, "420.00")
+        expected_digest = _relay_service().team_state_digest(number)
         r = client.post(f"/tournament/{TID}/proam-relay/results",
                         data={"team_number": str(number),
-                              "time_seconds": seconds})
+                              "time_seconds": seconds,
+                              "expected_relay_digest": expected_digest})
         assert r.status_code in (200, 302), r.data[:400]
 
     recorded = [t.get("total_time") for t in _relay_state(sql).get("teams", [])]
@@ -315,9 +326,11 @@ def test_public_relay_desktop_view_prints_the_times_it_actually_has(app, client,
     for team in teams:
         number = team["team_number"]
         seconds = RELAY_TOTAL_TIMES.get(number, "420.00")
+        expected_digest = _relay_service().team_state_digest(number)
         r = client.post(f"/tournament/{TID}/proam-relay/results",
                         data={"team_number": str(number),
-                              "time_seconds": seconds})
+                              "time_seconds": seconds,
+                              "expected_relay_digest": expected_digest})
         assert r.status_code in (200, 302), r.data[:400]
 
     # view=desktop is explicit because _resolve_view_mode(prefer_mobile=True)

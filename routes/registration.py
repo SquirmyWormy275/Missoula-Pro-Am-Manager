@@ -287,8 +287,8 @@ def team_detail(tournament_id, team_id):
     # Same reachability repair as the pro dashboard: scratch_confirm redirects
     # a college judge back here, and the Scratch button is gated on
     # status == 'active', so without this the undo window cannot be reached.
-    from services.scratch_cascade import find_undoable_scratches
-    undoable_scratch_ids = find_undoable_scratches(
+    from services.scratch_cascade import find_undoable_scratch_tokens
+    undo_tokens_by_competitor_id = find_undoable_scratch_tokens(
         [m.id for m in members if m.status == 'scratched'], 'college'
     )
 
@@ -298,7 +298,7 @@ def team_detail(tournament_id, team_id):
                            members=members,
                            college_events=college_events,
                            member_event_labels=member_event_labels,
-                           undoable_scratch_ids=undoable_scratch_ids,
+                           undo_tokens_by_competitor_id=undo_tokens_by_competitor_id,
                            member_event_details=member_event_details)
 
 

@@ -172,6 +172,102 @@ class TestCompetitorEnteredEvent:
         ev = _event(id=5, name='Underhand', event_type='college')
         assert _competitor_entered_event(ev, ['UNDERHAND']) is True
 
+    def test_legacy_name_selects_same_gender_event_when_names_collide(self, monkeypatch):
+        from services import heat_generator
+
+        men = _event(
+            id=20,
+            name='Underhand Speed',
+            display_name="Men's Underhand Speed",
+            event_type='college',
+            gender='M',
+        )
+        women = _event(
+            id=21,
+            name='Underhand Speed',
+            display_name="Women's Underhand Speed",
+            event_type='college',
+            gender='F',
+        )
+        monkeypatch.setattr(
+            heat_generator,
+            '_get_tournament_events',
+            lambda event: [men, women],
+        )
+
+        assert _competitor_entered_event(
+            men, ['Underhand Speed'], competitor_gender='M'
+        ) is True
+        assert _competitor_entered_event(
+            women, ['Underhand Speed'], competitor_gender='M'
+        ) is False
+        assert _competitor_entered_event(
+            women, ['Underhand Speed'], competitor_gender='F'
+        ) is True
+        assert _competitor_entered_event(
+            men, ['Underhand Speed'], competitor_gender='F'
+        ) is False
+
+    def test_explicit_wrong_gender_id_still_identifies_event(self, monkeypatch):
+        from services import heat_generator
+
+        men = _event(
+            id=20,
+            name='Underhand Speed',
+            display_name="Men's Underhand Speed",
+            event_type='college',
+            gender='M',
+        )
+        women = _event(
+            id=21,
+            name='Underhand Speed',
+            display_name="Women's Underhand Speed",
+            event_type='college',
+            gender='F',
+        )
+        monkeypatch.setattr(
+            heat_generator,
+            '_get_tournament_events',
+            lambda event: [men, women],
+        )
+
+        assert _competitor_entered_event(
+            men, [men.id], competitor_gender='F'
+        ) is True
+        assert _competitor_entered_event(
+            women, [men.id], competitor_gender='F'
+        ) is False
+
+    def test_gender_qualified_wrong_gender_name_still_identifies_event(self, monkeypatch):
+        from services import heat_generator
+
+        men = _event(
+            id=20,
+            name='Underhand Speed',
+            display_name="Men's Underhand Speed",
+            event_type='college',
+            gender='M',
+        )
+        women = _event(
+            id=21,
+            name='Underhand Speed',
+            display_name="Women's Underhand Speed",
+            event_type='college',
+            gender='F',
+        )
+        monkeypatch.setattr(
+            heat_generator,
+            '_get_tournament_events',
+            lambda event: [men, women],
+        )
+
+        assert _competitor_entered_event(
+            men, ["Men's Underhand Speed"], competitor_gender='F'
+        ) is True
+        assert _competitor_entered_event(
+            women, ["Men's Underhand Speed"], competitor_gender='F'
+        ) is False
+
 
 # ---------------------------------------------------------------------------
 # _is_list_only_event

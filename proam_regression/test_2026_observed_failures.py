@@ -741,11 +741,17 @@ def _scratch_through_the_real_route(client, comp_id, comp_type):
         headers={"Accept": "application/json"},
     )
     assert r.status_code == 200, r.status_code
-    effects = r.get_json()["effects"]
-    form = {"effect_count": str(len(effects)), "competitor_type": comp_type}
+    payload = r.get_json()
+    effects = payload["effects"]
+    form = {
+        "effect_count": str(len(effects)),
+        "competitor_type": comp_type,
+        "expected_effect_digest": payload["effect_digest"],
+    }
     for i, e in enumerate(effects):
         form[f"effect_type_{i}"] = e["effect_type"]
         form[f"affected_entity_id_{i}"] = str(e["affected_entity_id"])
+        form[f"affected_entity_type_{i}"] = e["affected_entity_type"]
         form[f"effect_checked_{i}"] = "on"
     r2 = client.post(
         f"/scoring/{TID}/competitor/{comp_id}/scratch-confirm", data=form
