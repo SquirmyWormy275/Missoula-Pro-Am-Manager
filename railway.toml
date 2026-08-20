@@ -7,6 +7,8 @@
 # Phase 1 deploy incident notes).  Renaming to preDeployCommand activates the
 # release-phase pipeline so `flask db upgrade` actually runs on every deploy.
 preDeployCommand = "flask db upgrade"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
 
 # ---------------------------------------------------------------------------
 # STRATHMARK environment variables (set in the Railway dashboard, not here)
