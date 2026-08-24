@@ -14,6 +14,7 @@ from services.gear_sharing import (
     build_name_index,
     competitors_share_gear_for_event,
     event_matches_gear_key,
+    gear_partner_names,
     get_family_events,
     get_gear_family,
     infer_equipment_categories,
@@ -1037,3 +1038,60 @@ class TestMultiSegmentParser:
             self.events, self.name_index, self_name='Alex Kaper',
         )
         assert 'Cody Labahn' in gear_map.values()
+
+
+class TestMultiPartnerParser:
+    def test_preserves_every_declared_roster_partner(self):
+        from services.gear_sharing import parse_gear_sharing_details
+
+        events = [_event(id=10, name='Single Buck', stand_type='saw_hand', event_type='pro')]
+        name_index = build_name_index(['Cody Labahn', 'Karson Wilson'])
+        gear_map, warnings = parse_gear_sharing_details(
+            'SHARING Single Buck saw with Cody Labahn and Karson Wilson',
+            events, name_index, self_name='Alex Kaper',
+        )
+
+        assert warnings == []
+        assert gear_partner_names(gear_map['10']) == ['Cody Labahn', 'Karson Wilson']
+
+    def test_multi_partner_value_is_a_conflict_for_each_named_competitor(self):
+        event = _event(id=10)
+        gear = {'10': 'partners:Cody Labahn|Karson Wilson'}
+
+        assert competitors_share_gear_for_event('Alex Kaper', gear, 'Cody Labahn', {}, event)
+        assert competitors_share_gear_for_event('Alex Kaper', gear, 'Karson Wilson', {}, event)
+
+    def test_keeps_each_explicit_clause_bound_to_its_event_and_intent(self):
+        from services.gear_sharing import parse_gear_sharing_details
+
+        events = [
+            _event(id=10, name='Single Buck', stand_type='saw_hand'),
+            _event(id=11, name='Cookie Stack', stand_type='cookie_stack'),
+            SimpleNamespace(
+                id=12,
+                name='Double Buck',
+                display_name='Double Buck',
+                stand_type='saw_hand',
+                event_type='pro',
+                is_partnered=True,
+            ),
+        ]
+        name_index = build_name_index([
+            'Mason Banks', 'Chrissy Marcellus', 'Cody Labahn', 'Mike Johnson',
+        ])
+        details = (
+            'SHARING Single Buck saw with Mason Banks, '
+            'SHARING Cookie Stack saw with Chrissy Marcellus, '
+            'SHARING Cookie Stack saw with Cody Labahn, '
+            'USING Double Buck saw with Mike Johnson'
+        )
+
+        gear_map, warnings = parse_gear_sharing_details(
+            details, events, name_index, self_name='Owen Vredenburg'
+        )
+
+        assert warnings == []
+        assert gear_partner_names(gear_map['10']) == ['Mason Banks', 'Mike Johnson']
+        assert gear_partner_names(gear_map['11']) == ['Chrissy Marcellus', 'Cody Labahn']
+        assert gear_map['12'] == 'using:Mike Johnson'
+        assert gear_partner_names(gear_map['category:crosscut']) == ['Mason Banks']

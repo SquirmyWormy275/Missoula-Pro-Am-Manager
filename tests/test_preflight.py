@@ -1253,6 +1253,31 @@ class TestGearSharingUsingPrefix:
         codes = self._codes(report)
         assert 'gear_partner_mismatch' not in codes
 
+    def test_multi_partner_sharing_value_resolves_every_roster_name(
+            self, db_session, tournament):
+        from services.preflight import build_preflight_report
+
+        event = _make_event(
+            db_session, tournament, 'Single Buck Multi', stand_type='saw_hand'
+        )
+        alice = _make_pro(
+            db_session, tournament, 'Alice Jones', event_ids=[event.id]
+        )
+        _bob = _make_pro(
+            db_session, tournament, 'Bob Smith', event_ids=[event.id]
+        )
+        _carol = _make_pro(
+            db_session, tournament, 'Carol Vance', event_ids=[event.id]
+        )
+        alice.gear_sharing = json.dumps({
+            str(event.id): 'partners:Bob Smith|Carol Vance',
+        })
+        db_session.flush()
+
+        report = build_preflight_report(tournament)
+
+        assert 'gear_unknown_partner_names' not in self._codes(report)
+
     def test_using_entry_still_flagged_when_name_unknown(
             self, db_session, tournament):
         """The prefix fix must not mask a GENUINE unresolved partner — a
