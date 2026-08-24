@@ -16,6 +16,7 @@ from models import Event, EventResult, Flight, Heat, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from services.gear_sharing import (
     event_matches_gear_key,
+    gear_partner_names,
     is_using_value,
     normalize_person_name,
     strip_using_prefix,
@@ -600,23 +601,24 @@ def build_preflight_report(tournament: Tournament, saturday_college_event_ids: l
                 # confirmation (see services/gear_sharing._USING_VALUE_PREFIX).
                 # The underlying name must still resolve to a real competitor,
                 # but the prefix itself is not part of the person's name.
-                partner_name_only = strip_using_prefix(partner_text)
-                partner_norm = normalize_person_name(partner_name_only)
-                if not partner_name_only:
+                partner_names = gear_partner_names(partner_text)
+                if not partner_names:
                     unknown_partner_rows += 1
                     if competitor.name not in unknown_partner_names:
                         unknown_partner_names.append(competitor.name)
                     continue
                 if partner_text.startswith('group:'):
                     continue
-                if partner_norm == self_name:
-                    self_reference_rows += 1
-                    if competitor.name not in self_reference_names:
-                        self_reference_names.append(competitor.name)
-                if partner_norm and partner_norm not in known_names:
-                    unknown_partner_rows += 1
-                    if competitor.name not in unknown_partner_names:
-                        unknown_partner_names.append(competitor.name)
+                for partner_name in partner_names:
+                    partner_norm = normalize_person_name(partner_name)
+                    if partner_norm == self_name:
+                        self_reference_rows += 1
+                        if competitor.name not in self_reference_names:
+                            self_reference_names.append(competitor.name)
+                    if partner_norm and partner_norm not in known_names:
+                        unknown_partner_rows += 1
+                        if competitor.name not in unknown_partner_names:
+                            unknown_partner_names.append(competitor.name)
 
     _scan_rows(ProCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(), pro_events, pro_names)
     _scan_rows(CollegeCompetitor.query.filter_by(tournament_id=tournament.id, status='active').all(), college_events, college_names)

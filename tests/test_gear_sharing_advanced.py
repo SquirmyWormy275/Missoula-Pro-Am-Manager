@@ -66,6 +66,37 @@ class TestBuildGearReport:
         report = build_gear_report(tournament)
         assert isinstance(report, dict)
 
+    def test_report_expands_a_multi_partner_value(self, db_session, tournament):
+        from services.gear_sharing import build_gear_report
+
+        event = make_event(
+            db_session, tournament, "Men's Single Buck Multi",
+            stand_type='saw_hand',
+        )
+        owner = make_pro_competitor(
+            db_session, tournament, 'Multi Owner', 'M', events=[event.id],
+            gear_sharing={str(event.id): 'partners:Partner One|Partner Two'},
+        )
+        partner_one = make_pro_competitor(
+            db_session, tournament, 'Partner One', 'M', events=[event.id],
+            gear_sharing={str(event.id): owner.name},
+        )
+        partner_two = make_pro_competitor(
+            db_session, tournament, 'Partner Two', 'M', events=[event.id],
+            gear_sharing={str(event.id): owner.name},
+        )
+        db_session.flush()
+
+        report = build_gear_report(tournament)
+        pair_ids = {
+            frozenset((pair['comp_a'].id, pair['comp_b'].id))
+            for pair in report['pro_pairs']
+        }
+
+        assert frozenset((owner.id, partner_one.id)) in pair_ids
+        assert frozenset((owner.id, partner_two.id)) in pair_ids
+        assert not report['pro_unresolved']
+
     def test_empty_tournament_report(self, db_session, tournament):
         from services.gear_sharing import build_gear_report
         report = build_gear_report(tournament)
@@ -107,6 +138,37 @@ class TestCompleteOneSidedPairs:
         result = complete_one_sided_pairs(tournament)
         # Already complete — should not error
         assert isinstance(result, dict)
+
+    def test_completes_reciprocals_for_every_multi_partner(self, db_session, tournament):
+        from services.gear_sharing import complete_one_sided_pairs, gear_partner_names
+
+        event = make_event(
+            db_session, tournament, "Men's Single Buck Recip Multi",
+            stand_type='saw_hand',
+        )
+        owner = make_pro_competitor(
+            db_session, tournament, 'Recip Owner', 'M', events=[event.id],
+            gear_sharing={str(event.id): 'partners:Recip One|Recip Two'},
+        )
+        partner_one = make_pro_competitor(
+            db_session, tournament, 'Recip One', 'M', events=[event.id],
+            gear_sharing={},
+        )
+        partner_two = make_pro_competitor(
+            db_session, tournament, 'Recip Two', 'M', events=[event.id],
+            gear_sharing={},
+        )
+        db_session.flush()
+
+        result = complete_one_sided_pairs(tournament)
+
+        assert result == {'completed': 2}
+        assert owner.name in gear_partner_names(
+            partner_one.get_gear_sharing()[str(event.id)]
+        )
+        assert owner.name in gear_partner_names(
+            partner_two.get_gear_sharing()[str(event.id)]
+        )
 
 
 # ---------------------------------------------------------------------------
