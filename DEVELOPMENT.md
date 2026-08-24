@@ -510,6 +510,45 @@ The database file is created at the absolute repo path `instance/proam.db` for
 SQLite (dev) or the URL from the `DATABASE_URL` environment variable
 (production/Railway).
 
+### Verification
+
+The ordinary suite is isolated from production data:
+
+```powershell
+python -m pytest
+```
+
+The production-shaped PostgreSQL mirrors have a separate, explicit gate. On
+Windows, run all four protected local lanes and produce SHA-stamped logs with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_proam_regression.ps1
+```
+
+See `proam_regression/RUNBOOK.md` for the lane contracts, expected counts, and
+private-data boundary. The runner refuses remote database hosts and fails if a
+run-owned disposable clone survives cleanup.
+
+### Applying Mail Patches
+
+Set a repository-local GitHub-linked identity once per checkout:
+
+```powershell
+git config --local user.name SquirmyWormy275
+git config --local user.email alex.j.kaper@gmail.com
+```
+
+Then apply mail patches through the guarded wrapper:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/apply_patch_mail.ps1 patch-one.patch patch-two.patch
+```
+
+The wrapper requires a clean tree, skips missing or already-applied patches,
+retries a failed `git am` once with `--3way`, resets each applied commit to the
+local author, verifies the resulting author name and email, and prints the
+single starting SHA and rollback command. It never pushes or deletes patches.
+
 ---
 
 ## Future Development Considerations

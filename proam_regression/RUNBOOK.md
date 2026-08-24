@@ -19,6 +19,16 @@ Every test clones the template database (see `rig.py`), drives the real app
 over HTTP against that clone, and drops the clone afterward. Nothing here
 touches the template itself.
 
+On Windows, run every lane and write a SHA-stamped receipt outside the checkout:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_proam_regression.ps1
+
+Use `-Lane normal`, `-Lane reversed`, `-Lane oracle`, or `-Lane pristine` to
+run one lane. The command refuses any PostgreSQL host other than localhost and
+uses a unique pytest temp directory and clone token for each lane. The receipt
+records the exact SHA, exit code, full lane log, and whether any run-owned clone
+survived cleanup. Passwords are read from `PROAM_RIG_PASS` and never printed.
+
 ## The lanes
 
 | lane      | template                       | purpose                                    |
@@ -45,13 +55,13 @@ and the something is usually yours.
 
 | lane      | passed | skipped | xfailed | failed |
 |-----------|--------|---------|---------|--------|
-| normal    | 205    | 6       | 2       | 0      |
-| reversed  | 205    | 6       | 2       | 0      |
-| oracle    | 211    | 0       | 2       | 0      |
+| normal    | 207    | 6       | 0       | 0      |
+| reversed  | 207    | 6       | 0       | 0      |
+| oracle    | 213    | 0       | 0       | 0      |
 | pristine  | 3      | 0       | 0       | 0      |
 
-The 2 xfails on every lane are the blocked gear-parser tests, which die with
-register decision G3/D2.
+The former gear-parser xfails are now ordinary passing regressions. Any return
+to xfail or skip status is a release blocker, not a standing allowance.
 
 The oracle lane must be clean. Its flight-order assertions are explicitly
 scoped to the real 2026 tournament, so the staged 2027 heats cannot inflate
@@ -89,11 +99,12 @@ reference databases and migrates only test-owned clones.
 
 ## Where the evidence lands
 
-Every delivered cycle ships `RECEIPT_<sha>_*.log` files (full pytest output
-per lane, mutation battery output) into `_claude_inbox/` on the operator's
-machine, alongside `STATUS.md`. The per-cycle verdict documents live in the
-STRATHEX project. Commit messages carry the adversarial record: baseline
-before fix, mutation battery results, and regression counts per lane.
+The Windows runner writes `RECEIPT.md` plus one full log per lane under the
+system temp directory's `proam-regression-receipts` folder. Remote cycles may
+still deliver `RECEIPT_<sha>_*.log` files into `_claude_inbox/`. The per-cycle
+verdict documents live in the STRATHEX project. Commit messages carry the
+adversarial record: baseline before fix, mutation battery results, and
+regression counts per lane.
 
 ## Standing up the rig elsewhere
 
