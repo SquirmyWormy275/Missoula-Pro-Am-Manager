@@ -29,12 +29,24 @@ def test_audit_counts_partnered_stands_rather_than_people(db_session):
     tournament = make_tournament(db_session)
     event = make_event(db_session, tournament, 'Partnered heat', max_stands=2, is_partnered=True)
     roster = [make_pro_competitor(db_session, tournament, f'Pair member {i}') for i in range(4)]
+    roster[0].gear_sharing = json.dumps({str(event.id): roster[1].name})
     make_heat(db_session, event, competitors=[comp.id for comp in roster],
               stand_assignments={str(comp.id): 1 + index // 2 for index, comp in enumerate(roster)})
 
     report = auditor.audit_session(db_session)
 
     assert report['findings'] == []
+
+
+def test_audit_detects_sharing_between_different_partnered_stand_units(db_session):
+    tournament = make_tournament(db_session)
+    event = make_event(db_session, tournament, 'Partnered heat', max_stands=2, is_partnered=True)
+    roster = [make_pro_competitor(db_session, tournament, f'Other pair member {i}') for i in range(4)]
+    roster[0].gear_sharing = json.dumps({str(event.id): roster[2].name})
+    make_heat(db_session, event, competitors=[comp.id for comp in roster],
+              stand_assignments={str(comp.id): 1 + index // 2 for index, comp in enumerate(roster)})
+
+    assert auditor.audit_session(db_session)['finding_counts'] == {'heat_gear_conflict': 1}
 
 
 def test_audit_checks_scratched_names_inside_multi_partner_values(db_session):
@@ -82,3 +94,20 @@ def test_postgres_audit_connection_rejects_writes(app, monkeypatch):
     monkeypatch.setattr(auditor, 'audit_session', attempted_write)
     with pytest.raises(sa.exc.DBAPIError, match='read-only'):
         auditor.audit_database(url)
+
+
+def test_failed_audit_reports_a_category_without_sensitive_details(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://user:DO_NOT_DISCLOSE@example.invalid/db')
+    monkeypatch.setattr('sys.argv', ['audit', '--output', str(tmp_path / 'unused.json')])
+
+    def connection_failure(url):
+        raise sa.exc.OperationalError('private query', {},
+                                      RuntimeError('password authentication failed DO_NOT_DISCLOSE'))
+
+    monkeypatch.setattr(auditor, 'audit_database', connection_failure)
+    assert auditor.main() == 2
+    output = capsys.readouterr()
+    assert 'authentication rejected' in output.err
+    assert 'DO_NOT_DISCLOSE' not in output.err
+    assert 'private query' not in output.err
+    assert not (tmp_path / 'unused.json').exists()

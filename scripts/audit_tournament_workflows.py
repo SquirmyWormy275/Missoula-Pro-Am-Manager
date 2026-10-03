@@ -114,6 +114,12 @@ def audit_session(session: Session) -> dict:
             else:
                 roster.append(comp)
         for first, second in combinations(roster, 2):
+            # A partnered saw team is one physical stand unit. Its members
+            # intentionally share equipment; conflicts concern other units.
+            first_stand = heat.get_stand_for_competitor(first.id)
+            if (event.is_partnered and first_stand is not None
+                    and first_stand == heat.get_stand_for_competitor(second.id)):
+                continue
             if competitors_share_gear_for_event(
                 first.name, first.get_gear_sharing(), second.name,
                 second.get_gear_sharing(), event, all_events=family,
@@ -160,7 +166,9 @@ def audit_session(session: Session) -> dict:
         'read_only': True,
         'counts': {'tournaments': len(tournaments), 'events': len(events),
                    'heats': len(heats), 'results': len(results),
-                   'competitors': len(competitors)},
+                   'competitors': len(competitors),
+                   'finalized_events': sum(bool(event.is_finalized) for event in events),
+                   'completed_heats': sum(heat.status == 'completed' for heat in heats)},
         'finding_counts': dict(sorted(Counter(item['code'] for item in findings).items())),
         'findings': findings,
         'limitations': [
@@ -212,11 +220,31 @@ def main() -> int:
             stream.write('\n')
     except Exception as exc:
         # Connection/SQL exceptions can contain credentials, queries or names.
-        print(f'Audit failed ({type(exc).__name__}); sensitive details suppressed.', file=sys.stderr)
+        print(f'Audit failed ({type(exc).__name__}; {_failure_category(exc)}); '
+              'sensitive details suppressed.', file=sys.stderr)
         return 2
     print(json.dumps({'counts': report['counts'], 'finding_counts': report['finding_counts'],
                       'read_only': report['read_only']}))
     return 1 if report['findings'] else 0
+
+
+def _failure_category(error) -> str:
+    """Classify the failure without returning any database diagnostic text."""
+    message = str(getattr(error, 'orig', error)).lower()
+    for needle, category in (
+        ('password authentication failed', 'authentication rejected'),
+        ('could not translate host name', 'hostname lookup failed'),
+        ('connection refused', 'connection refused'),
+        ('timeout expired', 'connection timed out'),
+        ('timed out', 'connection timed out'),
+        ('server closed the connection', 'connection closed by server'),
+        ('read-only transaction', 'database rejected a write'),
+        ('does not exist', 'schema mismatch'),
+        ('certificate', 'TLS certificate error'),
+    ):
+        if needle in message:
+            return category
+    return 'unclassified database failure'
 
 
 if __name__ == '__main__':
