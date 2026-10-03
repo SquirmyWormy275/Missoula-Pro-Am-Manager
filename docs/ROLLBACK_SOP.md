@@ -209,6 +209,29 @@ The scheduled workflow fails closed unless all three are configured:
 - `BACKUP_AGE_RECIPIENT_SHA256`, the reviewed SHA-256 of the exact recipient
   string, stored as a separate repository variable
 
+### Initial Dump-Role Setup
+
+The owner can dispatch `CI` with `configure_backup_role=true` on the reviewed
+setup branch. This is a one-time configuration operation, separate from the
+scheduled backup workflow. The PostgreSQL test jobs must pass first.
+
+Prepare the recovery identity outside the repository and store a second copy
+in the owner's password manager or approved encrypted storage. Set the public
+recipient and its exact SHA-256 repository variables, and temporarily provide
+`BACKUP_ROLE_BOOTSTRAP_PASSWORD` with a newly generated password. The setup
+step uses the existing `RAILWAY_PG_PUBLIC_URL` credential only to create
+`proam_backup_dump_20261002`, a non-superuser with `pg_read_all_data`, a
+read-only transaction default, and no detected write privileges. It refuses
+to modify an existing role or shared `PUBLIC` privileges.
+
+The connection URL is encrypted to the pinned public recipient before export.
+Only `backup-role-url.age` is retained, for one day. Decrypt it on the recovery
+workstation directly into `gh secret set RAILWAY_PG_READONLY_DUMP_URL`, without
+printing it or saving a plaintext URL. Remove the temporary bootstrap secret
+after configuring the dedicated URL. Run `Daily Production DB Backup` and
+complete the separately held identity rehearsal below. No private identity
+is provided to either GitHub workflow.
+
 Before `pg_dump`, automation verifies that the connected role is not a
 superuser, cannot create roles or databases, defaults to read-only transactions,
 and has no detected table or sequence write privileges. The production URL is

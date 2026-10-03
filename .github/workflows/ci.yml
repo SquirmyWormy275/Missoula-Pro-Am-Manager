@@ -11,12 +11,51 @@ on:
         description: 'Run a read-only production tournament audit (numeric IDs only)'
         type: boolean
         default: false
+      configure_backup_role:
+        description: 'Owner-invoked setup of a new dedicated read-only backup role'
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  backup-role-setup:
+    if: github.event_name == 'workflow_dispatch' && inputs.configure_backup_role
+    needs: [unit-postgres, postgres-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install setup dependencies
+        run: |
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y age
+      - name: Provision dedicated dump role and encrypt its URL
+        env:
+          RAILWAY_PG_PUBLIC_URL: ${{ secrets.RAILWAY_PG_PUBLIC_URL }}
+          BACKUP_ROLE_BOOTSTRAP_PASSWORD: ${{ secrets.BACKUP_ROLE_BOOTSTRAP_PASSWORD }}
+          BACKUP_AGE_RECIPIENT: ${{ vars.BACKUP_AGE_RECIPIENT }}
+          BACKUP_AGE_RECIPIENT_SHA256: ${{ vars.BACKUP_AGE_RECIPIENT_SHA256 }}
+          BACKUP_DUMP_ROLE_NAME: proam_backup_dump_20261002
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python scripts/configure_backup_dump_role.py --output backup-role-url.age
+      - name: Retain encrypted setup credential
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backup-role-credential
+          path: backup-role-url.age
+          if-no-files-found: error
+          retention-days: 1
+
   tournament-audit:
     if: github.event_name == 'workflow_dispatch' && inputs.audit_tournament_data
     needs: [unit-postgres, postgres-smoke]
