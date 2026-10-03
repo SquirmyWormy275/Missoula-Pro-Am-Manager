@@ -34,7 +34,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Read tournament snapshot without repairs
         env:
-          DATABASE_URL: ${{ secrets.RAILWAY_PG_PUBLIC_URL }}
+          DATABASE_URL: ${{ secrets.RAILWAY_PG_READONLY_DUMP_URL }}
           SECRET_KEY: ci-read-only-audit-unused-key
           FLASK_ENV: testing
           PYTHONDONTWRITEBYTECODE: "1"
