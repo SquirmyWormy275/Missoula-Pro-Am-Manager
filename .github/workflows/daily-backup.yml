@@ -282,7 +282,7 @@ jobs:
                 AND namespace.nspname = 'public'
                 AND relation.relname = 'score_submission_receipts'
             )
-            SELECT CASE WHEN count(column.column_name) = 9
+            SELECT CASE WHEN count(schema_column.column_name) = 9
               AND to_regclass('public.ix_background_jobs_owner_boot_id') IS NOT NULL
               AND to_regclass('public.ix_background_jobs_owner_heartbeat_at') IS NOT NULL
               AND to_regclass('public.ix_score_submission_receipts_binding') IS NOT NULL
@@ -294,10 +294,10 @@ jobs:
                 WHERE column_name = 'heat_id') = 0
               THEN 'ok' ELSE 'reject' END
             FROM expected
-            LEFT JOIN information_schema.columns column
-              ON column.table_schema = 'public'
-              AND column.table_name = expected.table_name
-              AND column.column_name = expected.column_name;")
+            LEFT JOIN information_schema.columns schema_column
+              ON schema_column.table_schema = 'public'
+              AND schema_column.table_name = expected.table_name
+              AND schema_column.column_name = expected.column_name;")
           if [ "$(printf '%s' "$CRITICAL_SCHEMA_OK" | tr -d '[:space:]')" != "ok" ]; then
             echo "::error::Restored database is missing critical current-head columns, indexes, or receipt lifecycle constraints."
             exit 1
