@@ -31,6 +31,7 @@ _PAYLOAD_TRANSPORT_FIELDS = frozenset({
     'tournament_id',
     'heat_id',
 })
+_NON_FINISH_STATUSES = frozenset({'dnf', 'dq', 'scratched'})
 
 
 def _form_pairs(form_data: Mapping[str, object]) -> list[tuple[str, str]]:
@@ -522,6 +523,26 @@ def _parse_dual_timer(
     return (t1, t2, None)
 
 
+def _missing_heat_results(heat: Heat, event: Event, results_by_comp: dict) -> list[int]:
+    """Find unaccounted entrants, checking the physical run rather than best time."""
+    missing = []
+    for competitor_id in _normalize_competitor_ids(heat.get_competitors()):
+        result = results_by_comp.get(competitor_id)
+        if result is None or result.status == 'pending':
+            missing.append(competitor_id)
+        elif result.status in ('completed', 'partial') and event.requires_dual_runs:
+            # One watch accounts for this run only; a prior run's partial
+            # cannot stand in for an entirely unentered current run.
+            run = 'run2' if heat.run_number == 2 else 'run1'
+            if all(getattr(result, field) is None for field in (
+                f'{run}_value', f't1_{run}', f't2_{run}',
+            )):
+                missing.append(competitor_id)
+        elif result.status == 'completed' and result.result_value is None:
+            missing.append(competitor_id)
+    return missing
+
+
 @serialize_sqlite_schedule_writer
 def save_heat_results_submission(
     *,
@@ -745,27 +766,41 @@ def save_heat_results_submission(
         and not event.requires_triple_runs
     )
 
+    def result_for_competitor(comp_id):
+        result = result_by_comp.get(comp_id)
+        if result is None:
+            comp = comp_lookup.get(comp_id)
+            result = EventResult(
+                event_id=event.id,
+                competitor_id=comp_id,
+                competitor_type=event.event_type,
+                competitor_name=comp.display_name if comp else f'Unknown ({comp_id})',
+            )
+            db.session.add(result)
+            result_by_comp[comp_id] = result
+        return result
+
     try:
         for comp_id in competitor_ids:
             status = form_data.get(f'status_{comp_id}', 'completed')
+            run_suffix = 'run2' if (event.requires_dual_runs and heat.run_number == 2) else 'run1'
+            primary_fields = (
+                (f't1_{run_suffix}_{comp_id}', f't2_{run_suffix}_{comp_id}')
+                if is_dual_timer_event else (f'result_{comp_id}',)
+            )
 
-            if is_dual_timer_event:
-                run_suffix = 'run2' if (event.requires_dual_runs and heat.run_number == 2) else 'run1'
+            if status in _NON_FINISH_STATUSES and all(
+                form_data.get(field) in (None, '') for field in primary_fields
+            ):
+                # A non-finish is a result even when no measurement was taken.
+                # Preserve any earlier measurements when changing its status.
+                result = result_for_competitor(comp_id)
+            elif is_dual_timer_event:
                 t1, t2, average = _parse_dual_timer(form_data, comp_id, run_suffix, invalid)
                 if t1 is None and t2 is None:
                     continue
 
-                result = result_by_comp.get(comp_id)
-                if not result:
-                    comp = comp_lookup.get(comp_id)
-                    result = EventResult(
-                        event_id=event.id,
-                        competitor_id=comp_id,
-                        competitor_type=event.event_type,
-                        competitor_name=comp.display_name if comp else f'Unknown ({comp_id})',
-                    )
-                    db.session.add(result)
-                    result_by_comp[comp_id] = result
+                result = result_for_competitor(comp_id)
 
                 if run_suffix == 'run1':
                     result.t1_run1 = t1
@@ -800,17 +835,7 @@ def save_heat_results_submission(
                     invalid.append((comp_id, raw))
                     continue
 
-                result = result_by_comp.get(comp_id)
-                if not result:
-                    comp = comp_lookup.get(comp_id)
-                    result = EventResult(
-                        event_id=event.id,
-                        competitor_id=comp_id,
-                        competitor_type=event.event_type,
-                        competitor_name=comp.display_name if comp else f'Unknown ({comp_id})',
-                    )
-                    db.session.add(result)
-                    result_by_comp[comp_id] = result
+                result = result_for_competitor(comp_id)
 
                 run_slot = form_data.get(f'run_slot_{comp_id}', '1')
                 if run_slot == '2':
@@ -844,17 +869,7 @@ def save_heat_results_submission(
                     invalid.append((comp_id, raw))
                     continue
 
-                result = result_by_comp.get(comp_id)
-                if not result:
-                    comp = comp_lookup.get(comp_id)
-                    result = EventResult(
-                        event_id=event.id,
-                        competitor_id=comp_id,
-                        competitor_type=event.event_type,
-                        competitor_name=comp.display_name if comp else f'Unknown ({comp_id})',
-                    )
-                    db.session.add(result)
-                    result_by_comp[comp_id] = result
+                result = result_for_competitor(comp_id)
 
                 result.result_value = parsed
 
@@ -923,7 +938,8 @@ def save_heat_results_submission(
                 'status_code': 400,
             }
 
-        heat.status = 'completed'
+        missing_current_ids = _missing_heat_results(heat, event, result_by_comp)
+        heat.status = 'in_progress' if missing_current_ids else 'completed'
         heat.release_lock(judge_user_id or 0)
 
         # A dual-timer row where only one watch was read is stored as
@@ -948,16 +964,30 @@ def save_heat_results_submission(
         # record that competitor is DNF on the entry form, not a partial row.
         # validate_finalization now names the partial rows on that path.
         db.session.flush()
-        partial_rows = [r for r in event.results.all() if r.status == 'partial']
+        event_results = event.results.all()
+        partial_rows = [r for r in event_results if r.status == 'partial']
         # Read the names now, while the objects are live. commit() expires
         # them and the caller formats this message after the commit.
         partial_names = [r.competitor_name or f'competitor {r.competitor_id}'
                          for r in partial_rows]
 
-        all_heats_complete = all(h.status == 'completed' for h in event.heats.all())
+        event_heats = event.heats.all()
+        all_heats_complete = all(h.status == 'completed' for h in event_heats)
+        event_result_map = {r.competitor_id: r for r in event_results
+                            if r.competitor_type == event.event_type}
+        missing_ids = set(missing_current_ids)
+        if all_heats_complete:
+            for event_heat in event_heats:
+                missing_ids.update(_missing_heat_results(event_heat, event, event_result_map))
+        missing_comps = competitor_lookup_for_event(event, sorted(missing_ids)) if missing_ids else {}
+        missing_names = [getattr(missing_comps.get(cid), 'display_name', f'competitor {cid}')
+                         for cid in sorted(missing_ids)]
+        if missing_ids:
+            event.is_finalized = False
+            event.status = 'in_progress'
         finalize_deferred = bool(all_heats_complete and partial_rows)
         finalize_failed = False
-        if all_heats_complete and not partial_rows:
+        if all_heats_complete and not partial_rows and not missing_ids:
             try:
                 with db.session.begin_nested():
                     engine.calculate_positions(event)
@@ -1002,6 +1032,24 @@ def save_heat_results_submission(
                 'message': ('Heat saved, but auto-finalization failed. The event '
                             'results page will let you retry - your timer values '
                             'are safe.'),
+                'redirect_kind': 'event_results',
+                'redirect_event_id': event.id,
+                'redirect_heat_id': heat.id,
+                'status_code': 200,
+                'undo_heat_id': heat.id,
+                'undo_token': undo_token,
+            }
+        elif missing_names:
+            shown = ', '.join(missing_names[:5])
+            more = f' (+{len(missing_names) - 5} more)' if len(missing_names) > 5 else ''
+            outcome = {
+                'ok': True,
+                'category': 'warning',
+                'message': (
+                    f'Heat saved. Scoring is incomplete for: {shown}{more}. '
+                    'Enter their results or record DNF, DQ, or scratched before '
+                    'completing the heat and finalizing the event.'
+                ),
                 'redirect_kind': 'event_results',
                 'redirect_event_id': event.id,
                 'redirect_heat_id': heat.id,
@@ -1117,6 +1165,17 @@ def finalize_event_results(
     judge_user_id: int | None,
 ) -> dict:
     warnings = engine.validate_finalization(event)
+    results_by_comp = {
+        row.competitor_id: row for row in event.results.all()
+        if row.competitor_type == event.event_type
+    }
+    if any(_missing_heat_results(heat, event, results_by_comp) for heat in event.heats.all()):
+        return {
+            'ok': False,
+            'warnings': warnings,
+            'message': 'Event results are incomplete. Score every heat entrant or record a non-finish before finalizing.',
+            'status_code': 409,
+        }
 
     try:
         with db.session.begin_nested():
