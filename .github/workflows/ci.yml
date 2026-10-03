@@ -6,12 +6,49 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      audit_tournament_data:
+        description: 'Run a read-only production tournament audit (numeric IDs only)'
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  tournament-audit:
+    if: github.event_name == 'workflow_dispatch' && inputs.audit_tournament_data
+    needs: [unit-postgres, postgres-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Read tournament snapshot without repairs
+        env:
+          DATABASE_URL: ${{ secrets.RAILWAY_PG_READONLY_DUMP_URL }}
+          SECRET_KEY: ci-read-only-audit-unused-key
+          FLASK_ENV: testing
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python scripts/audit_tournament_workflows.py --output tournament-audit.json
+      - name: Retain audit report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tournament-workflow-audit
+          path: tournament-audit.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   test:
     runs-on: ubuntu-latest
 

@@ -16,11 +16,11 @@ from models.competitor import CollegeCompetitor, ProCompetitor
 from services.gear_sharing import (
     competitors_share_gear_for_event,
     event_matches_gear_key,
+    gear_partner_names,
     get_family_events,
     infer_equipment_categories,
     normalize_event_text,
     normalize_person_name,
-    strip_using_prefix,
 )
 
 logger = logging.getLogger(__name__)
@@ -308,12 +308,12 @@ def _validate_event_gear_declarations(
             partner_text = str(raw_partner or '').strip()
             if partner_text.lower().startswith('group:'):
                 continue
-            partner_name = strip_using_prefix(partner_text)
-            partner_norm = normalize_person_name(partner_name)
-            if (
-                not partner_norm
+            partner_names = gear_partner_names(partner_text)
+            if not partner_names or any(
+                not (partner_norm := normalize_person_name(partner_name))
                 or partner_norm == self_name
                 or partner_norm not in known_names
+                for partner_name in partner_names
             ):
                 invalid.append(competitor)
                 break

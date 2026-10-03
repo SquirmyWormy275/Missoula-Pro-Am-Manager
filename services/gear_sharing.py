@@ -841,14 +841,21 @@ def sync_gear_bidirectional(comp_a, comp_b, event_key: str) -> None:
     Write gear-sharing entries on both sides.
       comp_a.gear_sharing[event_key] = comp_b.name
       comp_b.gear_sharing[event_key] = comp_a.name
+    These are the empty-map examples: preserve B's existing sharing partners
+    when adding A, or join B's existing named equipment group.
     Caller must commit.
     """
     sharing_a = comp_a.get_gear_sharing()
-    sharing_a[event_key] = str(comp_b.name or '').strip()
-    comp_a.gear_sharing = json.dumps(sharing_a)
-
     sharing_b = comp_b.get_gear_sharing()
-    sharing_b[event_key] = str(comp_a.name or '').strip()
+    existing = str(sharing_b.get(event_key, '') or '').strip()
+    # Editing A's declaration must not replace B's other sharing partners.
+    # A reference to a member of a named gear group joins that same group.
+    if existing.startswith('group:'):
+        sharing_a[event_key] = existing
+    else:
+        sharing_a[event_key] = str(comp_b.name or '').strip()
+        sharing_b[event_key] = _merge_gear_values(existing, comp_a.name)
+    comp_a.gear_sharing = json.dumps(sharing_a)
     comp_b.gear_sharing = json.dumps(sharing_b)
 
 
@@ -1124,11 +1131,26 @@ def cleanup_scratched_gear_entries(tournament, scratched_competitor=None, compet
     affected: list = []
     for comp in active_comps:
         gear = comp.get_gear_sharing()
-        updated = {k: v for k, v in gear.items()
-                   if normalize_person_name(str(v or '')) not in scratched_norms}
-        if len(updated) != len(gear):
+        updated = dict(gear)
+        removed = 0
+        for key, value in gear.items():
+            if str(value or '').strip().startswith('group:'):
+                continue
+            names = gear_partner_names(value)
+            retained = [name for name in names
+                        if normalize_person_name(name) not in scratched_norms]
+            if len(retained) == len(names):
+                continue
+            removed += len(names) - len(retained)
+            if retained:
+                updated[key] = format_gear_partner_names(
+                    retained, using=is_using_value(value),
+                )
+            else:
+                updated.pop(key, None)
+        if removed:
             comp.gear_sharing = json.dumps(updated)
-            cleaned += len(gear) - len(updated)
+            cleaned += removed
             if comp.name not in affected:
                 affected.append(comp.name)
 
@@ -1857,6 +1879,11 @@ def fix_heat_gear_conflicts(tournament) -> dict:
     from database import db
     from models import Event, Flight, Heat
     from models.competitor import ProCompetitor
+    from services.heat_generator import (
+        LH_SPRINGBOARD_STAND,
+        _effective_heat_capacity,
+        _stand_numbers_for_event,
+    )
 
     active_flight = (
         Flight.query
@@ -1897,6 +1924,35 @@ def fix_heat_gear_conflicts(tournament) -> dict:
             if event.max_stands is not None
             else stand_config.get('total', 4)
         )
+        stand_numbers = _stand_numbers_for_event(event, max_per_heat, stand_config)
+        max_per_heat = _effective_heat_capacity(event, max_per_heat, stand_numbers)
+        all_event_heats = event.heats.all()
+
+        def available_stand(mover, target_heat):
+            assignments = target_heat.get_stand_assignments()
+            used = {int(value) for value in assignments.values()
+                    if str(value).lstrip('-').isdigit()}
+            available = [stand for stand in stand_numbers if stand not in used]
+            if event.stand_type == 'springboard':
+                target_has_left_handed = any(
+                    comp_by_id[cid].is_left_handed_springboard
+                    for cid in target_heat.get_competitors() if cid in comp_by_id
+                )
+                if mover.is_left_handed_springboard:
+                    if target_has_left_handed:
+                        return None
+                    available = [stand for stand in available if stand == LH_SPRINGBOARD_STAND]
+                elif target_has_left_handed:
+                    available = [stand for stand in available if stand != LH_SPRINGBOARD_STAND]
+            if event.requires_dual_runs:
+                other_run_stands = {
+                    other.get_stand_assignments().get(str(mover.id))
+                    for other in all_event_heats
+                    if other.run_number != target_heat.run_number
+                    and mover.id in other.get_competitors()
+                }
+                available = [stand for stand in available if stand not in other_run_stands]
+            return available[0] if available else None
 
         # Group heats by run_number so a move stays within the same run.
         by_run: dict[int, list] = {}
@@ -1936,6 +1992,7 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                     # Score = remaining capacity - (new conflicts mover would create).
                     # Only heats with score >= 0 (capacity available, no new conflicts) qualify.
                     best_target = None
+                    best_stand = None
                     best_score = -1
 
                     for target_heat in run_heats:
@@ -1956,16 +2013,21 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                         )
                         if new_conflicts > 0:
                             continue
+                        target_stand = available_stand(mover, target_heat)
+                        if target_stand is None:
+                            continue
                         score = max_per_heat - len(target_ids)
                         if score > best_score:
                             best_score = score
                             best_target = target_heat
+                            best_stand = target_stand
 
                     if best_target is None:
                         # No valid target — record diagnostic info for suggestions.
                         reasons = []
                         full_count = 0
                         conflict_count = 0
+                        stand_count = 0
                         for th in run_heats:
                             if th.id == heat.id:
                                 continue
@@ -1985,10 +2047,14 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                                 )
                                 if nc > 0:
                                     conflict_count += 1
+                                elif available_stand(mover, th) is None:
+                                    stand_count += 1
                         if full_count > 0:
                             reasons.append(f'{full_count} heat(s) at capacity ({max_per_heat})')
                         if conflict_count > 0:
                             reasons.append(f'{conflict_count} heat(s) would create new conflicts')
+                        if stand_count > 0:
+                            reasons.append(f'{stand_count} heat(s) have no legal stand available')
                         # Stash suggestions for the post-scan recording phase.
                         if not hasattr(heat, '_failed_suggestions'):
                             heat._failed_suggestions = {}
@@ -2013,11 +2079,7 @@ def fix_heat_gear_conflicts(tournament) -> dict:
 
                     # Add mover to target heat.
                     tgt_assignments = best_target.get_stand_assignments()
-                    used_stands = {int(v) for v in tgt_assignments.values() if str(v).lstrip('-').isdigit()}
-                    next_stand = 1
-                    while next_stand in used_stands:
-                        next_stand += 1
-                    tgt_assignments[str(mover.id)] = next_stand
+                    tgt_assignments[str(mover.id)] = best_stand
                     best_target.set_roster(
                         'pro', target_ids + [mover.id], tgt_assignments,
                     )

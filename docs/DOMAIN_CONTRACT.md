@@ -191,6 +191,13 @@ Warning-only:
 
 ## Handicap Marks And Scoring
 
+Every heat entrant must have a result or an explicit non-finish before the heat
+can be completed and the event finalized. A blank entrant keeps the heat open;
+for dual-run events, an earlier run's score does not substitute for the current
+run. DNF, DQ, and scratched results do not require an invented numeric value.
+Recorded one-timer partial results retain the existing operator review path
+and prevent automatic finalization.
+
 For handicap time events, every active entrant must have an explicitly
 reviewed start mark before their heat can be scored. A zero-second mark is a
 valid intentional scratch and must be recorded as reviewed; it must never be
