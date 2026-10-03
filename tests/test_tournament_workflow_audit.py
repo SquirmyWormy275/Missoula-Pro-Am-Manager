@@ -111,3 +111,15 @@ def test_failed_audit_reports_a_category_without_sensitive_details(tmp_path, mon
     assert 'DO_NOT_DISCLOSE' not in output.err
     assert 'private query' not in output.err
     assert not (tmp_path / 'unused.json').exists()
+
+
+@pytest.mark.parametrize(('diagnostic', 'category'), [
+    ('FATAL: database "DO_NOT_DISCLOSE" does not exist', 'configured database does not exist'),
+    ('FATAL: role "DO_NOT_DISCLOSE" does not exist', 'configured database role does not exist'),
+    ('relation "DO_NOT_DISCLOSE" does not exist', 'schema mismatch'),
+    ('column "DO_NOT_DISCLOSE" does not exist', 'schema mismatch'),
+    ('DO_NOT_DISCLOSE does not exist', 'referenced database object unavailable'),
+])
+def test_missing_database_and_role_are_not_classified_as_schema_mismatches(diagnostic, category):
+    error = sa.exc.OperationalError('DO_NOT_DISCLOSE query', {}, RuntimeError(diagnostic))
+    assert auditor._failure_category(error) == category

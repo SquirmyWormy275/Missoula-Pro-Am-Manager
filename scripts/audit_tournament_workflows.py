@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -231,6 +232,12 @@ def main() -> int:
 def _failure_category(error) -> str:
     """Classify the failure without returning any database diagnostic text."""
     message = str(getattr(error, 'orig', error)).lower()
+    if re.search(r'\bdatabase\s+"[^"\r\n]*"\s+does not exist', message):
+        return 'configured database does not exist'
+    if re.search(r'\brole\s+"[^"\r\n]*"\s+does not exist', message):
+        return 'configured database role does not exist'
+    if re.search(r'\b(?:relation|column)\s+"[^"\r\n]*"\s+does not exist', message):
+        return 'schema mismatch'
     for needle, category in (
         ('password authentication failed', 'authentication rejected'),
         ('could not translate host name', 'hostname lookup failed'),
@@ -239,7 +246,7 @@ def _failure_category(error) -> str:
         ('timed out', 'connection timed out'),
         ('server closed the connection', 'connection closed by server'),
         ('read-only transaction', 'database rejected a write'),
-        ('does not exist', 'schema mismatch'),
+        ('does not exist', 'referenced database object unavailable'),
         ('certificate', 'TLS certificate error'),
     ):
         if needle in message:
