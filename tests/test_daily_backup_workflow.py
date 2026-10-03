@@ -155,6 +155,35 @@ def test_workflow_does_not_claim_ciphertext_recovery_was_verified():
     assert 'separately held identity rehearsal' in summary
 
 
+def test_postgres_executes_backup_schema_checks_and_rejects_a_missing_recovery_index(app):
+    import pytest
+    import sqlalchemy as sa
+
+    url = app.config['SQLALCHEMY_DATABASE_URI']
+    engine = sa.create_engine(url)
+    try:
+        if engine.dialect.name != 'postgresql':
+            pytest.skip('Requires the isolated unit-postgres service')
+        assert engine.url.host in {'127.0.0.1', 'localhost'}
+        workflow = _workflow_text()
+        verification = _step_block(workflow, 'Verify restored schema and aggregate invariants')
+        checks = dict(re.findall(
+            r'([A-Z_]+_OK)=\$\("\$\{LOCAL_PSQL\[@\]\}" --command "(.*?)"\)',
+            verification, re.S,
+        ))
+        assert set(checks) == {'SCHEMA_OK', 'MIGRATION_OK', 'CRITICAL_SCHEMA_OK', 'INVARIANTS_OK'}
+        head = re.search(r'EXPECTED_ALEMBIC_HEAD: ([a-z0-9]+)', workflow).group(1)
+        with engine.begin() as connection:
+            for query in checks.values():
+                assert connection.exec_driver_sql(
+                    query.replace('$EXPECTED_ALEMBIC_HEAD', head),
+                ).scalar_one() == 'ok'
+            connection.exec_driver_sql('DROP INDEX public.ix_score_submission_receipts_binding')
+            assert connection.exec_driver_sql(checks['CRITICAL_SCHEMA_OK']).scalar_one() == 'reject'
+    finally:
+        engine.dispose()
+
+
 def test_plaintext_restore_is_dropped_before_pinned_third_party_action():
     workflow = _workflow_text()
     pinned_upload = (
