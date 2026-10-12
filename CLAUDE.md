@@ -29,13 +29,13 @@ official mark fields. See Section 7.
 
 | Component | Technology |
 |-----------|------------|
-| Backend | Python 3.10+ / Flask 3.0 |
+| Backend | Python 3.10+ / Flask 3.1 |
 | Database | SQLite via Flask-SQLAlchemy 3.1 / SQLAlchemy 2.0 |
 | Migrations | Flask-Migrate 4.0.7 (Alembic) |
 | Forms / CSRF | Flask-WTF 1.2.2 |
 | Frontend | Jinja2 templates, Bootstrap 5 |
 | Excel I/O | pandas 2.1, openpyxl 3.1 |
-| Utilities | Werkzeug 3.0 |
+| Utilities | Werkzeug 3.1 |
 
 The database file is `instance/proam.db`. Schema is managed exclusively by Flask-Migrate — run `flask db upgrade` to initialize or evolve the database. Never use `db.create_all()` for schema changes.
 
@@ -425,7 +425,7 @@ PayoutTemplate  (tournament-independent, standalone)
 - Excel results export direct-download: `GET /reporting/<tid>/export-results` — synchronous download via `build_results_export()` in `services/excel_io.py`; returns multi-sheet XLSX (competitors, events, results, standings) with auto-cleaned temp file; complements the existing async job path `/reporting/<tid>/export-results/async` for large exports
 - Pro-Am Relay lottery (opt-in, gender-balanced draw, result entry, standings)
 - Partnered Axe Throw state machine (prelim registration, prelim scoring, top-4 advance, finals, full standings)
-- Birling bracket: full double-elimination management at `/scheduling/<tid>/event/<eid>/birling` (`templates/scheduling/birling_manage.html`) with seeding table (falls back to `pre_seedings` from ability rankings), one-click match recording, fall-by-fall tracking (`record_fall` service + `birling_record_fall` route), shallow undo (`undo_match_result` + `get_undoable_matches`), progression validation (`record_match_result` raises `ValueError` if not in `get_current_matches()`), losers bracket with bye propagation (`_sweep_losers_byes`, `_get_lb_sources`; scoped to L1 only), corrected round count `2*(log2(B)-1)`, placement-points scoring in `finalize_to_event_results()`, WeasyPrint PDF print (`birling_print_blank`, `birling_print_all`). Legacy `/scoring/<tid>/event/<eid>/birling-bracket` 302-redirects to the management page. See [`docs/solutions/best-practices/bracket-scoring-category-wiring-2026-04-21.md`](../../Desktop/John Ruffato Startup Challenge/Python/Missoula Pro Am/Missoula-Pro-Am-Manager/docs/solutions/best-practices/bracket-scoring-category-wiring-2026-04-21.md) for the end-to-end wiring pattern.
+- Birling bracket: full double-elimination management at `/scheduling/<tid>/event/<eid>/birling` (`templates/scheduling/birling_manage.html`) with seeding table (falls back to `pre_seedings` from ability rankings), one-click match recording, fall-by-fall tracking (`record_fall` service + `birling_record_fall` route), shallow undo (`undo_match_result` + `get_undoable_matches`), progression validation (`record_match_result` raises `ValueError` if not in `get_current_matches()`), losers bracket with bye propagation (`_sweep_losers_byes`, `_get_lb_sources`; scoped to L1 only), corrected round count `2*(log2(B)-1)`, placement-points scoring in `finalize_to_event_results()`, WeasyPrint PDF print (`birling_print_blank`, `birling_print_all`). Legacy `/scoring/<tid>/event/<eid>/birling-bracket` 302-redirects to the management page. See [`docs/solutions/best-practices/bracket-scoring-category-wiring-2026-04-21.md`](docs/solutions/best-practices/bracket-scoring-category-wiring-2026-04-21.md) for the end-to-end wiring pattern.
 - Validation service for teams, college competitors, pro competitors, heat constraints; validation API (JSON) endpoints
 - Saturday priority route (`/scheduling/<tid>/college/saturday-priority`) for college overflow event flagging
 - College Saturday overflow flight integration: `integrate_college_spillover_into_flights()` places Chokerman's Race Run 2 at the end of the last flight in heat-number order; other overflow events distributed round-robin; wired to `event_list` POST actions
