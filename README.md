@@ -1,12 +1,20 @@
-# Missoula Pro Am Manager — V2.12.1
+# Missoula Pro Am Manager — V2.14.16
 
 A web-based tournament management system for the Missoula Pro Am timbersports competition.
 
 ## Quick Start
 
+The repository pins Python 3.10.13 in `.python-version` and `runtime.txt`.
+Run these commands from the repository directory in an activated virtual
+environment. See [local development](#local-development)
+for developer tooling and [DEVELOPMENT.md](DEVELOPMENT.md) for configuration.
+
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+
+# Initialize or migrate your local database
+python -m flask --app app db upgrade
 
 # Run the application
 python app.py
@@ -52,7 +60,8 @@ Welcome! This guide will help you use the Missoula Pro Am Tournament Manager sof
 4. Open your web browser (Chrome, Firefox, or Edge recommended)
 5. Go to: `http://localhost:5000`
 
-You should see the main dashboard.
+You should see the role entry page. Choose Judge/Admin to open the management
+workflow; an authenticated judge or admin goes directly to the dashboard.
 
 If you keep your terminal one folder above the repo, use `python Missoula-Pro-Am-Manager/app.py` instead.
 
@@ -522,16 +531,20 @@ achievable. Tighten the list incrementally after the live deploy.
 
 ### CI / CD
 
-GitHub Actions runs three jobs on every push and PR to `main` (see
+GitHub Actions defines seven jobs for pushes and PRs to `main` (see
 [.github/workflows/ci.yml](.github/workflows/ci.yml)):
 
-1. **lint** — `python -m py_compile app.py` + `ruff check .`
+1. **lint** — compiles `app.py`, routes, services and models, then runs `ruff check .`
 2. **test** — pytest against in-memory SQLite (with a curated ignore list
    for pre-existing failing test files)
 3. **postgres-smoke** — spins up PostgreSQL 15, applies migrations via
    `flask db upgrade`, runs `tests/test_postgres_runtime_smoke.py`
 4. **migration-safety** — runs migration integrity and PostgreSQL migration
    safety checks that guard release-time schema failures
+5. **unit-postgres** — exercises the unit suite and concurrent shadow delivery
+   against disposable PostgreSQL
+6. **tournament-audit** — reads tournament workflow state without applying repairs
+7. **pip-audit** — checks installed third-party dependencies for known advisories
 
 Production deploy is handled by Railway, which auto-deploys from `main`
 on push. There is no GitHub Actions deploy step. The Railway release
@@ -546,4 +559,5 @@ Operational docs:
 
 ---
 
-*Last updated: April 2026 — V2.12.0*
+*Setup and version references checked October 11, 2026. Application version:
+2.14.16, as declared in [pyproject.toml](pyproject.toml).*

@@ -15,7 +15,7 @@ The Missoula Pro Am Manager is a Flask-based web application for managing the an
 
 | Component | Technology |
 |-----------|------------|
-| Backend | Python 3.x / Flask 3.0 |
+| Backend | Python 3.10+ / Flask 3.1 |
 | Database | SQLite (via SQLAlchemy 2.0) |
 | Migrations | Flask-Migrate 4.0.7 (Alembic) |
 | Forms / CSRF | Flask-WTF 1.2.2 |
@@ -917,7 +917,7 @@ The existing `test_open_college_event_without_heats_not_warned` (covering only `
 
 **Feature — Flight Fixes: 5-phase overhaul of Saturday flight assembly.**
 
-Ships five independent fixes to Saturday pro-flight construction plus one post-merge codex hotfix. Cumulative diff: 21 files, +3,282/-53 across PRs #68-73. See [docs/FLIGHT_FIXES_RECON.md](docs/FLIGHT_FIXES_RECON.md) for the pre-flight recon that scoped this release.
+Ships five independent fixes to Saturday pro-flight construction plus one post-merge codex hotfix. Cumulative diff: 21 files, +3,282/-53 across PRs #68-73. See [docs/FLIGHT_FIXES_RECON.md](docs/recon/FLIGHT_FIXES_RECON.md) for the pre-flight recon that scoped this release.
 
 **Phase 1 (PR #68) — async flight build chains spillover atomically.** Historical bug: `routes/scheduling/flights.py::_build_flights_async` built pro flights without chaining `integrate_college_spillover_into_flights`. Every async build orphaned Chokerman Run 2 and all selected `saturday_college_event_ids` with `flight_id=NULL`. Fix: thread `commit=False` through both functions so the async inner wrapper can call them and do a single final `db.session.commit()`. On any exception the whole chain rolls back — no orphaned spillover heats. Mirrors the existing `ProAmRelay._save_relay_data(commit=False)` precedent. 7 new tests in `tests/test_flight_builder_async_spillover.py`.
 
