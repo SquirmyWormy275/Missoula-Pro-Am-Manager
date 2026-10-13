@@ -20,6 +20,20 @@ The legacy path is retained for backward compatibility. Its old model-selection
 description is not a statement about STRATHMARK V2 and is not the procedure for
 a shadow event.
 
+**2026-10-13 clock verification:** the legacy judge form labels its inputs T1/T2
+and stores their average unchanged. `_metric()` currently ranks official
+handicap times as `max(0, stored_time - start_mark)`; reports and STRATHMARK
+result/residual exports retain the stored time. Source comments call that time
+raw, but the operator contract does not define whether judges start these
+stopwatches at the common count or the competitor's own start. That unresolved
+origin blocks shipping a handicap-scoring correction. If the inputs are raw
+cutting durations, shared handicap geometry instead requires completion on
+the common count to be `start_mark + raw_duration`: 60/45/30 seconds with
+marks 3/18/33 complete together at 63. With actual durations 62/44/29, completions
+are 65/62/62, while the current metric is 59/26/0. Confirm timer origin and the
+prospective correction contract before changing this path. This investigation
+does not reinterpret stored competition times or authorize recomputing winners.
+
 ## STRATHMARK V2 shadow path
 
 A shadow event produces a **shadow recommendation only**. It never writes the
