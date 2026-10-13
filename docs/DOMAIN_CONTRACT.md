@@ -198,6 +198,14 @@ run. DNF, DQ, and scratched results do not require an invented numeric value.
 Recorded one-timer partial results retain the existing operator review path
 and prevent automatic finalization.
 
+Best-run values are derived from the entered runs using the event's scoring
+order. Recalculating after a run changes or is cleared replaces the derived
+value; clearing every run clears both `best_run` and `result_value`. Cumulative
+events sum entered throws, including valid zero scores, and have no total when
+all throws are absent. A partial aggregate does not authorize finalization.
+Results reports display recorded final positions first, with unplaced rows
+after them; equal positions retain stable row order without changing the tie.
+
 For handicap time events, every active entrant must have an explicitly
 reviewed start mark before their heat can be scored. A zero-second mark is a
 valid intentional scratch and must be recorded as reviewed; it must never be

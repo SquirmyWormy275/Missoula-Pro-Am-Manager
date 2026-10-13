@@ -1,8 +1,8 @@
 """
 Unit tests for services/scoring_engine.py
 
-Tests run with pytest and do NOT require a live database — all models are
-mocked with simple namespace objects so the logic can be exercised in isolation.
+Tests run without a live database. Engine-only tests use lightweight objects;
+model calculations use real, transient EventResult instances.
 
 Run:  pytest tests/test_scoring.py -v
 """
@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import services.scoring_engine as engine
+from models.event import EventResult
 
 # ---------------------------------------------------------------------------
 # Helpers — create lightweight fakes that behave like SQLAlchemy models
@@ -95,47 +96,39 @@ class TestSortKey:
 # ---------------------------------------------------------------------------
 
 class TestCalculateBestRun:
-    """Tests the patched calculate_best_run that respects scoring_order."""
+    """Best-run selection follows Event.scoring_order (DOMAIN_CONTRACT.md)."""
 
-    def _fake_result(self):
-        """Return a minimal object that mirrors the real EventResult."""
-        r = SimpleNamespace(run1_value=None, run2_value=None,
-                            best_run=None, result_value=None)
+    @pytest.mark.parametrize('order,run1,run2,expected', [
+        ('lowest_wins', 12.3, 10.5, 10.5),
+        ('highest_wins', 45.2, 51.8, 51.8),
+        ('lowest_wins', 9.0, None, 9.0),
+        ('highest_wins', None, 9.0, 9.0),
+        ('highest_wins', 0.0, None, 0.0),  # valid zero distance, not missing
+        ('lowest_wins', None, None, None),
+        ('highest_wins', 9.0, 9.0, 9.0),
+    ])
+    def test_selects_and_stores_real_best_run(self, order, run1, run2, expected):
+        result = EventResult(run1_value=run1, run2_value=run2)
+        assert result.calculate_best_run(order) == expected
+        assert result.best_run == expected
+        assert result.result_value == expected
 
-        def calc(scoring_order='lowest_wins'):
-            runs = [v for v in [r.run1_value, r.run2_value] if v is not None]
-            if not runs:
-                return r.best_run
-            r.best_run = min(runs) if scoring_order == 'lowest_wins' else max(runs)
-            r.result_value = r.best_run
-            return r.best_run
+    def test_recalculates_when_best_distance_is_changed_or_cleared(self):
+        result = EventResult(run1_value=45.2, run2_value=51.8)
+        assert result.calculate_best_run('highest_wins') == 51.8
+        result.run2_value = 40.0
+        assert result.calculate_best_run('highest_wins') == 45.2
+        result.run1_value = None
+        assert result.calculate_best_run('highest_wins') == 40.0
+        assert result.best_run == result.result_value == 40.0
 
-        r.calculate_best_run = calc
-        return r
-
-    def test_lowest_wins_picks_min(self):
-        r = self._fake_result()
-        r.run1_value, r.run2_value = 12.3, 10.5
-        r.calculate_best_run('lowest_wins')
-        assert r.best_run == 10.5
-
-    def test_highest_wins_picks_max(self):
-        """Caber Toss (distance) — farthest throw wins."""
-        r = self._fake_result()
-        r.run1_value, r.run2_value = 45.2, 51.8
-        r.calculate_best_run('highest_wins')
-        assert r.best_run == 51.8
-
-    def test_single_run_entered(self):
-        r = self._fake_result()
-        r.run1_value = 9.0
-        r.calculate_best_run('lowest_wins')
-        assert r.best_run == 9.0
-
-    def test_no_runs_returns_none(self):
-        r = self._fake_result()
-        result = r.calculate_best_run('lowest_wins')
-        assert result is None
+    def test_clearing_all_runs_clears_derived_values(self):
+        result = EventResult(run1_value=12.0, run2_value=10.0)
+        assert result.calculate_best_run() == 10.0
+        result.run1_value = result.run2_value = None
+        assert result.calculate_best_run() is None
+        assert result.best_run is None
+        assert result.result_value is None
 
 
 # ---------------------------------------------------------------------------
@@ -143,31 +136,29 @@ class TestCalculateBestRun:
 # ---------------------------------------------------------------------------
 
 class TestCalculateCumulativeScore:
-    def _fake_result(self):
-        r = SimpleNamespace(run1_value=None, run2_value=None, run3_value=None, result_value=None)
+    @pytest.mark.parametrize('runs,expected', [
+        ((8, 9, 7), 24),
+        ((10, 9, None), 19),
+        ((None, None, 7), 7),
+        ((0, None, None), 0),
+        ((0, 0, 0), 0),
+        ((None, None, None), None),
+    ])
+    def test_sums_real_entered_throws(self, runs, expected):
+        result = EventResult(run1_value=runs[0], run2_value=runs[1], run3_value=runs[2])
+        assert result.calculate_cumulative_score() == expected
+        assert result.result_value == expected
 
-        def calc():
-            values = [v for v in [r.run1_value, r.run2_value, r.run3_value] if v is not None]
-            r.result_value = sum(values) if values else None
-            return r.result_value
-
-        r.calculate_cumulative_score = calc
-        return r
-
-    def test_all_three_throws(self):
-        r = self._fake_result()
-        r.run1_value, r.run2_value, r.run3_value = 8, 9, 7
-        assert r.calculate_cumulative_score() == 24
-
-    def test_partial_throws(self):
-        r = self._fake_result()
-        r.run1_value = 10
-        r.run2_value = 9
-        assert r.calculate_cumulative_score() == 19
-
-    def test_no_throws(self):
-        r = self._fake_result()
-        assert r.calculate_cumulative_score() is None
+    def test_recalculates_after_throw_is_changed_or_cleared(self):
+        result = EventResult(run1_value=8, run2_value=9, run3_value=7)
+        assert result.calculate_cumulative_score() == 24
+        result.run2_value = 0
+        assert result.calculate_cumulative_score() == 15
+        result.run3_value = None
+        assert result.calculate_cumulative_score() == 8
+        result.run1_value = result.run2_value = None
+        assert result.calculate_cumulative_score() is None
+        assert result.result_value is None
 
 
 # ---------------------------------------------------------------------------
