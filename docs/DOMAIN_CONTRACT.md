@@ -198,10 +198,28 @@ run. DNF, DQ, and scratched results do not require an invented numeric value.
 Recorded one-timer partial results retain the existing operator review path
 and prevent automatic finalization.
 
+Best-run values are derived from the entered runs using the event's scoring
+order. Recalculating after a run changes or is cleared replaces the derived
+value; clearing every run clears both `best_run` and `result_value`. Cumulative
+events sum entered throws, including valid zero scores, and have no total when
+all throws are absent. A partial aggregate does not authorize finalization.
+Results reports display recorded final positions first, with unplaced rows
+after them; equal positions retain stable row order without changing the tie.
+
 For handicap time events, every active entrant must have an explicitly
 reviewed start mark before their heat can be scored. A zero-second mark is a
 valid intentional scratch and must be recorded as reviewed; it must never be
 assumed merely because a result row has the database default of `0.0`.
+
+T1/T2 measure raw cutting duration from the competitor's own legal start.
+Following STRATHMARK's shared `Handicap-Mark-Math.md` foundation, official
+handicap completion on the common count is **start mark + raw cutting duration**.
+The average remains raw in storage, reports, result sync and residual export.
+The owner reaffirmed this shared convention on 2026-10-13; the earlier
+subtraction was an implementation error, not a different sporting policy.
+This correction has no historical backfill or automatic re-finalization.
+Finalized live feeds retain recorded positions. A later explicit score
+correction uses the current calculation and existing correction/payout rules.
 
 Preflight reports unreviewed handicap entrants. Heat scoring enforces the same
 rule and redirects the judge to the mark-review page before any score is
@@ -229,6 +247,14 @@ Every accepted score request has a durable request-ID receipt. Score undo
 supersedes but does not delete that receipt. The receipt belongs to tournament
 history, retains the original heat ID even if an undone heat is regenerated,
 and loses replay authority without deletion if its issuing user is removed.
+
+Prepared offline packages bind the existing lock-independent heat identity
+(roster, stands and schedule placement). Acquiring an edit lock does not replace
+that field. Optimistic row versions also change for locks and scores, so they
+are not a schedule identity. The separate scoring-state digest still rejects
+stale score writes. Exact accepted retries resolve through their durable receipt.
+The existing replay endpoint authenticates its user-bound HMAC in place of an
+expired form CSRF token; ordinary score entry retains normal CSRF protection.
 
 ## Production Parity
 

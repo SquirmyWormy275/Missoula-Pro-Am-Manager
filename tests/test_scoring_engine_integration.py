@@ -331,11 +331,11 @@ class TestHardHitTiebreak:
 
 
 # ---------------------------------------------------------------------------
-# Handicap scoring (subtract handicap_factor from time)
+# Handicap scoring (raw cutting duration plus start mark)
 # ---------------------------------------------------------------------------
 
 class TestHandicapScoringIntegration:
-    """Handicap events: net_time = raw_time - handicap_factor."""
+    """STRATHMARK: common completion = raw duration + start mark."""
 
     def test_handicap_changes_ranking(self, db_session, tournament):
         from services.scoring_engine import calculate_positions
@@ -344,8 +344,8 @@ class TestHandicapScoringIntegration:
                            stand_type='underhand', is_handicap=True)
         c1 = make_pro_competitor(db_session, tournament, 'Vera', 'F', events=[event.id])
         c2 = make_pro_competitor(db_session, tournament, 'Wendy', 'F', events=[event.id])
-        # Vera: raw 20.0, mark 5.0 → net 15.0
-        # Wendy: raw 18.0, mark 1.0 → net 17.0 (real 1-second mark)
+        # Vera: raw 20.0, mark 5.0 → completion 25.0
+        # Wendy: raw 18.0, mark 1.0 → completion 19.0 (real 1-second mark)
         make_event_result(db_session, event, c1,
                           result_value=20.0, handicap_factor=5.0, status='completed')
         make_event_result(db_session, event, c2,
@@ -358,8 +358,8 @@ class TestHandicapScoringIntegration:
         from models.event import EventResult
         first = EventResult.query.filter_by(
             event_id=event.id, final_position=1).first()
-        # Vera net=15.0 beats Wendy net=18.0
-        assert first.competitor_name == 'Vera'
+        assert first is not None
+        assert first.competitor_name == 'Wendy'
 
     def test_handicap_factor_zero_treated_as_scratch(self, db_session, tournament):
         from services.scoring_engine import calculate_positions

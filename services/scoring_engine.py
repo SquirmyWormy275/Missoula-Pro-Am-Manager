@@ -144,8 +144,9 @@ def _metric(result: EventResult, event: Event) -> Optional[float]:
     """Return the primary ranked metric for a result row.
 
     For handicap-format events (event.is_handicap is True), the competitor's
-    start mark (stored in result.handicap_factor as seconds) is subtracted from
-    the raw time to produce the adjusted net time used for ranking.
+    start mark (stored in result.handicap_factor as seconds) is added to
+    raw cutting duration to obtain completion on the common starter count.
+    This follows STRATHMARK/docs/wiki/Handicap-Mark-Math.md.
     A handicap_factor of None or 0.0 means scratch (no start mark).
     """
     if event.requires_dual_runs:
@@ -156,7 +157,7 @@ def _metric(result: EventResult, event: Event) -> Optional[float]:
     if raw is None:
         return None
 
-    # Apply handicap start mark: net_time = raw_time - start_mark_seconds.
+    # Apply handicap start mark: common_finish = raw_duration + start_mark_seconds.
     # handicap_factor stores the start mark in seconds; 0.0 or None = scratch.
     if (
         getattr(event, 'is_handicap', False)
@@ -166,7 +167,7 @@ def _metric(result: EventResult, event: Event) -> Optional[float]:
         start_mark = result.handicap_factor
         if start_mark is None:
             start_mark = 0.0
-        raw = max(0.0, raw - start_mark)
+        raw = raw + start_mark
 
     return raw
 
@@ -180,6 +181,13 @@ def _tiebreak_metric(result: EventResult, event: Event) -> float:
     if event.is_hard_hit:
         # Lower time is better; None floats to worst
         return result.tiebreak_value if result.tiebreak_value is not None else float('inf')
+
+    if (not event.requires_dual_runs and getattr(event, 'is_handicap', False)
+            and getattr(event, 'handicap_authority_mode', 'official') == 'official'
+            and event.scoring_type == 'time'):
+        # A single-run form also stores its average in run1_value. That is
+        # the same observation, not a second race or a raw-speed tiebreak.
+        return 0.0
 
     # Default: combined sum of both runs (only meaningful for dual-run events)
     r1 = result.run1_value or 0.0
@@ -1133,7 +1141,12 @@ def live_standings_data(event: Event) -> dict:
     """
     results = event.results.all()
     completed = [r for r in results if r.status == 'completed']
-    completed.sort(key=lambda r: _sort_key(r, event))
+    if event.is_finalized:
+        # Finalized placements are recorded authority. Reading a historical
+        # event must not decide its winners again under a newer calculation.
+        completed.sort(key=lambda r: (r.final_position is None, r.final_position or 0, r.id))
+    else:
+        completed.sort(key=lambda r: _sort_key(r, event))
 
     # Phase 3 (V2.8.0): pair-aware position grouping (same logic as
     # calculate_positions / preview_positions).  Two rows from the same
@@ -1163,7 +1176,7 @@ def live_standings_data(event: Event) -> dict:
             r = completed[j]
             metric = _metric(r, event)
             rows.append({
-                'position': position,
+                'position': r.final_position if event.is_finalized else position,
                 'competitor_name': r.competitor_name,
                 'result_value': float(metric) if metric is not None else None,
                 'run1_value': float(r.run1_value) if r.run1_value is not None else None,

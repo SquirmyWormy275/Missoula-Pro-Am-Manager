@@ -167,7 +167,9 @@ class Event(db.Model):
 
     def get_results_sorted(self):
         """Return results sorted by final position."""
-        return self.results.order_by(EventResult.final_position).all()
+        return self.results.order_by(None).order_by(
+            EventResult.final_position.asc().nullslast(), EventResult.id
+        ).all()
 
 
 class EventResult(db.Model):
@@ -326,7 +328,9 @@ class EventResult(db.Model):
         """
         runs = [v for v in [self.run1_value, self.run2_value] if v is not None]
         if not runs:
-            return self.best_run
+            self.best_run = None
+            self.result_value = None
+            return None
         if scoring_order == 'highest_wins':
             self.best_run = max(runs)
         else:

@@ -20,6 +20,17 @@ The legacy path is retained for backward compatibility. Its old model-selection
 description is not a statement about STRATHMARK V2 and is not the procedure for
 a shadow event.
 
+**2026-10-13 clock correction:** the owner reaffirmed STRATHMARK's shared
+clock convention. T1/T2 are raw cutting durations from each competitor's own
+start. Missoula stores their average unchanged and ranks official handicap
+completion as `start_mark + raw_duration`. The earlier subtraction was a
+reproduced implementation error: 60/45/30 seconds with marks 3/18/33 should
+complete together at 63; actual durations 62/44/29 complete at 65/62/62.
+Reports and STRATHMARK result/residual exports retain raw durations. There is
+no historical backfill or automatic re-finalization. Finalized live feeds use
+recorded placements; an explicit future correction uses the current scoring
+calculation and existing correction/payout rules.
+
 ## STRATHMARK V2 shadow path
 
 A shadow event produces a **shadow recommendation only**. It never writes the

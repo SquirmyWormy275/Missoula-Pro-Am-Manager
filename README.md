@@ -514,8 +514,9 @@ pytest tests/test_scoring.py # one file
 ```
 
 `pytest.ini` defines the markers (`smoke`, `integration`, `slow`). The test
-suite uses an in-memory SQLite DB via the `app` fixture in
-[tests/conftest.py](tests/conftest.py) — never the production DB.
+factory uses disposable file-backed SQLite or isolated PostgreSQL clones.
+See [Synthetic recovery drills](docs/RECOVERY_DRILLS.md) for the owned-process
+crash, backup restoration and offline replay reproduction route.
 
 ### Linting
 
@@ -531,12 +532,11 @@ achievable. Tighten the list incrementally after the live deploy.
 
 ### CI / CD
 
-GitHub Actions defines seven jobs for pushes and PRs to `main` (see
+GitHub Actions defines the following jobs for pushes and PRs to `main` (see
 [.github/workflows/ci.yml](.github/workflows/ci.yml)):
 
 1. **lint** — compiles `app.py`, routes, services and models, then runs `ruff check .`
-2. **test** — pytest against in-memory SQLite (with a curated ignore list
-   for pre-existing failing test files)
+2. **test** — the isolated SQLite fast lane; migration integrity runs separately
 3. **postgres-smoke** — spins up PostgreSQL 15, applies migrations via
    `flask db upgrade`, runs `tests/test_postgres_runtime_smoke.py`
 4. **migration-safety** — runs migration integrity and PostgreSQL migration
@@ -545,6 +545,8 @@ GitHub Actions defines seven jobs for pushes and PRs to `main` (see
    against disposable PostgreSQL
 6. **tournament-audit** — reads tournament workflow state without applying repairs
 7. **pip-audit** — checks installed third-party dependencies for known advisories
+8. **recovery-core** — restores a synthetic PostgreSQL 16 backup and executes
+   both score-commit crash windows with owned processes and sanitized evidence
 
 Production deploy is handled by Railway, which auto-deploys from `main`
 on push. There is no GitHub Actions deploy step. The Railway release

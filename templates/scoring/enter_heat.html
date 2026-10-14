@@ -250,6 +250,10 @@
             <input type="hidden" name="payload_sha256" value="">
             <input type="hidden" name="replay_token" value="">
 
+            {% if event.is_handicap and event.handicap_authority_mode == 'official' and event.scoring_type == 'time' %}
+            <p class="text-muted small">Enter raw cutting duration on T1/T2, measured from each competitor's own start.
+              Ranking adds the reviewed start mark to obtain completion on the common count.</p>
+            {% endif %}
             <div class="table-responsive">
             <table class="table align-middle">
               <thead class="table-light">

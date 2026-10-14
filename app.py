@@ -399,8 +399,10 @@ def _create_app_inner():
     app.register_blueprint(registration_bp, url_prefix='/registration')
     app.register_blueprint(scheduling_bp, url_prefix='/scheduling')
     app.register_blueprint(scoring_bp, url_prefix='/scoring')
-    # Exempt the offline replay endpoint from CSRF — it uses a one-time replay token instead.
-    csrf.exempt('scoring.replay_offline_score')
+    # Flask-WTF identifies a view by its Python module/name, not its blueprint
+    # endpoint string. Replay instead requires its existing user-bound HMAC,
+    # authenticated role/scope, heat/state binding and durable request receipt.
+    csrf.exempt(app.view_functions['scoring.replay_offline_score'])
     # Phase 4 (V2.8.0) admin scoring repair — JSON-returning POST, no HTML form,
     # admin role gate inside the route.  CSRF exemption matches the existing
     # pattern for replay_offline_score.
