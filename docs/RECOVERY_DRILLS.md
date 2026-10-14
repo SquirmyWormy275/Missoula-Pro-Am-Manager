@@ -122,6 +122,11 @@ establish scoring success. `NOT_RUN` counters remain unknown rather than zero.
 R01 records deliberately excluded checkpoint-B work as an expected snapshot gap;
 it does not reconstruct it from the external client ledger or claim an RPO.
 
+[Executed R03 example](recovery-example.json) is a sanitized extract from source
+`7453f4b88353f14397ba7e8f4fd862d83a83a39f`, not a template. It records the
+post-commit worker kill, receipt recovery and cleanup. Its measured interval is
+local synthetic evidence, not an approved recovery objective or production RTO.
+
 Raw process diagnostics and secrets live only in private scratch storage. Final
 reports omit cookies, CSRF/replay authority and private paths. Plaintext dumps,
 temporary keys, browser profiles and database files are removed after the run.

@@ -142,6 +142,7 @@ def run(args):
             owner.save()
             child = OwnedRun(child_path, create=True)
             lab = None
+            parent_environment = None
             started = time.monotonic()
             try:
                 if not all(prerequisites(args.pg_bin).values()):
@@ -149,6 +150,14 @@ def run(args):
                 if name not in FUNCTIONS:
                     raise FileNotFoundError('Scenario implementation is not available yet.')
                 lab = Lab(child, args.pg_bin, args.pg_library, args.tools_bin)
+                # A controlled peer also imports reviewed contract helpers in
+                # the coordinator. Give those imports the same owned storage
+                # before loading them, rather than retaining the caller's home.
+                parent_environment = dict(os.environ)
+                os.environ.clear()
+                os.environ.update(lab.env)
+                os.environ.update(DATABASE_URL=lab.settings['database_url'],
+                                  SECRET_KEY=lab.settings['secret'])
                 lab.initialize()
                 item['timings_seconds']['provisioning'] = time.monotonic() - started
                 item['environment'] = lab.query('SELECT version() AS server, '
@@ -200,6 +209,9 @@ def run(args):
                 except Exception as error:
                     item['cleanup_status'] = 'FAIL'
                     item['limitations'].append('Cleanup refused/failed: ' + type(error).__name__)
+                if parent_environment is not None:
+                    os.environ.clear()
+                    os.environ.update(parent_environment)
                 child.close()
                 item['timings_seconds']['total_including_cleanup'] = time.monotonic() - started
                 private_values = [(str(child.path / 'private'), '[private]')]

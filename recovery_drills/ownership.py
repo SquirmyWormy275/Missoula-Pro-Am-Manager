@@ -115,7 +115,8 @@ class OwnedRun:
             self.record = {'schema': 1, 'run_id': uuid.uuid4().hex,
                            'path': str(self.path), 'device': self.path.stat().st_dev,
                            'inode': self.path.stat().st_ino, 'uid': os.getuid(),
-                           'processes': [], 'intents': [], 'cleanup': 'NOT_RUN'}
+                           'processes': [], 'intents': [], 'cleanup': 'NOT_RUN',
+                           'network_namespace': os.readlink('/proc/self/ns/net')}
             publish(self.path / 'owner.json', json.dumps(self.record, indent=2))
         else:
             owner = no_alias(self.path / 'owner.json')
@@ -259,6 +260,8 @@ def child_environment(private, pg_bin, library_path=None):
         'UPLOAD_FOLDER': str(private / 'uploads'),
         'LOCAL_BACKUP_DIR': str(private / 'backups'),
         'EVENT_ORDER_CONFIG_PATH': str(private / 'event-order.json'),
+        'STRATHMARK_DB_PATH': str(private / 'strathmark.sqlite'),
+        'STRATHMARK_TEST_DB': '1',
     }
     if library_path:
         environment['LD_LIBRARY_PATH'] = library_path

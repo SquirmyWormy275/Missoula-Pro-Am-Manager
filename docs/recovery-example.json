@@ -1,0 +1,389 @@
+{
+  "schema_version": "proam-recovery-drill-v1",
+  "run_id": "ee454fa385df4c19a27d2828fbd58995",
+  "source": {
+    "commit": "7453f4b88353f14397ba7e8f4fd862d83a83a39f",
+    "dirty": false,
+    "patch_sha256": null
+  },
+  "utc_started": "2026-10-14T02:06:18.278301+00:00",
+  "environment": {
+    "python": "3.10.21",
+    "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+    "dependencies": {
+      "Flask": "3.1.3",
+      "Flask-SQLAlchemy": "3.1.1",
+      "SQLAlchemy": "2.0.23",
+      "psycopg2-binary": "2.9.10",
+      "gunicorn": "22.0.0",
+      "strathmark": "2.0.0"
+    },
+    "strathmark_source": {
+      "vcs": "git",
+      "commit_id": "da5c44d07311b226c1e9842104477efaf61253fa",
+      "requested_revision": "da5c44d07311b226c1e9842104477efaf61253fa"
+    },
+    "app_process_model": "gunicorn: 1 worker, 4 threads, timeout 120; TESTING=False; CSRF enabled",
+    "postgres_server_binary": "[user-home]/Repo-Updates/competition-verification-20261013/pg-binaries/usr/bin/postgres",
+    "postgres_clients": {
+      "pg_dump": "pg_dump (PostgreSQL) 18.6",
+      "pg_restore": "pg_restore (PostgreSQL) 18.6"
+    },
+    "network": "new loopback-only namespace; no external routes",
+    "production_server_version": "NOT_OBSERVED"
+  },
+  "scope": {
+    "data": "synthetic",
+    "production_access": false,
+    "evidence_kind": "local-process-and-database-drill"
+  },
+  "status": "PASS",
+  "scenarios": [
+    {
+      "scenario_id": "score-postcommit-response-loss",
+      "requirement": "R03",
+      "scenario_status": "PASS",
+      "cleanup_status": "PASS",
+      "fault": {
+        "point": "score-postcommit",
+        "mechanism": "SIGKILL owned Gunicorn worker",
+        "reached": true,
+        "observed": true,
+        "dead_pid": 2535266,
+        "recovery": "existing one-worker Gunicorn master respawn"
+      },
+      "checks": [
+        {
+          "name": "reject missing csrf_token",
+          "status": "PASS",
+          "expected": 400,
+          "actual": 400
+        },
+        {
+          "name": "reject missing heat_identity",
+          "status": "PASS",
+          "expected": 409,
+          "actual": 409
+        },
+        {
+          "name": "reject missing scoring_state_digest",
+          "status": "PASS",
+          "expected": 409,
+          "actual": 409
+        },
+        {
+          "name": "reject unauthorized viewer",
+          "status": "PASS",
+          "expected": 403,
+          "actual": 403
+        },
+        {
+          "name": "reject unauthorized outsider",
+          "status": "PASS",
+          "expected": 403,
+          "actual": 403
+        },
+        {
+          "name": "rejected requests preserve business state",
+          "status": "PASS",
+          "expected": {},
+          "actual": {}
+        },
+        {
+          "name": "score response is JSON acceptance",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "receipt replay disposition",
+          "status": "PASS",
+          "expected": false,
+          "actual": false
+        },
+        {
+          "name": "exact requested transaction barrier reached",
+          "status": "PASS",
+          "expected": "score-postcommit",
+          "actual": "score-postcommit"
+        },
+        {
+          "name": "no success response exposed at barrier",
+          "status": "PASS",
+          "expected": false,
+          "actual": false
+        },
+        {
+          "name": "independent observer sees acceptance at correct boundary",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "independent committed cutting durations",
+          "status": "PASS",
+          "expected": [
+            11.1,
+            12.1,
+            9.1,
+            14.1
+          ],
+          "actual": [
+            11.1,
+            12.1,
+            9.1,
+            14.1
+          ]
+        },
+        {
+          "name": "client observes ambiguous loss, never acceptance",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "score response is JSON acceptance",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "receipt replay disposition",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "independent committed cutting durations",
+          "status": "PASS",
+          "expected": [
+            11.1,
+            12.1,
+            9.1,
+            14.1
+          ],
+          "actual": [
+            11.1,
+            12.1,
+            9.1,
+            14.1
+          ]
+        },
+        {
+          "name": "score response is JSON acceptance",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "receipt replay disposition",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "exact retry has no second business effect",
+          "status": "PASS",
+          "expected": {},
+          "actual": {}
+        },
+        {
+          "name": "conflicting payload identity rejected",
+          "status": "PASS",
+          "expected": 409,
+          "actual": 409
+        },
+        {
+          "name": "receipt heat/user binding rejected",
+          "status": "PASS",
+          "expected": 409,
+          "actual": 409
+        },
+        {
+          "name": "receipt heat/user binding rejected",
+          "status": "PASS",
+          "expected": 409,
+          "actual": 409
+        },
+        {
+          "name": "conflicts preserve authoritative state",
+          "status": "PASS",
+          "expected": {},
+          "actual": {}
+        },
+        {
+          "name": "post-crash report uses committed rankings",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "score response is JSON acceptance",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "receipt replay disposition",
+          "status": "PASS",
+          "expected": false,
+          "actual": false
+        },
+        {
+          "name": "score response is JSON acceptance",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "receipt replay disposition",
+          "status": "PASS",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "old accepted outcome cannot overwrite newer correction",
+          "status": "PASS",
+          "expected": {},
+          "actual": {}
+        }
+      ],
+      "request_reconciliation": {
+        "lost_expected": [],
+        "lost_unexpected": 0,
+        "duplicate_effects": 0,
+        "conflicting_effects": 0,
+        "observed_committed_without_ack": 1
+      },
+      "timings_seconds": {
+        "provisioning": 6.317150126007618,
+        "fault_to_verified_workflow": 2.9476449550129473,
+        "total_including_cleanup": 11.93403424200369
+      },
+      "limitations": [],
+      "artifacts": [],
+      "environment": [
+        {
+          "server": "PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 16.2.1 20260810, 64-bit",
+          "fsync": "on",
+          "synchronous_commit": "on"
+        }
+      ],
+      "schema_revision": [
+        {
+          "version_num": "a6b7c8d9e0f1"
+        }
+      ],
+      "responses": [
+        {
+          "status": 200,
+          "json": {
+            "category": "success",
+            "message": "Heat results saved successfully!",
+            "ok": true,
+            "receipt": {
+              "accepted": true,
+              "heat_id": 1,
+              "issuing_user_id": 1,
+              "payload_sha256": "ae97edede433ea6c022e53d7b41f44587908d5dc7a4a7c2bbeabede026539b7c",
+              "request_id": "e7ff6b8a-434c-4257-a60d-9e4f2ccc7034",
+              "tournament_id": 1
+            },
+            "receipt_replayed": false,
+            "redirect_url": "/scoring/1/event/1/results",
+            "undo_heat_id": 1
+          }
+        },
+        {
+          "status": 200,
+          "json": {
+            "category": "success",
+            "message": "Heat results saved successfully!",
+            "ok": true,
+            "receipt": {
+              "accepted": true,
+              "heat_id": 2,
+              "issuing_user_id": 1,
+              "payload_sha256": "90304e808759647eecfd6c8bb301fd9beb662bb886680d60811c0951e865a382",
+              "request_id": "263d9437-2f46-4f47-837c-ca8d1894cb19",
+              "tournament_id": 1
+            },
+            "receipt_replayed": true,
+            "redirect_url": "/scoring/1/event/1/results",
+            "undo_heat_id": 2
+          }
+        },
+        {
+          "status": 200,
+          "json": {
+            "category": "success",
+            "message": "Heat results saved successfully!",
+            "ok": true,
+            "receipt": {
+              "accepted": true,
+              "heat_id": 2,
+              "issuing_user_id": 1,
+              "payload_sha256": "90304e808759647eecfd6c8bb301fd9beb662bb886680d60811c0951e865a382",
+              "request_id": "263d9437-2f46-4f47-837c-ca8d1894cb19",
+              "tournament_id": 1
+            },
+            "receipt_replayed": true,
+            "redirect_url": "/scoring/1/event/1/results",
+            "undo_heat_id": 2
+          }
+        },
+        {
+          "status": 200,
+          "json": {
+            "category": "success",
+            "message": "Heat results saved successfully!",
+            "ok": true,
+            "receipt": {
+              "accepted": true,
+              "heat_id": 2,
+              "issuing_user_id": 1,
+              "payload_sha256": "ca500894136e5b679cec0d430b7fdbdc3de594091bbf3b88d32f9a5d11f1a099",
+              "request_id": "c2d4001e-af53-4904-941e-8a981e01fdac",
+              "tournament_id": 1
+            },
+            "receipt_replayed": false,
+            "redirect_url": "/scoring/1/event/1/results",
+            "undo_heat_id": 2
+          }
+        },
+        {
+          "status": 200,
+          "json": {
+            "category": "success",
+            "message": "Heat results saved successfully!",
+            "ok": true,
+            "receipt": {
+              "accepted": true,
+              "heat_id": 2,
+              "issuing_user_id": 1,
+              "payload_sha256": "90304e808759647eecfd6c8bb301fd9beb662bb886680d60811c0951e865a382",
+              "request_id": "263d9437-2f46-4f47-837c-ca8d1894cb19",
+              "tournament_id": 1
+            },
+            "receipt_replayed": true,
+            "redirect_url": "/scoring/1/event/1/results",
+            "undo_heat_id": 2
+          }
+        }
+      ],
+      "runtime_identity": [
+        {
+          "application_source": "[user-home]/Repo-Updates/proam-recovery-20261013/Missoula-Pro-Am-Manager",
+          "testing": false,
+          "csrf": true
+        },
+        {
+          "application_source": "[user-home]/Repo-Updates/proam-recovery-20261013/Missoula-Pro-Am-Manager",
+          "testing": false,
+          "csrf": true
+        }
+      ]
+    }
+  ],
+  "example_note": "Sanitized R03 extract from the executed full synthetic run; this subset is not a production qualification."
+}
