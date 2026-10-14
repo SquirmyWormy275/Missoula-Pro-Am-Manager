@@ -211,6 +211,16 @@ reviewed start mark before their heat can be scored. A zero-second mark is a
 valid intentional scratch and must be recorded as reviewed; it must never be
 assumed merely because a result row has the database default of `0.0`.
 
+T1/T2 measure raw cutting duration from the competitor's own legal start.
+Following STRATHMARK's shared `Handicap-Mark-Math.md` foundation, official
+handicap completion on the common count is **start mark + raw cutting duration**.
+The average remains raw in storage, reports, result sync and residual export.
+The owner reaffirmed this shared convention on 2026-10-13; the earlier
+subtraction was an implementation error, not a different sporting policy.
+This correction has no historical backfill or automatic re-finalization.
+Finalized live feeds retain recorded positions. A later explicit score
+correction uses the current calculation and existing correction/payout rules.
+
 Preflight reports unreviewed handicap entrants. Heat scoring enforces the same
 rule and redirects the judge to the mark-review page before any score is
 written. Heat regeneration preserves scored heat history by refusing to

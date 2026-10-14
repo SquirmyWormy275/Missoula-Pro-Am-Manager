@@ -458,7 +458,7 @@ class TestImportResultsFromCSV:
 # ---------------------------------------------------------------------------
 
 class TestHandicapScoring:
-    """Verify _metric() applies start-mark subtraction for handicap events."""
+    """Verify STRATHMARK's raw-duration plus start-mark clock convention."""
 
     def _handi_event(self, scoring_type='time', requires_dual_runs=False):
         ev = _event(scoring_type=scoring_type, requires_dual_runs=requires_dual_runs)
@@ -507,7 +507,7 @@ class TestHandicapScoring:
         ev = self._handi_event()
         r = self._res(result_value=60.0, handicap_factor=1.0)
         # 1.0 is a real 1-second start mark, not a sentinel
-        assert engine._metric(r, ev) == 59.0
+        assert engine._metric(r, ev) == 61.0
 
     def test_handicap_zero_factor_is_scratch(self):
         ev = self._handi_event()
@@ -520,27 +520,26 @@ class TestHandicapScoring:
         r = self._res(result_value=60.0, handicap_factor=None)
         assert engine._metric(r, ev) == 60.0
 
-    # --- normal start-mark subtraction ---
+    # --- completion on the common count ---
 
-    def test_handicap_subtracts_start_mark(self):
+    def test_handicap_adds_start_mark(self):
         ev = self._handi_event()
         r = self._res(result_value=60.0, handicap_factor=5.0)
-        # net = 60.0 - 5.0 = 55.0
-        assert engine._metric(r, ev) == 55.0
+        # common count = 60.0 + 5.0 = 65.0
+        assert engine._metric(r, ev) == 65.0
 
-    def test_handicap_clamps_to_zero(self):
-        # start_mark > raw_time should not produce a negative net time
+    def test_start_mark_longer_than_cut_still_contributes_to_finish(self):
         ev = self._handi_event()
         r = self._res(result_value=3.0, handicap_factor=10.0)
-        assert engine._metric(r, ev) == 0.0
+        assert engine._metric(r, ev) == 13.0
 
     # --- dual-run handicap events ---
 
     def test_handicap_dual_run_uses_best_run(self):
         ev = self._handi_event(requires_dual_runs=True)
         r = self._res(best_run=55.0, handicap_factor=5.0)
-        # net = 55.0 - 5.0 = 50.0
-        assert engine._metric(r, ev) == 50.0
+        # common count = 55.0 + 5.0 = 60.0
+        assert engine._metric(r, ev) == 60.0
 
     def test_handicap_dual_run_none_best_run(self):
         ev = self._handi_event(requires_dual_runs=True)

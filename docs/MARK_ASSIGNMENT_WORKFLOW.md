@@ -20,19 +20,16 @@ The legacy path is retained for backward compatibility. Its old model-selection
 description is not a statement about STRATHMARK V2 and is not the procedure for
 a shadow event.
 
-**2026-10-13 clock verification:** the legacy judge form labels its inputs T1/T2
-and stores their average unchanged. `_metric()` currently ranks official
-handicap times as `max(0, stored_time - start_mark)`; reports and STRATHMARK
-result/residual exports retain the stored time. Source comments call that time
-raw, but the operator contract does not define whether judges start these
-stopwatches at the common count or the competitor's own start. That unresolved
-origin blocks shipping a handicap-scoring correction. If the inputs are raw
-cutting durations, shared handicap geometry instead requires completion on
-the common count to be `start_mark + raw_duration`: 60/45/30 seconds with
-marks 3/18/33 complete together at 63. With actual durations 62/44/29, completions
-are 65/62/62, while the current metric is 59/26/0. Confirm timer origin and the
-prospective correction contract before changing this path. This investigation
-does not reinterpret stored competition times or authorize recomputing winners.
+**2026-10-13 clock correction:** the owner reaffirmed STRATHMARK's shared
+clock convention. T1/T2 are raw cutting durations from each competitor's own
+start. Missoula stores their average unchanged and ranks official handicap
+completion as `start_mark + raw_duration`. The earlier subtraction was a
+reproduced implementation error: 60/45/30 seconds with marks 3/18/33 should
+complete together at 63; actual durations 62/44/29 complete at 65/62/62.
+Reports and STRATHMARK result/residual exports retain raw durations. There is
+no historical backfill or automatic re-finalization. Finalized live feeds use
+recorded placements; an explicit future correction uses the current scoring
+calculation and existing correction/payout rules.
 
 ## STRATHMARK V2 shadow path
 

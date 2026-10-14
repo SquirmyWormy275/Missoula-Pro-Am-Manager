@@ -38,8 +38,8 @@ pytestmark = pytest.mark.integration
 class TestHandicapScoringIntegration:
     """End-to-end handicap scoring with start marks applied."""
 
-    def test_handicap_subtracts_start_mark(self, db_session):
-        """Competitor with start mark should have adjusted time."""
+    def test_handicap_adds_start_mark(self, db_session):
+        """Rank raw cutting duration plus start mark, per STRATHMARK."""
         import services.scoring_engine as engine
 
         t = make_tournament(db_session)
@@ -50,11 +50,11 @@ class TestHandicapScoringIntegration:
                            event_type='pro', scoring_type='time',
                            stand_type='underhand', is_handicap=True)
 
-        # Fast: raw 20s, scratch (0.0) → net 20s
+        # Raw 20s, scratch (0.0) → common completion 20s
         r1 = make_event_result(db_session, event, p1, competitor_type='pro',
                                result_value=20.0, handicap_factor=0.0,
                                status='completed')
-        # Slow: raw 28s, 10s start mark → net 18s
+        # Raw 28s, 10s start mark → common completion 38s
         r2 = make_event_result(db_session, event, p2, competitor_type='pro',
                                result_value=28.0, handicap_factor=10.0,
                                status='completed')
@@ -63,9 +63,8 @@ class TestHandicapScoringIntegration:
         engine.calculate_positions(event)
         db_session.flush()
 
-        # Slow Pro wins: 28 - 10 = 18 < 20
-        assert r2.final_position == 1
-        assert r1.final_position == 2
+        assert r1.final_position == 1
+        assert r2.final_position == 2
 
     def test_handicap_none_factor_treated_as_scratch(self, db_session):
         """handicap_factor=None should be treated as 0.0 scratch."""
@@ -84,7 +83,7 @@ class TestHandicapScoringIntegration:
         engine.calculate_positions(event)
         db_session.flush()
 
-        # No mark subtracted → position 1 (only competitor)
+        # No mark added → position 1 (only competitor)
         assert r.final_position == 1
 
     def test_championship_mode_ignores_handicap_factor(self, db_session):
