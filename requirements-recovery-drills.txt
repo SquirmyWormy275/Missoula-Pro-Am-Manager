@@ -1,0 +1,3 @@
+# Optional synthetic extended-lab tools, never production deployment dependencies.
+pytest==9.1.1
+playwright==1.64.0
