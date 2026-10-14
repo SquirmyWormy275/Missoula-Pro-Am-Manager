@@ -215,7 +215,9 @@ class OwnedRun:
                     self.remember(identity, 'browser')
 
     def scratch(self):
-        path = Path(tempfile.gettempdir()) / ('pam-' + self.record['run_id'])
+        # TMPDIR is deliberately private and can be long. Chromium's Unix
+        # singleton socket needs this separately owned short Linux path.
+        path = Path('/tmp') / ('pam-' + self.record['run_id'])
         no_alias(path)
         self.record.setdefault('scratch', []).append({'path': str(path), 'identity': None})
         self.save()

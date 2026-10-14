@@ -93,6 +93,19 @@ def test_unallocated_process_and_operational_storage_are_refused(tmp_path):
     assert list(operational.iterdir()) == []
 
 
+def test_browser_scratch_stays_short_with_a_private_long_tmpdir(tmp_path, monkeypatch):
+    owner = OwnedRun(tmp_path / 'run', create=True)
+    monkeypatch.setenv('TMPDIR', str(tmp_path / ('long-' * 30)))
+    try:
+        scratch = owner.scratch()
+        assert scratch.parent == Path('/tmp')
+        assert len(str(scratch / 'org.chromium.Chromium.abcdef/SingletonSocket')) < 108
+        assert json.loads((scratch / 'owner.json').read_text())['run_id'] == owner.record['run_id']
+    finally:
+        owner.cleanup_scratch()
+        owner.close()
+
+
 def test_cleanup_of_one_run_preserves_a_second_live_run(tmp_path):
     owners = [OwnedRun(tmp_path / name, create=True) for name in ('one', 'two')]
     processes = []
