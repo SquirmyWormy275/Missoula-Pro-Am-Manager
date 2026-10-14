@@ -224,7 +224,9 @@ def _offline_schedule_snapshot(tournament_id: int) -> tuple[str, list[Heat]]:
             'event_id': heat.event_id,
             'heat_id': heat.id,
             'identity': heat_submission_identity(heat),
-            'version': heat.version_id,
+            # Optimistic versions also change for edit locks and score saves.
+            # The schedule identity already binds roster, stands and placement;
+            # scoring_state_digest separately rejects a changed score payload.
         }
         for heat in heats
     ]

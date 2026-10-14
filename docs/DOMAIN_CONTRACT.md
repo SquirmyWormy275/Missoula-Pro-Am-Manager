@@ -248,6 +248,14 @@ supersedes but does not delete that receipt. The receipt belongs to tournament
 history, retains the original heat ID even if an undone heat is regenerated,
 and loses replay authority without deletion if its issuing user is removed.
 
+Prepared offline packages bind the existing lock-independent heat identity
+(roster, stands and schedule placement). Acquiring an edit lock does not replace
+that field. Optimistic row versions also change for locks and scores, so they
+are not a schedule identity. The separate scoring-state digest still rejects
+stale score writes. Exact accepted retries resolve through their durable receipt.
+The existing replay endpoint authenticates its user-bound HMAC in place of an
+expired form CSRF token; ordinary score entry retains normal CSRF protection.
+
 ## Production Parity
 
 Local SQLite success does not prove Railway/PostgreSQL behavior. Local Python
