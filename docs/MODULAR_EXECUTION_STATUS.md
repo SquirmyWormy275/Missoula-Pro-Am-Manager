@@ -59,9 +59,9 @@ private historical/training corpus was used for these checks.
 
 | Repository | Implementation / delivery |
 | --- | --- |
-| STRATHMARK | final reviewed source `0839f640b8f1a02270a8275246e5801260458391`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) MERGED at `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214` after all 25 checks passed and all six review findings were fixed/resolved; rc11 publication awaits successful main CI |
-| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; host SQLite/PostgreSQL/migration/lint/audit/recovery CI passed; managed lane awaits exact producer publication; merge BLOCKED by hosted backup/recovery proof below |
-| STRATHEX | `bcf7ffc19c3796ac189c6dd8c2c59d2abb472f89`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), ready for review, both findings fixed/resolved; ordinary Linux/Windows checks pass, installed managed lane awaits exact producer publication; version 7.4.3 |
+| STRATHMARK | final reviewed source `0839f640b8f1a02270a8275246e5801260458391`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) MERGED at `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214` after all 25 checks passed and all six review findings were fixed/resolved; rc11 PUBLISHED to [PyPI](https://pypi.org/project/strathmark/3.0.0rc11/) and [GitHub prerelease](https://github.com/SquirmyWormy275/STRATHMARK/releases/tag/v3.0.0rc11) after successful main CI and exact artifact/extra installation checks |
+| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; review fixes `faf353d40ef9065b54308bd1b818f09b99a4e556`, `d672d536d93081672a9cbdeffa698502bb3a530d` shared-profile code `74466eb0f46c73c84e1ee519ff41a28153cebdc4`, and recovery-hook closure `71faad29478b483ecb9b837504c84eb779c4dbc2`; published component pins verified locally; latest exact-head CI/review is on the PR; merge BLOCKED by hosted backup/recovery proof below |
+| STRATHEX | `bcf7ffc19c3796ac189c6dd8c2c59d2abb472f89`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), MERGED at `bcfe4e50e1449b2585a037215c79f5a7e955e9da`; both findings fixed/resolved; all 11 PR checks and main run `38885236056` passed, including installed published rc11; version 7.4.3 |
 | MNEMEX | implementation PR 5 MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; binding/scope PR 6 MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; provenance/security source `83d9e6d296b990ba01884fc04c5662fea36c6eb6` in [PR 7](https://github.com/SquirmyWormy275/mnemex/pull/7) MERGED at `7a315946c92e24a125fc213c7d139eef6278f12c`. Each passed exact-head Linux/Windows CI; PR 7 automated review completed with no findings; all earlier eight findings fixed/resolved; no deployment |
 
 ### Working features and boundaries
@@ -85,6 +85,7 @@ has source/revision/issue/field/clock evidence; the final summary is separate.
 The optional GUI has scoped authenticated sessions, revocation, CSRF/origin
 checks, native forms, responsive layout, sync status and independent print sheets.
 CLI/GUI handover changes event revision without changing physical field identity.
+The core-only published package has no Flask, MNEMEX or STRATHEX dependency.
 
 Missoula deliberately links only fresh supported individual SB/UH events,
 validates all active entries, division/wood, declared gear and physical stands,
@@ -93,7 +94,14 @@ remain independent. Legacy managed scoring/placing mutations refuse competing
 authority. Host acceptance commits attempts, delivery intents, projection and
 receipt together. Points/payouts use accepted source positions through an
 explicit host action; payout edits preserve that boundary. MNEMEX delivery is a
-bounded supervised batch, never part of scoring/finalization. ProductionConfig
+bounded supervised batch, never part of scoring/finalization. College awards rebuild affected team totals; pro ties use the existing shared-position
+purse, and saved templates use accepted source positions. A refused initial creation
+can be corrected under a new durable request; an ambiguous existing source cannot
+be overwritten. Source actor/request/config bind the accepted mapping, and superseded
+initial intents remain conflicts. Host preparation rechecks live roster/gear/wood,
+physical stand aliases and dual timers. Unissued configuration revisions reconcile
+entry mappings; incompatible shared-client profiles and changing export revisions
+are refused. ProductionConfig
 forces managed functionality off. The host's Python 3.10 / STRATHMARK 2.x pin
 is unchanged; the managed component has a separate interpreter.
 
@@ -128,7 +136,7 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 
 | Check | Actual result / retained receipt |
 | --- | --- |
-| STRATHMARK full isolated portable suite | 3242 passed, 47 skipped; `producer-full-final/{pytest.log,junit.xml}`; final authority-location change additionally verified by the 20 focused managed tests; exact final revision reruns in Required CI |
+| STRATHMARK full isolated portable suite | 3242 passed, 47 skipped; `producer-full-final/{pytest.log,junit.xml}`. Final 0839 PR run `38878110636` passed all 25 checks; merged f184 main run `38881349305` attempt 2 passed all 25 checks. |
 | STRATHMARK focused final authority/UI/process/evaluation | Original 20 passed; review reproduced seven additional failures, then final 29 passed in `producer-reviewed-commit/{pytest.log,junit.xml}`. Exact reviewed PR CI passed all 25 checks (`38878110636`). |
 | Installed producer wheel and sdist, outside checkout | PASS on reviewed 0839 artifacts: supplied-data CLI, real two-show qualifying/semi/final lifecycle through separate processes, per-attempt export and synthetic evaluation; `producer-reviewed-{wheel,sdist}.log`; R11/R12 repeated against this wheel. |
 | Core-only installation | PASS without Flask, MNEMEX or STRATHEX; `core-optional-absence.log` |
@@ -147,7 +155,7 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 | MNEMEX narrow inbox on PostgreSQL | 10 passed; `postgres-full-final/{mnemex-junit.xml,mnemex.log}` |
 | MNEMEX distribution | wheel/sdist built; installed wheel imported from site-packages outside checkout; Django check/migration drift PASS; `mnemex-installed-wheel-check2.log` |
 | STRATHEX full suite | 381 passed after parser-level RED regression for portable encrypted-backup flags; `strathex-review-final.xml` (earlier 380 in `strathex-final.xml`). |
-| STRATHEX installed retro + managed clients | Reviewed bcf7 wheel PASS: sdist inspection and disposable-workbook startup/exit; supplied-data creation/resume and wrong-show refusal without legacy startup; `strathex-reviewed-installed-{retro,managed}.log`. |
+| STRATHEX installed retro + managed clients | Reviewed bcf7 wheel PASS: sdist inspection and disposable-workbook startup/exit; supplied-data creation/resume and wrong-show refusal without legacy startup; `strathex-reviewed-installed-{retro,managed}.log`. PR/main installed CI also passes against indexed rc11. |
 | Ruff/docs/format/diff | PASS applicable repository checks; hosted CI repeats exact revisions |
 
 The final complete rerun, `recovery-qualified-final/report.json`, passes all
@@ -184,17 +192,71 @@ resumes them successfully (`legacy-candidate-compatibility/report.json`). No
 existing receipt or frozen numerical identity was rewritten. Backup/transfer
 destinations use exclusive atomic publication and refuse a late competing path.
 
-Main producer run `38881349305` hit a timing-sensitive existing Python 3.11
-shadow test: its 100 ms deadline expired during preflight instead of after the
-deliberately stalled write. The API correctly reported unclaimed preflight state.
-Five independent Python 3.11.16 runs of both preflight and post-admission timeout
-tests pass (`producer-311-timeout-diagnosis.log` and per-run XML); all 56 shadow API
-tests also pass (`producer-311-shadow.xml`). No deadline, assertion or production
-behavior was relaxed. The exact merged-commit retry passes Python 3.11 and is
-running installed-artifact jobs; main CI/publication remains pending until that
-run completes. The first failed-job rerun request was
-refused because the full workflow was still running. Original failure evidence
-is retained in `producer-main-311.log`.
+Main producer run `38881349305` attempt 1 hit an existing timing-sensitive Python
+3.11 shadow test: its 100 ms deadline expired during preflight instead of after
+the deliberately stalled write. The API correctly reported unclaimed preflight
+state. Five independent Python 3.11.16 runs of both preflight/post-admission
+semantics and all 56 shadow API tests pass (`producer-311-timeout-diagnosis.log`,
+`producer-311-shadow.xml`). Exact-commit attempt 2 passes all 25 checks. No timeout,
+assertion, requirement or production behavior was relaxed. The automatic release
+alert [36](https://github.com/SquirmyWormy275/STRATHMARK/issues/36) closed after the
+same run recovered. Original failure evidence remains in `producer-main-311.log`.
+
+The host review reproduced seven further policy/binding/guard defects in
+`host-policy-red2.xml` (three earlier stale-state failures are separate).
+Current code preserves college team totals and shared-position pro purses, applies
+saved templates, protects tournament configuration and drag moves, refuses old
+host heat layouts, and recovers refused/ambiguous initialization without deleting
+its source or local intents. Further current-roster/timer/stand regressions retain
+`host-policy-boundary-red.xml`: roster refusal was missing; two initial test cases
+also exposed stale retained helper ORM cache, now scoped to each host validation.
+The corrected 13 policy checks pass in `host-policy-boundaries-final.xml`.
+Final shared-profile/source-export checks produce **65 passed** on SQLite and
+PostgreSQL 18.6 with installed indexed rc11 and real installed MNEMEX HTTP:
+`host-shared-profile-final.xml`, `host-shared-profile-postgres/{junit.xml,report.json}`;
+PostgreSQL cleanup PASS. This includes the existing 42 scoring/payout regressions.
+The exact source, commands, and final CI outcome remain attributable through
+[PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125).
+
+### Published artifacts and independent indexed verification
+
+Publication workflow [38884204894](https://github.com/SquirmyWormy275/STRATHMARK/actions/runs/38884204894)
+passes all six jobs, including wheel/sdist installs and every declared extra.
+Both immutable annotated tags `v3.0.0rc11` and `pypi-v3.0.0rc11` dereference to
+`f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214`. GitHub's release is a prerelease.
+The downloaded release and PyPI metadata agree with the exact locally reviewed
+artifacts; `published-artifacts/SHA256SUMS` verifies both files:
+
+| File | SHA-256 |
+| --- | --- |
+| `strathmark-3.0.0rc11-py3-none-any.whl` | `7151e43e6126d704fd09b634b82c20e08cc32b74580b2feb7613e380be45fdcd` |
+| `strathmark-3.0.0rc11.tar.gz` | `2f9fecc63c287ce0e69c88059c449bfd8fe0915a71a8fde27ee68bee209bcbfe` |
+
+`pypi-publication-local-verification.log` independently verifies metadata hashes,
+a fresh indexed install, dependency consistency and real demo. `pypi-two-show/report.json`
+passes both full lifecycles from a new indexed core-only environment, without source
+checkout imports. `pypi-core-optional-absence.json` confirms absent Flask/MNEMEX/STRATHEX;
+runtime Python 3.13.15, NumPy 2.5.4, pandas 3.0.6. `evaluation-published/report.json`
+and readable report reproduce all eight generated cases and matched-baseline limits.
+Initial index propagation returned no rc11; the retained failed installation
+`pypi-core-install.log` was retried with the same exact pin and succeeds in
+`pypi-core-install-retry.log`. No version substitution occurred.
+
+Published-package R11 and R12 pass with cleanup PASS in `recovery-r11-published`
+and `recovery-r12-published`, source d672d53 clean. R11 includes both final
+corrections/voids and 16 revisions versus eight summary entries. The first R11
+launch refused a relative output path before creating resources; the absolute-path
+retry is retained separately. The first latest-profile R12 run, `recovery-r12-profile-published`, FAILS one
+assertion (cleanup PASS): its old request-level commit hook stopped after the
+new export-refresh commit, before acceptance. The receipt-transaction observer
+now binds the fault to the actual acceptance INSERT transaction, preserving the
+original expected independent counts of zero before commit and two after commit.
+`recovery-r12-receipt-transaction` passes at clean 0ae607e. The hook also avoids
+importing new model modules into historical rollback code. Final clean source
+`71faad29478b483ecb9b837504c84eb779c4dbc2` passes R12's 13 checks and R09's 13 checks,
+cleanup PASS, in `recovery-r12-closure` and `recovery-r09-closure`. No failure
+threshold was relaxed. All these are synthetic Linux evidence, not hosted/provider
+recovery qualification.
 
 ### Commands and exact pins
 
@@ -245,13 +307,15 @@ code (`v3-production-gate.log`), not rebound to obtain a pass.
 No new service DEPLOYED and no new OFFICIAL-USE ENABLED state. MNEMEX's receiver
 defaults off and accepts sandbox synthetic sources only. Missoula's managed
 profile is hard-off in ProductionConfig, independent of environment flags.
-STRATHMARK rc11 publication and separate wiki synchronization are tracked at
-closeout; publication is not official activation.
+STRATHMARK rc11 is PUBLISHED; publication is not official activation. No new
+service was deployed by this effort.
 
 STRATHMARK's separately published wiki is verified at
 `bea618007ef72b465bfe9a8c0a487a5ed847e414`, sourced from exact merged main f184e9f.
 `producer-merged-wiki-{publish,check}.log` records remote verification of every
-versioned page. STRATHEX wiki publication waits for its verified normal merge.
+versioned page. STRATHEX's separately published wiki is verified at
+`43197c198b7282fad551c3a6da2a76ece1c76dd3`, sourced from exact merged main bcfe4e5;
+`strathex-merged-wiki-{publish,check}.log` records every remote page check.
 
 **Missoula merge BLOCKED:** its additive schema requires changing the daily-backup
 expected head from `a6b7c8d9e0f1` to `a6d6dda4e480`. The current
