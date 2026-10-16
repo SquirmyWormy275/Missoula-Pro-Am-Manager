@@ -120,7 +120,7 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 | --- | --- |
 | STRATHMARK full isolated portable suite | 3242 passed, 47 skipped; `producer-full-final/{pytest.log,junit.xml}`; final authority-location change additionally verified by the 20 focused managed tests; exact final revision reruns in Required CI |
 | STRATHMARK focused final authority/UI/process/evaluation | 20 passed; `producer-authority-final/{pytest.log,junit.xml}` |
-| Installed producer wheel and sdist, outside checkout | PASS supplied-data CLI, real two-show qualifying/semi/final lifecycle through separate processes, correction/export and synthetic evaluation; `producer-smoke-final-{wheel,sdist}2.log` |
+| Installed producer wheel and sdist, outside checkout | PASS supplied-data CLI, real two-show qualifying/semi/final lifecycle through separate processes, per-attempt export and synthetic evaluation; CLI corrections additionally pass R11 below; `producer-smoke-final-{wheel,sdist}2.log` |
 | Core-only installation | PASS without Flask, MNEMEX or STRATHEX; `core-optional-absence.log` |
 | Real installed browser | PASS login, CLI handover/native fields, real engine/review/issue, raw timers, both clocks, stale edit, normal CSRF, wrong-show access, print identity and mobile no-overflow; `browser-workspace-7/report.json` plus synthetic screenshots/HTML |
 | Installed two-show CLI | PASS; `installed-core-final/report.json`; Missoula and second configuration run unchanged component with different wood/capacity/heat structure |
@@ -136,7 +136,12 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 | STRATHEX installed retro + managed clients | PASS wheel/sdist inspection and disposable-workbook startup/exit; supplied-data creation/resume and wrong-show refusal without legacy startup; `strathex-installed-final.log`, `strathex-managed-installed.log` |
 | Ruff/docs/format/diff | PASS applicable repository checks; hosted CI repeats exact revisions |
 
-Recovery receipts preserve failures rather than overwriting evidence:
+The final complete rerun, `recovery-qualified-final/report.json`, passes all
+12 scenarios and 197 assertions with every cleanup PASS. The stronger R11
+CLI-correction rerun, `recovery-r11-cli-correction/report.json`, additionally
+voids a final attempt, accepts/re-finalizes on both shows through installed CLI
+processes, preserves the issued identity and verifies 16 source revisions versus
+eight summary entries. Earlier receipts preserve failures rather than overwriting evidence:
 `recovery-all-final/report.json` records R01–R04 and R06–R12 PASS with cleanup
 PASS, and R05 FAIL because the old harness restored a hard-coded old Alembic
 stamp to its otherwise intact synthetic source. The corrected harness retains
@@ -148,7 +153,7 @@ R09 retains the historical baseline commit, receipt retry and scratch scoring
 assertions. Old code ignores new managed tables; this is not a downgrade of
 accepted managed data.
 
-R11 runs installed real-engine two-show CLI portability. R12 uses actual
+R11 runs installed real-engine two-show CLI portability and corrections. R12 uses actual
 PostgreSQL/Gunicorn worker death before acceptance commit and after commit before
 response. Retries produce one acceptance and exact append-only attempt/delivery
 counts with no award side effect. The independent three-repository test launches

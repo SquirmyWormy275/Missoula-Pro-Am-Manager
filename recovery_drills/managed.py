@@ -97,6 +97,30 @@ def portability(lab, result):
     check(result, 'identical installed component completes two isolated shows', len(report['shows']), 2)
     check(result, 'all round attempts and separate summaries survive CLI process restarts', [(r['attempts'], r['summary_entries']) for r in report['shows']], [(14, 8), (14, 8)])
     check(result, 'same numeric component serves both configurations', len({r['numeric_identity'] for r in report['shows']}), 1)
+    for show in report['shows']:
+        show_id = show['show_id']
+        directory = output / show_id.replace(':', '-')
+        database = directory / 'authority.sqlite3'
+        event_id = show_id + ':underhand'
+        def cli(action, payload=None, state=None):
+            command = [producer, '-I', '-m', 'strathmark', 'event', action, '--database', str(database), '--event-id', event_id, '--show', show_id, '--json']
+            if payload is not None:
+                supplied = directory / ('correction-' + uuid.uuid4().hex + '.json')
+                supplied.write_text(json.dumps(payload))
+                command += ['--input', str(supplied), '--request-id', uuid.uuid4().hex, '--expected-revision', str(state['revision'])]
+            return json.loads(lab.command(command).stdout)
+        state = cli('status')
+        final = state['rounds'][-1]['fields'][0]
+        issue_id = final['issue_id']
+        rows = [{'entry_id': entry, 'status': 'finished', 'timer1_seconds': str(101+i), 'timer2_seconds': str(101+i)} for i, entry in enumerate(final['entries'])]
+        rows[0] = {'entry_id': final['entries'][0], 'status': 'void'}
+        state = cli('correct', {'heat_id': final['heat_id'], 'issue_id': issue_id, 'supersedes': final['result_revisions'][-1]['digest'], 'reason': 'Synthetic CLI correction and explicit void', 'outcomes': rows}, state)
+        final = state['rounds'][-1]['fields'][0]
+        state = cli('accept', {'heat_id': final['heat_id'], 'result_digest': final['result_revisions'][-1]['digest']}, state)
+        state = cli('finalize', {}, state)
+        exported = cli('export')
+        check(result, show_id + ' CLI correction appends two source revisions and re-finalizes separate summary', (len(exported['deliveries']),len(exported['summary']),state['summary_revision']), (16,8,2))
+        check(result, show_id + ' issued field remains unchanged by correction', state['rounds'][-1]['fields'][0]['issue_id'], issue_id)
     result['limitations'].append('Synthetic V2 and SQLite component evidence; no V3, provider, Windows or official-use qualification.')
 
 
