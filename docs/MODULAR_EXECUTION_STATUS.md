@@ -60,7 +60,7 @@ private historical/training corpus was used for these checks.
 | Repository | Implementation / delivery |
 | --- | --- |
 | STRATHMARK | final reviewed source `0839f640b8f1a02270a8275246e5801260458391`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) MERGED at `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214` after all 25 checks passed and all six review findings were fixed/resolved; rc11 PUBLISHED to [PyPI](https://pypi.org/project/strathmark/3.0.0rc11/) and [GitHub prerelease](https://github.com/SquirmyWormy275/STRATHMARK/releases/tag/v3.0.0rc11) after successful main CI and exact artifact/extra installation checks |
-| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; review fixes `faf353d40ef9065b54308bd1b818f09b99a4e556`, `d672d536d93081672a9cbdeffa698502bb3a530d` shared-profile code `74466eb0f46c73c84e1ee519ff41a28153cebdc4`, recovery-hook closure `71faad29478b483ecb9b837504c84eb779c4dbc2`, and source-fence/scheduling slice `f35b3685fdd0bc81e803208fb10b4ed0483a5c7a`, and host-owned mutex/binding closure `ee50f8c979aefd61bffa3b54942bce757aa1cf2d`, and registration/gear/correction closure `2171dcfc391066c8d42b6cc50c516f9823059ecc`; published component pins verified locally; latest exact-head CI/review is on the PR; merge BLOCKED by hosted backup/recovery proof below |
+| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; review fixes `faf353d40ef9065b54308bd1b818f09b99a4e556`, `d672d536d93081672a9cbdeffa698502bb3a530d` shared-profile code `74466eb0f46c73c84e1ee519ff41a28153cebdc4`, recovery-hook closure `71faad29478b483ecb9b837504c84eb779c4dbc2`, and source-fence/scheduling slice `f35b3685fdd0bc81e803208fb10b4ed0483a5c7a`, and host-owned mutex/binding closure `ee50f8c979aefd61bffa3b54942bce757aa1cf2d`, and registration/gear/correction closure `2171dcfc391066c8d42b6cc50c516f9823059ecc`, and deletion/legacy-contract closure `0727e9b63cdaaeb7ac994f5729d82b8114456d7d`; published component pins verified locally; latest exact-head CI/review is on the PR; merge BLOCKED by hosted backup/recovery proof below |
 | STRATHEX | `bcf7ffc19c3796ac189c6dd8c2c59d2abb472f89`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), MERGED at `bcfe4e50e1449b2585a037215c79f5a7e955e9da`; both findings fixed/resolved; all 11 PR checks and main run `38885236056` passed, including installed published rc11; version 7.4.3 |
 | MNEMEX | implementation PR 5 MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; binding/scope PR 6 MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; provenance/security source `83d9e6d296b990ba01884fc04c5662fea36c6eb6` in [PR 7](https://github.com/SquirmyWormy275/mnemex/pull/7) MERGED at `7a315946c92e24a125fc213c7d139eef6278f12c`. Each passed exact-head Linux/Windows CI; PR 7 automated review completed with no findings; all earlier eight findings fixed/resolved; no deployment |
 
@@ -351,6 +351,40 @@ Exact clean 2171dcf passes R12 and R09 again, 13 checks each, cleanup PASS
 (`recovery-r12-registration-finality`, `recovery-r09-registration-finality`). Ruff
 and diff checks pass. Final exact-head CI/review is linked on PR 125. The producer
 package/numeric identity and all operational merge/activation gates are unchanged.
+
+### Pending registration deletion and retained gear-service contract
+
+The boundary audit found the same authority problem in college competitor/team
+removal: with all flights pending, the legacy completed-history check could delete
+an entrant still mapped into a managed event. Four RED route cases reproduce
+pending creation/unissued and issued-field deletion in `managed-deletion-red.xml`.
+The shared deletion predicate now protects retained managed mappings as well as
+recorded results/completed heats. Both deletion routes use it. Four fixed cases
+also prove unrelated competitor/team deletion still works in the same tournament;
+existing scored/scratched-history and active-flight deletion guards pass.
+
+The preceding head d135cb0's [CI run 38897053396](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/actions/runs/38897053396)
+failed the full SQLite lane's existing
+`test_gear_repair_respects_the_left_handed_dummy[False]`: an empty new
+`managed_events_skipped` key changed the legacy service's exact return contract.
+`ci-registration-finality-test-failure.log` retains the original job log. The
+implementation now adds that key only for an actual managed skip, and the UI
+uses an optional lookup. The existing exact dictionary assertion and left-handed
+stand behavior are unchanged. No test was relaxed to absorb the incompatibility.
+
+Expanded boundary verification passes **154 SQLite tests**, including the existing
+registration edge/writer checks, and **91 PostgreSQL tests** with cleanup PASS
+(`managed-boundary-final.xml`, `managed-boundary-final-postgres`). Those runs
+precede the return-shape compatibility fix; the subsequent focused compatibility
+run passes all **10 tests**, no skips (`managed-boundary-compat.xml`), covering the
+unchanged legacy left-handed assertion and managed gear/deletion route/service
+behavior. Exact clean application source
+`0727e9b63cdaaeb7ac994f5729d82b8114456d7d` passes R12 and R09 again, 13 checks each,
+cleanup PASS (`recovery-r12-managed-boundary`, `recovery-r09-managed-boundary`).
+Ruff and diff checks pass. The final exact-head full CI/review result is linked on
+PR 125; all 18 prior review threads have concrete fixes and are resolved.
+Operational data, package publication, numeric policy and merge/activation gates
+remain unchanged by these host-only fixes.
 
 ### Published artifacts and independent indexed verification
 
