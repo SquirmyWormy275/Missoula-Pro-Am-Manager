@@ -60,7 +60,7 @@ private historical/training corpus was used for these checks.
 | Repository | Implementation / delivery |
 | --- | --- |
 | STRATHMARK | final reviewed source `0839f640b8f1a02270a8275246e5801260458391`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) MERGED at `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214` after all 25 checks passed and all six review findings were fixed/resolved; rc11 PUBLISHED to [PyPI](https://pypi.org/project/strathmark/3.0.0rc11/) and [GitHub prerelease](https://github.com/SquirmyWormy275/STRATHMARK/releases/tag/v3.0.0rc11) after successful main CI and exact artifact/extra installation checks |
-| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; review fixes `faf353d40ef9065b54308bd1b818f09b99a4e556`, `d672d536d93081672a9cbdeffa698502bb3a530d` shared-profile code `74466eb0f46c73c84e1ee519ff41a28153cebdc4`, recovery-hook closure `71faad29478b483ecb9b837504c84eb779c4dbc2`, and source-fence/scheduling slice `f35b3685fdd0bc81e803208fb10b4ed0483a5c7a`, and host-owned mutex/binding closure `ee50f8c979aefd61bffa3b54942bce757aa1cf2d`; published component pins verified locally; latest exact-head CI/review is on the PR; merge BLOCKED by hosted backup/recovery proof below |
+| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; review fixes `faf353d40ef9065b54308bd1b818f09b99a4e556`, `d672d536d93081672a9cbdeffa698502bb3a530d` shared-profile code `74466eb0f46c73c84e1ee519ff41a28153cebdc4`, recovery-hook closure `71faad29478b483ecb9b837504c84eb779c4dbc2`, and source-fence/scheduling slice `f35b3685fdd0bc81e803208fb10b4ed0483a5c7a`, and host-owned mutex/binding closure `ee50f8c979aefd61bffa3b54942bce757aa1cf2d`, and registration/gear/correction closure `2171dcfc391066c8d42b6cc50c516f9823059ecc`; published component pins verified locally; latest exact-head CI/review is on the PR; merge BLOCKED by hosted backup/recovery proof below |
 | STRATHEX | `bcf7ffc19c3796ac189c6dd8c2c59d2abb472f89`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), MERGED at `bcfe4e50e1449b2585a037215c79f5a7e955e9da`; both findings fixed/resolved; all 11 PR checks and main run `38885236056` passed, including installed published rc11; version 7.4.3 |
 | MNEMEX | implementation PR 5 MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; binding/scope PR 6 MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; provenance/security source `83d9e6d296b990ba01884fc04c5662fea36c6eb6` in [PR 7](https://github.com/SquirmyWormy275/mnemex/pull/7) MERGED at `7a315946c92e24a125fc213c7d139eef6278f12c`. Each passed exact-head Linux/Windows CI; PR 7 automated review completed with no findings; all earlier eight findings fixed/resolved; no deployment |
 
@@ -276,7 +276,7 @@ binding racing an already-running schedule writer. Both failures reproduce in
 `host-owned-fence-red.xml`: a source writer advances after the old helper dies in
 the engine commit hook, and old binding accepts after a legacy heat is generated.
 
-Current application source `ee50f8c979aefd61bffa3b54942bce757aa1cf2d` supersedes
+The host-owned application slice `ee50f8c979aefd61bffa3b54942bce757aa1cf2d` supersedes
 the helper-owned fence above. Private transport v2 obtains the exact rc11 export
 and opaque verified state digests. It hands off to a host-owned, existing-file-only
 SQLite writer mutex, then compares state-byte hashes again under that mutex.
@@ -292,7 +292,7 @@ Tournament parent lock. It refreshes Event/link state and rechecks freshness
 before committing the link. Authority-presence checks query the committed link
 without flushing incidental edits, avoiding a stale relationship's cached absence.
 
-Final local evidence: **110 passed** on SQLite, including scratch regressions
+Local evidence for this slice: **110 passed** on SQLite, including scratch regressions
 (`host-owned-fence-final.xml`), and **79 passed** on owned PostgreSQL 18.6, cleanup
 PASS (`host-owned-fence-final-postgres/{junit.xml,report.json}`). Tests include the
 actual after-Session-before-DBAPI-commit helper exit interval with a competing
@@ -302,6 +302,55 @@ recovery. Exact clean ee50f8c passes R12 and R09 again, 13 checks each, cleanup
 PASS (`recovery-r12-host-owned-fence`, `recovery-r09-host-owned-fence`). The latest
 exact-head CI and review remain linked on PR 125. No numerical/package changes,
 production-data dispatch, service deployment or gate waiver occurred.
+
+### Registration, gear synchronization and correction acceptance closure
+
+Head `0b38a431d1123fe309020a1c4ac02317c34e3cc5` passed all eight verification
+jobs in [38895054087](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/actions/runs/38895054087),
+production audit skipped. The downloaded `ci-host-owned-fence-38895054087-managed`
+artifact records 37 passing tests and R11/R12 PASS/cleanup PASS; the corresponding
+core artifact records R01–R03 PASS. Its tested synthetic merge checkout
+`1d9c21a2c40cc1f956cb39ce34b13531afdb9818` has parents baseline main and 0b38a43.
+The managed receipts' dirty patch digest is exactly reproducible from the
+collector's `managed-results.xml` filename, NUL separator and downloaded bytes:
+`7e6d456b608410fd967658e0de3bd62311901847264d1cc3f00d4b3fce8a1c49`.
+Their sole patch is generated test output, not an unrecorded code modification.
+The clean local source receipts remain independent evidence.
+
+Further review found three host gaps: unchanged source configuration could hide
+added/removed host entries at acceptance, registration gear synchronization could
+rewrite managed fields, and accepting a correction before source re-finalization
+could leave earlier host awards marked final. Seven RED failures reproduce them
+in `registration-finality-red.xml`. Application source
+`2171dcfc391066c8d42b6cc50c516f9823059ecc` fixes them:
+
+- New acceptance takes the tournament parent lock after the source fence,
+  refreshes Event and registration identities and revalidates the current active
+  roster/divisions/gear against the source mapping, plus the host profile/wood.
+  Already accepted exact retries return their immutable original receipt.
+- Gear sync skips managed fields, whether pending or issued, reports those event
+  IDs and explains the STRATHMARK action in the host UI. Independent host fields
+  in the same show still repair normally.
+- Accepting a non-finalized source revision reopens the host event, clears host
+  finalization and accepted-summary award eligibility, and retains earlier award
+  and settlement facts for explicit reconciliation. Re-finalization requires a
+  fresh source acceptance and deliberate host award action; finalized metadata-only
+  revisions continue to preserve award finalization.
+
+Expanded local evidence: **136 passed** on SQLite, **87 passed** on owned
+PostgreSQL 18.6, no skips/failures, cleanup PASS
+(`registration-finality-final.xml`, `registration-finality-final-postgres`). The
+initial fixed test run retains one new-test error: it expected an unreviewed source
+correction to be a career attempt before source acceptance. The corrected test
+asserts one retained official attempt before judge acceptance and two afterward;
+the original seven RED failures and all official-acceptance requirements remain.
+Tests cover additions, independent removal with a stale loaded identity, immutable
+accepted retry, full correction/re-finalization/explicit award reconciliation, and
+both direct service and actual registration route with pending/issued managed fields.
+Exact clean 2171dcf passes R12 and R09 again, 13 checks each, cleanup PASS
+(`recovery-r12-registration-finality`, `recovery-r09-registration-finality`). Ruff
+and diff checks pass. Final exact-head CI/review is linked on PR 125. The producer
+package/numeric identity and all operational merge/activation gates are unchanged.
 
 ### Published artifacts and independent indexed verification
 
