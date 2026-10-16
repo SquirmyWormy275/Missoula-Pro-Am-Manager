@@ -17,7 +17,9 @@ from services.managed_events import (
     authorize,
     bind_event,
     deliver_career_results,
+    placement_digest,
     recover_command,
+    release_unissued_placement,
     submit,
     workspace_url,
 )
@@ -82,6 +84,10 @@ def event_workspace(tournament_id, event_id):
             elif action == 'awards':
                 apply_host_awards(event, current_user)
                 db.session.commit()
+            elif action == 'release_placement':
+                release_unissued_placement(event, current_user, int(request.form['heat_id']),
+                    request.form['placement_digest'], confirm=request.form.get('confirm') == 'yes')
+                db.session.commit()
             elif action == 'deliver':
                 delivery = deliver_career_results(event, current_user, limit=5)
                 flash(f"Career delivery: {delivery['accepted']} acknowledged, {delivery['remaining_pending']} pending, {delivery['conflicting']} conflicting.", 'info')
@@ -101,4 +107,9 @@ def event_workspace(tournament_id, event_id):
         shared_url = workspace_url(event)
     except ManagedEventError as exc:
         error = str(exc)
-    return render_template('managed/event.html', tournament=event.tournament, event=event, state=state, commands=commands, error=error, shared_url=shared_url, delivery_counts=delivery_counts, request_id=str(uuid.uuid4())), (409 if error else 200)
+    placements = []
+    if link:
+        from models.managed_event import ManagedFieldLink
+
+        placements = [(field, db.session.get(Heat, field.heat_id)) for field in ManagedFieldLink.query.filter_by(event_id=event.id).all()]
+    return render_template('managed/event.html', tournament=event.tournament, event=event, state=state, commands=commands, error=error, shared_url=shared_url, delivery_counts=delivery_counts, request_id=str(uuid.uuid4()), placements=placements, placement_digest=placement_digest(event) if link else None), (409 if error else 200)

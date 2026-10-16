@@ -47,6 +47,17 @@ def assert_host_owned(event):
         raise ManagedEventError('This managed event must be changed through STRATHMARK operations.')
 
 
+def assert_host_scratch_allowed(competitor, tournament):
+    from models import CollegeCompetitor
+
+    kind = 'college' if isinstance(competitor, CollegeCompetitor) else 'pro'
+    for link, event in (db.session.query(ManagedEventLink, Event)
+                        .join(Event, Event.id == ManagedEventLink.event_id)
+                        .filter(Event.tournament_id == tournament.id, Event.event_type == kind).all()):
+        if competitor.id in json.loads(link.mapping_json).values():
+            raise ManagedEventError('Use STRATHMARK managed outcomes or roster revision before scratching this competitor.')
+
+
 def authorize(user, event):
     if not user or not user.is_active or not user.is_judge or (user.tournament_id is not None and user.tournament_id != event.tournament_id):
         raise ManagedEventError('Managed operation forbidden for this operator/tournament.')
@@ -73,16 +84,21 @@ def _configured_runtime():
     return executable, database
 
 
-def _call(user, link, request):
-    executable, database = _configured_runtime()
-    envelope = {'principal': {'actor_id': user.shadow_actor_id, 'shows': [link.show_id],
-                              'role': 'director' if user.is_admin else 'judge'}, 'request': request}
+def _runtime_environment(database):
     # The local OS is this transport's trust boundary. No provider credentials,
     # Python path, proxies or live database URL enter the numerical process.
     environment = {key: os.environ[key] for key in ('PATH', 'SYSTEMROOT', 'TEMP', 'TMP', 'LANG') if key in os.environ}
     isolated = database.parent / (database.name + '.numeric-isolation')
     environment.update(STRATHMARK_TEST_DB='1', STRATHMARK_DB_PATH=str(isolated.with_suffix('.v2.sqlite3')),
                        STRATHMARK_V3_DB_PATH=str(isolated.with_suffix('.v3.sqlite3')))
+    return environment
+
+
+def _call(user, link, request):
+    executable, database = _configured_runtime()
+    envelope = {'principal': {'actor_id': user.shadow_actor_id, 'shows': [link.show_id],
+                              'role': 'director' if user.is_admin else 'judge'}, 'request': request}
+    environment = _runtime_environment(database)
     try:
         completed = subprocess.run([str(executable), '-I', '-m', 'strathmark.events.rpc', '--database', str(database)],
                                    input=canonical(envelope), text=True, capture_output=True, timeout=45, env=environment)
@@ -102,10 +118,52 @@ def _call(user, link, request):
     return result
 
 
+def guard_managed_awards(events, user):
+    """Fence all selected source events before taking host write locks."""
+    from services.managed_source_lock import HeldSourceExport, SourceLockError
+
+    events = [event for event in events if event.managed_operation is not None]
+    if not events:
+        return None
+    for event in events:
+        authorize(user, event)
+    event_ids = sorted({event.managed_operation.module_event_id for event in events})
+    session = db.session()
+    existing = session.info.get('managed_source_fence')
+    if existing is not None:
+        existing.check_alive()
+        if set(event_ids) <= set(existing.exports):
+            return existing
+        raise ManagedEventError('Select all managed award events before beginning the host transaction.')
+    executable, database = _configured_runtime()
+    principal = {'actor_id': user.shadow_actor_id,
+                 'shows': sorted({event.managed_operation.show_id for event in events}),
+                 'role': 'director' if user.is_admin else 'judge'}
+    try:
+        guard = HeldSourceExport(executable, database, _runtime_environment(database), principal,
+                                 event_ids, failure_type=ManagedEventError)
+    except SourceLockError as exc:
+        raise ManagedEventError(str(exc)) from exc
+    try:
+        for event in events:
+            link = event.managed_operation
+            exported = guard.exports[link.module_event_id]
+            if exported.get('schema_version') != CONTRACT or exported.get('event_id') != link.module_event_id or exported.get('show_id') != link.show_id:
+                raise ManagedEventError('Source fence returned a different event identity.')
+            _validate_host_profile(event, guard.states[link.module_event_id]['config'])
+        guard.bind_transaction(session)
+        session.info['managed_source_fence'] = guard
+        return guard
+    except Exception:
+        guard.close(False)
+        raise
+
+
 def bind_event(event, user, config):
     """Bind an existing show's active entries; never trust a name-based mapping."""
     authorize(user, event)
     _configured_runtime()
+    _validate_host_profile(event, config)
     link = event.managed_operation
     pending_creation = link is not None and link.state_json is None and link.accepted_revision == 0
     if (event.operation_mode != 'host' and not pending_creation) or event.handicap_authority_mode == 'shadow' or not event.is_handicap or event.stand_type not in {'underhand', 'standing_block'}:
@@ -191,13 +249,17 @@ def _validate_show_wood(event, config):
     diameter = Decimal(str(wood.size_value)) * (Decimal('25.4') if wood.size_unit == 'in' else Decimal(1))
     if str(config['wood']['species']).casefold() != str(wood.species).casefold() or Decimal(str(config['wood']['diameter_mm'])) != diameter:
         raise ManagedEventError('Managed wood differs from the configured show wood; prepare a reviewed revision.')
+    _validate_physical_stands(event, config)
+
+
+def _validate_physical_stands(event, config):
     try:
         stands = [int(s) for s in config['stands']]
     except (TypeError, ValueError) as exc:
         raise ManagedEventError('Physical integer stands required.') from exc
     if len(set(stands)) != len(stands) or any(str(n) != str(raw) for n, raw in zip(stands, config['stands'])):
         raise ManagedEventError('Physical stands require distinct canonical integer identifiers.')
-    if any(s < 1 or s > (event.max_stands or 5) for s in stands):
+    if len(stands) > (event.max_stands or 5) or any(s < 1 or s > (event.max_stands or 5) for s in stands):
         raise ManagedEventError('Stand outside configured show resources.')
 
 
@@ -208,6 +270,7 @@ def _validate_host_profile(event, config):
         config['format'] != 'handicap' or config['timer_policy'] != 'dual_mean' or
         config['publisher'] != 'host' or config.get('synthetic') is not True):
         raise ManagedEventError('Source configuration differs from this host event or its dual timer policy.')
+    _validate_physical_stands(event, config)
 
 
 def submit(event, user, request, *, _initial_binding=False):
@@ -362,8 +425,8 @@ def project_fields(event, state):
     for obsolete in ManagedFieldLink.query.filter_by(event_id=event.id).all():
         if obsolete.module_heat_id not in active_ids:
             heat = db.session.get(Heat, obsolete.heat_id)
-            if obsolete.issue_id or heat.status == 'completed':
-                raise ManagedEventError('Cannot discard an issued/completed dependent field.')
+            if obsolete.issue_id or heat.status == 'completed' or heat.flight_id is not None:
+                raise ManagedEventError('Cannot discard an issued, completed or host-scheduled dependent field; reconcile its placement first.')
             db.session.delete(obsolete)
             db.session.flush()
             db.session.delete(heat)
@@ -382,6 +445,8 @@ def project_fields(event, state):
                 heat = db.session.get(Heat, link.heat_id)
                 if link.issue_id and link.field_digest != field['field_digest']:
                     raise ManagedEventError('Issued host field cannot change.')
+                if heat.flight_id is not None and link.field_digest != field['field_digest']:
+                    raise ManagedEventError('Cannot replace a host-scheduled physical field; release its pending placement first.')
             ids = [mapping[e] for e in field['entries']]
             try:
                 stands = {str(c): int(s) for c, s in zip(ids, field['stands'])}
@@ -406,6 +471,36 @@ def recover_command(command_id, user):
     return submit(event, user, json.loads(command.payload_json))
 
 
+def placement_digest(event):
+    rows = []
+    for link in ManagedFieldLink.query.filter_by(event_id=event.id).order_by(ManagedFieldLink.id).all():
+        heat = db.session.get(Heat, link.heat_id)
+        rows.append([link.module_heat_id, heat.id, heat.flight_id, heat.flight_position, link.field_digest])
+    return digest(rows)
+
+
+def release_unissued_placement(event, user, heat_id, expected_placement, *, confirm=False):
+    """Explicitly unschedule one pending field before source replacement."""
+    from services.flight_builder import lock_tournament_schedule
+
+    authorize(user, event)
+    guard = guard_managed_awards([event], user)
+    lock_tournament_schedule(event.tournament_id)
+    if confirm is not True or placement_digest(event) != expected_placement:
+        raise ManagedEventError('Refresh and confirm the current field placement before changing it.')
+    link = ManagedFieldLink.query.filter_by(event_id=event.id, heat_id=heat_id).one_or_none()
+    if link is None:
+        raise ManagedEventError('Managed field placement not found.')
+    source_fields = {field['heat_id']: field for round_ in guard.states[event.managed_operation.module_event_id]['rounds']
+                     for field in round_['fields']}
+    field = source_fields.get(link.module_heat_id)
+    heat = db.session.get(Heat, heat_id)
+    if link.issue_id or (field and field.get('issue_id')) or heat.status != 'pending' or (heat.flight and heat.flight.status != 'pending'):
+        raise ManagedEventError('Issued, completed or started-flight fields cannot be unscheduled here.')
+    heat.flight_id, heat.flight_position = None, None
+    db.session.flush()
+
+
 def accept_export(event, user, exported):
     """Atomically retain all attempts, source deliveries, summary and receipt."""
     authorize(user, event)
@@ -414,9 +509,6 @@ def accept_export(event, user, exported):
         raise ManagedEventError('Managed result identity mismatch.')
     if exported.get('synthetic') is not True or exported.get('official_use') is not False:
         raise ManagedEventError('This installation has no live managed-event qualification.')
-    # PostgreSQL serializes competing acceptance at the event parent. SQLite
-    # uses its normal single-writer application contract.
-    link = _locked_link(event)
     revision = exported['event_revision']
     payload_digest = digest(exported)
     prior = ManagedAcceptance.query.filter_by(event_id=event.id, module_revision=revision).first()
@@ -424,9 +516,23 @@ def accept_export(event, user, exported):
         if prior.payload_digest != payload_digest:
             raise ManagedEventError('Changed payload for an accepted module revision.')
         return prior
+    # Reject known stale input without opening a source writer. A fresh locked
+    # comparison repeats below, after the source fence, before any result write.
+    link = ManagedEventLink.query.filter_by(event_id=event.id).populate_existing().one()
     if revision <= link.accepted_revision:
         raise ManagedEventError('Stale managed export cannot replace a later correction.')
     if link.state_json and revision < json.loads(link.state_json)['revision']:
+        raise ManagedEventError('Stale managed export cannot replace a later correction.')
+    guard = guard_managed_awards([event], user)
+    link = _locked_link(event)
+    prior = ManagedAcceptance.query.filter_by(event_id=event.id, module_revision=revision).first()
+    if prior:
+        if prior.payload_digest != payload_digest:
+            raise ManagedEventError('Changed payload for an accepted module revision.')
+        return prior
+    if digest(guard.exports[link.module_event_id]) != payload_digest:
+        raise ManagedEventError('Stale source export; the authoritative revision changed before acceptance.')
+    if revision <= link.accepted_revision:
         raise ManagedEventError('Stale managed export cannot replace a later correction.')
     mapping = json.loads(link.mapping_json)
     for item in exported['deliveries']:
@@ -455,7 +561,8 @@ def accept_export(event, user, exported):
         event.status = 'completed'
         # Host awards and settlement remain explicit operations after accepting
         # source results. A correction cannot silently pay or repay anyone.
-        event.is_finalized = False
+        if link.summary_revision != exported['summary_revision']:
+            event.is_finalized = False
         link.summary_revision = exported['summary_revision']
     link.accepted_revision = revision
     receipt = ManagedAcceptance(event_id=event.id, module_revision=revision, payload_digest=payload_digest, actor_id=user.id)
@@ -469,12 +576,17 @@ def apply_host_awards(event, user):
     authorize(user, event)
     if not event.managed_operation:
         raise ManagedEventError('Accepted finalized module summary required before host awards.')
+    guard = guard_managed_awards([event], user)
+    from services.flight_builder import lock_tournament_schedule
+
+    lock_tournament_schedule(event.tournament_id)
     link = _locked_link(event)
     if not link.summary_revision:
         raise ManagedEventError('Accepted finalized module summary required before host awards.')
-    source = json.loads(link.state_json)
-    if source['status'] != 'finalized' or source['summary_revision'] != link.summary_revision or source['revision'] > link.accepted_revision:
+    source = guard.states[link.module_event_id]
+    if source['status'] != 'finalized' or source['summary_revision'] != link.summary_revision:
         raise ManagedEventError('Accept the current finalized source revision before applying host awards.')
+    _project_latest(event, source)
     from services.scoring_engine import (
         _clear_changed_payout_settlements,
         _rebuild_individual_points,

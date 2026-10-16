@@ -131,13 +131,14 @@ def test_export_older_than_known_correction_cannot_be_accepted():
         assert event.managed_operation.accepted_revision == 0
 
 
-def test_awards_reload_current_source_after_parent_lock():
+def test_awards_reload_current_source_after_parent_lock(monkeypatch):
     from database import db
     from models import Event, User
     from models.managed_event import ManagedEventLink
     from services.managed_events import apply_host_awards, canonical
 
     app, event_id, user_id, initial = _projection_fixture()
+    install_projection_guard(monkeypatch)
     with app.app_context():
         event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
         link = event.managed_operation
@@ -152,6 +153,25 @@ def test_awards_reload_current_source_after_parent_lock():
         with pytest.raises(ManagedEventError, match='Accept the current finalized'):
             apply_host_awards(event, user)
         assert event.is_finalized is False
+
+
+def install_projection_guard(monkeypatch):
+    """Policy-only fixtures have no numerical peer; real fixtures keep theirs."""
+    from types import SimpleNamespace
+
+    from models.managed_event import ManagedEventLink
+    from services import managed_events
+
+    real_guard = managed_events.guard_managed_awards
+
+    def guard(events, user):
+        if events and all(e.managed_operation and e.managed_operation.module_event_id == 'synthetic:projection:event' for e in events):
+            states = {e.managed_operation.module_event_id: json.loads(
+                ManagedEventLink.query.filter_by(event_id=e.id).populate_existing().one().state_json) for e in events}
+            return SimpleNamespace(states=states)
+        return real_guard(events, user)
+
+    monkeypatch.setattr(managed_events, 'guard_managed_awards', guard)
 
 
 @pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires explicit separately installed managed-event component')
@@ -256,6 +276,17 @@ def test_real_component_multiround_acceptance_and_retry(tmp_path):
         assert event.is_finalized
         assert positions == {row.competitor_id: row.final_position for row in event.results.all()}
         assert ManagedCommand.query.filter_by(status='pending').count() == 0
+        # Accepting editor-only revisions preserves the same host award state.
+        command('handover', {'editor': 'gui'})
+        metadata_export = submit(event, user, {'operation': 'export'})
+        accept_export(event, user, metadata_export)
+        db.session.commit()
+        assert event.is_finalized
+        command('handover', supplied={'operation': 'handover', 'request_id': 'return-after-metadata-proof',
+            'expected_revision': state['revision'], 'editor': 'gui', 'payload': {'editor': 'missoula'}})
+        accept_export(event, user, submit(event, user, {'operation': 'export'}))
+        db.session.commit()
+        assert event.is_finalized
         from services.scoring_engine import calculate_positions
 
         with pytest.raises(ManagedEventError):
@@ -270,7 +301,7 @@ def _real_mnemex_delivery(event, user, app, tmp_path, command, submit, accept_ex
 
     from database import db
     from models.managed_event import ManagedAttemptRevision, ManagedCareerDelivery
-    from services.managed_events import deliver_career_results
+    from services.managed_events import _call, apply_host_awards, deliver_career_results
 
     # Append a real source correction; old attempts and the host's previous
     # awards remain retained until explicit host acceptance/award actions.
@@ -278,7 +309,15 @@ def _real_mnemex_delivery(event, user, app, tmp_path, command, submit, accept_ex
     heat = state['rounds'][-1]['fields'][0]
     result = heat['result_revisions'][-1]
     rows = [{'entry_id': r['entry_id'], 'status': 'dq'} for r in result['outcomes']]
-    command('correct', {'heat_id': heat['heat_id'], 'issue_id': heat['issue_id'], 'outcomes': rows, 'reason': 'Synthetic source voids', 'supersedes': result['digest']})
+    correction = {'operation': 'correct', 'request_id': 'external-client-correction',
+                  'event_id': state['event_id'], 'expected_revision': state['revision'], 'editor': 'missoula',
+                  'payload': {'heat_id': heat['heat_id'], 'issue_id': heat['issue_id'], 'outcomes': rows,
+                              'reason': 'Synthetic source voids', 'supersedes': result['digest']}}
+    _call(user, event.managed_operation, correction)
+    with pytest.raises(ManagedEventError, match='current finalized'):
+        apply_host_awards(event, user)
+    db.session.rollback()
+    command('correct', supplied=correction)
     state = submit(event, user, {'operation': 'read'})
     result = state['rounds'][-1]['fields'][0]['result_revisions'][-1]
     command('accept', {'heat_id': heat['heat_id'], 'result_digest': result['digest']})

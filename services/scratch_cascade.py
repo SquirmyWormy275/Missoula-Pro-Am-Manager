@@ -863,10 +863,15 @@ def execute_cascade(competitor, effects, judge_user_id, tournament) -> dict:
     from models.competitor import CollegeCompetitor, ProCompetitor
     from models.event import Event, EventResult
     from services.flight_builder import lock_tournament_schedule
+    from services.managed_events import ManagedEventError, assert_host_scratch_allowed
     from services.proam_relay import ProAmRelay
     from services.scoring_engine import _rebuild_individual_points
 
     tournament = lock_tournament_schedule(tournament)
+    try:
+        assert_host_scratch_allowed(competitor, tournament)
+    except ManagedEventError as exc:
+        raise ScratchCascadeConflict(str(exc)) from exc
     _lock_cascade_rows(competitor, tournament, effects)
 
     # --- Build pre-scratch snapshot ------------------------------------------

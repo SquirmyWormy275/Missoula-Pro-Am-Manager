@@ -1584,6 +1584,12 @@ def scratch_confirm(tournament_id, competitor_id):
     """
     lock_tournament_schedule(tournament_id)
     comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
+    from services.managed_events import assert_host_scratch_allowed
+
+    try:
+        assert_host_scratch_allowed(comp, tournament)
+    except ManagedEventError as exc:
+        abort(409, description=str(exc))
 
     from services.scratch_cascade import (
         CascadeEffect,
@@ -1803,6 +1809,14 @@ def configure_payouts(tournament_id, event_id):
     tournament = db.get_or_404(Tournament, tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
     if request.method == 'POST':
+        from services.managed_events import guard_managed_awards
+
+        try:
+            guard_managed_awards([event], current_user)
+        except ManagedEventError as exc:
+            db.session.rollback()
+            flash(str(exc), 'error')
+            return redirect(url_for('scoring.configure_payouts', tournament_id=tournament_id, event_id=event_id))
         tournament = lock_tournament_schedule(tournament)
         db.session.refresh(event)
 
@@ -1922,8 +1936,25 @@ def tournament_payout_manager(tournament_id):
         return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
 
     if request.method == 'POST':
-        tournament = lock_tournament_schedule(tournament)
         action = request.form.get('action', '')
+
+        # Acquire one source fence for the complete batch before host locks or
+        # payout edits. Later per-event award calls reuse these exact exports.
+        from services.managed_events import guard_managed_awards
+
+        raw_ids = request.form.getlist('event_ids') if action == 'bulk_apply' else [request.form.get('event_id')]
+        try:
+            selected_ids = [int(value) for value in raw_ids if value]
+        except (TypeError, ValueError):
+            selected_ids = []
+        selected = Event.query.filter(Event.tournament_id == tournament_id, Event.event_type == 'pro', Event.id.in_(selected_ids)).all()
+        try:
+            guard_managed_awards(selected, current_user)
+        except ManagedEventError as exc:
+            db.session.rollback()
+            flash(str(exc), 'error')
+            return _payout_redirect()
+        tournament = lock_tournament_schedule(tournament)
 
         if action == 'bulk_apply':
             tpl_id = request.form.get('template_id', type=int)

@@ -1444,6 +1444,12 @@ def apply_payout_template(event: Event, template_id: int, *, managed_actor=None)
     template = db.session.get(PayoutTemplate, template_id)
     if template is None:
         return False
+    if event.operation_mode == 'managed':
+        from services.flight_builder import lock_tournament_schedule
+        from services.managed_events import guard_managed_awards
+
+        guard_managed_awards([event], managed_actor)
+        lock_tournament_schedule(event.tournament_id)
     event.set_payouts(template.get_payouts())
     if event.is_finalized:
         with db.session.begin_nested():

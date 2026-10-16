@@ -18,7 +18,12 @@ from tests.conftest import (
     make_pro_competitor,
     make_team,
 )
-from tests.test_managed_events import _projection_fixture
+from tests.test_managed_events import _projection_fixture, install_projection_guard
+
+
+@pytest.fixture(autouse=True)
+def projection_policy_peer(monkeypatch):
+    install_projection_guard(monkeypatch)
 
 
 def _award_fixture(kind):

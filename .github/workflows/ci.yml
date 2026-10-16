@@ -85,7 +85,7 @@ jobs:
           SECRET_KEY: synthetic-managed-ci-only
           PROAM_MANAGED_TEST_PYTHON: ${{ github.workspace }}/.tmp/managed-producer/bin/python
           PROAM_MNEMEX_TEST_PYTHON: ${{ github.workspace }}/.tmp/managed-records/bin/python
-        run: .tmp/managed-host/bin/python -m pytest tests/test_managed_events.py tests/test_managed_host_policy.py -q -p no:cacheprovider --junitxml=managed-results.xml
+        run: .tmp/managed-host/bin/python -m pytest tests/test_managed_events.py tests/test_managed_host_policy.py tests/test_managed_source_fence.py -q -p no:cacheprovider --junitxml=managed-results.xml
       - name: Rehearse two-show portability and atomic host acceptance
         run: |
           LAB_PYTHON="$PWD/.tmp/managed-host/bin/python"

@@ -40,6 +40,16 @@ to import a source configuration selecting a different discipline or timer rule.
 Export refreshes authoritative state and requires the same source revision; a
 concurrent change asks the operator to refresh and retry.
 
+Acceptance and award application retain the selected component's SQLite writer
+fence through the outer host transaction. The private process adapter uses the
+exact rc11 export and verified transaction primitive; it adds no calculation or
+progression logic and imports no component into Python 3.10. A source change
+before the fence refuses stale acceptance. Commit, rollback, session close and
+worker death release it; a missing worker prevents commit. Savepoint completion
+keeps the outer fence. Bulk payouts acquire one fence for all selected managed
+events before host scheduling/row locks. This local adapter is bound to rc11 and
+must be reverified before selecting a different runtime.
+
 A pending creation keeps legacy writes fenced while its outcome is uncertain.
 Recover its exact request first. If its supplied configuration was refused, the
 same workspace accepts corrected configuration under a new request, retaining
@@ -78,6 +88,10 @@ times across rebased heats are not compared to invent placings. Acceptance never
 settles points/payouts. **Apply host points and payouts** explicitly uses accepted
 module positions, preserves tie behavior, and clears changed payout settlements.
 Corrections append history and require a fresh acceptance/award decision.
+Accepting an editor/metadata revision with the same summary keeps existing host
+award finalization. Competitor-wide scratch cascades refuse linked managed
+entries, preserving their source positions and history; use the managed outcome
+or roster workflow and event-scoped operations for unrelated events.
 College awards rebuild both individual and affected team totals, including after
 corrections. Pro ties retain Missoula's existing shared-position payout: each tied
 entrant receives the configured purse for that shared place. Direct entry and
@@ -94,6 +108,12 @@ public career/export eligibility. The shadow settlement outbox is unrelated.
 MNEMEX is optional on race day.
 
 ## Migration, rollback and recovery
+
+A scheduled unissued field cannot be silently deleted or physically replaced.
+In the managed workspace, confirm **Unschedule unissued field** while its flight
+is still pending, then recover the retained source request and schedule the new
+field deliberately. The confirmation binds the current placement digest. Issued
+fields and started/completed flight history cannot be released this way.
 
 Additive chain: `a6b7c8d9e0f1 -> f22576d0ea7d -> 66a549582a97 ->
 a6d6dda4e480`. Existing events remain host-owned unless a link is created. New
