@@ -1874,7 +1874,8 @@ def fix_heat_gear_conflicts(tournament) -> dict:
     Only touches host-owned heats that are not yet completed. Delegated fields
     remain under STRATHMARK authority, including pending and issued fields.
     Caller is responsible for db.session.commit().
-    Returns: {fixed: int, failed: list[dict], managed_events_skipped: list[int]}
+    Returns the retained {fixed: int, failed: list[dict]} contract, adding
+    managed_events_skipped only when delegated events were actually skipped.
     """
     import config
     from database import db
@@ -2139,4 +2140,7 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                                 'suggestions': suggestions,
                             })
 
-    return {'fixed': fixed, 'failed': failed, 'managed_events_skipped': managed_events_skipped}
+    result = {'fixed': fixed, 'failed': failed}
+    if managed_events_skipped:
+        result['managed_events_skipped'] = managed_events_skipped
+    return result

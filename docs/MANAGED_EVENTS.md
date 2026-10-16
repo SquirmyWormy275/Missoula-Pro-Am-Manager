@@ -110,6 +110,9 @@ or roster workflow and event-scoped operations for unrelated events.
 Registration's gear heat synchronization leaves managed fields unchanged,
 including pending and issued fields, and identifies the skipped events. It can
 still repair conflicts in independent host-owned heats in the same show.
+College competitor/team deletion also protects every mapped managed entrant,
+including a pending creation or unissued event. Reconcile a removable entry in
+the managed configuration first; deleting registration cannot remove its authority.
 College awards rebuild both individual and affected team totals, including after
 corrections. Pro ties retain Missoula's existing shared-position payout: each tied
 entrant receives the configured purse for that shared place. Direct entry and

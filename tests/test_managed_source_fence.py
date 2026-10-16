@@ -186,6 +186,50 @@ def test_registration_gear_sync_preserves_managed_fields_and_repairs_host_fields
         assert [len(db.session.get(Heat, hid).get_competitors()) for hid in host_ids] == [1, 2]
 
 
+@pytest.mark.parametrize('delete_team', [False, True])
+@pytest.mark.parametrize('issued', [False, True])
+def test_registration_deletion_preserves_pending_managed_college_mapping(delete_team, issued):
+    from models import CollegeCompetitor, Team
+    from models.managed_event import ManagedFieldLink
+    from tests.conftest import make_college_competitor, make_team
+
+    app, event_id, _, _ = _projection_fixture()
+    with app.app_context():
+        event = db.session.get(Event, event_id)
+        event.event_type = 'college'
+        team = make_team(db.session, event.tournament)
+        entrant = make_college_competitor(db.session, event.tournament, team, 'Synthetic protected registration')
+        independent_team = make_team(db.session, event.tournament, code='INDEP')
+        independent = make_college_competitor(db.session, event.tournament, independent_team, 'Synthetic independent registration')
+        event.managed_operation.mapping_json = json.dumps({'mapped-entry': entrant.id})
+        heat_id = None
+        if issued:
+            heat = make_heat(db.session, event, competitors=[entrant.id])
+            heat_id = heat.id
+            db.session.add(ManagedFieldLink(event_id=event.id, module_heat_id='issued-delete-guard',
+                heat_id=heat.id, field_digest='a' * 64, issue_id='b' * 64))
+        db.session.commit()
+        tid, cid, team_id = event.tournament_id, entrant.id, team.id
+        independent_id, independent_team_id = independent.id, independent_team.id
+    client = app.test_client()
+    client.post('/auth/login', data={'username': 'synthetic-projection-director', 'password': 'synthetic-only-password'})
+    suffix = f'team/{team_id}' if delete_team else f'competitor/{cid}'
+    assert client.post(f'/registration/{tid}/college/{suffix}/delete').status_code == 302
+    with app.app_context():
+        assert db.session.get(CollegeCompetitor, cid) is not None
+        assert db.session.get(Team, team_id) is not None
+        assert json.loads(db.session.get(Event, event_id).managed_operation.mapping_json) == {'mapped-entry': cid}
+        if issued:
+            assert db.session.get(Heat, heat_id).get_competitors() == [cid]
+    suffix = f'team/{independent_team_id}' if delete_team else f'competitor/{independent_id}'
+    assert client.post(f'/registration/{tid}/college/{suffix}/delete').status_code == 302
+    with app.app_context():
+        assert db.session.get(CollegeCompetitor, independent_id) is None
+        assert db.session.get(CollegeCompetitor, cid) is not None
+        if delete_team:
+            assert db.session.get(Team, independent_team_id) is None
+
+
 def test_competitor_scoped_scratch_cannot_remove_managed_roster():
     from services.scratch_cascade import ScratchCascadeConflict, execute_cascade
 
