@@ -186,8 +186,7 @@ def submit(event, user, request):
     if request['operation'] in {'read', 'export'}:
         result = _call(user, link, request)
         if request['operation'] == 'read':
-            project_fields(event, result)
-            link.state_json = canonical(result)
+            _project_latest(event, result)
             db.session.commit()
         return result
     if request['operation'] in {'calculate', 'review', 'issue'} and link.state_json:
@@ -210,16 +209,35 @@ def submit(event, user, request):
         db.session.add(saved)
         db.session.commit()
     result = _call(user, link, json.loads(saved.payload_json))
+    _project_latest(event, result)
+    saved.status, saved.response_json = 'accepted', canonical(result)
+    db.session.commit()
+    return result
+
+
+def _locked_link(event):
+    """Reload under the parent lock; an earlier ORM read is not current state."""
+    db.session.query(Event).filter_by(id=event.id).with_for_update().one()
+    return (ManagedEventLink.query.filter_by(event_id=event.id)
+            .populate_existing().with_for_update().one())
+
+
+def _project_latest(event, result):
+    from services.flight_builder import lock_tournament_schedule
+
+    # Keep the whole-show schedule lock order, then serialize this event's
+    # projection with acceptance. Delayed responses retain their own receipts
+    # while the cache and physical field projection move only forwards.
+    lock_tournament_schedule(event.tournament_id)
+    link = _locked_link(event)
     if result.get('event_id') != link.module_event_id or result.get('show_id') != link.show_id:
         raise ManagedEventError('Managed response identity mismatch.')
-    saved.status, saved.response_json = 'accepted', canonical(result)
-    # Exact old retries return their receipt, but cannot overwrite newer state.
     current = json.loads(link.state_json) if link.state_json else None
+    if current and result['revision'] == current['revision'] and canonical(result) != canonical(current):
+        raise ManagedEventError('Changed managed state for an existing revision.')
     if not current or result['revision'] > current['revision']:
         project_fields(event, result)
         link.state_json = canonical(result)
-    db.session.commit()
-    return result
 
 
 def validate_host_fields(event):
@@ -302,7 +320,7 @@ def accept_export(event, user, exported):
         raise ManagedEventError('This installation has no live managed-event qualification.')
     # PostgreSQL serializes competing acceptance at the event parent. SQLite
     # uses its normal single-writer application contract.
-    db.session.query(Event).filter_by(id=event.id).with_for_update().one()
+    link = _locked_link(event)
     revision = exported['event_revision']
     payload_digest = digest(exported)
     prior = ManagedAcceptance.query.filter_by(event_id=event.id, module_revision=revision).first()
@@ -311,6 +329,8 @@ def accept_export(event, user, exported):
             raise ManagedEventError('Changed payload for an accepted module revision.')
         return prior
     if revision <= link.accepted_revision:
+        raise ManagedEventError('Stale managed export cannot replace a later correction.')
+    if link.state_json and revision < json.loads(link.state_json)['revision']:
         raise ManagedEventError('Stale managed export cannot replace a later correction.')
     mapping = json.loads(link.mapping_json)
     for item in exported['deliveries']:
@@ -351,10 +371,13 @@ def accept_export(event, user, exported):
 def apply_host_awards(event, user):
     """Use accepted source positions, without recalculating delegated placings."""
     authorize(user, event)
-    if not event.managed_operation or not event.managed_operation.summary_revision:
+    if not event.managed_operation:
         raise ManagedEventError('Accepted finalized module summary required before host awards.')
-    source = json.loads(event.managed_operation.state_json)
-    if source['status'] != 'finalized' or source['summary_revision'] != event.managed_operation.summary_revision or source['revision'] > event.managed_operation.accepted_revision:
+    link = _locked_link(event)
+    if not link.summary_revision:
+        raise ManagedEventError('Accepted finalized module summary required before host awards.')
+    source = json.loads(link.state_json)
+    if source['status'] != 'finalized' or source['summary_revision'] != link.summary_revision or source['revision'] > link.accepted_revision:
         raise ManagedEventError('Accept the current finalized source revision before applying host awards.')
     from services.scoring_engine import (
         _clear_changed_payout_settlements,

@@ -28,6 +28,131 @@ def test_retained_mode_remains_independent():
     assert_host_owned(Event())
 
 
+def _projection_fixture():
+    from database import db
+    from models import Event, Tournament, User
+    from models.managed_event import ManagedEventLink
+    from services.managed_events import CONTRACT, canonical
+    from tests.db_test_utils import create_test_app
+
+    app, _ = create_test_app(use_migrations=True)
+    with app.app_context():
+        tournament = Tournament(name='Synthetic projection ordering', year=2027)
+        db.session.add(tournament)
+        db.session.flush()
+        event = Event(tournament_id=tournament.id, name='Underhand', event_type='pro', scoring_type='time')
+        user = User(username='synthetic-projection-director', role='admin')
+        user.set_password('synthetic-only-password')
+        db.session.add_all([event, user])
+        db.session.flush()
+        state = {'schema_version': CONTRACT, 'event_id': 'synthetic:projection:event',
+                 'show_id': 'synthetic:projection', 'revision': 1, 'rounds': []}
+        db.session.add(ManagedEventLink(event=event, module_event_id=state['event_id'],
+                                      show_id=state['show_id'], mapping_json='{}', state_json=canonical(state)))
+        db.session.commit()
+        return app, event.id, user.id, state
+
+
+@pytest.mark.parametrize('operation', ['read', 'forecast'])
+def test_delayed_component_response_cannot_replace_newer_host_projection(monkeypatch, operation):
+    from database import db
+    from models import Event, User
+    from models.managed_event import ManagedCommand, ManagedEventLink
+    from services import managed_events
+
+    app, event_id, user_id, initial = _projection_fixture()
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        newer = {**initial, 'revision': 3}
+        delayed = {**initial, 'revision': 2}
+
+        def response_after_other_request_commits(_user, link, _request):
+            # This request has already loaded its ORM link when another request
+            # commits the later correction. The component's older response then
+            # arrives; its own receipt remains valid but cannot regress cache.
+            assert json.loads(link.state_json)['revision'] == 1
+            with db.engine.begin() as connection:
+                connection.execute(ManagedEventLink.__table__.update().where(
+                    ManagedEventLink.event_id == event_id).values(state_json=managed_events.canonical(newer)))
+            return delayed
+
+        monkeypatch.setattr(managed_events, '_call', response_after_other_request_commits)
+        request = {'operation': operation, 'request_id': 'synthetic-delayed-response',
+                   'expected_revision': 1, 'editor': 'missoula', 'payload': {}}
+        assert managed_events.submit(event, user, request) == delayed
+        db.session.expire_all()
+        assert json.loads(db.session.get(ManagedEventLink, event_id).state_json) == newer
+        if operation != 'read':
+            assert json.loads(ManagedCommand.query.one().response_json) == delayed
+
+
+def test_acceptance_reloads_link_after_parent_lock():
+    from database import db
+    from models import Event, User
+    from models.managed_event import ManagedAcceptance, ManagedEventLink
+    from services.managed_events import ManagedEventError, accept_export
+
+    app, event_id, user_id, initial = _projection_fixture()
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        assert event.managed_operation.accepted_revision == 0
+        # Another request committed while this one retained an older ORM link.
+        with db.engine.begin() as connection:
+            connection.execute(ManagedEventLink.__table__.update().where(
+                ManagedEventLink.event_id == event_id).values(accepted_revision=3))
+        exported = {'schema_version': initial['schema_version'], 'event_id': initial['event_id'],
+                    'show_id': initial['show_id'], 'synthetic': True, 'official_use': False,
+                    'event_revision': 2, 'deliveries': [], 'status': 'active'}
+        with pytest.raises(ManagedEventError, match='Stale managed export'):
+            accept_export(event, user, exported)
+        assert ManagedAcceptance.query.count() == 0
+        db.session.rollback()
+        assert db.session.get(ManagedEventLink, event_id).accepted_revision == 3
+
+
+def test_export_older_than_known_correction_cannot_be_accepted():
+    from database import db
+    from models import Event, User
+    from models.managed_event import ManagedAcceptance
+    from services.managed_events import accept_export, canonical
+
+    app, event_id, user_id, initial = _projection_fixture()
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        event.managed_operation.state_json = canonical({**initial, 'revision': 3})
+        db.session.commit()
+        exported = {'schema_version': initial['schema_version'], 'event_id': initial['event_id'],
+                    'show_id': initial['show_id'], 'synthetic': True, 'official_use': False,
+                    'event_revision': 2, 'deliveries': [], 'status': 'active'}
+        with pytest.raises(ManagedEventError, match='Stale managed export'):
+            accept_export(event, user, exported)
+        assert ManagedAcceptance.query.count() == 0
+        assert event.managed_operation.accepted_revision == 0
+
+
+def test_awards_reload_current_source_after_parent_lock():
+    from database import db
+    from models import Event, User
+    from models.managed_event import ManagedEventLink
+    from services.managed_events import apply_host_awards, canonical
+
+    app, event_id, user_id, initial = _projection_fixture()
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        link = event.managed_operation
+        link.state_json = canonical({**initial, 'status': 'finalized', 'summary_revision': 1})
+        link.accepted_revision = link.summary_revision = 1
+        db.session.commit()
+        assert json.loads(link.state_json)['status'] == 'finalized'
+        with db.engine.begin() as connection:
+            connection.execute(ManagedEventLink.__table__.update().where(
+                ManagedEventLink.event_id == event_id).values(state_json=canonical(
+                    {**initial, 'revision': 3, 'status': 'active', 'summary_revision': 1})))
+        with pytest.raises(ManagedEventError, match='Accept the current finalized'):
+            apply_host_awards(event, user)
+        assert event.is_finalized is False
+
+
 @pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires explicit separately installed managed-event component')
 def test_real_component_multiround_acceptance_and_retry(tmp_path):
     from database import db

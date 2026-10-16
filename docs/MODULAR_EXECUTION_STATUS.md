@@ -138,6 +138,7 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 | Missoula SQLite full fast lane | 4492 passed, 43 skipped (4535 total); `host-full-final.xml`; migration-integrity checks run separately |
 | Missoula full PostgreSQL | 4521 passed, 33 skipped (4554 total), exit 0; `postgres-full-final/{junit.xml,pytest.log,report.json}`; owned cluster cleanup PASS |
 | Selected component outage | PASS actual absent interpreter: retained pending request/projection, unrelated registration committed, exact recovery against restored interpreter; three integration tests passed in `host-component-outage.xml` |
+| Delayed response / cached acceptance | Three RED failures reproduced read/write cache regression and stale ORM acceptance after parent lock. Host now reloads the locked link and updates fields/cache only forward, refuses export older than a known correction, and locks/reloads before awards. All eight managed tests pass on SQLite and PostgreSQL 18.6 (`host-projection-final.xml`, `host-projection-postgres-final/{junit.xml,report.json}`), cleanup PASS; 42 scoring/payout regressions pass (`host-projection-awards.xml`). Both runs include actual installed producer and MNEMEX HTTP. |
 | Current payout changes | 94 passed, 3 skipped; `host-payout-broad.xml`; actual producer/MNEMEX contract and direct payout subset 7 passed in `host-payout-final2.xml` |
 | Release/migration/recovery guards | 49 passed, 1 skipped; `host-release-current.xml`; PostgreSQL migration repair/concurrent delivery also executed in full PG lane |
 | MNEMEX full isolated SQLite | 629 passed, 53 optional skipped; `mnemex-full-final.xml` |
@@ -187,9 +188,11 @@ Main producer run `38881349305` hit a timing-sensitive existing Python 3.11
 shadow test: its 100 ms deadline expired during preflight instead of after the
 deliberately stalled write. The API correctly reported unclaimed preflight state.
 Five independent Python 3.11.16 runs of both preflight and post-admission timeout
-tests pass (`producer-311-timeout-diagnosis.log` and per-run XML). No deadline,
-assertion or production behavior was relaxed. Main CI/publication remains pending
-until an exact-commit rerun succeeds; the first failed-job rerun request was
+tests pass (`producer-311-timeout-diagnosis.log` and per-run XML); all 56 shadow API
+tests also pass (`producer-311-shadow.xml`). No deadline, assertion or production
+behavior was relaxed. The exact merged-commit retry passes Python 3.11 and is
+running installed-artifact jobs; main CI/publication remains pending until that
+run completes. The first failed-job rerun request was
 refused because the full workflow was still running. Original failure evidence
 is retained in `producer-main-311.log`.
 
@@ -244,6 +247,11 @@ defaults off and accepts sandbox synthetic sources only. Missoula's managed
 profile is hard-off in ProductionConfig, independent of environment flags.
 STRATHMARK rc11 publication and separate wiki synchronization are tracked at
 closeout; publication is not official activation.
+
+STRATHMARK's separately published wiki is verified at
+`bea618007ef72b465bfe9a8c0a487a5ed847e414`, sourced from exact merged main f184e9f.
+`producer-merged-wiki-{publish,check}.log` records remote verification of every
+versioned page. STRATHEX wiki publication waits for its verified normal merge.
 
 **Missoula merge BLOCKED:** its additive schema requires changing the daily-backup
 expected head from `a6b7c8d9e0f1` to `a6d6dda4e480`. The current
