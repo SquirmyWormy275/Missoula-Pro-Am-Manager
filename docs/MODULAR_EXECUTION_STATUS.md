@@ -60,7 +60,7 @@ private historical/training corpus was used for these checks.
 | Repository | Implementation / delivery |
 | --- | --- |
 | STRATHMARK | final reviewed source `0839f640b8f1a02270a8275246e5801260458391`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) MERGED at `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214` after all 25 checks passed and all six review findings were fixed/resolved; rc11 PUBLISHED to [PyPI](https://pypi.org/project/strathmark/3.0.0rc11/) and [GitHub prerelease](https://github.com/SquirmyWormy275/STRATHMARK/releases/tag/v3.0.0rc11) after successful main CI and exact artifact/extra installation checks |
-| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; review fixes `faf353d40ef9065b54308bd1b818f09b99a4e556`, `d672d536d93081672a9cbdeffa698502bb3a530d` shared-profile code `74466eb0f46c73c84e1ee519ff41a28153cebdc4`, and recovery-hook closure `71faad29478b483ecb9b837504c84eb779c4dbc2`; published component pins verified locally; latest exact-head CI/review is on the PR; merge BLOCKED by hosted backup/recovery proof below |
+| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; review fixes `faf353d40ef9065b54308bd1b818f09b99a4e556`, `d672d536d93081672a9cbdeffa698502bb3a530d` shared-profile code `74466eb0f46c73c84e1ee519ff41a28153cebdc4`, recovery-hook closure `71faad29478b483ecb9b837504c84eb779c4dbc2`, and source-fence/scheduling closure `f35b3685fdd0bc81e803208fb10b4ed0483a5c7a`; published component pins verified locally; latest exact-head CI/review is on the PR; merge BLOCKED by hosted backup/recovery proof below |
 | STRATHEX | `bcf7ffc19c3796ac189c6dd8c2c59d2abb472f89`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), MERGED at `bcfe4e50e1449b2585a037215c79f5a7e955e9da`; both findings fixed/resolved; all 11 PR checks and main run `38885236056` passed, including installed published rc11; version 7.4.3 |
 | MNEMEX | implementation PR 5 MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; binding/scope PR 6 MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; provenance/security source `83d9e6d296b990ba01884fc04c5662fea36c6eb6` in [PR 7](https://github.com/SquirmyWormy275/mnemex/pull/7) MERGED at `7a315946c92e24a125fc213c7d139eef6278f12c`. Each passed exact-head Linux/Windows CI; PR 7 automated review completed with no findings; all earlier eight findings fixed/resolved; no deployment |
 
@@ -211,12 +211,59 @@ its source or local intents. Further current-roster/timer/stand regressions reta
 `host-policy-boundary-red.xml`: roster refusal was missing; two initial test cases
 also exposed stale retained helper ORM cache, now scoped to each host validation.
 The corrected 13 policy checks pass in `host-policy-boundaries-final.xml`.
-Final shared-profile/source-export checks produce **65 passed** on SQLite and
+The preceding shared-profile/source-export checks produce **65 passed** on SQLite and
 PostgreSQL 18.6 with installed indexed rc11 and real installed MNEMEX HTTP:
 `host-shared-profile-final.xml`, `host-shared-profile-postgres/{junit.xml,report.json}`;
 PostgreSQL cleanup PASS. This includes the existing 42 scoring/payout regressions.
 The exact source, commands, and final CI outcome remain attributable through
 [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125).
+
+### Source-fenced host delivery and final review follow-up
+
+The preceding exact head `68ec6444b5cd8fe6b0ecacacdebbb1668191a6f2` passed all
+eight verification jobs in [38887910621](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/actions/runs/38887910621);
+the production audit remained skipped. Its downloaded managed artifact contains
+23 passing tests and R11/R12 PASS/cleanup PASS (`ci-final-managed`), plus the
+three core drills (`ci-final-core`). Review then identified further concurrency,
+competitor-cascade and pending-flight issues. Five regressions reproduce the old
+behavior (`host-source-review-red.xml`). The pinned producer already refuses
+non-handicap format; the additional host check now runs before linking/RPC rather
+than allowing a locally pending invalid configuration.
+
+Source `f35b3685fdd0bc81e803208fb10b4ed0483a5c7a` adds a private, exact-rc11
+local export-fence adapter. It calls the unchanged component export operation,
+then verifies its revision under the component's own SQLite transaction and holds
+that writer fence through the host outer transaction. The 3.10 host never imports
+the 3.13 component. Commit, rollback, session close and worker EOF release the
+fence; nested savepoints retain it. Before commit the host checks worker liveness.
+Bulk templates acquire one fence for the full selected managed batch before host
+locks. Source changes before the fence refuse stale acceptance; fresh fenced
+source state also gates awards. Accepted exact receipts remain immutable.
+No numerical/progression implementation or package contents changed; published
+rc11 remains the exact selected artifact. This is local process coordination,
+not qualification of a hosted/distributed transaction profile.
+
+Competitor-wide scratch cascades cannot rewrite mapped managed records. A
+scheduled unissued field cannot disappear or change physically in place: the
+operator explicitly confirms unscheduling from a pending flight, binding the
+current placement digest, then recovers the retained source command and schedules
+the replacement. Issued/completed/started-flight history remains protected.
+Accepting editor-only metadata with an unchanged summary retains award finalization.
+
+Verification: **108 passed** on SQLite, including 31 retained scratch-cascade
+regressions (`host-source-fence-final.xml`); **77 passed** on owned PostgreSQL 18.6,
+cleanup PASS (`host-source-fence-final-postgres/{junit.xml,report.json}`). Both use
+indexed rc11 and actual installed MNEMEX. These tests include a real competing
+component process blocked until host commit/rollback/close, nested savepoint
+commit/rollback, a killed fence worker before commit, stale source export refusal,
+metadata acceptance, two-event bulk payouts and explicit placement recovery.
+The direct template guard additionally passes 32 checks (`host-template-fence-final.xml`).
+The initial fixed run's sole remaining test failure assumed SQLite would never
+reuse a deleted unissued Heat primary key; the corrected test asserts stable
+module field identity, retained placement and the new field mapping instead.
+Final clean f35b368 repeats R12 and R09: 13 checks each, cleanup PASS, in
+`recovery-r12-source-fence` and `recovery-r09-source-fence`. No check or expected
+pre/postcommit count was weakened. Latest exact-head CI/review is linked on PR 125.
 
 ### Published artifacts and independent indexed verification
 
