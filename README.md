@@ -6,6 +6,11 @@ scoring-inert shadow events keep the rules below. Registration, whole-show
 scheduling/resources, points and payouts stay in Missoula. Managed production
 activation is disabled.
 
+See the [delivery and verification record](docs/MODULAR_EXECUTION_STATUS.md) for
+merged component versions, exact CI evidence and the outstanding hosted-backup
+and recovery-key merge gates. Cross-repository decisions and resumption context
+live in [MNEMEX project memory](https://github.com/SquirmyWormy275/mnemex/blob/main/docs/project-memory/START_HERE.md).
+
 
 A web-based tournament management system for the Missoula Pro Am timbersports competition.
 

@@ -3,6 +3,60 @@
 Owner authorization: `CODEX_Modular_Tournament_Execution_Handover.md`, 2026-10-15.
 Canonical [architecture agreement](https://github.com/SquirmyWormy275/STRATHMARK/blob/main/docs/MODULAR_ECOSYSTEM.md).
 
+## Current delivery and resumption point
+
+Documentation refreshed 2026-10-16 after fetching all four repositories. The
+application implementation is verified at Missoula head
+`47f9bb558816e07f35d2c54f3ed4454f0c6fc21e`; its last application-code commit is
+`0727e9b63cdaaeb7ac994f5729d82b8114456d7d`. Later documentation commits must record
+their own check status rather than inherit an exact-head CI claim.
+
+| Component | Delivered state | Verified revision / record |
+| --- | --- | --- |
+| STRATHMARK | MERGED, VERIFIED, PUBLISHED | Main `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214`; package `3.0.0rc11`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) |
+| STRATHEX | MERGED, VERIFIED; retro CLI preserved | Main `bcfe4e50e1449b2585a037215c79f5a7e955e9da`; version `7.4.3`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34) |
+| MNEMEX | MERGED, VERIFIED; sandbox source-result contracts | Application main `7a315946c92e24a125fc213c7d139eef6278f12c`; [PR 7](https://github.com/SquirmyWormy275/mnemex/pull/7); full profiles/provider activation remain separate |
+| Missoula | IMPLEMENTED, VERIFIED, PUSHED; merge BLOCKED | [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125) remains draft; production main stays `3a61ec7e519744f90f3e80f1a95eaab526b34af0` |
+
+[CI 38897926622](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/actions/runs/38897926622)
+passed all eight applicable jobs on 47f9bb5, including full SQLite and PostgreSQL
+suites. The production tournament audit stayed skipped. Exact-head automated
+review completed with no findings; all 18 earlier review threads are resolved.
+The [final verification comment](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125#issuecomment-6215277443)
+records these results without changing the tested commit.
+
+Downloaded installed-integration evidence records **49 tests passed, zero
+failures/errors/skips**. R01–R03 pass 90 checks, R11 portability passes seven,
+and R12 managed acceptance passes 13; every cleanup passes. GitHub tested
+synthetic merge `bc89099c97a01c6a682b34ac8f1cd0ae3b75acee`, whose parents are
+production main and 47f9bb5. The managed receipts' dirty flag is solely generated
+`managed-results.xml`; reconstructing its collector bytes yields
+`e16f71a453059345780a389693645fcaef474bf4a575f9b6f148b74dea29b8d5`.
+Local clean 0727e9b independently passes R12 and historical rollback R09, 13
+checks each, cleanup PASS. Earlier failures and intermediate receipts below are
+historical evidence, not outstanding functionality or current pass claims.
+
+Durable workstation inventory: `../evidence/REPOSITORY_STATUS.json`, captured
+2026-10-16 12:15 UTC, contains full repository refs, CI/review status, published
+artifact digests, wiki heads and evidence hashes. Refresh remote refs before
+resuming; this inventory is a dated receipt, not a live status service.
+
+**Next operational step:** designated backup/recovery operators must supply the
+exact-current-head hosted backup/runner restore/encrypted-artifact proof and the
+separately held approved recovery-identity decryption/restore rehearsal required
+by the [release checklist](RELEASE_CHECKLIST.md#hosted-backup-restore-proof).
+Then verify current CI/review and merge through the permitted process. Any branch
+change requires fresh exact-head proof. Main triggers Railway migrations and
+deployment; perform the documented deployment smokes afterward. Do not merge or
+dispatch operational-data tests merely because synthetic CI is green.
+
+No new service was DEPLOYED or OFFICIAL-USE ENABLED. Private historical runs are
+NOT_RUN; prospective evaluation and installation-specific numerical qualification
+remain BLOCKED under their original input/identity requirements. The separate
+[MNEMEX project memory](https://github.com/SquirmyWormy275/mnemex/blob/main/docs/project-memory/START_HERE.md)
+provides the model-neutral design/context entry point; this file remains the
+implementation evidence record.
+
 ## Repository record
 
 All remotes fetched 2026-10-15 and refreshed throughout delivery on October 16;
@@ -32,12 +86,12 @@ Evidence directory: `../evidence/baseline-{strathmark,missoula,strathex,mnemex}`
 | STRATHMARK `pytest tests -q --tb=short --basetemp <unique> -p no:cacheprovider`, portable Formula mode | 3222 passed, 47 skipped; one installed-wheel prerequisite failure (new uv venv lacked pip). Installed pip and reran that test: 1 passed. |
 | STRATHEX same isolated full-suite command | 379 passed |
 | MNEMEX isolated `mnemex.web.settings.test` full suite | 619 passed, 53 skipped |
-| Missoula seeded route-smoke DB, isolated SQLite full suite excluding migration-integrity | Reached 100%, no failure output; process exit receipt lost during session interruption. Rerun required before verification claim. |
+| Missoula seeded route-smoke DB, isolated SQLite full suite excluding migration-integrity | Reached 100%, no failure output; baseline exit receipt was lost during interruption. No baseline pass is claimed; subsequent independently recorded full local and CI reruns are listed below. |
 
-Existing reusable work: real V2 calculations/receipts, full separate V3 Linux
+At reconnaissance, reusable work included real V2 calculations/receipts, full separate V3 Linux
 lifecycle and backup, retro terminal, Missoula R01–R10 process recovery lab,
 MNEMEX reviewed SB/UH export and Django identity/consent/Results Desk, historical
-benchmark/accuracy/prospective/preview tools. Missing: shared higher-level
+benchmark/accuracy/prospective/preview tools. Missing at that baseline: shared higher-level
 operations, supplied-data CLI, managed host projection, optional shared GUI,
 source result inbox/outbox integration and cross-show acceptance.
 
@@ -60,7 +114,7 @@ private historical/training corpus was used for these checks.
 | Repository | Implementation / delivery |
 | --- | --- |
 | STRATHMARK | final reviewed source `0839f640b8f1a02270a8275246e5801260458391`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) MERGED at `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214` after all 25 checks passed and all six review findings were fixed/resolved; rc11 PUBLISHED to [PyPI](https://pypi.org/project/strathmark/3.0.0rc11/) and [GitHub prerelease](https://github.com/SquirmyWormy275/STRATHMARK/releases/tag/v3.0.0rc11) after successful main CI and exact artifact/extra installation checks |
-| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; review fixes `faf353d40ef9065b54308bd1b818f09b99a4e556`, `d672d536d93081672a9cbdeffa698502bb3a530d` shared-profile code `74466eb0f46c73c84e1ee519ff41a28153cebdc4`, recovery-hook closure `71faad29478b483ecb9b837504c84eb779c4dbc2`, and source-fence/scheduling slice `f35b3685fdd0bc81e803208fb10b4ed0483a5c7a`, and host-owned mutex/binding closure `ee50f8c979aefd61bffa3b54942bce757aa1cf2d`, and registration/gear/correction closure `2171dcfc391066c8d42b6cc50c516f9823059ecc`, and deletion/legacy-contract closure `0727e9b63cdaaeb7ac994f5729d82b8114456d7d`; published component pins verified locally; latest exact-head CI/review is on the PR; merge BLOCKED by hosted backup/recovery proof below |
+| Missoula | managed integration and review fixes through application source `0727e9b63cdaaeb7ac994f5729d82b8114456d7d`; verified documentation head `47f9bb558816e07f35d2c54f3ed4454f0c6fc21e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; all eight applicable jobs passed in run `38897926622`, automated review clean, all 18 earlier findings resolved; merge BLOCKED by hosted backup/recovery proof. Intermediate commits and failure/fix receipts are retained in the dated sections below. |
 | STRATHEX | `bcf7ffc19c3796ac189c6dd8c2c59d2abb472f89`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), MERGED at `bcfe4e50e1449b2585a037215c79f5a7e955e9da`; both findings fixed/resolved; all 11 PR checks and main run `38885236056` passed, including installed published rc11; version 7.4.3 |
 | MNEMEX | implementation PR 5 MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; binding/scope PR 6 MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; provenance/security source `83d9e6d296b990ba01884fc04c5662fea36c6eb6` in [PR 7](https://github.com/SquirmyWormy275/mnemex/pull/7) MERGED at `7a315946c92e24a125fc213c7d139eef6278f12c`. Each passed exact-head Linux/Windows CI; PR 7 automated review completed with no findings; all earlier eight findings fixed/resolved; no deployment |
 
@@ -158,7 +212,7 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 | STRATHEX installed retro + managed clients | Reviewed bcf7 wheel PASS: sdist inspection and disposable-workbook startup/exit; supplied-data creation/resume and wrong-show refusal without legacy startup; `strathex-reviewed-installed-{retro,managed}.log`. PR/main installed CI also passes against indexed rc11. |
 | Ruff/docs/format/diff | PASS applicable repository checks; hosted CI repeats exact revisions |
 
-The final complete rerun, `recovery-qualified-final/report.json`, passes all
+The earlier complete implementation rerun, `recovery-qualified-final/report.json`, passes all
 12 scenarios and 197 assertions with every cleanup PASS. The stronger R11
 CLI-correction rerun, `recovery-r11-cli-correction/report.json`, additionally
 voids a final attempt, accepts/re-finalizes on both shows through installed CLI
