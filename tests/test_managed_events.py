@@ -163,6 +163,7 @@ def install_projection_guard(monkeypatch):
     from services import managed_events
 
     real_guard = managed_events.guard_managed_awards
+    real_context = managed_events._validate_host_context
 
     def guard(events, user):
         if events and all(e.managed_operation and e.managed_operation.module_event_id == 'synthetic:projection:event' for e in events):
@@ -172,6 +173,12 @@ def install_projection_guard(monkeypatch):
         return real_guard(events, user)
 
     monkeypatch.setattr(managed_events, 'guard_managed_awards', guard)
+
+    def context(event, state, mapping):
+        if event.managed_operation.module_event_id != 'synthetic:projection:event':
+            return real_context(event, state, mapping)
+
+    monkeypatch.setattr(managed_events, '_validate_host_context', context)
 
 
 @pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires explicit separately installed managed-event component')

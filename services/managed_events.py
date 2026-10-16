@@ -254,9 +254,9 @@ def _validate_show_wood(event, config):
 
     key = f'block_{event.stand_type}_{event.event_type}'
     gender_key = key + ('_' + event.gender if event.gender else '')
-    wood = WoodConfig.query.filter_by(tournament_id=event.tournament_id, config_key=gender_key).first()
+    wood = WoodConfig.query.filter_by(tournament_id=event.tournament_id, config_key=gender_key).populate_existing().first()
     if wood is None:
-        wood = WoodConfig.query.filter_by(tournament_id=event.tournament_id, config_key=key).first()
+        wood = WoodConfig.query.filter_by(tournament_id=event.tournament_id, config_key=key).populate_existing().first()
     if wood is None:
         raise ManagedEventError('Configure the show wood before linking or preparing a managed event.')
     diameter = Decimal(str(wood.size_value)) * (Decimal('25.4') if wood.size_unit == 'in' else Decimal(1))
@@ -369,6 +369,33 @@ def _locked_link(event):
             .populate_existing().with_for_update().one())
 
 
+def _validate_host_context(event, state, mapping):
+    """Check fresh registration and show facts while holding the host lock."""
+    config = state['config']
+    _validate_host_profile(event, config)
+    _validate_show_wood(event, config)
+    if _host_roster(event, config) != mapping:
+        raise ManagedEventError('Refresh the managed entry mapping before accepting this revision.')
+
+
+def _reconcile_pending_results(event, old_mapping, mapping):
+    """An unissued roster replacement may remove only unused placeholder rows."""
+    removed = set(old_mapping.values()) - set(mapping.values())
+    rows = (EventResult.query.filter_by(event_id=event.id, competitor_type=event.event_type)
+            .filter(EventResult.competitor_id.in_(removed)).populate_existing().with_for_update().all())
+    recorded = ('result_value', 'run1_value', 'run2_value', 'run3_value', 'best_run',
+                't1_run1', 't2_run1', 't1_run2', 't2_run2', 'tiebreak_value',
+                'predicted_time', 'mark_assigned_at', 'final_position', 'status_reason', 'partner_name')
+    for row in rows:
+        if (row.status != 'pending' or any(getattr(row, name) is not None for name in recorded)
+                or row.handicap_factor or row.points_awarded or row.payout_amount
+                or row.payout_settled or row.throwoff_pending or row.is_flagged):
+            raise ManagedEventError('Cannot discard host result history while replacing the managed roster.')
+    for row in rows:
+        db.session.delete(row)
+    db.session.flush()
+
+
 def _project_latest(event, result):
     from services.flight_builder import lock_tournament_schedule
 
@@ -381,6 +408,7 @@ def _project_latest(event, result):
         raise ManagedEventError('Managed response identity mismatch.')
     if 'config' in result:
         _validate_host_profile(event, result['config'])
+        _validate_show_wood(event, result['config'])
     current = json.loads(link.state_json) if link.state_json else None
     if current and result['revision'] == current['revision'] and canonical(result) != canonical(current):
         raise ManagedEventError('Changed managed state for an existing revision.')
@@ -405,8 +433,8 @@ def _project_latest(event, result):
                     candidate.response_json = canonical({'error': 'initial_creation_superseded',
                                                           'source_creation_request_id': creation['request_id']})
         elif 'config' in result and result['config']['roster'] != current['config']['roster']:
-            _validate_show_wood(event, result['config'])
             mapping = _host_roster(event, result['config'])
+            _reconcile_pending_results(event, json.loads(link.mapping_json), mapping)
             link.mapping_json = canonical(mapping)
         project_fields(event, result)
         link.state_json = canonical(result)
@@ -554,11 +582,7 @@ def accept_export(event, user, exported):
     # Source roster equality with an old projection says nothing about current
     # registration. Recheck host facts under the same parent lock used by
     # registration writers, even when the source config has not changed.
-    config = guard.states[link.module_event_id]['config']
-    _validate_host_profile(event, config)
-    _validate_show_wood(event, config)
-    if _host_roster(event, config) != mapping:
-        raise ManagedEventError('Refresh the managed entry mapping before accepting this revision.')
+    _validate_host_context(event, guard.states[link.module_event_id], mapping)
     for item in exported['deliveries']:
         payload = item['payload']
         if digest(payload) != item['payload_digest'] or payload['outcome']['entry_id'] not in mapping or payload['source_event_id'] != link.module_event_id:
@@ -616,6 +640,7 @@ def apply_host_awards(event, user):
     source = guard.states[link.module_event_id]
     if source['status'] != 'finalized' or source['summary_revision'] != link.summary_revision:
         raise ManagedEventError('Accept the current finalized source revision before applying host awards.')
+    _validate_host_context(event, source, json.loads(link.mapping_json))
     _project_latest(event, source)
     from services.scoring_engine import (
         _clear_changed_payout_settlements,

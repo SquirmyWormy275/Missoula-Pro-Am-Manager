@@ -18,10 +18,11 @@ from tests.test_managed_events import _projection_fixture
 from tests.test_managed_host_policy import _binding_fixture
 
 
-def _single_entry_final(event, user, config):
+def _single_entry_final(event, user, config, *, state=None):
     from services import managed_events
 
-    state = managed_events.bind_event(event, user, config)
+    if state is None:
+        state = managed_events.bind_event(event, user, config)
 
     def command(operation, payload=None):
         nonlocal state
@@ -42,6 +43,106 @@ def _single_entry_final(event, user, config):
     command('accept', {'heat_id': 'single-final', 'result_digest': field['result_revisions'][-1]['digest']})
     command('finalize')
     return state
+
+
+@pytest.mark.parametrize('change', ['add', 'remove'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_awards_recheck_registration_after_accepted_summary(tmp_path, change):
+    from models import ProCompetitor
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        _single_entry_final(event, user, config)
+        managed_events.accept_export(event, user, managed_events.submit(event, user, {'operation': 'export'}))
+        event.set_payouts({'1': 100})
+        db.session.commit()
+        entrant = ProCompetitor.query.one()
+        if change == 'add':
+            make_pro_competitor(db.session, event.tournament, 'Synthetic post-acceptance entrant', events=['Underhand'])
+            db.session.commit()
+        else:
+            with db.engine.begin() as connection:
+                connection.execute(ProCompetitor.__table__.update().where(
+                    ProCompetitor.id == entrant.id).values(events_entered='[]'))
+        with pytest.raises(ManagedEventError, match='active entered competitor'):
+            managed_events.apply_host_awards(event, user)
+        db.session.rollback()
+        assert not db.session.get(Event, event_id).is_finalized
+        assert db.session.get(Event, event_id).results.one().payout_amount == 0
+
+
+@pytest.mark.parametrize('history', [False, True])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_unissued_roster_shrink_removes_only_empty_pending_host_result(tmp_path, history):
+    from copy import deepcopy
+
+    from models import EventResult
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        extra = make_pro_competitor(db.session, event.tournament, 'Synthetic withdrawn entrant',
+                                    gender=config['roster'][0]['gender'], events=['Underhand'])
+        config['roster'].append({**config['roster'][0], 'entry_id': 'withdrawn-entry',
+                                'engine_id': 'synthetic:engine:withdrawn', 'host_ref': f'pro:{extra.id}'})
+        db.session.commit()
+        state = managed_events.bind_event(event, user, config)
+        row = EventResult.query.filter_by(event_id=event.id, competitor_id=extra.id).one()
+        if history:
+            row.t1_run1 = 0  # Even a recorded zero is scoring history.
+        extra.events_entered = '[]'
+        db.session.commit()
+        revised = deepcopy(config)
+        revised['roster'] = revised['roster'][:1]
+        request = {'operation': 'configure', 'request_id': 'shrink-before-issue',
+                   'expected_revision': state['revision'], 'editor': 'missoula', 'payload': {'config': revised}}
+        if history:
+            with pytest.raises(ManagedEventError, match='history'):
+                managed_events.submit(event, user, request)
+            db.session.rollback()
+            assert event.results.count() == 2
+            assert EventResult.query.filter_by(event_id=event.id, competitor_id=extra.id).one().t1_run1 == 0
+            assert len(json.loads(event.managed_operation.mapping_json)) == 2
+        else:
+            state = managed_events.submit(event, user, request)
+            assert event.results.count() == 1
+            _single_entry_final(event, user, revised, state=state)
+            managed_events.accept_export(event, user, managed_events.submit(event, user, {'operation': 'export'}))
+            managed_events.apply_host_awards(event, user)
+            db.session.commit()
+            assert event.is_finalized and event.results.count() == 1
+            assert event.results.one().status == 'completed'
+
+
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_shared_editor_wood_only_change_cannot_project_host_fields(tmp_path):
+    from copy import deepcopy
+
+    from models.managed_event import ManagedFieldLink
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        state = managed_events.bind_event(event, user, config)
+        changed = deepcopy(config)
+        changed['wood']['diameter_mm'] = '280'
+        state = managed_events._call(user, event.managed_operation, {
+            'operation': 'configure', 'event_id': state['event_id'], 'request_id': 'shared-editor-wood-only',
+            'expected_revision': state['revision'], 'editor': 'missoula', 'payload': {'config': changed}})
+        managed_events._call(user, event.managed_operation, {
+            'operation': 'fields', 'event_id': state['event_id'], 'request_id': 'shared-editor-wood-fields',
+            'expected_revision': state['revision'], 'editor': 'missoula', 'payload': {'fields': [
+                {'heat_id': 'foreign-wood-field', 'entries': [config['roster'][0]['entry_id']], 'stands': ['1']}]}})
+        before = event.managed_operation.state_json
+        with pytest.raises(ManagedEventError, match='wood differs'):
+            managed_events.submit(event, user, {'operation': 'read'})
+        db.session.rollback()
+        assert event.managed_operation.state_json == before
+        assert event.heats.count() == ManagedFieldLink.query.count() == 0
 
 
 @pytest.mark.parametrize('change', ['add', 'remove'])
