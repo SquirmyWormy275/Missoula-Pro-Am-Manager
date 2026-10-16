@@ -33,6 +33,12 @@ source configuration. Physical stand identifiers must be canonical distinct
 integers; Missoula retains its dual-timer rule. Already accepted requests still
 return their original receipts. Recovery of an ambiguous command first checks
 verified source audit, so a later host edit cannot hide a committed outcome.
+An unissued roster can be reconciled through the shared `configure` operation;
+the host validates its entries and updates their mapping with the new source
+revision. The generic workspace serves several show profiles, so Missoula refuses
+to import a source configuration selecting a different discipline or timer rule.
+Export refreshes authoritative state and requires the same source revision; a
+concurrent change asks the operator to refresh and retry.
 
 A pending creation keeps legacy writes fenced while its outcome is uncertain.
 Recover its exact request first. If its supplied configuration was refused, the

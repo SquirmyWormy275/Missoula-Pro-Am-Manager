@@ -317,3 +317,49 @@ def test_committed_command_response_loss_recovers_after_host_roster_edit(tmp_pat
         recovered = managed_events.recover_command(command.id, user)
         assert recovered['revision'] == 2 and command.status == 'accepted'
         assert managed_events.submit(event, user, request) == recovered
+
+
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_unissued_configuration_reconciles_new_host_roster_mapping(tmp_path):
+    from copy import deepcopy
+
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        state = managed_events.bind_event(event, user, config)
+        entrant = make_pro_competitor(db.session, event.tournament, 'Synthetic new entrant',
+                                      gender='F', events=['Underhand'])
+        db.session.commit()
+        row = deepcopy(config['roster'][0])
+        row.update(entry_id='new-entry', engine_id='synthetic:engine:new-entry',
+                   host_ref=f'pro:{entrant.id}', gender='F', gear_group=None)
+        config['roster'].append(row)
+        updated = managed_events.submit(event, user, {
+            'operation': 'configure', 'request_id': 'reconcile-new-entry', 'expected_revision': state['revision'],
+            'editor': 'missoula', 'payload': {'config': config}})
+        assert updated['revision'] == 2
+        assert json.loads(event.managed_operation.mapping_json)['new-entry'] == entrant.id
+        assert managed_events.submit(event, user, {'operation': 'forecast', 'request_id': 'new-roster-forecast',
+            'expected_revision': 2, 'editor': 'missoula', 'payload': {}})['revision'] == 3
+
+
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_shared_client_cannot_import_a_different_host_timer_policy(tmp_path):
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        state = managed_events.bind_event(event, user, config)
+        config['timer_policy'] = 'single'
+        # Another presentation can use general component configuration, but
+        # this host must refuse an incompatible show profile before importing.
+        managed_events._call(user, event.managed_operation, {
+            'operation': 'configure', 'event_id': state['event_id'], 'request_id': 'other-client-config',
+            'expected_revision': 1, 'editor': 'missoula', 'payload': {'config': config}})
+        with pytest.raises(ManagedEventError, match='dual timer policy'):
+            managed_events.submit(event, user, {'operation': 'export'})
+        db.session.rollback()
+        assert json.loads(event.managed_operation.state_json)['revision'] == 1

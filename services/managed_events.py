@@ -201,6 +201,15 @@ def _validate_show_wood(event, config):
         raise ManagedEventError('Stand outside configured show resources.')
 
 
+def _validate_host_profile(event, config):
+    if (config['event_id'] != event.shadow_event_occurrence_id + ':managed' or
+        config['tournament_id'] != event.tournament.shadow_tournament_id or
+        config['discipline'] != {'underhand': 'UH', 'standing_block': 'SB'}.get(event.stand_type) or
+        config['format'] != 'handicap' or config['timer_policy'] != 'dual_mean' or
+        config['publisher'] != 'host' or config.get('synthetic') is not True):
+        raise ManagedEventError('Source configuration differs from this host event or its dual timer policy.')
+
+
 def submit(event, user, request, *, _initial_binding=False):
     """Commit exact local intent before crossing the process/response boundary."""
     authorize(user, event)
@@ -210,10 +219,16 @@ def submit(event, user, request, *, _initial_binding=False):
     request = dict(request)
     request['event_id'] = link.module_event_id
     if request['operation'] in {'read', 'export'}:
+        if request['operation'] == 'export':
+            observed = _call(user, link, {'operation': 'read', 'event_id': link.module_event_id})
+            _project_latest(event, observed)
+            db.session.commit()
         result = _call(user, link, request)
         if request['operation'] == 'read':
             _project_latest(event, result)
             db.session.commit()
+        elif result['event_revision'] != observed['revision']:
+            raise ManagedEventError('Source changed during export; refresh and retry the current revision.')
         return result
     request_id = request.get('request_id')
     if not isinstance(request_id, str) or not 1 <= len(request_id) <= 224:
@@ -247,8 +262,14 @@ def submit(event, user, request, *, _initial_binding=False):
                 _project_latest(event, observed)
                 db.session.commit()
     if not already_committed:
+        if request['operation'] == 'configure':
+            candidate = request['payload']['config']
+            _validate_host_profile(event, candidate)
+            _validate_show_wood(event, candidate)
+            _host_roster(event, candidate)
         if request['operation'] in {'fields', 'forecast', 'calculate', 'review', 'issue'} and link.state_json:
             config = json.loads(link.state_json)['config']
+            _validate_host_profile(event, config)
             _validate_show_wood(event, config)
             _host_roster(event, config)
         if request['operation'] in {'fields', 'calculate', 'review', 'issue', 'outcomes'}:
@@ -282,6 +303,8 @@ def _project_latest(event, result):
     link = _locked_link(event)
     if result.get('event_id') != link.module_event_id or result.get('show_id') != link.show_id:
         raise ManagedEventError('Managed response identity mismatch.')
+    if 'config' in result:
+        _validate_host_profile(event, result['config'])
     current = json.loads(link.state_json) if link.state_json else None
     if current and result['revision'] == current['revision'] and canonical(result) != canonical(current):
         raise ManagedEventError('Changed managed state for an existing revision.')
@@ -305,6 +328,10 @@ def _project_latest(event, result):
                     candidate.status = 'conflicting'
                     candidate.response_json = canonical({'error': 'initial_creation_superseded',
                                                           'source_creation_request_id': creation['request_id']})
+        elif 'config' in result and result['config']['roster'] != current['config']['roster']:
+            _validate_show_wood(event, result['config'])
+            mapping = _host_roster(event, result['config'])
+            link.mapping_json = canonical(mapping)
         project_fields(event, result)
         link.state_json = canonical(result)
 
