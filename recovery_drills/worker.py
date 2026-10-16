@@ -75,11 +75,11 @@ def instrument(settings):
     from sqlalchemy import event as sa_event
     from sqlalchemy.orm import Session
 
-    from models.managed_event import ManagedAcceptance
-
     @sa_event.listens_for(Session, 'before_flush')
     def note_managed_acceptance(session, _context, _instances):
-        if any(isinstance(item, ManagedAcceptance) for item in session.new):
+        # The R09 historical checkout deliberately has no managed model module.
+        if any(getattr(type(item), '__tablename__', None) == 'managed_acceptances'
+               for item in session.new):
             session.info['lab_managed_acceptance_transaction'] = True
 
     @sa_event.listens_for(Session, 'after_rollback')
