@@ -5,8 +5,10 @@ Canonical [architecture agreement](https://github.com/SquirmyWormy275/STRATHMARK
 
 ## Repository record
 
-All remotes fetched 2026-10-15; no open PRs at reconnaissance. All work uses
-`feature/modular-events-20261015` in isolated worktrees under
+All remotes fetched 2026-10-15 and refreshed throughout delivery on October 16;
+no open PRs at reconnaissance. Initial work uses
+`feature/modular-events-20261015`; MNEMEX review fixes use the corresponding
+`fix/show-*` branches. All are isolated worktrees under
 `~/Repo-Updates/modular-tournament-20261015`. Original checkouts and unrelated
 branches are untouched.
 
@@ -57,10 +59,10 @@ private historical/training corpus was used for these checks.
 
 | Repository | Implementation / delivery |
 | --- | --- |
-| STRATHMARK | `de878a477f1d9ecae1c5190cb04318c8e957a78f`, final reviewed source `3e27a3da6c2ee0f6d529ce8130f63caf0df9ac11` (includes capability metadata, current wiki ownership and readable mobile tables); [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35), Required CI running; rc11 publication pending main merge/CI |
+| STRATHMARK | final reviewed source `0839f640b8f1a02270a8275246e5801260458391`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) MERGED at `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214` after all 25 checks passed and all six review findings were fixed/resolved; rc11 publication awaits successful main CI |
 | Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; host SQLite/PostgreSQL/migration/lint/audit/recovery CI passed; managed lane awaits exact producer publication; merge BLOCKED by hosted backup/recovery proof below |
-| STRATHEX | `382561b`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), draft pending exact producer publication; version 7.4.3 |
-| MNEMEX | implementation `1d2bd2942d051403b3406979a1e567b4475acd7c`; [PR 5](https://github.com/SquirmyWormy275/mnemex/pull/5) MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; follow-up source binding/show-scope fix `0b74353b9e03f0fc9b09dedbcf5f99de86afc2fb` in [PR 6](https://github.com/SquirmyWormy275/mnemex/pull/6) MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; both PRs passed Linux/Windows CI; no deployment |
+| STRATHEX | `bcf7ffc19c3796ac189c6dd8c2c59d2abb472f89`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), ready for review, both findings fixed/resolved; ordinary Linux/Windows checks pass, installed managed lane awaits exact producer publication; version 7.4.3 |
+| MNEMEX | implementation PR 5 MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; binding/scope PR 6 MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; provenance/security source `83d9e6d296b990ba01884fc04c5662fea36c6eb6` in [PR 7](https://github.com/SquirmyWormy275/mnemex/pull/7) MERGED at `7a315946c92e24a125fc213c7d139eef6278f12c`. Each passed exact-head Linux/Windows CI; PR 7 automated review completed with no findings; all earlier eight findings fixed/resolved; no deployment |
 
 ### Working features and boundaries
 
@@ -75,7 +77,10 @@ numeric code and frozen contracts were not changed. The explicit new
 `mark3-ceil180.v1` policy differs from the preserved V2 optimizer policy.
 
 Issued descendants remain frozen after corrections; unissued descendants are
-invalidated and issued progression needs director review. Every accepted attempt
+invalidated and issued progression needs director review with retained reason,
+actor/time/revision and exact issued/result digests. Finalization requires every
+latest summary result to be accepted, including corrected earlier rounds. Root
+engine, numeric runtime and mark policy remain fixed. Every accepted attempt
 has source/revision/issue/field/clock evidence; the final summary is separate.
 The optional GUI has scoped authenticated sessions, revocation, CSRF/origin
 checks, native forms, responsive layout, sync status and independent print sheets.
@@ -102,7 +107,12 @@ requires the exact producer version; no automatic fallback or save migration.
 MNEMEX accepts a closed, scoped synthetic show-result contract with expiring,
 revocable hashed credentials and registered source ownership. Actual machine
 HTTP ingestion/status preserve exact retries, reordered corrections, immutable
-source revisions, durable conflicts and audit/idempotency atomicity. All received
+source revisions, durable conflicts and audit/idempotency atomicity. Rejected
+validated envelopes and authenticating credential identities are
+retained immutably; legacy unknown provenance is not invented. Idempotency is
+source-scoped with safe recovery of earlier client-scoped receipts. Both machine
+endpoints enforce activation/sandbox/source/credential checks. Credential files
+are private from exclusive POSIX creation. All received
 identities remain unlinked; no name linking, consent promotion, public career
 publication or 2.x history-export widening occurs. Full profile portability and
 all 14 hosted activation gates remain separate unfinished programs.
@@ -119,10 +129,10 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 | Check | Actual result / retained receipt |
 | --- | --- |
 | STRATHMARK full isolated portable suite | 3242 passed, 47 skipped; `producer-full-final/{pytest.log,junit.xml}`; final authority-location change additionally verified by the 20 focused managed tests; exact final revision reruns in Required CI |
-| STRATHMARK focused final authority/UI/process/evaluation | 20 passed; `producer-authority-final/{pytest.log,junit.xml}` |
-| Installed producer wheel and sdist, outside checkout | PASS supplied-data CLI, real two-show qualifying/semi/final lifecycle through separate processes, per-attempt export and synthetic evaluation; CLI corrections additionally pass R11 below; `producer-smoke-source-final-{wheel,sdist}.log` |
+| STRATHMARK focused final authority/UI/process/evaluation | Original 20 passed; review reproduced seven additional failures, then final 29 passed in `producer-reviewed-commit/{pytest.log,junit.xml}`. Exact reviewed PR CI passed all 25 checks (`38878110636`). |
+| Installed producer wheel and sdist, outside checkout | PASS on reviewed 0839 artifacts: supplied-data CLI, real two-show qualifying/semi/final lifecycle through separate processes, per-attempt export and synthetic evaluation; `producer-reviewed-{wheel,sdist}.log`; R11/R12 repeated against this wheel. |
 | Core-only installation | PASS without Flask, MNEMEX or STRATHEX; `core-optional-absence.log` |
-| Real installed browser | PASS login, CLI handover/native fields, real engine/review/issue, raw timers, both clocks, stale edit, normal CSRF, wrong-show access, print identity and mobile no-overflow; `browser-workspace-8/report.json` plus synthetic screenshots/HTML |
+| Real installed browser | PASS login, CLI handover/native fields, real engine/review/issue, raw timers, both clocks, stale edit, normal CSRF, wrong-show access, slash-bearing heat print identity and mobile no-overflow; reviewed wheel `browser-workspace-9/report.json` plus synthetic screenshots/HTML. Native director retention additionally passes focused tests. |
 | Installed two-show CLI | PASS; `installed-core-final/report.json`; Missoula and second configuration run unchanged component with different wood/capacity/heat structure |
 | V3 replay / frozen contract | PASS; `producer-replay-final.log`, `producer-contract-final.log`; no frozen hashes rewritten |
 | Missoula SQLite full fast lane | 4492 passed, 43 skipped (4535 total); `host-full-final.xml`; migration-integrity checks run separately |
@@ -132,10 +142,11 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 | Release/migration/recovery guards | 49 passed, 1 skipped; `host-release-current.xml`; PostgreSQL migration repair/concurrent delivery also executed in full PG lane |
 | MNEMEX full isolated SQLite | 629 passed, 53 optional skipped; `mnemex-full-final.xml` |
 | MNEMEX correction/scope follow-up | Three RED cases reproduced direct correction entry/issued-binding poisoning and cross-show conflict counts. Full fixed suite 632 passed, 53 skipped (`mnemex-binding-full.xml`); narrow PostgreSQL 13 passed, cleanup PASS (`mnemex-binding-postgres/report.json`); rebuilt installed wheel check and real Missoula HTTP test PASS (`host-hardened-receiver.xml`). Additive partners 0004 retains unattributed old conflicts as null/private. |
+| MNEMEX provenance/security follow-up | Six RED cases reproduced remaining defects. Full 638 passed / 53 optional skips (`mnemex-provenance-full.xml`); narrow PostgreSQL 19 passed, cleanup PASS (`mnemex-provenance-postgres-2/report.json`). Additive partners 0005 retains legacy unknown evidence as nullable. Rebuilt installed receiver + real host HTTP: three passed (`host-provenance-components.xml`). Initial PG run passed 19 tests but cleanup refused pytest-current links; retained receipt and exact-owned link reconciliation in `mnemex-provenance-postgres/cleanup-reconciliation.json`; fresh rerun uses temp paths outside guarded private resources and passes cleanup. |
 | MNEMEX narrow inbox on PostgreSQL | 10 passed; `postgres-full-final/{mnemex-junit.xml,mnemex.log}` |
 | MNEMEX distribution | wheel/sdist built; installed wheel imported from site-packages outside checkout; Django check/migration drift PASS; `mnemex-installed-wheel-check2.log` |
-| STRATHEX full suite | 380 passed; `strathex-final.xml` |
-| STRATHEX installed retro + managed clients | PASS wheel/sdist inspection and disposable-workbook startup/exit; supplied-data creation/resume and wrong-show refusal without legacy startup; `strathex-installed-final.log`, `strathex-managed-installed.log` |
+| STRATHEX full suite | 381 passed after parser-level RED regression for portable encrypted-backup flags; `strathex-review-final.xml` (earlier 380 in `strathex-final.xml`). |
+| STRATHEX installed retro + managed clients | Reviewed bcf7 wheel PASS: sdist inspection and disposable-workbook startup/exit; supplied-data creation/resume and wrong-show refusal without legacy startup; `strathex-reviewed-installed-{retro,managed}.log`. |
 | Ruff/docs/format/diff | PASS applicable repository checks; hosted CI repeats exact revisions |
 
 The final complete rerun, `recovery-qualified-final/report.json`, passes all
@@ -162,6 +173,26 @@ counts with no award side effect. The independent three-repository test launches
 the installed Django HTTP receiver, including downtime and an actually committed
 lost response. R08 remains explicitly a simulated **shadow** peer.
 
+Reviewed producer artifacts repeat both R11 and R12 with PASS/cleanup PASS in
+`recovery-r11-reviewed` and `recovery-r12-reviewed`. Canonical tuple hashing now
+prevents delimiter collisions in source attempt IDs. Root source-identity scheme
+is immutable. The unpublished earlier 3e27 candidate wheel/sdist/checksums are
+retained in `unreleased-3e27a3d`; old concatenated-ID checkpoints remain readable
+but mutation is refused by the new runtime. Their original installed runtime
+resumes them successfully (`legacy-candidate-compatibility/report.json`). No
+existing receipt or frozen numerical identity was rewritten. Backup/transfer
+destinations use exclusive atomic publication and refuse a late competing path.
+
+Main producer run `38881349305` hit a timing-sensitive existing Python 3.11
+shadow test: its 100 ms deadline expired during preflight instead of after the
+deliberately stalled write. The API correctly reported unclaimed preflight state.
+Five independent Python 3.11.16 runs of both preflight and post-admission timeout
+tests pass (`producer-311-timeout-diagnosis.log` and per-run XML). No deadline,
+assertion or production behavior was relaxed. Main CI/publication remains pending
+until an exact-commit rerun succeeds; the first failed-job rerun request was
+refused because the full workflow was still running. Original failure evidence
+is retained in `producer-main-311.log`.
+
 ### Commands and exact pins
 
 Use the documented isolated variables **before imports/collection**. Representative
@@ -182,7 +213,7 @@ python scripts/verify_managed_client.py --wheel dist/strathex-7.4.3-py3-none-any
 
 Missoula CI's new managed lane installs separate host/producer/records environments,
 pins `strathmark[workspace]==3.0.0rc11` and MNEMEX merge
-`43b1d9382da0e0b7f56eaa98e368c5a5b095590d`, and runs actual HTTP contracts and
+`7a315946c92e24a125fc213c7d139eef6278f12c`, and runs actual HTTP contracts and
 R11/R12. It never opts into the existing production audit dispatch. Existing
 production requirements and all compatibility pins remain intact.
 

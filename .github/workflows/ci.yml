@@ -76,7 +76,7 @@ jobs:
           python -m venv .tmp/managed-producer
           python -m venv .tmp/managed-records
           .tmp/managed-producer/bin/python -m pip install -r requirements-managed-runtime.txt
-          .tmp/managed-records/bin/python -m pip install 'mnemex @ git+https://github.com/SquirmyWormy275/mnemex.git@43b1d9382da0e0b7f56eaa98e368c5a5b095590d'
+          .tmp/managed-records/bin/python -m pip install 'mnemex @ git+https://github.com/SquirmyWormy275/mnemex.git@7a315946c92e24a125fc213c7d139eef6278f12c'
           sudo apt-get update
           sudo apt-get install -y postgresql-16
       - name: Exercise actual installed source and HTTP contracts
