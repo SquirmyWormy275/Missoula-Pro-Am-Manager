@@ -57,8 +57,8 @@ private historical/training corpus was used for these checks.
 
 | Repository | Implementation / delivery |
 | --- | --- |
-| STRATHMARK | `de878a477f1d9ecae1c5190cb04318c8e957a78f`, documentation clarification `3bf1a5c0a55ef55eaa8c76b9c84135e1eac0c791`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35), Required CI running; rc11 publication pending main merge/CI |
-| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; PR pending producer publication; merge BLOCKED by hosted backup/recovery proof below |
+| STRATHMARK | `de878a477f1d9ecae1c5190cb04318c8e957a78f`, final reviewed source `3e27a3da6c2ee0f6d529ce8130f63caf0df9ac11` (includes capability metadata, current wiki ownership and readable mobile tables); [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35), Required CI running; rc11 publication pending main merge/CI |
+| Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; host SQLite/PostgreSQL/migration/lint/audit/recovery CI passed; managed lane awaits exact producer publication; merge BLOCKED by hosted backup/recovery proof below |
 | STRATHEX | `382561b`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), draft pending exact producer publication; version 7.4.3 |
 | MNEMEX | implementation `1d2bd2942d051403b3406979a1e567b4475acd7c`; [PR 5](https://github.com/SquirmyWormy275/mnemex/pull/5) MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; Linux/Windows PR and main CI passed; no deployment |
 
@@ -120,13 +120,14 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 | --- | --- |
 | STRATHMARK full isolated portable suite | 3242 passed, 47 skipped; `producer-full-final/{pytest.log,junit.xml}`; final authority-location change additionally verified by the 20 focused managed tests; exact final revision reruns in Required CI |
 | STRATHMARK focused final authority/UI/process/evaluation | 20 passed; `producer-authority-final/{pytest.log,junit.xml}` |
-| Installed producer wheel and sdist, outside checkout | PASS supplied-data CLI, real two-show qualifying/semi/final lifecycle through separate processes, per-attempt export and synthetic evaluation; CLI corrections additionally pass R11 below; `producer-smoke-final-{wheel,sdist}2.log` |
+| Installed producer wheel and sdist, outside checkout | PASS supplied-data CLI, real two-show qualifying/semi/final lifecycle through separate processes, per-attempt export and synthetic evaluation; CLI corrections additionally pass R11 below; `producer-smoke-source-final-{wheel,sdist}.log` |
 | Core-only installation | PASS without Flask, MNEMEX or STRATHEX; `core-optional-absence.log` |
-| Real installed browser | PASS login, CLI handover/native fields, real engine/review/issue, raw timers, both clocks, stale edit, normal CSRF, wrong-show access, print identity and mobile no-overflow; `browser-workspace-7/report.json` plus synthetic screenshots/HTML |
+| Real installed browser | PASS login, CLI handover/native fields, real engine/review/issue, raw timers, both clocks, stale edit, normal CSRF, wrong-show access, print identity and mobile no-overflow; `browser-workspace-8/report.json` plus synthetic screenshots/HTML |
 | Installed two-show CLI | PASS; `installed-core-final/report.json`; Missoula and second configuration run unchanged component with different wood/capacity/heat structure |
 | V3 replay / frozen contract | PASS; `producer-replay-final.log`, `producer-contract-final.log`; no frozen hashes rewritten |
 | Missoula SQLite full fast lane | 4492 passed, 43 skipped (4535 total); `host-full-final.xml`; migration-integrity checks run separately |
 | Missoula full PostgreSQL | 4521 passed, 33 skipped (4554 total), exit 0; `postgres-full-final/{junit.xml,pytest.log,report.json}`; owned cluster cleanup PASS |
+| Selected component outage | PASS actual absent interpreter: retained pending request/projection, unrelated registration committed, exact recovery against restored interpreter; three integration tests passed in `host-component-outage.xml` |
 | Current payout changes | 94 passed, 3 skipped; `host-payout-broad.xml`; actual producer/MNEMEX contract and direct payout subset 7 passed in `host-payout-final2.xml` |
 | Release/migration/recovery guards | 49 passed, 1 skipped; `host-release-current.xml`; PostgreSQL migration repair/concurrent delivery also executed in full PG lane |
 | MNEMEX full isolated SQLite | 629 passed, 53 optional skipped; `mnemex-full-final.xml` |

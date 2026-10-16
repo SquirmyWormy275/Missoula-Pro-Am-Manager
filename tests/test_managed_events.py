@@ -66,6 +66,31 @@ def test_real_component_multiround_acceptance_and_retry(tmp_path):
         app.config['MANAGED_WORKSPACE_ORIGIN'] = 'http://127.0.0.1:8789'
         assert workspace_url(event).startswith('http://127.0.0.1:8789/events/')
 
+        # A selected component outage retains the host intent and accepted
+        # projection. The retained 2.x library must not become a fallback.
+        outage_request = {'operation': 'forecast', 'request_id': 'synthetic-component-outage',
+                          'expected_revision': state['revision'], 'editor': 'missoula', 'payload': {}}
+        app.config['MANAGED_EVENTS_PYTHON'] = str(tmp_path / 'unavailable-runtime')
+        try:
+            with pytest.raises(ManagedEventError, match='explicit installed'):
+                submit(event, user, outage_request)
+            db.session.rollback()
+            pending = ManagedCommand.query.filter_by(event_id=event.id, request_id=outage_request['request_id']).one()
+            assert pending.status == 'pending'
+            assert json.loads(event.managed_operation.state_json)['revision'] == state['revision']
+            other = Tournament(name='Synthetic independent registration during component outage', year=2027)
+            db.session.add(other)
+            db.session.flush()
+            entrant = ProCompetitor(tournament_id=other.id, name='Synthetic Unrelated Entry', gender='F', events_entered='[]')
+            db.session.add(entrant)
+            db.session.commit()
+            assert db.session.get(ProCompetitor, entrant.id).name == 'Synthetic Unrelated Entry'
+        finally:
+            app.config['MANAGED_EVENTS_PYTHON'] = interpreter
+        from services.managed_events import recover_command
+        state = recover_command(pending.id, user)
+        assert pending.status == 'accepted' and state['revision'] == outage_request['expected_revision'] + 1
+
         def command(action, payload=None, request_id=None, supplied=None):
             nonlocal state
             request = supplied or {'operation': action, 'request_id': request_id or str(uuid.uuid4()), 'expected_revision': state['revision'], 'editor': 'missoula', 'payload': payload or {}}
