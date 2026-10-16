@@ -739,11 +739,13 @@ def generate_event_heats(
     return actual_heat_count
 
 
-def _get_event_competitors(event: Event) -> list:
+def _get_event_competitors(event: Event, *, refresh=False) -> list:
     """Get list of competitors entered in this event with their info.
 
     Always scans active competitors to discover new registrations that don't
     yet have EventResult rows (fixes silent omission on heat regeneration).
+    Delegated acceptance can refresh already loaded registrations after taking
+    the tournament lock; an ORM identity cache is not a registration snapshot.
     """
     competitors = []
     seen_ids: set[int] = set()
@@ -763,15 +765,16 @@ def _get_event_competitors(event: Event) -> list:
     # generated heat roster changed. id order is registration order, so this
     # makes the fallback's comment true instead of coincidental.
     if event.event_type == 'college':
-        all_comps = CollegeCompetitor.query.filter_by(
+        query = CollegeCompetitor.query.filter_by(
             tournament_id=event.tournament_id,
             status='active'
-        ).order_by(CollegeCompetitor.id).all()
+        ).order_by(CollegeCompetitor.id)
     else:
-        all_comps = ProCompetitor.query.filter_by(
+        query = ProCompetitor.query.filter_by(
             tournament_id=event.tournament_id,
             status='active'
-        ).order_by(ProCompetitor.id).all()
+        ).order_by(ProCompetitor.id)
+    all_comps = (query.populate_existing() if refresh else query).all()
 
     # Filter by gender if gendered event.
     # Record who this drops before dropping them. An active competitor who is

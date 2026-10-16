@@ -18,6 +18,174 @@ from tests.test_managed_events import _projection_fixture
 from tests.test_managed_host_policy import _binding_fixture
 
 
+def _single_entry_final(event, user, config):
+    from services import managed_events
+
+    state = managed_events.bind_event(event, user, config)
+
+    def command(operation, payload=None):
+        nonlocal state
+        state = managed_events.submit(event, user, {
+            'operation': operation, 'request_id': f'single-final-{operation}',
+            'expected_revision': state['revision'], 'editor': 'missoula', 'payload': payload or {}})
+
+    entry = config['roster'][0]['entry_id']
+    command('fields', {'fields': [{'heat_id': 'single-final', 'entries': [entry], 'stands': ['1']}]})
+    command('calculate', {'heat_id': 'single-final'})
+    field = state['rounds'][-1]['fields'][0]
+    command('review', {'heat_id': 'single-final', 'sheet_digest': field['sheet']['digest']})
+    command('issue', {'heat_id': 'single-final', 'sheet_digest': field['sheet']['digest'], 'confirm': True})
+    field = state['rounds'][-1]['fields'][0]
+    command('outcomes', {'heat_id': 'single-final', 'issue_id': field['issue_id'], 'outcomes': [
+        {'entry_id': entry, 'status': 'finished', 'timer1_seconds': '20', 'timer2_seconds': '20'}]})
+    field = state['rounds'][-1]['fields'][0]
+    command('accept', {'heat_id': 'single-final', 'result_digest': field['result_revisions'][-1]['digest']})
+    command('finalize')
+    return state
+
+
+@pytest.mark.parametrize('change', ['add', 'remove'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_acceptance_rechecks_current_registration_with_unchanged_source_roster(tmp_path, change):
+    from models import ProCompetitor
+    from models.managed_event import ManagedAcceptance, ManagedAttemptRevision
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        _single_entry_final(event, user, config)
+        entrant = ProCompetitor.query.one()
+        assert entrant.get_events_entered() == ['Underhand']
+        if change == 'add':
+            make_pro_competitor(db.session, event.tournament, 'Synthetic late registration', events=['Underhand'])
+            db.session.commit()
+        else:
+            # Keep this request's already loaded competitor stale while an
+            # independent registration transaction removes its event entry.
+            with db.engine.begin() as connection:
+                connection.execute(ProCompetitor.__table__.update().where(
+                    ProCompetitor.id == entrant.id).values(events_entered='[]'))
+        exported = managed_events.submit(event, user, {'operation': 'export'})
+        with pytest.raises(ManagedEventError, match='active entered competitor'):
+            managed_events.accept_export(event, user, exported)
+        db.session.rollback()
+        assert ManagedAcceptance.query.count() == ManagedAttemptRevision.query.count() == 0
+        assert db.session.get(Event, event_id).status != 'completed'
+
+
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_accepted_export_retry_survives_later_registration_edit(tmp_path):
+    from models import ProCompetitor
+    from models.managed_event import ManagedAcceptance
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        managed_events.bind_event(event, user, config)
+        exported = managed_events.submit(event, user, {'operation': 'export'})
+        receipt = managed_events.accept_export(event, user, exported)
+        db.session.commit()
+        ProCompetitor.query.one().events_entered = '[]'
+        db.session.commit()
+        assert managed_events.accept_export(event, user, exported).id == receipt.id
+        assert ManagedAcceptance.query.count() == 1
+
+
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_nonfinal_correction_acceptance_reopens_host_awards_until_refinalized(tmp_path):
+    from models.managed_event import ManagedAcceptance, ManagedAttemptRevision
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        state = _single_entry_final(event, user, config)
+        event.set_payouts({'1': 100})
+        db.session.commit()
+        managed_events.accept_export(event, user, managed_events.submit(event, user, {'operation': 'export'}))
+        db.session.commit()
+        managed_events.apply_host_awards(event, user)
+        db.session.commit()
+        assert event.is_finalized and event.status == 'completed'
+        assert event.results.one().payout_amount == 100
+        field = state['rounds'][-1]['fields'][0]
+        state = managed_events.submit(event, user, {
+            'operation': 'correct', 'request_id': 'single-final-correction', 'expected_revision': state['revision'],
+            'editor': 'missoula', 'payload': {'heat_id': field['heat_id'], 'issue_id': field['issue_id'],
+                'outcomes': [{'entry_id': config['roster'][0]['entry_id'], 'status': 'dq'}],
+                'reason': 'Synthetic correction before final review', 'supersedes': field['result_revisions'][-1]['digest']}})
+        assert state['status'] != 'finalized'
+        exported = managed_events.submit(event, user, {'operation': 'export'})
+        managed_events.accept_export(event, user, exported)
+        db.session.commit()
+        assert not event.is_finalized and event.status == 'in_progress'
+        assert event.managed_operation.summary_revision == 0
+        assert ManagedAcceptance.query.count() == 2
+        # The corrected outcomes are retained in source state, but only become
+        # a career attempt revision after the source judge accepts them.
+        assert ManagedAttemptRevision.query.count() == 1
+        with pytest.raises(ManagedEventError, match='finalized'):
+            managed_events.apply_host_awards(event, user)
+        db.session.rollback()
+        field = state['rounds'][-1]['fields'][0]
+        state = managed_events.submit(event, user, {'operation': 'accept', 'request_id': 'accept-corrected-final',
+            'expected_revision': state['revision'], 'editor': 'missoula',
+            'payload': {'heat_id': field['heat_id'], 'result_digest': field['result_revisions'][-1]['digest']}})
+        managed_events.submit(event, user, {'operation': 'finalize', 'request_id': 'refinalize-corrected-final',
+            'expected_revision': state['revision'], 'editor': 'missoula', 'payload': {}})
+        managed_events.accept_export(event, user, managed_events.submit(event, user, {'operation': 'export'}))
+        db.session.commit()
+        assert ManagedAttemptRevision.query.count() == 2
+        assert not event.is_finalized and event.status == 'completed'
+        assert event.results.one().status == 'dq' and event.results.one().payout_amount == 100
+        managed_events.apply_host_awards(event, user)
+        db.session.commit()
+        assert event.is_finalized and event.results.one().payout_amount == 0
+
+
+@pytest.mark.parametrize('through_route', [False, True])
+@pytest.mark.parametrize('issued', [False, True])
+def test_registration_gear_sync_preserves_managed_fields_and_repairs_host_fields(through_route, issued):
+    from models.managed_event import ManagedFieldLink
+    from services.gear_sharing import fix_heat_gear_conflicts
+    from tests.conftest import make_event
+
+    app, event_id, _, _ = _projection_fixture()
+    with app.app_context():
+        event = db.session.get(Event, event_id)
+        host = make_event(db.session, event.tournament, 'Synthetic host gear event')
+        entrants = [make_pro_competitor(db.session, event.tournament, f'Synthetic gear entrant {i}',
+                                       events=[event.id, host.id]) for i in range(3)]
+        for first, second in [(entrants[0], entrants[1]), (entrants[1], entrants[0])]:
+            first.gear_sharing = json.dumps({str(e.id): second.name for e in (event, host)})
+        managed_heats = [make_heat(db.session, event, heat_number=1, competitors=[e.id for e in entrants[:2]]),
+                         make_heat(db.session, event, heat_number=2, competitors=[entrants[2].id])]
+        host_heats = [make_heat(db.session, host, heat_number=1, competitors=[e.id for e in entrants[:2]]),
+                      make_heat(db.session, host, heat_number=2, competitors=[entrants[2].id])]
+        db.session.add(ManagedFieldLink(event_id=event.id, module_heat_id='protected-gear-field',
+            heat_id=managed_heats[0].id, field_digest='a' * 64, issue_id='b' * 64 if issued else None))
+        db.session.commit()
+        before = {h.id: (h.get_competitors(), h.get_stand_assignments()) for h in managed_heats}
+        tid, host_ids = event.tournament_id, [h.id for h in host_heats]
+        if not through_route:
+            result = fix_heat_gear_conflicts(event.tournament)
+            assert result['fixed'] == 1 and result['managed_events_skipped'] == [event.id]
+            db.session.commit()
+    if through_route:
+        client = app.test_client()
+        client.post('/auth/login', data={'username': 'synthetic-projection-director', 'password': 'synthetic-only-password'})
+        response = client.post(f'/registration/{tid}/pro/gear-sharing/sync-heats')
+        assert response.status_code == 302
+        with client.session_transaction() as session:
+            assert any('STRATHMARK' in message for _category, message in session['_flashes'])
+    with app.app_context():
+        assert {hid: (db.session.get(Heat, hid).get_competitors(), db.session.get(Heat, hid).get_stand_assignments())
+                for hid in before} == before
+        assert [len(db.session.get(Heat, hid).get_competitors()) for hid in host_ids] == [1, 2]
+
+
 def test_competitor_scoped_scratch_cannot_remove_managed_roster():
     from services.scratch_cascade import ScratchCascadeConflict, execute_cascade
 

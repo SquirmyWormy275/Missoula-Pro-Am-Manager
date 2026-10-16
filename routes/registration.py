@@ -984,6 +984,9 @@ def pro_gear_sync_heats(tournament_id):
         db.session.commit()
         invalidate_tournament_caches(tournament_id)
         msg = f'Heat sync complete: {result["fixed"]} conflict(s) resolved.'
+        if result['managed_events_skipped']:
+            msg += (f' {len(result["managed_events_skipped"])} managed event(s) unchanged; '
+                    'revise their gear declarations and fields through STRATHMARK.')
         if result['failed']:
             msg += f' {len(result["failed"])} conflict(s) could not be auto-resolved.'
             for fail in result['failed'][:3]:

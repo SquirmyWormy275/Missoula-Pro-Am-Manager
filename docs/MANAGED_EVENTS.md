@@ -39,6 +39,11 @@ revision. The generic workspace serves several show profiles, so Missoula refuse
 to import a source configuration selecting a different discipline or timer rule.
 Export refreshes authoritative state and requires the same source revision; a
 concurrent change asks the operator to refresh and retry.
+New acceptance also reloads registrations under the tournament parent lock and
+checks the active entries, divisions, gear, wood and physical resources against
+the source configuration. An unchanged source roster cannot conceal a host-side
+entry addition/removal. Exact retries of an already accepted export retain their
+original receipt after later registration edits.
 
 Acceptance and award application retain a host-owned SQLite writer fence through
 the outer host transaction. The private adapter first asks exact rc11 to export
@@ -94,10 +99,17 @@ times across rebased heats are not compared to invent placings. Acceptance never
 settles points/payouts. **Apply host points and payouts** explicitly uses accepted
 module positions, preserves tie behavior, and clears changed payout settlements.
 Corrections append history and require a fresh acceptance/award decision.
+Accepting a source revision that is no longer finalized reopens the host event
+and clears the accepted-summary eligibility for awards. Earlier award/settlement
+facts remain for explicit reconciliation. After source review and re-finalization,
+accept the new summary and apply host awards deliberately.
 Accepting an editor/metadata revision with the same summary keeps existing host
 award finalization. Competitor-wide scratch cascades refuse linked managed
 entries, preserving their source positions and history; use the managed outcome
 or roster workflow and event-scoped operations for unrelated events.
+Registration's gear heat synchronization leaves managed fields unchanged,
+including pending and issued fields, and identifies the skipped events. It can
+still repair conflicts in independent host-owned heats in the same show.
 College awards rebuild both individual and affected team totals, including after
 corrections. Pro ties retain Missoula's existing shared-position payout: each tied
 entrant receives the configured purse for that shared place. Direct entry and

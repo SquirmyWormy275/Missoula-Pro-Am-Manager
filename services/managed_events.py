@@ -214,7 +214,7 @@ def _host_roster(event, config, *, assign_gear=False):
         _validate_event_gear_declarations,
     )
 
-    entrants = _get_event_competitors(event)
+    entrants = _get_event_competitors(event, refresh=True)
     mapping = {r['entry_id']: int(r['host_ref'].split(':')[-1]) for r in config['roster']}
     if len(set(mapping.values())) != len(mapping) or set(mapping.values()) != {r['id'] for r in entrants}:
         raise ManagedEventError('Managed roster must account for every active entered competitor exactly once.')
@@ -364,7 +364,7 @@ def submit(event, user, request, *, _initial_binding=False):
 
 def _locked_link(event):
     """Reload under the parent lock; an earlier ORM read is not current state."""
-    db.session.query(Event).filter_by(id=event.id).with_for_update().one()
+    db.session.query(Event).filter_by(id=event.id).populate_existing().with_for_update().one()
     return (ManagedEventLink.query.filter_by(event_id=event.id)
             .populate_existing().with_for_update().one())
 
@@ -537,6 +537,9 @@ def accept_export(event, user, exported):
     if link.state_json and revision < json.loads(link.state_json)['revision']:
         raise ManagedEventError('Stale managed export cannot replace a later correction.')
     guard = guard_managed_awards([event], user)
+    from services.flight_builder import lock_tournament_schedule
+
+    lock_tournament_schedule(event.tournament_id)
     link = _locked_link(event)
     prior = ManagedAcceptance.query.filter_by(event_id=event.id, module_revision=revision).first()
     if prior:
@@ -548,6 +551,14 @@ def accept_export(event, user, exported):
     if revision <= link.accepted_revision:
         raise ManagedEventError('Stale managed export cannot replace a later correction.')
     mapping = json.loads(link.mapping_json)
+    # Source roster equality with an old projection says nothing about current
+    # registration. Recheck host facts under the same parent lock used by
+    # registration writers, even when the source config has not changed.
+    config = guard.states[link.module_event_id]['config']
+    _validate_host_profile(event, config)
+    _validate_show_wood(event, config)
+    if _host_roster(event, config) != mapping:
+        raise ManagedEventError('Refresh the managed entry mapping before accepting this revision.')
     for item in exported['deliveries']:
         payload = item['payload']
         if digest(payload) != item['payload_digest'] or payload['outcome']['entry_id'] not in mapping or payload['source_event_id'] != link.module_event_id:
@@ -577,6 +588,12 @@ def accept_export(event, user, exported):
         if link.summary_revision != exported['summary_revision']:
             event.is_finalized = False
         link.summary_revision = exported['summary_revision']
+    else:
+        # Keep earlier awards/settlement facts for explicit reconciliation, but
+        # they cannot remain final after accepting a still-active correction.
+        event.is_finalized = False
+        event.status = 'in_progress' if exported['rounds'] else 'pending'
+        link.summary_revision = 0
     link.accepted_revision = revision
     receipt = ManagedAcceptance(event_id=event.id, module_revision=revision, payload_digest=payload_digest, actor_id=user.id)
     db.session.add(receipt)

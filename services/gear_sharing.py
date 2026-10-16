@@ -1871,9 +1871,10 @@ def fix_heat_gear_conflicts(tournament) -> dict:
     attempt to resolve each by moving one competitor to a compatible heat in
     the same event run.
 
-    Only touches heats that are not yet completed.
+    Only touches host-owned heats that are not yet completed. Delegated fields
+    remain under STRATHMARK authority, including pending and issued fields.
     Caller is responsible for db.session.commit().
-    Returns: {fixed: int, failed: list[dict]}
+    Returns: {fixed: int, failed: list[dict], managed_events_skipped: list[int]}
     """
     import config
     from database import db
@@ -1909,6 +1910,7 @@ def fix_heat_gear_conflicts(tournament) -> dict:
 
     fixed = 0
     failed = []
+    managed_events_skipped = []
 
     all_pro_events = Event.query.filter_by(tournament_id=tournament.id, event_type='pro').all()
     for event in all_pro_events:
@@ -1916,6 +1918,9 @@ def fix_heat_gear_conflicts(tournament) -> dict:
             Heat.status != 'completed'
         ).order_by(Heat.run_number, Heat.heat_number).all()
         if not heats:
+            continue
+        if event.operation_mode == 'managed':
+            managed_events_skipped.append(event.id)
             continue
 
         stand_config = config.STAND_CONFIGS.get(event.stand_type, {})
@@ -2134,4 +2139,4 @@ def fix_heat_gear_conflicts(tournament) -> dict:
                                 'suggestions': suggestions,
                             })
 
-    return {'fixed': fixed, 'failed': failed}
+    return {'fixed': fixed, 'failed': failed, 'managed_events_skipped': managed_events_skipped}
