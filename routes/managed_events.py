@@ -39,9 +39,11 @@ def protect_delegated_writes():
     if request.method != 'POST' or not request.endpoint or not request.endpoint.startswith(('scoring.', 'scheduling.')) or request.endpoint == 'scoring.configure_payouts':
         return
     args = request.view_args or {}
-    event = db.session.get(Event, args['event_id']) if args.get('event_id') else None
-    if event is None and args.get('heat_id'):
-        heat = db.session.get(Heat, args['heat_id'])
+    event_id = args.get('event_id', args.get('eid'))
+    event = db.session.get(Event, event_id) if event_id else None
+    heat_id = args.get('heat_id', args.get('source_heat_id'))
+    if event is None and heat_id:
+        heat = db.session.get(Heat, heat_id)
         event = heat.event if heat else None
     if event is not None and event.operation_mode == 'managed':
         abort(409, description='Use STRATHMARK managed event operations for marks, outcomes and progression.')

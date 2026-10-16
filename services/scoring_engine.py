@@ -1434,23 +1434,25 @@ def save_payout_template(name: str, payout_dict: dict) -> PayoutTemplate:
     return template
 
 
-def apply_payout_template(event: Event, template_id: int) -> bool:
+def apply_payout_template(event: Event, template_id: int, *, managed_actor=None) -> bool:
     """Apply a saved template's payout structure to an event.
 
     If the event is already finalized, re-runs calculate_positions() so that
     the new payout amounts propagate to EventResult.payout_amount and
     ProCompetitor.total_earnings immediately.  Returns True on success.
     """
-    from services.managed_events import assert_host_owned
-
-    assert_host_owned(event)
     template = db.session.get(PayoutTemplate, template_id)
     if template is None:
         return False
     event.set_payouts(template.get_payouts())
     if event.is_finalized:
         with db.session.begin_nested():
-            calculate_positions(event)
+            if event.operation_mode == 'managed':
+                from services.managed_events import apply_host_awards
+
+                apply_host_awards(event, managed_actor)
+            else:
+                calculate_positions(event)
     db.session.commit()
     return True
 

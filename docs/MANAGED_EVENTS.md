@@ -25,6 +25,23 @@ gear groups, an explicit selection reason and authorized prior history. The
 example 275 mm configuration never overrides this show's WoodConfig.
 Unsupported families, partial/mismatched rosters, absent wood and conflicting
 gear/stand assignments fail explicitly. Future history is refused.
+Existing host-generated heats also prevent binding; do not mix two field layouts.
+Tournament setup cannot alter delegated discipline/capacity/handicap configuration.
+Preparation rechecks the current active roster, divisions, gear declarations and
+wood. Changed host facts block new preparation until reconciled with a reviewed
+source configuration. Physical stand identifiers must be canonical distinct
+integers; Missoula retains its dual-timer rule. Already accepted requests still
+return their original receipts. Recovery of an ambiguous command first checks
+verified source audit, so a later host edit cannot hide a committed outcome.
+
+A pending creation keeps legacy writes fenced while its outcome is uncertain.
+Recover its exact request first. If its supplied configuration was refused, the
+same workspace accepts corrected configuration under a new request, retaining
+the original intent. Source creation is insert-only: an ambiguous earlier success
+cannot be replaced. Its creating actor/request and exact configuration determine
+the accepted host mapping. Once confirmed, other initial requests become retained
+conflicts rather than permanent pending work. Never delete a pending link to guess
+that the remote creation failed.
 
 The host's advanced command panel accepts the versioned operations documented in
 [STRATHMARK's operator guide](https://github.com/SquirmyWormy275/STRATHMARK/blob/main/docs/MANAGED_EVENTS.md).
@@ -55,6 +72,10 @@ times across rebased heats are not compared to invent placings. Acceptance never
 settles points/payouts. **Apply host points and payouts** explicitly uses accepted
 module positions, preserves tie behavior, and clears changed payout settlements.
 Corrections append history and require a fresh acceptance/award decision.
+College awards rebuild both individual and affected team totals, including after
+corrections. Pro ties retain Missoula's existing shared-position payout: each tied
+entrant receives the configured purse for that shared place. Direct entry and
+saved payout templates use those accepted positions without recomputing placing.
 
 **Deliver next five pending career revisions** is a supervised bounded batch.
 Configure `MNEMEX_SHOW_RESULTS_URL` as an HTTPS or loopback

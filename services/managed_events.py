@@ -106,41 +106,14 @@ def bind_event(event, user, config):
     """Bind an existing show's active entries; never trust a name-based mapping."""
     authorize(user, event)
     _configured_runtime()
-    if event.operation_mode != 'host' or event.handicap_authority_mode == 'shadow' or not event.is_handicap or event.stand_type not in {'underhand', 'standing_block'}:
+    link = event.managed_operation
+    pending_creation = link is not None and link.state_json is None and link.accepted_revision == 0
+    if (event.operation_mode != 'host' and not pending_creation) or event.handicap_authority_mode == 'shadow' or not event.is_handicap or event.stand_type not in {'underhand', 'standing_block'}:
         raise ManagedEventError('Only an unlinked SB/UH handicap event may opt into managed mode.')
-    if event.is_partnered or event.requires_dual_runs or event.requires_triple_runs or event.is_finalized or event.results.filter(EventResult.status != 'pending').first():
+    if event.is_partnered or event.requires_dual_runs or event.requires_triple_runs or event.is_finalized or event.heats.count() or event.results.filter(EventResult.status != 'pending').first():
         raise ManagedEventError('Managed v1 requires a fresh, single-run individual event.')
-    from services.heat_generator import _get_event_competitors
-
-    entrants = _get_event_competitors(event)
     _validate_show_wood(event, config)
-    # Input host_ref is the stable event-local primary-key mapping, never name.
-    mapping = {r['entry_id']: int(r['host_ref'].split(':')[-1]) for r in config['roster']}
-    if len(set(mapping.values())) != len(mapping) or set(mapping.values()) != {r['id'] for r in entrants}:
-        raise ManagedEventError('Managed roster must account for every active entered competitor exactly once.')
-    gender_by_id = {r['id']: r['gender'] for r in entrants}
-    for row in config['roster']:
-        if row['host_ref'] != f"{event.event_type}:{mapping[row['entry_id']]}" or row['gender'] != gender_by_id[mapping[row['entry_id']]]:
-            raise ManagedEventError('Mismatched host identity or division mapping.')
-    from services.heat_generator import (
-        _competitors_share_gear_for_event,
-        _validate_event_gear_declarations,
-    )
-
-    _validate_event_gear_declarations(event, entrants)
-    groups = {r['id']: r['id'] for r in entrants}
-    def root(value):
-        while groups[value] != value:
-            value = groups[value]
-        return value
-    for i, first in enumerate(entrants):
-        for second in entrants[i+1:]:
-            if _competitors_share_gear_for_event(first, second, event):
-                groups[root(second['id'])] = root(first['id'])
-    for row in config['roster']:
-        comp_id = mapping[row['entry_id']]
-        family = [other for other in groups if root(other) == root(comp_id)]
-        row['gear_group'] = f'gear:{min(family)}' if len(family) > 1 else None
+    mapping = _host_roster(event, config, assign_gear=True)
     expected_event = event.shadow_event_occurrence_id + ':managed'
     if config['event_id'] != expected_event or config['tournament_id'] != event.tournament.shadow_tournament_id or config['discipline'] != {'underhand': 'UH', 'standing_block': 'SB'}[event.stand_type] or config['publisher'] != 'host':
         raise ManagedEventError('Source event/tournament/discipline/publisher binding differs from this show.')
@@ -148,10 +121,61 @@ def bind_event(event, user, config):
         raise ManagedEventError('Live managed-event qualification is not enabled.')
     if len(config['stands']) > (event.max_stands or 5):
         raise ManagedEventError('Managed capacity exceeds the configured show resource.')
-    link = ManagedEventLink(event=event, module_event_id=expected_event, show_id=config['show_id'], mapping_json=canonical(mapping))
-    db.session.add(link)
-    db.session.commit()
-    return submit(event, user, {'operation': 'create', 'request_id': str(uuid.uuid4()), 'editor': 'missoula', 'payload': config})
+    if config.get('timer_policy') != 'dual_mean':
+        raise ManagedEventError('Missoula requires its documented dual timer policy.')
+    if link is None:
+        link = ManagedEventLink(event=event, module_event_id=expected_event, show_id=config['show_id'], mapping_json=canonical(mapping))
+        db.session.add(link)
+        db.session.commit()
+    elif link.module_event_id != expected_event or link.show_id != config['show_id']:
+        raise ManagedEventError('A pending creation must retain its original source identity.')
+    # A corrected initial configuration gets a new durable request. Source
+    # create is insert-only: an earlier ambiguous success cannot be overwritten.
+    # Keep the original mapping until a source receipt identifies the winner.
+    return submit(event, user, {'operation': 'create', 'request_id': str(uuid.uuid4()), 'editor': 'missoula', 'payload': config}, _initial_binding=True)
+
+
+def _host_roster(event, config, *, assign_gear=False):
+    from services.heat_generator import (
+        _competitors_share_gear_for_event,
+        _get_event_competitors,
+        _get_tournament_events,
+        _validate_event_gear_declarations,
+    )
+
+    entrants = _get_event_competitors(event)
+    mapping = {r['entry_id']: int(r['host_ref'].split(':')[-1]) for r in config['roster']}
+    if len(set(mapping.values())) != len(mapping) or set(mapping.values()) != {r['id'] for r in entrants}:
+        raise ManagedEventError('Managed roster must account for every active entered competitor exactly once.')
+    gender_by_id = {r['id']: r['gender'] for r in entrants}
+    for row in config['roster']:
+        if row['host_ref'] != f"{event.event_type}:{mapping[row['entry_id']]}" or row['gender'] != gender_by_id[mapping[row['entry_id']]]:
+            raise ManagedEventError('Mismatched host identity or division mapping.')
+    # The retained helper's cache is scoped to one generation operation, not a
+    # reusable ORM snapshot across these separate host requests/databases.
+    _get_tournament_events._cache = {}
+    try:
+        _validate_event_gear_declarations(event, entrants)
+        groups = {r['id']: r['id'] for r in entrants}
+        def root(value):
+            while groups[value] != value:
+                value = groups[value]
+            return value
+        for i, first in enumerate(entrants):
+            for second in entrants[i+1:]:
+                if _competitors_share_gear_for_event(first, second, event):
+                    groups[root(second['id'])] = root(first['id'])
+        for row in config['roster']:
+            comp_id = mapping[row['entry_id']]
+            family = [other for other in groups if root(other) == root(comp_id)]
+            gear = f'gear:{min(family)}' if len(family) > 1 else None
+            if assign_gear:
+                row['gear_group'] = gear
+            elif row['gear_group'] != gear:
+                raise ManagedEventError('Host gear declarations changed; revise unissued source preparation.')
+    finally:
+        _get_tournament_events._cache = {}
+    return mapping
 
 
 def _validate_show_wood(event, config):
@@ -171,11 +195,13 @@ def _validate_show_wood(event, config):
         stands = [int(s) for s in config['stands']]
     except (TypeError, ValueError) as exc:
         raise ManagedEventError('Physical integer stands required.') from exc
+    if len(set(stands)) != len(stands) or any(str(n) != str(raw) for n, raw in zip(stands, config['stands'])):
+        raise ManagedEventError('Physical stands require distinct canonical integer identifiers.')
     if any(s < 1 or s > (event.max_stands or 5) for s in stands):
         raise ManagedEventError('Stand outside configured show resources.')
 
 
-def submit(event, user, request):
+def submit(event, user, request, *, _initial_binding=False):
     """Commit exact local intent before crossing the process/response boundary."""
     authorize(user, event)
     link = event.managed_operation
@@ -189,21 +215,45 @@ def submit(event, user, request):
             _project_latest(event, result)
             db.session.commit()
         return result
-    if request['operation'] in {'calculate', 'review', 'issue'} and link.state_json:
-        _validate_show_wood(event, json.loads(link.state_json)['config'])
-    if request['operation'] in {'calculate', 'review', 'issue', 'outcomes'}:
-        validate_host_fields(event)
     request_id = request.get('request_id')
     if not isinstance(request_id, str) or not 1 <= len(request_id) <= 224:
         raise ManagedEventError('Stable request identity required.')
     saved = ManagedCommand.query.filter_by(event_id=event.id, actor_id=user.id, request_id=request_id).first()
+    if request['operation'] == 'create' and saved is None and not _initial_binding:
+        raise ManagedEventError('Create through the validated event binding form.')
     binding = digest(request)
     if saved:
         if saved.payload_digest != binding:
             raise ManagedEventError('Managed request identity conflicts with a different payload.')
         if saved.status == 'accepted':
             return json.loads(saved.response_json)
-    else:
+        if saved.status == 'conflicting':
+            raise ManagedEventError('This initial request does not own the accepted source creation; its conflict evidence is retained.')
+    already_committed = False
+    if saved:
+        # A later host edit must not prevent recovery of a source command that
+        # already committed. Read verified source audit before allowing its
+        # exact retry to bypass present-day preparation checks.
+        try:
+            observed = _call(user, link, {'operation': 'read', 'event_id': link.module_event_id})
+        except ManagedEventError as exc:
+            if request['operation'] != 'create' or str(exc) != 'event_not_found':
+                raise
+        else:
+            already_committed = any(item['actor_id'] == user.shadow_actor_id and
+                                    item['request_id'] == request_id and item['action'] == request['operation']
+                                    for item in observed['audit'])
+            if already_committed:
+                _project_latest(event, observed)
+                db.session.commit()
+    if not already_committed:
+        if request['operation'] in {'fields', 'forecast', 'calculate', 'review', 'issue'} and link.state_json:
+            config = json.loads(link.state_json)['config']
+            _validate_show_wood(event, config)
+            _host_roster(event, config)
+        if request['operation'] in {'fields', 'calculate', 'review', 'issue', 'outcomes'}:
+            validate_host_fields(event)
+    if saved is None:
         saved = ManagedCommand(event_id=event.id, actor_id=user.id, request_id=request_id,
                                payload_json=canonical(request), payload_digest=binding)
         db.session.add(saved)
@@ -236,6 +286,25 @@ def _project_latest(event, result):
     if current and result['revision'] == current['revision'] and canonical(result) != canonical(current):
         raise ManagedEventError('Changed managed state for an existing revision.')
     if not current or result['revision'] > current['revision']:
+        if not current:
+            # A recovered original request can differ from a subsequently
+            # refused candidate. Bind the source's creating actor/request and
+            # exact supplied config before adopting its accepted mapping.
+            creation = result['audit'][0]
+            owned = (ManagedCommand.query.join(User, User.id == ManagedCommand.actor_id)
+                     .filter(ManagedCommand.event_id == event.id,
+                             ManagedCommand.request_id == creation['request_id'],
+                             User.shadow_actor_id == creation['actor_id']).one_or_none())
+            original = json.loads(owned.payload_json) if owned else {}
+            if creation['action'] != 'create' or original.get('operation') != 'create' or canonical(original.get('payload')) != canonical(result['config']):
+                raise ManagedEventError('Initial source receipt does not match an owned creation request.')
+            link.mapping_json = canonical({row['entry_id']: int(row['host_ref'].split(':')[-1])
+                                           for row in result['config']['roster']})
+            for candidate in ManagedCommand.query.filter_by(event_id=event.id, status='pending').all():
+                if candidate.id != owned.id and json.loads(candidate.payload_json).get('operation') == 'create':
+                    candidate.status = 'conflicting'
+                    candidate.response_json = canonical({'error': 'initial_creation_superseded',
+                                                          'source_creation_request_id': creation['request_id']})
         project_fields(event, result)
         link.state_json = canonical(result)
 
@@ -399,10 +468,18 @@ def apply_host_awards(event, user):
             if event.event_type == 'college':
                 row.points_awarded = split_tie_points(position, len(rows))
             else:
-                row.payout_amount = sum(float(event.get_payout_for_position(n)) for n in range(position, position + len(rows))) / len(rows)
+                row.payout_amount = event.get_payout_for_position(position)
     db.session.flush()
     if event.event_type == 'college':
-        _rebuild_individual_points([r.competitor_id for r in results])
+        from models import CollegeCompetitor, Team
+
+        touched_ids = [r.competitor_id for r in results]
+        _rebuild_individual_points(touched_ids)
+        touched = CollegeCompetitor.query.filter(CollegeCompetitor.id.in_(touched_ids)).all()
+        for team_id in {comp.team_id for comp in touched if comp.team_id}:
+            team = db.session.get(Team, team_id)
+            if team:
+                team.recalculate_points()
     else:
         from models.competitor import ProCompetitor
 

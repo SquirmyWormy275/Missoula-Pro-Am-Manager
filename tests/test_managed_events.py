@@ -28,7 +28,7 @@ def test_retained_mode_remains_independent():
     assert_host_owned(Event())
 
 
-def _projection_fixture():
+def _projection_fixture(*, linked=True):
     from database import db
     from models import Event, Tournament, User
     from models.managed_event import ManagedEventLink
@@ -47,13 +47,14 @@ def _projection_fixture():
         db.session.flush()
         state = {'schema_version': CONTRACT, 'event_id': 'synthetic:projection:event',
                  'show_id': 'synthetic:projection', 'revision': 1, 'rounds': []}
-        db.session.add(ManagedEventLink(event=event, module_event_id=state['event_id'],
-                                      show_id=state['show_id'], mapping_json='{}', state_json=canonical(state)))
+        if linked:
+            db.session.add(ManagedEventLink(event=event, module_event_id=state['event_id'],
+                                          show_id=state['show_id'], mapping_json='{}', state_json=canonical(state)))
         db.session.commit()
         return app, event.id, user.id, state
 
 
-@pytest.mark.parametrize('operation', ['read', 'forecast'])
+@pytest.mark.parametrize('operation', ['read', 'handover'])
 def test_delayed_component_response_cannot_replace_newer_host_projection(monkeypatch, operation):
     from database import db
     from models import Event, User
@@ -78,7 +79,7 @@ def test_delayed_component_response_cannot_replace_newer_host_projection(monkeyp
 
         monkeypatch.setattr(managed_events, '_call', response_after_other_request_commits)
         request = {'operation': operation, 'request_id': 'synthetic-delayed-response',
-                   'expected_revision': 1, 'editor': 'missoula', 'payload': {}}
+                   'expected_revision': 1, 'editor': 'missoula', 'payload': {'editor': 'gui'}}
         assert managed_events.submit(event, user, request) == delayed
         db.session.expire_all()
         assert json.loads(db.session.get(ManagedEventLink, event_id).state_json) == newer

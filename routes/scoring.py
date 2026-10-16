@@ -1820,10 +1820,15 @@ def configure_payouts(tournament_id, event_id):
 
         if action == 'apply_template':
             tpl_id = request.form.get('template_id', type=int)
-            if engine.apply_payout_template(event, tpl_id):
-                flash('Template applied.', 'success')
-            else:
-                flash('Template not found.', 'error')
+            try:
+                if engine.apply_payout_template(event, tpl_id, managed_actor=current_user):
+                    invalidate_tournament_caches(tournament_id)
+                    flash('Template applied.', 'success')
+                else:
+                    flash('Template not found.', 'error')
+            except (StaleDataError, IntegrityError, ManagedEventError):
+                db.session.rollback()
+                flash('Accept the current source result before applying payouts, then retry.', 'error')
             return redirect(url_for('scoring.configure_payouts',
                                     tournament_id=tournament_id, event_id=event_id))
 
