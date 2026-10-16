@@ -60,7 +60,7 @@ private historical/training corpus was used for these checks.
 | STRATHMARK | `de878a477f1d9ecae1c5190cb04318c8e957a78f`, final reviewed source `3e27a3da6c2ee0f6d529ce8130f63caf0df9ac11` (includes capability metadata, current wiki ownership and readable mobile tables); [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35), Required CI running; rc11 publication pending main merge/CI |
 | Missoula | nullable rollback-compatible model fix `8c0ae904d19cf618d7b8b2460e540cb3414a9d96`; managed integration `e16893e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; host SQLite/PostgreSQL/migration/lint/audit/recovery CI passed; managed lane awaits exact producer publication; merge BLOCKED by hosted backup/recovery proof below |
 | STRATHEX | `382561b`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), draft pending exact producer publication; version 7.4.3 |
-| MNEMEX | implementation `1d2bd2942d051403b3406979a1e567b4475acd7c`; [PR 5](https://github.com/SquirmyWormy275/mnemex/pull/5) MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; Linux/Windows PR and main CI passed; no deployment |
+| MNEMEX | implementation `1d2bd2942d051403b3406979a1e567b4475acd7c`; [PR 5](https://github.com/SquirmyWormy275/mnemex/pull/5) MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; follow-up source binding/show-scope fix `0b74353b9e03f0fc9b09dedbcf5f99de86afc2fb` in [PR 6](https://github.com/SquirmyWormy275/mnemex/pull/6) MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; both PRs passed Linux/Windows CI; no deployment |
 
 ### Working features and boundaries
 
@@ -131,6 +131,7 @@ No SQLite result is labeled PostgreSQL or Windows/provider qualification.
 | Current payout changes | 94 passed, 3 skipped; `host-payout-broad.xml`; actual producer/MNEMEX contract and direct payout subset 7 passed in `host-payout-final2.xml` |
 | Release/migration/recovery guards | 49 passed, 1 skipped; `host-release-current.xml`; PostgreSQL migration repair/concurrent delivery also executed in full PG lane |
 | MNEMEX full isolated SQLite | 629 passed, 53 optional skipped; `mnemex-full-final.xml` |
+| MNEMEX correction/scope follow-up | Three RED cases reproduced direct correction entry/issued-binding poisoning and cross-show conflict counts. Full fixed suite 632 passed, 53 skipped (`mnemex-binding-full.xml`); narrow PostgreSQL 13 passed, cleanup PASS (`mnemex-binding-postgres/report.json`); rebuilt installed wheel check and real Missoula HTTP test PASS (`host-hardened-receiver.xml`). Additive partners 0004 retains unattributed old conflicts as null/private. |
 | MNEMEX narrow inbox on PostgreSQL | 10 passed; `postgres-full-final/{mnemex-junit.xml,mnemex.log}` |
 | MNEMEX distribution | wheel/sdist built; installed wheel imported from site-packages outside checkout; Django check/migration drift PASS; `mnemex-installed-wheel-check2.log` |
 | STRATHEX full suite | 380 passed; `strathex-final.xml` |
@@ -181,7 +182,7 @@ python scripts/verify_managed_client.py --wheel dist/strathex-7.4.3-py3-none-any
 
 Missoula CI's new managed lane installs separate host/producer/records environments,
 pins `strathmark[workspace]==3.0.0rc11` and MNEMEX merge
-`7f96f798317ac3b1afd7e0a37eb021c6099389a4`, and runs actual HTTP contracts and
+`43b1d9382da0e0b7f56eaa98e368c5a5b095590d`, and runs actual HTTP contracts and
 R11/R12. It never opts into the existing production audit dispatch. Existing
 production requirements and all compatibility pins remain intact.
 
