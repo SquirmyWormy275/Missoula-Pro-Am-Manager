@@ -160,6 +160,19 @@ def guard_managed_awards(events, user):
 
 
 def bind_event(event, user, config):
+    """Serialize freshness and delegation with the host's schedule writers."""
+    from services.flight_builder import lock_tournament_schedule, sqlite_schedule_writer_guard
+
+    authorize(user, event)
+    _configured_runtime()
+    with sqlite_schedule_writer_guard(event.tournament_id):
+        lock_tournament_schedule(event.tournament_id)
+        db.session.query(Event).filter_by(id=event.id).populate_existing().with_for_update().one()
+        db.session.expire(event, ['managed_operation'])
+        return _bind_event_locked(event, user, config)
+
+
+def _bind_event_locked(event, user, config):
     """Bind an existing show's active entries; never trust a name-based mapping."""
     authorize(user, event)
     _configured_runtime()

@@ -2,7 +2,7 @@
 
 The exact rc11 application supplies exports, authorization and its verified
 transaction primitive. No numerical, result or progression logic lives here.
-Keep its SQLite writer fence until the host acknowledges commit or closes stdin.
+Verify a snapshot under its transaction, then hand lock ownership to the host.
 """
 
 import argparse
@@ -13,7 +13,7 @@ from importlib.metadata import version
 
 def main():
     from strathmark.events.client import local_request
-    from strathmark.events.contracts import closed, encode
+    from strathmark.events.contracts import closed, digest, encode
     from strathmark.events.operations import EventOperations
 
     parser = argparse.ArgumentParser()
@@ -34,18 +34,21 @@ def main():
         ops = EventOperations(args.database)
         exports = {event_id: local_request(ops, {'principal': envelope['principal'],
                    'request': {'operation': 'export', 'event_id': event_id}}) for event_id in event_ids}
-        # All CLI/GUI writes use this same BEGIN IMMEDIATE transaction. Verify
-        # the earlier application exports after obtaining it, then retain it
-        # through the independent host commit. EOF rolls back and releases it.
+        # All CLI/GUI writes use BEGIN IMMEDIATE. The host will take its own
+        # lock after handoff and compare these opaque verified-state digests.
         with ops.store.transaction() as source:
             states = {event_id: ops.store.read(source, event_id) for event_id in event_ids}
             if any(states[key]['revision'] != exports[key]['event_revision'] for key in event_ids):
                 raise ValueError('source_changed_before_fence')
-            print(encode({'ok': True, 'schema_version': 'strathmark.held-export.v1',
-                          'exports': exports, 'states': states}), flush=True)
+            print(encode({'ok': True, 'schema_version': 'strathmark.held-export.v2',
+                          'exports': exports, 'states': states,
+                          'state_digests': {key: digest(value) for key, value in states.items()}}), flush=True)
             announced = True
-            if sys.stdin.readline(16) != 'commit\n':
-                raise EOFError('host_transaction_aborted')
+            if sys.stdin.readline(16) != 'handoff\n':
+                raise EOFError('host_handoff_aborted')
+            # Read-only transaction: release before the host acquires its own
+            # lock. Any intervening writer changes the digest and is refused.
+            raise EOFError('host_handoff')
     except EOFError:
         return 0
     except Exception as exc:

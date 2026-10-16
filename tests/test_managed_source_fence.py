@@ -7,6 +7,7 @@ import subprocess
 import threading
 
 import pytest
+from sqlalchemy import event as sa_event
 from sqlalchemy import text
 
 from database import db
@@ -79,7 +80,7 @@ def test_source_change_between_export_and_acceptance_is_refused(tmp_path):
         assert ManagedAcceptance.query.count() == 0
 
 
-@pytest.mark.parametrize('outcome', ['commit', 'rollback', 'close', 'savepoint_commit', 'savepoint_rollback'])
+@pytest.mark.parametrize('outcome', ['commit', 'rollback', 'close', 'savepoint_commit', 'savepoint_rollback', 'midcommit_helper_exit'])
 @pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
 def test_source_writer_waits_for_outer_host_transaction(tmp_path, outcome):
     from services import managed_events
@@ -123,6 +124,16 @@ print(json.dumps(result),flush=True)
                 output.get(timeout=.2)
             with db.engine.connect() as independent:
                 assert independent.execute(text('SELECT count(*) FROM managed_acceptances')).scalar() == 0
+            if outcome == 'midcommit_helper_exit':
+                def after_before_commit(_connection):
+                    # Engine commit dispatch is after Session.before_commit
+                    # and before the DBAPI commit. The helper may disappear;
+                    # the host-owned source mutex must still exclude writers.
+                    guard.process.kill()
+                    guard.process.wait(timeout=5)
+                    with pytest.raises(queue.Empty):
+                        output.get(timeout=1)
+                sa_event.listen(db.engine, 'commit', after_before_commit, once=True)
             if outcome == 'rollback':
                 db.session.rollback()
             elif outcome == 'close':
@@ -155,13 +166,84 @@ def test_lost_source_fence_refuses_host_commit(tmp_path):
         exported = managed_events.submit(event, user, {'operation': 'export'})
         managed_events.accept_export(event, user, exported)
         guard = db.session.info['managed_source_fence']
-        guard.process.kill()
-        guard.process.wait(timeout=5)
+        guard.source_connection.close()
         with pytest.raises(ManagedEventError, match='Source fence was lost'):
             db.session.commit()
         db.session.rollback()
         assert ManagedAcceptance.query.count() == 0
         assert managed_events.submit(event, user, {'operation': 'read'})['revision'] == 1
+
+
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_binding_waits_for_schedule_writer_and_rechecks_freshness(tmp_path, monkeypatch):
+    from models.managed_event import ManagedEventLink
+    from services import managed_events
+    from services.flight_builder import lock_tournament_schedule, sqlite_schedule_writer_guard
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        tid = db.session.get(Event, event_id).tournament_id
+    schedule_locked, generate, generated = threading.Event(), threading.Event(), threading.Event()
+    binding_started, permit_bind = threading.Event(), threading.Event()
+    results = queue.Queue()
+    real_wood = managed_events._validate_show_wood
+
+    def pause_after_freshness(*args):
+        assert permit_bind.wait(timeout=15)
+        return real_wood(*args)
+    monkeypatch.setattr(managed_events, '_validate_show_wood', pause_after_freshness)
+
+    def generator():
+        try:
+            with app.app_context(), sqlite_schedule_writer_guard(tid):
+                lock_tournament_schedule(tid)
+                event = db.session.get(Event, event_id)
+                assert event.operation_mode == 'host'
+                schedule_locked.set()
+                assert generate.wait(timeout=15)
+                make_heat(db.session, event)
+                db.session.commit()
+                generated.set()
+        except Exception as exc:
+            results.put(('generator_error', repr(exc)))
+
+    def binding():
+        try:
+            with app.app_context():
+                event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+                # Warm the relationship before waiting: freshness must reload.
+                assert event.managed_operation is None
+                binding_started.set()
+                try:
+                    managed_events.bind_event(event, user, config)
+                except ManagedEventError as exc:
+                    db.session.rollback()
+                    results.put(('binding_refused', str(exc)))
+                else:
+                    results.put(('binding_accepted', None))
+        except Exception as exc:
+            results.put(('binding_error', repr(exc)))
+
+    first = threading.Thread(target=generator, daemon=True)
+    second = threading.Thread(target=binding, daemon=True)
+    first.start()
+    assert schedule_locked.wait(timeout=15)
+    second.start()
+    assert binding_started.wait(timeout=15)
+    # Let the old unlocked path reach its paused validation. The fixed path
+    # remains behind the schedule writer until its existing heat commits.
+    threading.Event().wait(.3)
+    generate.set()
+    assert generated.wait(timeout=15)
+    permit_bind.set()
+    first.join(timeout=15)
+    second.join(timeout=15)
+    assert not first.is_alive() and not second.is_alive()
+    result, detail = results.get(timeout=1)
+    assert result == 'binding_refused' and 'fresh' in detail, (result, detail)
+    with app.app_context():
+        assert db.session.get(Event, event_id).heats.count() == 1
+        assert ManagedEventLink.query.count() == 0
 
 
 @pytest.mark.parametrize('retain_heat_id', [False, True])

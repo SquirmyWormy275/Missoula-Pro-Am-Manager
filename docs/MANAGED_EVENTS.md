@@ -40,15 +40,21 @@ to import a source configuration selecting a different discipline or timer rule.
 Export refreshes authoritative state and requires the same source revision; a
 concurrent change asks the operator to refresh and retry.
 
-Acceptance and award application retain the selected component's SQLite writer
-fence through the outer host transaction. The private process adapter uses the
-exact rc11 export and verified transaction primitive; it adds no calculation or
-progression logic and imports no component into Python 3.10. A source change
-before the fence refuses stale acceptance. Commit, rollback, session close and
-worker death release it; a missing worker prevents commit. Savepoint completion
-keeps the outer fence. Bulk payouts acquire one fence for all selected managed
-events before host scheduling/row locks. This local adapter is bound to rc11 and
-must be reverified before selecting a different runtime.
+Acceptance and award application retain a host-owned SQLite writer fence through
+the outer host transaction. The private adapter first asks exact rc11 to export
+and verify the snapshot, then hands off to a standard SQLite mutex in the host
+process. It compares opaque state-byte digests again under that mutex, refusing
+an intervening source change. It adds no calculation/progression logic and never
+imports the component into Python 3.10. Helper exit cannot release the host's
+lock during DBAPI commit. Commit, rollback and session close release it; savepoint
+completion keeps the outer fence. Bulk payouts acquire one fence for all selected
+managed events before host scheduling/row locks. The source schema/adapter is
+bound to rc11 and must be reverified before selecting a different runtime.
+
+Initial binding shares SQLite's schedule-writer guard and PostgreSQL's tournament
+parent lock with heat generation. It reloads the event/link and checks freshness
+under that lock before committing delegation. Authority-presence reads also avoid
+a relationship's stale cached absence after another request delegates the event.
 
 A pending creation keeps legacy writes fenced while its outcome is uncertain.
 Recover its exact request first. If its supplied configuration was refused, the
