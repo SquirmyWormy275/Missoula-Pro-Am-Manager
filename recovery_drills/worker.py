@@ -72,7 +72,19 @@ def barrier(settings, point, request_id=None, extra=None):
 
 def instrument(settings):
     from flask import has_request_context, request
+    from sqlalchemy import event as sa_event
     from sqlalchemy.orm import Session
+
+    from models.managed_event import ManagedAcceptance
+
+    @sa_event.listens_for(Session, 'before_flush')
+    def note_managed_acceptance(session, _context, _instances):
+        if any(isinstance(item, ManagedAcceptance) for item in session.new):
+            session.info['lab_managed_acceptance_transaction'] = True
+
+    @sa_event.listens_for(Session, 'after_rollback')
+    def forget_managed_acceptance(session):
+        session.info.pop('lab_managed_acceptance_transaction', None)
 
     real_commit = Session.commit
 
@@ -86,7 +98,8 @@ def instrument(settings):
             barrier(settings, 'score-precommit', target)
         managed = (request.form.get('request_id') if has_request_context()
                    and request.endpoint == 'managed.event_workspace'
-                   and request.form.get('action') == 'accept_export' else None)
+                   and request.form.get('action') == 'accept_export'
+                   and session.info.pop('lab_managed_acceptance_transaction', False) else None)
         if managed:
             session.flush()
             barrier(settings, 'managed-accept-precommit', managed)
