@@ -185,3 +185,31 @@ forged current-timestamp HMACs, and read committed result/receipt state.
 The same drill also exposed an edit-lock version incorrectly changing the
 prepared schedule fingerprint. It now uses the existing heat identity; a real
 stand change still invalidates the package, and newer scores still conflict.
+
+## Managed-event extensions (R11–R12)
+
+R01–R10 retain their identities and assertions. R08 uses a simulated shadow
+receiver; it does not prove MNEMEX official-result ingestion.
+
+- R11 `managed-component-portability` runs the installed STRATHMARK CLI through
+  two different synthetic configurations, full qualifying/semi/final progression,
+  restart, correction and per-attempt export.
+- R12 `managed-acceptance-crashes` uses real PostgreSQL/Gunicorn plus the separately
+  installed numerical component. It kills the owned worker before host acceptance
+  commit and after commit before response; retries prove atomic attempt/delivery
+  projection and no duplicate award effect. Fault injection exists only in the
+  owned launcher, with no public fault endpoint/header.
+
+Supply `--managed-python /absolute/installed/env/bin/python` for these scenarios.
+For example, append that option to the normal `run --scenario
+managed-acceptance-crashes --output /new/owned/path --pg-bin ...` invocation.
+Absent interpreters/tools produce explicit blocked evidence. `--suite all` also
+selects the managed extensions; core CI retains its existing three scenarios.
+
+The actual cross-repository HTTP proof is
+`PROAM_MANAGED_TEST_PYTHON=/absolute/producer/python
+PROAM_MNEMEX_TEST_PYTHON=/absolute/mnemex/python python -m pytest
+tests/test_managed_events.py`. Its receiver subprocess uses the installed Django
+application and new SQLite storage, tests downtime, correction/void streams and
+a genuinely committed lost HTTP response, and terminates only its owned server.
+It never contacts providers or activates production.

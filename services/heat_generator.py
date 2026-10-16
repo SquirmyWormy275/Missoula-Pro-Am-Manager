@@ -545,6 +545,10 @@ def generate_event_heats(
     logger.info('heat_generator: generate_event_heats event_id=%s name=%r type=%s',
                 event.id, event.name, event.event_type)
 
+    if getattr(event, 'operation_mode', 'host') == 'managed':
+        # Module-owned fields may be scheduled, but never replaced locally.
+        return event.heats.count()
+
     # The routes normally reject regeneration after scoring, but this service
     # is also used by bulk and background workflows. Keep every caller from
     # deleting completed score or heat history, including an all-scratch heat

@@ -1,0 +1,440 @@
+"""Opt-in process adapter and durable projection for delegated synthetic events.
+
+No STRATHMARK import here: Missoula's retained 2.x dependency stays intact.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import uuid
+from decimal import Decimal
+from pathlib import Path
+from urllib.parse import quote, urlsplit
+
+from flask import current_app
+
+from database import db
+from models import Event, EventResult, Heat, User
+from models.managed_event import (
+    ManagedAcceptance,
+    ManagedAttemptRevision,
+    ManagedCareerDelivery,
+    ManagedCommand,
+    ManagedEventLink,
+    ManagedFieldLink,
+)
+
+CONTRACT = 'strathmark.managed-event.v1'
+
+
+class ManagedEventError(ValueError):
+    pass
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def digest(value):
+    return hashlib.sha256(canonical(value).encode()).hexdigest()
+
+
+def assert_host_owned(event):
+    if getattr(event, 'operation_mode', 'host') == 'managed':
+        raise ManagedEventError('This managed event must be changed through STRATHMARK operations.')
+
+
+def authorize(user, event):
+    if not user or not user.is_active or not user.is_judge or (user.tournament_id is not None and user.tournament_id != event.tournament_id):
+        raise ManagedEventError('Managed operation forbidden for this operator/tournament.')
+
+
+def workspace_url(event):
+    """Optional navigation to the same private authority; no token in the URL."""
+    origin = current_app.config.get('MANAGED_WORKSPACE_ORIGIN', '').rstrip('/')
+    if not origin or not event.managed_operation:
+        return None
+    parsed = urlsplit(origin)
+    if parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment or not parsed.hostname or (parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in {'127.0.0.1', 'localhost', '::1'})):
+        raise ManagedEventError('Shared workspace requires an explicit HTTPS or loopback origin without credentials or path.')
+    return origin + '/events/' + quote(event.managed_operation.module_event_id, safe='')
+
+
+def _configured_runtime():
+    if not current_app.config.get('MANAGED_EVENTS_ENABLED', False):
+        raise ManagedEventError('Managed events are disabled. Existing local show operations remain available.')
+    executable = Path(current_app.config.get('MANAGED_EVENTS_PYTHON', ''))
+    database = Path(current_app.config.get('MANAGED_EVENTS_DATABASE', ''))
+    if not executable.is_absolute() or not executable.is_file() or not database.is_absolute():
+        raise ManagedEventError('Configure an explicit installed STRATHMARK interpreter and private authority database.')
+    return executable, database
+
+
+def _call(user, link, request):
+    executable, database = _configured_runtime()
+    envelope = {'principal': {'actor_id': user.shadow_actor_id, 'shows': [link.show_id],
+                              'role': 'director' if user.is_admin else 'judge'}, 'request': request}
+    # The local OS is this transport's trust boundary. No provider credentials,
+    # Python path, proxies or live database URL enter the numerical process.
+    environment = {key: os.environ[key] for key in ('PATH', 'SYSTEMROOT', 'TEMP', 'TMP', 'LANG') if key in os.environ}
+    isolated = database.parent / (database.name + '.numeric-isolation')
+    environment.update(STRATHMARK_TEST_DB='1', STRATHMARK_DB_PATH=str(isolated.with_suffix('.v2.sqlite3')),
+                       STRATHMARK_V3_DB_PATH=str(isolated.with_suffix('.v3.sqlite3')))
+    try:
+        completed = subprocess.run([str(executable), '-I', '-m', 'strathmark.events.rpc', '--database', str(database)],
+                                   input=canonical(envelope), text=True, capture_output=True, timeout=45, env=environment)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ManagedEventError('STRATHMARK unavailable or response uncertain; retry the retained request identity.') from exc
+    if len(completed.stdout) > 16 * 1024 * 1024:
+        raise ManagedEventError('STRATHMARK response exceeded the contract bound.')
+    try:
+        response = json.loads(completed.stdout)
+    except (ValueError, TypeError) as exc:
+        raise ManagedEventError('Invalid STRATHMARK response; retained request requires recovery.') from exc
+    if completed.returncode or not response.get('ok'):
+        raise ManagedEventError(str(response.get('error', 'STRATHMARK command refused.')))
+    result = response['result']
+    if result.get('schema_version') != CONTRACT:
+        raise ManagedEventError('Incompatible managed-event component; no fallback is permitted.')
+    return result
+
+
+def bind_event(event, user, config):
+    """Bind an existing show's active entries; never trust a name-based mapping."""
+    authorize(user, event)
+    _configured_runtime()
+    if event.operation_mode != 'host' or event.handicap_authority_mode == 'shadow' or not event.is_handicap or event.stand_type not in {'underhand', 'standing_block'}:
+        raise ManagedEventError('Only an unlinked SB/UH handicap event may opt into managed mode.')
+    if event.is_partnered or event.requires_dual_runs or event.requires_triple_runs or event.is_finalized or event.results.filter(EventResult.status != 'pending').first():
+        raise ManagedEventError('Managed v1 requires a fresh, single-run individual event.')
+    from services.heat_generator import _get_event_competitors
+
+    entrants = _get_event_competitors(event)
+    _validate_show_wood(event, config)
+    # Input host_ref is the stable event-local primary-key mapping, never name.
+    mapping = {r['entry_id']: int(r['host_ref'].split(':')[-1]) for r in config['roster']}
+    if len(set(mapping.values())) != len(mapping) or set(mapping.values()) != {r['id'] for r in entrants}:
+        raise ManagedEventError('Managed roster must account for every active entered competitor exactly once.')
+    gender_by_id = {r['id']: r['gender'] for r in entrants}
+    for row in config['roster']:
+        if row['host_ref'] != f"{event.event_type}:{mapping[row['entry_id']]}" or row['gender'] != gender_by_id[mapping[row['entry_id']]]:
+            raise ManagedEventError('Mismatched host identity or division mapping.')
+    from services.heat_generator import (
+        _competitors_share_gear_for_event,
+        _validate_event_gear_declarations,
+    )
+
+    _validate_event_gear_declarations(event, entrants)
+    groups = {r['id']: r['id'] for r in entrants}
+    def root(value):
+        while groups[value] != value:
+            value = groups[value]
+        return value
+    for i, first in enumerate(entrants):
+        for second in entrants[i+1:]:
+            if _competitors_share_gear_for_event(first, second, event):
+                groups[root(second['id'])] = root(first['id'])
+    for row in config['roster']:
+        comp_id = mapping[row['entry_id']]
+        family = [other for other in groups if root(other) == root(comp_id)]
+        row['gear_group'] = f'gear:{min(family)}' if len(family) > 1 else None
+    expected_event = event.shadow_event_occurrence_id + ':managed'
+    if config['event_id'] != expected_event or config['tournament_id'] != event.tournament.shadow_tournament_id or config['discipline'] != {'underhand': 'UH', 'standing_block': 'SB'}[event.stand_type] or config['publisher'] != 'host':
+        raise ManagedEventError('Source event/tournament/discipline/publisher binding differs from this show.')
+    if config.get('synthetic') is not True:
+        raise ManagedEventError('Live managed-event qualification is not enabled.')
+    if len(config['stands']) > (event.max_stands or 5):
+        raise ManagedEventError('Managed capacity exceeds the configured show resource.')
+    link = ManagedEventLink(event=event, module_event_id=expected_event, show_id=config['show_id'], mapping_json=canonical(mapping))
+    db.session.add(link)
+    db.session.commit()
+    return submit(event, user, {'operation': 'create', 'request_id': str(uuid.uuid4()), 'editor': 'missoula', 'payload': config})
+
+
+def _validate_show_wood(event, config):
+    from models.wood_config import WoodConfig
+
+    key = f'block_{event.stand_type}_{event.event_type}'
+    gender_key = key + ('_' + event.gender if event.gender else '')
+    wood = WoodConfig.query.filter_by(tournament_id=event.tournament_id, config_key=gender_key).first()
+    if wood is None:
+        wood = WoodConfig.query.filter_by(tournament_id=event.tournament_id, config_key=key).first()
+    if wood is None:
+        raise ManagedEventError('Configure the show wood before linking or preparing a managed event.')
+    diameter = Decimal(str(wood.size_value)) * (Decimal('25.4') if wood.size_unit == 'in' else Decimal(1))
+    if str(config['wood']['species']).casefold() != str(wood.species).casefold() or Decimal(str(config['wood']['diameter_mm'])) != diameter:
+        raise ManagedEventError('Managed wood differs from the configured show wood; prepare a reviewed revision.')
+    try:
+        stands = [int(s) for s in config['stands']]
+    except (TypeError, ValueError) as exc:
+        raise ManagedEventError('Physical integer stands required.') from exc
+    if any(s < 1 or s > (event.max_stands or 5) for s in stands):
+        raise ManagedEventError('Stand outside configured show resources.')
+
+
+def submit(event, user, request):
+    """Commit exact local intent before crossing the process/response boundary."""
+    authorize(user, event)
+    link = event.managed_operation
+    if not link:
+        raise ManagedEventError('Managed event is not linked.')
+    request = dict(request)
+    request['event_id'] = link.module_event_id
+    if request['operation'] in {'read', 'export'}:
+        result = _call(user, link, request)
+        if request['operation'] == 'read':
+            project_fields(event, result)
+            link.state_json = canonical(result)
+            db.session.commit()
+        return result
+    if request['operation'] in {'calculate', 'review', 'issue'} and link.state_json:
+        _validate_show_wood(event, json.loads(link.state_json)['config'])
+    if request['operation'] in {'calculate', 'review', 'issue', 'outcomes'}:
+        validate_host_fields(event)
+    request_id = request.get('request_id')
+    if not isinstance(request_id, str) or not 1 <= len(request_id) <= 224:
+        raise ManagedEventError('Stable request identity required.')
+    saved = ManagedCommand.query.filter_by(event_id=event.id, actor_id=user.id, request_id=request_id).first()
+    binding = digest(request)
+    if saved:
+        if saved.payload_digest != binding:
+            raise ManagedEventError('Managed request identity conflicts with a different payload.')
+        if saved.status == 'accepted':
+            return json.loads(saved.response_json)
+    else:
+        saved = ManagedCommand(event_id=event.id, actor_id=user.id, request_id=request_id,
+                               payload_json=canonical(request), payload_digest=binding)
+        db.session.add(saved)
+        db.session.commit()
+    result = _call(user, link, json.loads(saved.payload_json))
+    if result.get('event_id') != link.module_event_id or result.get('show_id') != link.show_id:
+        raise ManagedEventError('Managed response identity mismatch.')
+    saved.status, saved.response_json = 'accepted', canonical(result)
+    # Exact old retries return their receipt, but cannot overwrite newer state.
+    current = json.loads(link.state_json) if link.state_json else None
+    if not current or result['revision'] > current['revision']:
+        project_fields(event, result)
+        link.state_json = canonical(result)
+    db.session.commit()
+    return result
+
+
+def validate_host_fields(event):
+    mapping = json.loads(event.managed_operation.mapping_json)
+    state = json.loads(event.managed_operation.state_json) if event.managed_operation.state_json else None
+    if not state:
+        return
+    for round_ in state['rounds']:
+        for field in round_['fields']:
+            link = ManagedFieldLink.query.filter_by(event_id=event.id, module_heat_id=field['heat_id']).first()
+            if not link:
+                raise ManagedEventError('Missing host field mapping; recover the original command first.')
+            heat = db.session.get(Heat, link.heat_id)
+            expected = [mapping[e] for e in field['entries']]
+            if heat.get_competitors() != expected or [str(heat.get_stand_for_competitor(c)) for c in expected] != field['stands']:
+                raise ManagedEventError('Physical host field changed; prepare a revised unissued module field.')
+
+
+def project_fields(event, state):
+    """Publish module readiness as normal host heats; the host schedules them."""
+    from services.flight_builder import lock_tournament_schedule
+
+    lock_tournament_schedule(event.tournament_id)
+    mapping = json.loads(event.managed_operation.mapping_json)
+    active_ids = {field['heat_id'] for round_ in state['rounds'] for field in round_['fields']}
+    for obsolete in ManagedFieldLink.query.filter_by(event_id=event.id).all():
+        if obsolete.module_heat_id not in active_ids:
+            heat = db.session.get(Heat, obsolete.heat_id)
+            if obsolete.issue_id or heat.status == 'completed':
+                raise ManagedEventError('Cannot discard an issued/completed dependent field.')
+            db.session.delete(obsolete)
+            db.session.flush()
+            db.session.delete(heat)
+            db.session.flush()
+    for round_ in state['rounds']:
+        for field in round_['fields']:
+            link = ManagedFieldLink.query.filter_by(event_id=event.id, module_heat_id=field['heat_id']).first()
+            if link is None:
+                number = max((h.heat_number for h in event.heats.all()), default=0) + 1
+                heat = Heat(event_id=event.id, heat_number=number, run_number=1, status='pending')
+                db.session.add(heat)
+                db.session.flush()
+                link = ManagedFieldLink(event_id=event.id, module_heat_id=field['heat_id'], heat_id=heat.id, field_digest=field['field_digest'])
+                db.session.add(link)
+            else:
+                heat = db.session.get(Heat, link.heat_id)
+                if link.issue_id and link.field_digest != field['field_digest']:
+                    raise ManagedEventError('Issued host field cannot change.')
+            ids = [mapping[e] for e in field['entries']]
+            try:
+                stands = {str(c): int(s) for c, s in zip(ids, field['stands'])}
+            except (TypeError, ValueError) as exc:
+                raise ManagedEventError('Missoula requires physical integer stand identifiers.') from exc
+            if not link.issue_id:
+                heat.set_roster(event.event_type, ids, stands)
+            elif heat.get_competitors() != ids or heat.get_stand_assignments() != stands:
+                raise ManagedEventError('Issued host roster/stands differ from the module authority.')
+            link.field_digest, link.issue_id = field['field_digest'], field.get('issue_id')
+            if field['state'] == 'accepted':
+                heat.status = 'completed'
+    db.session.flush()
+
+
+def recover_command(command_id, user):
+    command = db.get_or_404(ManagedCommand, command_id)
+    event = db.session.get(Event, command.event_id)
+    authorize(user, event)
+    if command.actor_id != user.id:
+        raise ManagedEventError('Only the original authenticated operator may retry this command.')
+    return submit(event, user, json.loads(command.payload_json))
+
+
+def accept_export(event, user, exported):
+    """Atomically retain all attempts, source deliveries, summary and receipt."""
+    authorize(user, event)
+    link = event.managed_operation
+    if not link or exported.get('event_id') != link.module_event_id or exported.get('show_id') != link.show_id or exported.get('schema_version') != CONTRACT:
+        raise ManagedEventError('Managed result identity mismatch.')
+    if exported.get('synthetic') is not True or exported.get('official_use') is not False:
+        raise ManagedEventError('This installation has no live managed-event qualification.')
+    # PostgreSQL serializes competing acceptance at the event parent. SQLite
+    # uses its normal single-writer application contract.
+    db.session.query(Event).filter_by(id=event.id).with_for_update().one()
+    revision = exported['event_revision']
+    payload_digest = digest(exported)
+    prior = ManagedAcceptance.query.filter_by(event_id=event.id, module_revision=revision).first()
+    if prior:
+        if prior.payload_digest != payload_digest:
+            raise ManagedEventError('Changed payload for an accepted module revision.')
+        return prior
+    if revision <= link.accepted_revision:
+        raise ManagedEventError('Stale managed export cannot replace a later correction.')
+    mapping = json.loads(link.mapping_json)
+    for item in exported['deliveries']:
+        payload = item['payload']
+        if digest(payload) != item['payload_digest'] or payload['outcome']['entry_id'] not in mapping or payload['source_event_id'] != link.module_event_id:
+            raise ManagedEventError('Invalid source attempt or delivery digest.')
+        existing = ManagedAttemptRevision.query.filter_by(event_id=event.id, source_result_id=payload['source_result_id'], source_revision=payload['source_revision']).first()
+        if existing and existing.payload_digest != item['payload_digest']:
+            raise ManagedEventError('Attempt source revision conflict.')
+        if not existing:
+            db.session.add(ManagedAttemptRevision(event_id=event.id, source_result_id=payload['source_result_id'], source_revision=payload['source_revision'], payload_json=canonical(payload), payload_digest=item['payload_digest']))
+        delivery = db.session.get(ManagedCareerDelivery, item['delivery_id'])
+        if not delivery:
+            db.session.add(ManagedCareerDelivery(delivery_id=item['delivery_id'], event_id=event.id, payload_json=canonical(payload), payload_digest=item['payload_digest']))
+    if exported['status'] == 'finalized':
+        summary = exported.get('summary')
+        if not summary or len(summary) != len(mapping) or {r['entry_id'] for r in summary} != set(mapping):
+            raise ManagedEventError('Complete source summary required.')
+        for item in summary:
+            row = EventResult.query.filter_by(event_id=event.id, competitor_type=event.event_type, competitor_id=mapping[item['entry_id']]).one()
+            row.result_value = float(item['raw_duration_seconds']) if item['raw_duration_seconds'] is not None else None
+            row.handicap_factor = item['start_mark_seconds']
+            row.final_position = item['official_position']
+            row.status = {'finished': 'completed', 'dns': 'scratched', 'void': 'dq'}.get(item['status'], item['status'])
+            row.result_unit = 'seconds'
+        event.status = 'completed'
+        # Host awards and settlement remain explicit operations after accepting
+        # source results. A correction cannot silently pay or repay anyone.
+        event.is_finalized = False
+        link.summary_revision = exported['summary_revision']
+    link.accepted_revision = revision
+    receipt = ManagedAcceptance(event_id=event.id, module_revision=revision, payload_digest=payload_digest, actor_id=user.id)
+    db.session.add(receipt)
+    db.session.flush()
+    return receipt
+
+
+def apply_host_awards(event, user):
+    """Use accepted source positions, without recalculating delegated placings."""
+    authorize(user, event)
+    if not event.managed_operation or not event.managed_operation.summary_revision:
+        raise ManagedEventError('Accepted finalized module summary required before host awards.')
+    source = json.loads(event.managed_operation.state_json)
+    if source['status'] != 'finalized' or source['summary_revision'] != event.managed_operation.summary_revision or source['revision'] > event.managed_operation.accepted_revision:
+        raise ManagedEventError('Accept the current finalized source revision before applying host awards.')
+    from services.scoring_engine import (
+        _clear_changed_payout_settlements,
+        _rebuild_individual_points,
+        split_tie_points,
+    )
+
+    results = event.results.all()
+    prior_payouts = {row.id: float(row.payout_amount or 0) for row in results}
+    groups = {}
+    for row in results:
+        if row.final_position is not None:
+            groups.setdefault(row.final_position, []).append(row)
+    for row in results:
+        row.points_awarded = Decimal(0)
+        row.payout_amount = 0
+    for position, rows in groups.items():
+        for row in rows:
+            if event.event_type == 'college':
+                row.points_awarded = split_tie_points(position, len(rows))
+            else:
+                row.payout_amount = sum(float(event.get_payout_for_position(n)) for n in range(position, position + len(rows))) / len(rows)
+    db.session.flush()
+    if event.event_type == 'college':
+        _rebuild_individual_points([r.competitor_id for r in results])
+    else:
+        from models.competitor import ProCompetitor
+
+        for row in results:
+            comp = db.session.get(ProCompetitor, row.competitor_id)
+            comp.total_earnings = sum(float(r.payout_amount or 0) for r in EventResult.query.filter_by(competitor_type='pro', competitor_id=comp.id).all())
+    event.is_finalized = True
+    _clear_changed_payout_settlements(results, prior_payouts)
+
+
+def deliver_career_results(event, user, *, limit=25, transport=None):
+    """Bounded supervised delivery; never called during scoring/finalization."""
+    authorize(user, event)
+    url = current_app.config.get('MNEMEX_SHOW_RESULTS_URL', '')
+    token = current_app.config.get('MNEMEX_SHOW_RESULTS_TOKEN', '')
+    parsed = urlsplit(url)
+    if not token or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path != '/partners/results/ingest' or (parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in {'127.0.0.1', 'localhost', '::1'})):
+        raise ManagedEventError('Configure an explicit HTTPS or loopback MNEMEX inbox and scoped service credential.')
+    if not 1 <= limit <= 100:
+        raise ManagedEventError('Delivery limit must be 1..100.')
+    import requests
+
+    session = requests.Session()
+    session.trust_env = False
+    send = transport or session.post
+    delivered, pending, conflicting = 0, 0, 0
+    mapping = json.loads(event.managed_operation.mapping_json)
+    try:
+        for item in ManagedCareerDelivery.query.filter_by(event_id=event.id, status='pending').order_by(ManagedCareerDelivery.delivery_id).with_for_update(skip_locked=True).limit(limit).all():
+            payload = json.loads(item.payload_json)
+            if digest(payload) != item.payload_digest:
+                raise ManagedEventError('Stored career delivery failed integrity verification.')
+            entry_id = payload['outcome']['entry_id']
+            envelope = {'schema_version': 'mnemex.show-result.v1', 'message_id': item.delivery_id,
+                        'source': payload, 'source_digest': item.payload_digest,
+                        'participant': {'show_person_ref': None, 'unresolved_ref': f'{event.event_type}:{mapping[entry_id]}', 'authorization_basis_ref': None}}
+            try:
+                response = send(url, data=canonical(envelope), headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}, timeout=(3, 8), allow_redirects=False)
+                if response.status_code not in {200, 409} or len(response.content) > 65536:
+                    raise ManagedEventError('receiver_unavailable_or_refused')
+                receipt = response.json()
+                if receipt.get('schema_version') != 'mnemex.show-result-receipt.v1' or receipt.get('source_result_id') != payload['source_result_id'] or receipt.get('source_revision') != payload['source_revision'] or receipt.get('state') not in {'unlinked', 'pending_predecessor', 'accepted', 'conflicting'}:
+                    raise ManagedEventError('receiver_receipt_mismatch')
+                if receipt.get('payload_digest') != digest({k: v for k, v in envelope.items() if k != 'message_id'}):
+                    raise ManagedEventError('receiver_payload_binding_mismatch')
+                item.receipt_json, item.receipt_digest = canonical(receipt), digest(receipt)
+                item.status = 'conflicting' if receipt['state'] == 'conflicting' else 'accepted'
+                item.last_error_code = None
+                conflicting += int(item.status == 'conflicting')
+                delivered += int(item.status == 'accepted')
+            except (requests.RequestException, ValueError, KeyError, ManagedEventError):
+                item.last_error_code = 'receiver_unavailable_or_invalid_receipt'
+                pending += 1
+            db.session.commit()
+    finally:
+        session.close()
+    return {'accepted': delivered, 'pending_attempts': pending, 'conflicting': conflicting,
+            'remaining_pending': ManagedCareerDelivery.query.filter_by(event_id=event.id, status='pending').count()}

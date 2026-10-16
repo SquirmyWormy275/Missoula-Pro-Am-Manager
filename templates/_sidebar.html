@@ -168,6 +168,9 @@
             <i class="bi bi-chevron-down sb-chevron sb-text"></i>
         </button>
         <div id="sb-scoring" class="sb-group-body">
+            {% if config.MANAGED_EVENTS_ENABLED %}
+            <a class="nav-link" href="{{url_for('managed.event_list',tournament_id=tournament.id)}}">Managed handicap events</a>
+            {% endif %}
             <a href="{{ url_for('scheduling.event_list', tournament_id=tournament.id) }}?tab=build"
                class="nav-link {{ 'active' if request.endpoint == 'scheduling.event_list' and request.args.get('tab', 'build') == 'build' else '' }}"
                {% if request.endpoint == 'scheduling.event_list' and request.args.get('tab', 'build') == 'build' %}aria-current="page"{% endif %}

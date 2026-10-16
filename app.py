@@ -120,7 +120,7 @@ login_manager.login_view = 'auth.login'
 login_manager.login_message = 'Please log in to continue.'
 login_manager.login_message_category = 'warning'
 
-MANAGEMENT_BLUEPRINTS = {'main', 'registration', 'scheduling', 'scoring', 'reporting', 'proam_relay', 'partnered_axe', 'validation', 'import_pro', 'woodboss', 'demo', 'strathmark', 'domain_conflicts'}
+MANAGEMENT_BLUEPRINTS = {'main', 'registration', 'scheduling', 'scoring', 'reporting', 'proam_relay', 'partnered_axe', 'validation', 'import_pro', 'woodboss', 'demo', 'strathmark', 'domain_conflicts', 'managed'}
 BLUEPRINT_PERMISSIONS = {
     'main': 'is_judge',
     'registration': 'can_register',
@@ -134,6 +134,7 @@ BLUEPRINT_PERMISSIONS = {
     'woodboss': 'is_judge',
     'demo': 'is_judge',
     'strathmark': 'is_judge',
+    'managed': 'is_judge',
     'domain_conflicts': 'can_manage_users',
     'auth': 'can_manage_users',
 }
@@ -381,6 +382,7 @@ def _create_app_inner():
     from routes.domain_conflicts import bp as domain_conflicts_bp
     from routes.import_routes import import_pro_bp
     from routes.main import main_bp
+    from routes.managed_events import managed_bp
     from routes.partnered_axe import bp as partnered_axe_bp
     from routes.proam_relay import bp as proam_relay_bp
     from routes.registration import registration_bp
@@ -396,6 +398,7 @@ def _create_app_inner():
         from routes.portal import portal_bp
 
     app.register_blueprint(main_bp)
+    app.register_blueprint(managed_bp)
     app.register_blueprint(registration_bp, url_prefix='/registration')
     app.register_blueprint(scheduling_bp, url_prefix='/scheduling')
     app.register_blueprint(scoring_bp, url_prefix='/scoring')

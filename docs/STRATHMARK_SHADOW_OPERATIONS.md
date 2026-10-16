@@ -1,5 +1,12 @@
 # STRATHMARK Shadow Operations Runbook
 
+Current architecture addition (2026-10-16): [delegated synthetic events](MANAGED_EVENTS.md)
+use shared STRATHMARK operations. Existing host-owned official events and
+scoring-inert shadow events keep the rules below. Registration, whole-show
+scheduling/resources, points and payouts stay in Missoula. Managed production
+activation is disabled.
+
+
 This runbook covers the scoring-inert 2027 shadow integration between Missoula
 Pro-Am Manager and STRATHMARK V2. It does not authorize production deployment,
 database migration, or official mark application.

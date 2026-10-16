@@ -14,6 +14,14 @@ from .competitor import CollegeCompetitor, ProCompetitor
 from .competitor_identity import Competitor
 from .event import Event, EventResult
 from .heat import Flight, Heat, HeatAssignment
+from .managed_event import (
+    ManagedAcceptance,
+    ManagedAttemptRevision,
+    ManagedCareerDelivery,
+    ManagedCommand,
+    ManagedEventLink,
+    ManagedFieldLink,
+)
 from .payout_template import PayoutTemplate
 from .print_email_log import PrintEmailLog
 from .print_tracker import PrintTracker
@@ -39,6 +47,12 @@ from .user import User
 from .wood_config import WoodConfig
 
 __all__ = [
+    'ManagedEventLink',
+    'ManagedFieldLink',
+    'ManagedCommand',
+    'ManagedAttemptRevision',
+    'ManagedAcceptance',
+    'ManagedCareerDelivery',
     'Tournament',
     'Team',
     'CollegeCompetitor',

@@ -27,6 +27,8 @@ SCENARIOS = {
     'shadow-delivery': ('R08', 'extended'),
     'code-schema-rollback': ('R09', 'extended'),
     'sqlite-offline-restore': ('R10', 'extended'),
+    'managed-component-portability': ('R11', 'managed'),
+    'managed-acceptance-crashes': ('R12', 'managed'),
 }
 
 

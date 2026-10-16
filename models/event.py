@@ -118,6 +118,11 @@ class Event(db.Model):
         return f'<Event {self.name}{gender_str}>'
 
     @property
+    def operation_mode(self):
+        """Old events retain host authority; only an explicit link delegates."""
+        return 'managed' if self.managed_operation is not None else 'host'
+
+    @property
     def display_name(self):
         """Return event name with gender prefix if applicable."""
         name = (self.name or '').strip()

@@ -45,7 +45,7 @@ jobs:
       RESTORE_PORT: '5432'
       RESTORE_DB: proam_restore_verify
       RESTORE_USER: postgres
-      EXPECTED_ALEMBIC_HEAD: a6b7c8d9e0f1
+      EXPECTED_ALEMBIC_HEAD: a6d6dda4e480
 
     steps:
       - name: Install PostgreSQL client and age

@@ -80,6 +80,12 @@ class BaseConfig:
     # from the legacy Supabase sync variables; shadow calculation uses only
     # the frozen authenticated HTTP consumer contract.
     STRATHMARK_SHADOW_URL = os.environ.get('STRATHMARK_SHADOW_URL', '').strip()
+    MANAGED_EVENTS_ENABLED = os.environ.get('PROAM_MANAGED_EVENTS_ENABLED', '0') == '1'
+    MANAGED_EVENTS_PYTHON = os.environ.get('PROAM_MANAGED_EVENTS_PYTHON', '').strip()
+    MANAGED_EVENTS_DATABASE = os.environ.get('PROAM_MANAGED_EVENTS_DATABASE', '').strip()
+    MANAGED_WORKSPACE_ORIGIN = os.environ.get('PROAM_MANAGED_WORKSPACE_ORIGIN', '').strip()
+    MNEMEX_SHOW_RESULTS_URL = os.environ.get('MNEMEX_SHOW_RESULTS_URL', '').strip()
+    MNEMEX_SHOW_RESULTS_TOKEN = os.environ.get('MNEMEX_SHOW_RESULTS_TOKEN', '').strip()
     STRATHMARK_SHADOW_CONSUMER_ID = os.environ.get(
         'STRATHMARK_SHADOW_CONSUMER_ID',
         'missoula:service:shadow',
@@ -100,6 +106,9 @@ class DevelopmentConfig(BaseConfig):
 
 class ProductionConfig(BaseConfig):
     ENV_NAME = 'production'
+    # Installation/official-use qualification is not supplied by a code merge
+    # or an environment toggle. Rehearsal runs only in isolated development.
+    MANAGED_EVENTS_ENABLED = False
 
 
 def _is_production_environment() -> bool:
