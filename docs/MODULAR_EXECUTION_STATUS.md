@@ -7,11 +7,12 @@ Canonical [architecture agreement](https://github.com/SquirmyWormy275/STRATHMARK
 
 Documentation refreshed 2026-10-16 after fetching all four repositories. The
 latest application-code commit is
-`e8bbc42f4250e2e79e3be4ed3aef3614aa4edae0`, with fresh 195-test SQLite,
-132-test PostgreSQL and clean-source R09/R12 verification. Earlier sources
-62216f4 and documentation c201c9e passed all eight applicable CI jobs (production
-audit skipped). The final head's CI/review have their own status; consult the
-current PR checks.
+`97769be6c1adc323d511ed2fa5dd6d851c8b6539`, with fresh 220-test SQLite,
+157-test PostgreSQL, 146 legacy heat regressions and clean-source R09/R12
+verification. All 31 findings raised so far are fixed/resolved. Earlier
+documentation 96951ed passed all eight applicable CI jobs (production audit
+skipped), before its review identified the latest three defects. The final
+head's CI/review have their own status; consult the current PR checks.
 Earlier full CI/review checkpoints below remain explicitly source-bound.
 Later documentation commits must record their own checks.
 
@@ -677,3 +678,51 @@ Independent remaining gates are provider restore, real keys/models, operator
 rehearsal and production approval. Existing official/shadow and retro workflows
 remain available. No test threshold, release requirement or branch protection
 was removed to make delivery appear complete.
+
+## Request recovery, lock order and real show profiles — 2026-10-16
+
+Application `97769be6c1adc323d511ed2fa5dd6d851c8b6539` fixes the three findings raised at documentation
+96951ed: typed canonical host references before parsing, shared host/source lock
+ordering, and concurrent durable command insertion. Creation and acceptance first
+acquire the same outer order gate before either inner host/source lock domain.
+The empty canonical-path `.host-order.sqlite3` mutex stays held through host
+commit/rollback; helper death cannot release it. It contains no business state,
+never replaces source recovery data, and must not be replaced while hosts run.
+Identical concurrent request IDs reload the winning intent and recover through
+normal payload/audit checks; changed payloads retain their conflict.
+
+Related concrete regression checks also fixed two pre-intent configuration races:
+registration validation now reads without creating result placeholders, which
+projection creates under host locks. Known stale uncommitted retries fail before
+host preparation. Malformed held-export packets fail within the managed boundary
+and release coordination resources. The real show-profile matrix found Standing
+Block was looking up `block_standing_block_*` instead of Woodboss's existing
+`block_standing_*`; the adapter now reuses the existing canonical key helper.
+Underhand, gender precedence and the general-key fallback remain aligned with
+show configuration. No numerical engine, policy, schema or production setting
+changed.
+
+Retained RED receipts cover six failures plus three already-refused reference
+cases, the actual lock-domain interleave, one stale retry, two preparation races
+and four Standing Block lifecycle failures (four Underhand cases already passed).
+An intermediate broad run exposed one bulk test fixture repeating the same wrong
+Standing Block key; only that fixture key changed, with its assertions preserved.
+Final focused verification passes **220 SQLite / 157 PostgreSQL tests, zero skips**,
+with PostgreSQL cleanup PASS. The eight SB/UH × pro/college × M/F cases use the real
+installed engine, actual gender-specific WoodConfig and inch/mm conversion through
+source review/issue/outcomes/acceptance/finalization and host awards. Four concurrent
+handover/configuration exact/conflicting request cases pass. All **146 legacy heat
+regressions** pass, plus ruff and diff checks.
+
+Fresh R12 and R09 each pass all 13 checks with cleanup PASS at clean committed
+source 97769be. Evidence: `../evidence/managed-final-complete.xml`,
+`managed-final-complete-postgres/report.json`, `managed-legacy-heat-regression.xml`,
+`managed-command-races-final.xml`, `managed-real-profiles-final.xml`,
+`recovery-coordination-final-managed-acceptance-crashes/report.json` and
+`recovery-coordination-final-code-schema-rollback/report.json`.
+The three findings and their thread resolutions are tracked on PR 125; current
+CI/review state is exact-head and remains separate from earlier checkpoints.
+The previous 96951ed passed all eight applicable jobs in CI 38987534485, with the
+production audit skipped, before review raised these three defects. That green
+checkpoint does not establish their absence. Missoula remains draft under the
+unchanged hosted backup/key proof gate; no operational workflow was dispatched.
