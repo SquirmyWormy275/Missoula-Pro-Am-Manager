@@ -7,8 +7,8 @@ Canonical [architecture agreement](https://github.com/SquirmyWormy275/STRATHMARK
 
 Documentation refreshed 2026-10-16 after fetching all four repositories. The
 latest application-code commit is
-`1fc0897fda0d9e5567328af75640ae4d3078fa5b`, with fresh 170-test SQLite,
-107-test PostgreSQL and clean-source R09/R12 verification. Earlier sources
+`e8bbc42f4250e2e79e3be4ed3aef3614aa4edae0`, with fresh 195-test SQLite,
+132-test PostgreSQL and clean-source R09/R12 verification. Earlier sources
 62216f4 and documentation c201c9e passed all eight applicable CI jobs (production
 audit skipped). The final head's CI/review have their own status; consult the
 current PR checks.
@@ -137,6 +137,44 @@ Documentation c201c9e independently passed all eight applicable jobs in
 The new implementation/final documentation receive fresh checks and do not
 inherit that pass. The hosted backup/key merge gate remains unchanged.
 
+## Initial binding and malformed-response follow-up — 2026-10-16
+
+Review at e79ac4a raised four further findings, fixed in application
+`e8bbc42f4250e2e79e3be4ed3aef3614aa4edae0`:
+
+- Validate both supplied/stored wood diameters within the managed error boundary.
+- Reconcile empty stale pending results on initial binding and refuse all recorded
+  result history, including a zero timer, before delegating a fresh event.
+- Lock and revalidate current host facts after the durable-intent commit, holding
+  them across actual source creation, projection and host commit. Tests include
+  wood/gear writers at the RPC boundary and edits in the intent-commit gap.
+- Non-object MNEMEX acknowledgement JSON leaves delivery pending with its retryable
+  invalid-receipt status instead of an uncaught AttributeError.
+
+The related boundary audit also rejects non-object local RPC envelopes/results
+and enforces the existing component show-ID grammar before allocating a link;
+malformed scope values cannot cause SQL errors or an unrecoverable pending scope.
+No engine, numerical policy, schema, production setting or legacy workflow changed.
+
+The four findings produced 13 failing cases and one already-rejected NaN case.
+The related RPC/show-ID audit reproduced another 11 failures. All 25 new cases
+now pass. Consolidated final suites pass **195 SQLite and 132 PostgreSQL tests,
+zero skips**, with PostgreSQL cleanup PASS; ruff/diff checks pass. The expanded
+owned verification runner's ceiling increased to accommodate the added cases;
+no source-operation timeout or assertion was weakened.
+
+Fresh clean e8bbc42 R12 and R09 each pass all 13 checks with cleanup PASS.
+Receipts: `../evidence/managed-binding-input-red.xml`, `managed-rpc-shape-red.xml`,
+`managed-show-identity-red.xml`, `managed-binding-current-sqlite.xml`,
+`managed-binding-current-postgres/report.json`,
+`recovery-binding-final-managed-acceptance-crashes/report.json` and
+`recovery-binding-final-code-schema-rollback/report.json`.
+All 28 findings raised so far are fixed/resolved. Final checks/review are bound to
+the current PR head; older source e79ac4a passed eight CI jobs in run 38985815198
+but its subsequent review found these four defects. Earlier green reviews/runs
+remain dated evidence, not a claim of permanent correctness. Merge remains blocked
+by the same hosted backup and independent recovery-identity proofs.
+
 ## Repository record
 
 All remotes fetched 2026-10-15 and refreshed throughout delivery on October 16;
@@ -194,7 +232,7 @@ private historical/training corpus was used for these checks.
 | Repository | Implementation / delivery |
 | --- | --- |
 | STRATHMARK | final reviewed source `0839f640b8f1a02270a8275246e5801260458391`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) MERGED at `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214` after all 25 checks passed and all six review findings were fixed/resolved; rc11 PUBLISHED to [PyPI](https://pypi.org/project/strathmark/3.0.0rc11/) and [GitHub prerelease](https://github.com/SquirmyWormy275/STRATHMARK/releases/tag/v3.0.0rc11) after successful main CI and exact artifact/extra installation checks |
-| Missoula | managed integration and follow-up fixes through application source `1fc0897fda0d9e5567328af75640ae4d3078fa5b` (170 SQLite / 107 PostgreSQL, clean R09/R12); historical full-CI documentation checkpoints `47f9bb558816e07f35d2c54f3ed4454f0c6fc21e` and `70109349dc668a73b30f1cd48fc33b201ab2375c`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; historical all-eight-job runs `38897926622` and `38982953991` passed; 24 findings fixed/resolved through 1fc0897 with current review/check status tracked separately; merge BLOCKED by hosted backup/recovery proof. Intermediate commits and failure/fix receipts are retained in the dated sections below. |
+| Missoula | managed integration and follow-up fixes through application source `e8bbc42f4250e2e79e3be4ed3aef3614aa4edae0` (195 SQLite / 132 PostgreSQL, clean R09/R12); historical full-CI documentation checkpoints `47f9bb558816e07f35d2c54f3ed4454f0c6fc21e` and `70109349dc668a73b30f1cd48fc33b201ab2375c`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; historical all-eight-job runs `38897926622` and `38982953991` passed; 28 findings fixed/resolved through e8bbc42 with current review/check status tracked separately; merge BLOCKED by hosted backup/recovery proof. Intermediate commits and failure/fix receipts are retained in the dated sections below. |
 | STRATHEX | `bcf7ffc19c3796ac189c6dd8c2c59d2abb472f89`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), MERGED at `bcfe4e50e1449b2585a037215c79f5a7e955e9da`; both findings fixed/resolved; all 11 PR checks and main run `38885236056` passed, including installed published rc11; version 7.4.3 |
 | MNEMEX | implementation PR 5 MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; binding/scope PR 6 MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; provenance/security source `83d9e6d296b990ba01884fc04c5662fea36c6eb6` in [PR 7](https://github.com/SquirmyWormy275/mnemex/pull/7) MERGED at `7a315946c92e24a125fc213c7d139eef6278f12c`. Each passed exact-head Linux/Windows CI; PR 7 automated review completed with no findings; all earlier eight findings fixed/resolved; no deployment |
 
