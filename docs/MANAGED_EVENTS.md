@@ -23,6 +23,9 @@ uses stable host references (`pro:id` or `college:id`), source event/tournament
 identities shown on the page, actual configured wood, physical stand capacity,
 gear groups, an explicit selection reason and authorized prior history. The
 example 275 mm configuration never overrides this show's WoodConfig.
+Standing Block uses Woodboss's existing `block_standing_*` keys; Underhand
+uses `block_underhand_*`. Gender-specific rows precede the retained general-key
+fallback. Pro/college and inch/mm lifecycle checks use the real installed engine.
 Unsupported families, partial/mismatched rosters, absent wood and conflicting
 gear/stand assignments fail explicitly. Future history is refused.
 Existing host-generated heats also prevent binding; do not mix two field layouts.
@@ -72,6 +75,15 @@ completion keeps the outer fence. Bulk payouts acquire one fence for all selecte
 managed events before host scheduling/row locks. The source schema/adapter is
 bound to rc11 and must be reverified before selecting a different runtime.
 
+Creation and acceptance first take the same outer host/source order mutex, so
+neither can hold a source writer while waiting for the other's host locks.
+The empty `<authority database>.host-order.sqlite3` sidecar contains no business
+tables or authority state. Every host process uses the same canonical authority
+path. It remains held through commit/rollback; helper exit cannot release it.
+Do not delete/replace it while host processes are active. After all processes
+stop it can be recreated empty; actual recovery still requires the source
+database, its independent head reference and the documented fencing proof.
+
 Initial binding shares SQLite's schedule-writer guard and PostgreSQL's tournament
 parent lock with heat generation. It reloads the event/link and checks freshness
 under that lock before committing delegation. Authority-presence reads also avoid
@@ -102,6 +114,13 @@ Use a stable request ID, expected revision and `editor: missoula`. Pending local
 intents survive an unavailable component; **Recover exact request** resubmits
 that same identity and actor. Refresh reads authoritative state. A stale retry
 cannot replace a newer accepted projection. No runtime or engine fallback exists.
+Concurrent identical request-ID inserts reload the winning durable intent and
+use the normal digest/status/audit checks; changed payloads conflict. A known
+uncommitted stale request is refused before host preparation. Entry IDs and
+`pro:<id>`/`college:<id>` references are validated before parsing or mapping.
+Validation before the intent commit reads registration without creating result
+placeholders. Projection creates missing rows under the host lock, so concurrent
+configuration requests cannot race on placeholder inserts before intent recovery.
 
 For native field/timer forms, configure `PROAM_MANAGED_WORKSPACE_ORIGIN` to an
 explicit HTTPS or loopback origin and launch the optional shared workspace

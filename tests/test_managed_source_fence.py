@@ -617,7 +617,7 @@ def test_bulk_payout_configuration_uses_one_fence_for_all_managed_events(tmp_pat
         second = Event(tournament_id=first.tournament_id, name='Standing Block', event_type='pro',
                        scoring_type='time', is_handicap=True, stand_type='standing_block', max_stands=4)
         db.session.add(second)
-        db.session.add(WoodConfig(tournament_id=first.tournament_id, config_key='block_standing_block_pro',
+        db.session.add(WoodConfig(tournament_id=first.tournament_id, config_key='block_standing_pro',
                                  species='S01', size_value=275, size_unit='mm'))
         db.session.flush()
         second_config = deepcopy(config)
@@ -920,3 +920,302 @@ def test_invalid_show_identity_cannot_allocate_a_pending_link(tmp_path, show_id)
         db.session.rollback()
         assert db.session.get(Event, event_id).managed_operation is None
         assert not (tmp_path / 'authority.sqlite3').exists()
+
+
+@pytest.mark.parametrize('host_ref', [None, [], {}, 7, 'pro:01', 'college:1', 'pro:0'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_binding_validates_host_reference_before_parsing(tmp_path, host_ref):
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    config['roster'][0]['host_ref'] = host_ref
+    with app.app_context():
+        with pytest.raises(ManagedEventError):
+            managed_events.bind_event(db.session.get(Event, event_id), db.session.get(User, user_id), config)
+        db.session.rollback()
+        assert db.session.get(Event, event_id).managed_operation is None
+
+
+@pytest.mark.parametrize('conflict', [False, True])
+@pytest.mark.parametrize('operation', ['handover', 'configure'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_concurrent_command_identity_recovers_exact_retry_or_reports_conflict(tmp_path, conflict, operation):
+    from copy import deepcopy
+
+    from sqlalchemy.orm import Session
+
+    from models.managed_event import ManagedCommand
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event = db.session.get(Event, event_id)
+        state = managed_events.bind_event(event, db.session.get(User, user_id), config)
+        if operation == 'configure':
+            entrant = make_pro_competitor(db.session, event.tournament, 'Synthetic racing new entrant',
+                                          gender='F', events=['Underhand'])
+            row = deepcopy(config['roster'][0])
+            row.update(entry_id='racing-new-entry', engine_id='synthetic:engine:racing-new',
+                       host_ref=f'pro:{entrant.id}', gender='F')
+            for i, history in enumerate(row['history']):
+                history['source_ref'] = f'synthetic:racing-history:{i}'
+            config['roster'].append(row)
+            db.session.commit()
+    barrier, replies, errors = threading.Barrier(2), queue.Queue(), queue.Queue()
+    def before_intent_insert(session, _context, _instances):
+        if any(isinstance(row, ManagedCommand) and row.request_id == 'same-racing-handover' for row in session.new):
+            barrier.wait(10)
+    def submit(index):
+        try:
+            with app.app_context():
+                if operation == 'configure':
+                    candidate = deepcopy(config)
+                    if conflict and index:
+                        candidate['round_rules'][0]['capacity'] = 3
+                    payload = {'config': candidate}
+                else:
+                    payload = {'editor': 'cli' if conflict and index else 'gui'}
+                replies.put(managed_events.submit(db.session.get(Event, event_id), db.session.get(User, user_id), {
+                    'operation': operation, 'request_id': 'same-racing-handover',
+                    'expected_revision': state['revision'], 'editor': 'missoula',
+                    'payload': payload}))
+        except Exception as exc:
+            errors.put(exc)
+    workers = [threading.Thread(target=submit, args=(i,)) for i in range(2)]
+    sa_event.listen(Session, 'before_flush', before_intent_insert)
+    try:
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(20)
+    finally:
+        barrier.abort()
+        sa_event.remove(Session, 'before_flush', before_intent_insert)
+    assert all(not worker.is_alive() for worker in workers)
+    if conflict:
+        assert replies.qsize() == errors.qsize() == 1
+        error = errors.get_nowait()
+        assert isinstance(error, ManagedEventError) and 'conflict' in str(error).lower()
+    else:
+        assert errors.empty(), list(errors.queue)
+        assert replies.qsize() == 2
+        assert replies.get_nowait() == replies.get_nowait()
+    with app.app_context():
+        saved = ManagedCommand.query.filter_by(request_id='same-racing-handover').one()
+        assert saved.status == 'accepted'
+        assert json.loads(saved.response_json)['revision'] == state['revision'] + 1
+        if operation == 'configure':
+            assert db.session.get(Event, event_id).results.count() == 2
+
+
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_creation_and_other_event_acceptance_do_not_invert_lock_domains(tmp_path, monkeypatch):
+    from copy import deepcopy
+
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        original, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        _single_entry_final(original, user, config)
+        exported = managed_events.submit(original, user, {'operation': 'export'})
+        second = Event(tournament_id=original.tournament_id, name='Underhand', event_type='pro',
+                       scoring_type='time', is_handicap=True, stand_type='underhand', max_stands=4)
+        db.session.add(second)
+        db.session.commit()
+        second_id = second.id
+        second_config = deepcopy(config)
+        second_config['event_id'] = second.shadow_event_occurrence_id + ':managed'
+    at_creation, allow_creation = threading.Event(), threading.Event()
+    attempted_acceptance, source_fenced = threading.Event(), threading.Event()
+    allow_accept_host, abort_accept = threading.Event(), threading.Event()
+    binding_done, errors = threading.Event(), queue.Queue()
+    real_call, real_guard = managed_events._call, managed_events.guard_managed_awards
+
+    def pause_before_creation(*args):
+        if args[2]['operation'] == 'create' and args[1].event_id == second_id:
+            at_creation.set()
+            assert allow_creation.wait(15)
+        return real_call(*args)
+
+    def pause_after_source_fence(*args):
+        attempted_acceptance.set()
+        guard = real_guard(*args)
+        source_fenced.set()
+        assert allow_accept_host.wait(15)
+        if abort_accept.is_set():
+            db.session.rollback()
+            raise ManagedEventError('Synthetic cleanup after the reproduced lock inversion')
+        return guard
+
+    def bind_second():
+        try:
+            with app.app_context():
+                managed_events.bind_event(db.session.get(Event, second_id), db.session.get(User, user_id), second_config)
+        except Exception as exc:
+            errors.put(exc)
+        finally:
+            binding_done.set()
+
+    def accept_first():
+        try:
+            with app.app_context():
+                managed_events.accept_export(db.session.get(Event, event_id), db.session.get(User, user_id), exported)
+                db.session.commit()
+        except Exception as exc:
+            errors.put(exc)
+
+    monkeypatch.setattr(managed_events, '_call', pause_before_creation)
+    monkeypatch.setattr(managed_events, 'guard_managed_awards', pause_after_source_fence)
+    binding, acceptance = threading.Thread(target=bind_second), threading.Thread(target=accept_first)
+    completed = False
+    try:
+        binding.start()
+        assert at_creation.wait(15)
+        acceptance.start()
+        assert attempted_acceptance.wait(10)
+        assert not source_fenced.wait(5), 'Acceptance acquired source after creation acquired host: inverted lock order'
+        allow_creation.set()
+        assert binding_done.wait(15)
+        assert source_fenced.wait(15)
+        allow_accept_host.set()
+        completed = True
+    finally:
+        if not completed:
+            abort_accept.set()
+        allow_accept_host.set()
+        allow_creation.set()
+        for worker in (binding, acceptance):
+            if worker.ident is not None:
+                worker.join(20)
+    assert not binding.is_alive() and not acceptance.is_alive()
+    assert errors.empty(), list(errors.queue)
+    with app.app_context():
+        assert db.session.get(Event, event_id).status == 'completed'
+        assert db.session.get(Event, second_id).managed_operation.state_json
+
+
+@pytest.mark.parametrize('packet', [[], None, {'ok': True, 'schema_version': 'strathmark.held-export.v2',
+                                             'exports': [], 'states': {}, 'state_digests': {}}])
+def test_invalid_fence_packet_releases_outer_coordination(tmp_path, monkeypatch, packet):
+    import io
+
+    from services import managed_source_lock
+
+    class Process:
+        def __init__(self, *_args, **_kwargs):
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO(json.dumps(packet) + '\n')
+            self.stderr = io.StringIO()
+        def wait(self, **_kwargs):
+            return 0
+        def kill(self):
+            pass
+
+    database = tmp_path / 'source.sqlite3'
+    monkeypatch.setattr(managed_source_lock.subprocess, 'Popen', Process)
+    with pytest.raises(managed_source_lock.SourceLockError):
+        managed_source_lock.HeldSourceExport('unused', database, {}, {}, ['synthetic:event'])
+    with managed_source_lock.HostSourceOrder(database) as gate:
+        assert gate.connection.in_transaction
+
+
+def test_coordination_refuses_to_open_a_business_database_as_its_mutex(tmp_path):
+    import sqlite3
+
+    from services.managed_source_lock import HostSourceOrder, SourceLockError
+
+    database = tmp_path / 'source.sqlite3'
+    coordination = str(database.resolve()) + '.host-order.sqlite3'
+    with sqlite3.connect(coordination) as connection:
+        connection.execute('CREATE TABLE preserved(value TEXT)')
+        connection.execute("INSERT INTO preserved VALUES ('synthetic sentinel')")
+    with pytest.raises(SourceLockError):
+        HostSourceOrder(database)
+    with sqlite3.connect(coordination) as connection:
+        assert connection.execute('SELECT value FROM preserved').fetchone() == ('synthetic sentinel',)
+
+
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_uncommitted_stale_retry_refuses_before_host_preparation(tmp_path, monkeypatch):
+    from models.managed_event import ManagedCommand
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        state = managed_events.bind_event(event, user, config)
+        real_call = managed_events._call
+        def unavailable(*_args):
+            raise ManagedEventError('Synthetic transport unavailable before source commit')
+        monkeypatch.setattr(managed_events, '_call', unavailable)
+        with pytest.raises(ManagedEventError, match='transport unavailable'):
+            managed_events.submit(event, user, {'operation': 'forecast', 'request_id': 'stale-pending',
+                'expected_revision': state['revision'], 'editor': 'missoula', 'payload': {}})
+        db.session.rollback()
+        command_id = ManagedCommand.query.filter_by(request_id='stale-pending').one().id
+        monkeypatch.setattr(managed_events, '_call', real_call)
+        real_call(user, event.managed_operation, {'operation': 'handover', 'event_id': state['event_id'],
+            'request_id': 'another-committed-command', 'expected_revision': state['revision'],
+            'editor': 'missoula', 'payload': {'editor': 'cli'}})
+        def forbidden_preparation(*_args, **_kwargs):
+            pytest.fail('Known stale uncommitted request reached host preparation')
+        monkeypatch.setattr(managed_events, '_host_roster', forbidden_preparation)
+        with pytest.raises(ManagedEventError, match='[Ss]tale'):
+            managed_events.recover_command(command_id, user)
+        db.session.rollback()
+        assert db.session.get(ManagedCommand, command_id).status == 'pending'
+
+
+@pytest.mark.parametrize('discipline', ['SB', 'UH'])
+@pytest.mark.parametrize('kind', ['pro', 'college'])
+@pytest.mark.parametrize('gender', ['M', 'F'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_real_host_profiles_use_configured_wood_and_complete_lifecycle(tmp_path, discipline, kind, gender):
+    from models import ProCompetitor, WoodConfig
+    from services import managed_events
+    from tests.conftest import make_college_competitor, make_team
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        name = 'Standing Block' if discipline == 'SB' else 'Underhand'
+        event.name = name + (' Speed' if kind == 'college' else '')
+        event.stand_type = 'standing_block' if discipline == 'SB' else 'underhand'
+        event.event_type, event.gender = kind, gender
+        old_pro = ProCompetitor.query.one()
+        if kind == 'pro':
+            entrant = old_pro
+            entrant.gender = gender
+            entrant.events_entered = json.dumps([event.name])
+            event.set_payouts({'1': 100})
+        else:
+            old_pro.events_entered = '[]'
+            team = make_team(db.session, event.tournament)
+            members = [make_college_competitor(db.session, event.tournament, team,
+                f'Synthetic profile {g} {index}', gender=g, events=[event.name] if g == gender and index == 0 else [])
+                for g in ['M', 'F'] for index in range(2)]
+            entrant = next(comp for comp in members if comp.gender == gender)
+        config['discipline'] = discipline
+        config['roster'][0].update(host_ref=f'{kind}:{entrant.id}', gender=gender)
+        for history in config['roster'][0]['history']:
+            history['event_code'] = discipline
+        WoodConfig.query.delete()
+        category = 'standing' if discipline == 'SB' else 'underhand'
+        size, unit, millimetres = (10, 'in', 254) if gender == 'M' else (275, 'mm', 275)
+        db.session.add(WoodConfig(tournament_id=event.tournament_id,
+            config_key=f'block_{category}_{kind}_{gender}', species='S01', size_value=size, size_unit=unit))
+        config['wood']['diameter_mm'] = millimetres
+        db.session.commit()
+        _single_entry_final(event, user, config)
+        managed_events.accept_export(event, user, managed_events.submit(event, user, {'operation': 'export'}))
+        managed_events.apply_host_awards(event, user)
+        db.session.commit()
+        row = event.results.one()
+        assert event.is_finalized and event.status == 'completed'
+        assert row.competitor_id == entrant.id and row.competitor_type == kind
+        assert row.final_position == 1 and row.result_value == 20 and row.handicap_factor == 3
+        if kind == 'pro':
+            assert row.payout_amount == entrant.total_earnings == 100
+        else:
+            assert row.points_awarded == entrant.individual_points == team.total_points == 10

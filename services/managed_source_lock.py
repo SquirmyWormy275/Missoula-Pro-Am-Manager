@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import queue
 import sqlite3
 import subprocess
@@ -15,18 +16,66 @@ class SourceLockError(ValueError):
     pass
 
 
+class HostSourceOrder:
+    """Serialize host operations spanning source/host locks, before either.
+
+    The empty SQLite sidecar is a mutex, not authority or backup data. It lets
+    creation run its normal component transaction while preventing acceptance
+    from holding the source writer and waiting for creation's host locks.
+    Every host process must use the same configured authority path.
+    """
+
+    def __init__(self, database):
+        self.connection = None
+        path = Path(str(Path(database).resolve()) + '.host-order.sqlite3')
+        try:
+            try:
+                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                if path.is_symlink() or not path.is_file():
+                    raise SourceLockError('Invalid host/source coordination file.')
+            else:
+                os.close(descriptor)
+            self.connection = sqlite3.connect(path.as_uri() + '?mode=rw', uri=True,
+                                              timeout=45, isolation_level=None)
+            if self.connection.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
+                raise SourceLockError('Host/source coordination file must contain no business tables.')
+            self.connection.execute('BEGIN IMMEDIATE')
+        except (OSError, sqlite3.Error, SourceLockError) as exc:
+            self.close()
+            raise SourceLockError('Host/source coordination unavailable; retry the retained request.') from exc
+
+    def close(self):
+        if self.connection is not None:
+            try:
+                self.connection.rollback()
+            finally:
+                self.connection.close()
+                self.connection = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
+
+
 class HeldSourceExport:
     def __init__(self, executable, database, environment, principal, event_ids, *, failure_type=SourceLockError):
         self.closed = False
         self.source_connection = None
+        self.coordination = None
+        self.process = None
         self.failure_type = failure_type
         try:
+            self.coordination = HostSourceOrder(database)
             self.process = subprocess.Popen(
                 [str(executable), '-I', str(Path(__file__).with_name('managed_export_worker.py')),
                  '--database', str(database)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, env=environment)
-        except OSError as exc:
-            raise SourceLockError('Source fence interpreter is unavailable.') from exc
+        except (OSError, SourceLockError) as exc:
+            self.close(False)
+            raise SourceLockError('Source fence coordination or interpreter is unavailable.') from exc
         try:
             self.process.stdin.write(json.dumps({'principal': principal, 'event_ids': event_ids}) + '\n')
             self.process.stdin.flush()
@@ -37,9 +86,15 @@ class HeldSourceExport:
             if len(line) > 16 * 1024 * 1024:
                 raise SourceLockError('Source fence response exceeded capacity.')
             packet = json.loads(line)
+            if not isinstance(packet, dict):
+                raise SourceLockError('Source export fence response must be an object.')
             if not packet.get('ok') or packet.get('schema_version') != 'strathmark.held-export.v2':
                 raise SourceLockError('Source export fence refused: ' + str(packet.get('error', 'invalid response')))
+            if not all(isinstance(packet.get(name), dict) for name in ('exports', 'states', 'state_digests')):
+                raise SourceLockError('Source export fence maps are invalid.')
             self.exports, self.states = packet['exports'], packet['states']
+            if not all(isinstance(value, dict) for mapping in (self.exports, self.states) for value in mapping.values()):
+                raise SourceLockError('Source export fence state/export objects are invalid.')
             if set(self.exports) != set(event_ids) or set(self.states) != set(event_ids) or set(packet['state_digests']) != set(event_ids):
                 raise SourceLockError('Source export fence identity mismatch.')
             self.process.stdin.write('handoff\n')
@@ -64,9 +119,12 @@ class HeldSourceExport:
         if self.closed:
             return
         try:
-            if self.source_connection is None or not self.source_connection.in_transaction:
+            if (self.source_connection is None or not self.source_connection.in_transaction
+                    or self.coordination is None or self.coordination.connection is None
+                    or not self.coordination.connection.in_transaction):
                 raise sqlite3.OperationalError('source_fence_not_active')
             self.source_connection.execute('SELECT 1')
+            self.coordination.connection.execute('SELECT 1')
         except sqlite3.Error as exc:
             raise self.failure_type('Source fence was lost; rollback and recover before accepting results.') from exc
 
@@ -74,12 +132,21 @@ class HeldSourceExport:
         if self.closed:
             return
         self.closed = True
+        try:
+            self._close_resources()
+        finally:
+            if self.coordination is not None:
+                self.coordination.close()
+
+    def _close_resources(self):
         if self.source_connection is not None:
             try:
                 self.source_connection.rollback()
             except sqlite3.Error:
                 pass
             self.source_connection.close()
+        if self.process is None:
+            return
         try:
             self.process.stdin.write('abort\n')
             self.process.stdin.flush()

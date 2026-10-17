@@ -739,13 +739,15 @@ def generate_event_heats(
     return actual_heat_count
 
 
-def _get_event_competitors(event: Event, *, refresh=False) -> list:
+def _get_event_competitors(event: Event, *, refresh=False, create_results=True) -> list:
     """Get list of competitors entered in this event with their info.
 
     Always scans active competitors to discover new registrations that don't
     yet have EventResult rows (fixes silent omission on heat regeneration).
     Delegated acceptance can refresh already loaded registrations after taking
     the tournament lock; an ORM identity cache is not a registration snapshot.
+    Managed pre-intent validation can opt out of placeholder writes; projection
+    creates them under the host lock after the source operation has completed.
     """
     competitors = []
     seen_ids: set[int] = set()
@@ -822,7 +824,7 @@ def _get_event_competitors(event: Event, *, refresh=False) -> list:
         seen_ids.add(comp.id)
 
         # Create EventResult row if one doesn't exist yet (new entrant).
-        if comp.id not in existing_result_comp_ids:
+        if create_results and comp.id not in existing_result_comp_ids:
             result = EventResult(
                 event_id=event.id,
                 competitor_id=comp.id,
@@ -849,7 +851,8 @@ def _get_event_competitors(event: Event, *, refresh=False) -> list:
 
         competitors.append(comp_data)
 
-    db.session.flush()
+    if create_results:
+        db.session.flush()
     return competitors
 
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from flask import current_app
+from sqlalchemy.exc import IntegrityError
 
 from database import db
 from models import Event, EventResult, Heat, User
@@ -213,7 +214,7 @@ def _bind_event_locked(event, user, config):
     return submit(event, user, {'operation': 'create', 'request_id': str(uuid.uuid4()), 'editor': 'missoula', 'payload': config}, _initial_binding=True)
 
 
-def _host_roster(event, config, *, assign_gear=False):
+def _host_roster(event, config, *, assign_gear=False, create_results=True):
     from services.heat_generator import (
         HeatGenerationSafetyError,
         _competitors_share_gear_for_event,
@@ -222,8 +223,18 @@ def _host_roster(event, config, *, assign_gear=False):
         _validate_event_gear_declarations,
     )
 
-    entrants = _get_event_competitors(event, refresh=True)
-    mapping = {r['entry_id']: int(r['host_ref'].split(':')[-1]) for r in config['roster']}
+    roster = config.get('roster')
+    if not isinstance(roster, list) or any(not isinstance(row, dict) for row in roster):
+        raise ManagedEventError('Managed roster must be an array of entry objects.')
+    mapping = {}
+    for row in roster:
+        entry_id, host_ref = row.get('entry_id'), row.get('host_ref')
+        if (not isinstance(entry_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/-]{0,223}', entry_id)
+                or entry_id in mapping or not isinstance(host_ref, str) or len(host_ref) > 224
+                or not re.fullmatch(re.escape(event.event_type) + r':[1-9][0-9]*', host_ref)):
+            raise ManagedEventError('Use unique stable entry IDs and canonical pro:<id>/college:<id> host references.')
+        mapping[entry_id] = int(host_ref.split(':', 1)[1])
+    entrants = _get_event_competitors(event, refresh=True, create_results=create_results)
     if len(set(mapping.values())) != len(mapping) or set(mapping.values()) != {r['id'] for r in entrants}:
         raise ManagedEventError('Managed roster must account for every active entered competitor exactly once.')
     gender_by_id = {r['id']: r['gender'] for r in entrants}
@@ -262,9 +273,16 @@ def _host_roster(event, config, *, assign_gear=False):
 
 def _validate_show_wood(event, config):
     from models.wood_config import WoodConfig
+    from services.strathmark_sync import (
+        _STAND_TYPE_TO_WOOD_FRAGMENT,
+        _wood_config_key,
+    )
 
-    key = f'block_{event.stand_type}_{event.event_type}'
-    gender_key = key + ('_' + event.gender if event.gender else '')
+    fragment = _STAND_TYPE_TO_WOOD_FRAGMENT.get(event.stand_type)
+    if fragment is None:
+        raise ManagedEventError('Unsupported show wood category for this managed event.')
+    key = f'block_{fragment}_{event.event_type}'
+    gender_key = _wood_config_key(event.stand_type, event.event_type, event.gender) or key
     wood = WoodConfig.query.filter_by(tournament_id=event.tournament_id, config_key=gender_key).populate_existing().first()
     if wood is None:
         wood = WoodConfig.query.filter_by(tournament_id=event.tournament_id, config_key=key).populate_existing().first()
@@ -316,6 +334,8 @@ def submit(event, user, request, *, _initial_binding=False):
     if not link:
         raise ManagedEventError('Managed event is not linked.')
     request = dict(request)
+    if request.get('operation') == 'create' and db.session().info.get('managed_source_fence') is not None:
+        raise ManagedEventError('Finish the source-fenced host transaction before creating another event.')
     request['event_id'] = link.module_event_id
     if request['operation'] in {'read', 'export'}:
         if request['operation'] == 'export':
@@ -357,6 +377,8 @@ def submit(event, user, request, *, _initial_binding=False):
             already_committed = any(item['actor_id'] == user.shadow_actor_id and
                                     item['request_id'] == request_id and item['action'] == request['operation']
                                     for item in observed['audit'])
+            if not already_committed and request['operation'] != 'create' and request.get('expected_revision') != observed['revision']:
+                raise ManagedEventError('Stale uncommitted request; refresh and prepare a new command identity.')
             if already_committed:
                 _project_latest(event, observed)
                 db.session.commit()
@@ -365,32 +387,57 @@ def submit(event, user, request, *, _initial_binding=False):
             candidate = request['payload']['config']
             _validate_host_profile(event, candidate)
             _validate_show_wood(event, candidate)
-            _host_roster(event, candidate)
+            _host_roster(event, candidate, create_results=False)
         if request['operation'] in {'fields', 'forecast', 'calculate', 'review', 'issue'} and link.state_json:
             config = json.loads(link.state_json)['config']
             _validate_host_profile(event, config)
             _validate_show_wood(event, config)
-            _host_roster(event, config)
+            _host_roster(event, config, create_results=False)
         if request['operation'] in {'fields', 'calculate', 'review', 'issue', 'outcomes'}:
             validate_host_fields(event)
     if saved is None:
         saved = ManagedCommand(event_id=event.id, actor_id=user.id, request_id=request_id,
                                payload_json=canonical(request), payload_digest=binding)
         db.session.add(saved)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            winner = ManagedCommand.query.filter_by(event_id=event.id, actor_id=user.id, request_id=request_id).first()
+            if winner is None:
+                raise
+            # A concurrent request won the unique insert. Re-enter the normal
+            # digest/status/audit path; exact retries recover, changes conflict.
+            return submit(event, user, request, _initial_binding=_initial_binding)
     if request['operation'] == 'create' and not already_committed:
         # Durable link/intent commits intentionally release earlier locks.
         # Reacquire and revalidate after the last commit, then hold the real
         # host facts across source creation and host projection/commit.
         from services.flight_builder import lock_tournament_schedule
+        from services.managed_source_lock import HostSourceOrder, SourceLockError
 
-        lock_tournament_schedule(event.tournament_id)
-        _locked_link(event)
-        candidate = json.loads(saved.payload_json)['payload']
-        _validate_host_profile(event, candidate)
-        _validate_show_wood(event, candidate)
-        mapping = _host_roster(event, candidate)
-        _reconcile_initial_results(event, mapping)
+        _, database = _configured_runtime()
+        try:
+            with HostSourceOrder(database):
+                try:
+                    lock_tournament_schedule(event.tournament_id)
+                    _locked_link(event)
+                    candidate = json.loads(saved.payload_json)['payload']
+                    _validate_host_profile(event, candidate)
+                    _validate_show_wood(event, candidate)
+                    mapping = _host_roster(event, candidate)
+                    _reconcile_initial_results(event, mapping)
+                    return _finish_command(event, user, link, saved)
+                except BaseException:
+                    # Release host locks before releasing the outer order gate.
+                    db.session.rollback()
+                    raise
+        except SourceLockError as exc:
+            raise ManagedEventError(str(exc)) from exc
+    return _finish_command(event, user, link, saved)
+
+
+def _finish_command(event, user, link, saved):
     result = _call(user, link, json.loads(saved.payload_json))
     _project_latest(event, result)
     saved.status, saved.response_json = 'accepted', canonical(result)
