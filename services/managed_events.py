@@ -10,7 +10,7 @@ import json
 import os
 import subprocess
 import uuid
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -208,6 +208,7 @@ def _bind_event_locked(event, user, config):
 
 def _host_roster(event, config, *, assign_gear=False):
     from services.heat_generator import (
+        HeatGenerationSafetyError,
         _competitors_share_gear_for_event,
         _get_event_competitors,
         _get_tournament_events,
@@ -226,7 +227,10 @@ def _host_roster(event, config, *, assign_gear=False):
     # reusable ORM snapshot across these separate host requests/databases.
     _get_tournament_events._cache = {}
     try:
-        _validate_event_gear_declarations(event, entrants)
+        try:
+            _validate_event_gear_declarations(event, entrants)
+        except HeatGenerationSafetyError as exc:
+            raise ManagedEventError(str(exc)) from exc
         groups = {r['id']: r['id'] for r in entrants}
         def root(value):
             while groups[value] != value:
@@ -259,7 +263,14 @@ def _validate_show_wood(event, config):
         wood = WoodConfig.query.filter_by(tournament_id=event.tournament_id, config_key=key).populate_existing().first()
     if wood is None:
         raise ManagedEventError('Configure the show wood before linking or preparing a managed event.')
-    diameter = Decimal(str(wood.size_value)) * (Decimal('25.4') if wood.size_unit == 'in' else Decimal(1))
+    try:
+        if wood.size_value is None or wood.size_unit not in {'in', 'mm'}:
+            raise ValueError('missing size or unsupported unit')
+        diameter = Decimal(str(wood.size_value)) * (Decimal('25.4') if wood.size_unit == 'in' else Decimal(1))
+        if not diameter.is_finite() or diameter <= 0:
+            raise ValueError('nonpositive or nonfinite size')
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ManagedEventError('Configure a finite positive show wood size and supported unit before managed operations.') from exc
     if str(config['wood']['species']).casefold() != str(wood.species).casefold() or Decimal(str(config['wood']['diameter_mm'])) != diameter:
         raise ManagedEventError('Managed wood differs from the configured show wood; prepare a reviewed revision.')
     _validate_physical_stands(event, config)
@@ -365,8 +376,27 @@ def submit(event, user, request, *, _initial_binding=False):
 def _locked_link(event):
     """Reload under the parent lock; an earlier ORM read is not current state."""
     db.session.query(Event).filter_by(id=event.id).populate_existing().with_for_update().one()
+    _lock_host_context(event)
     return (ManagedEventLink.query.filter_by(event_id=event.id)
             .populate_existing().with_for_update().one())
+
+
+def _lock_host_context(event):
+    """Fence even wood/gear writers that do not take the tournament lock.
+
+    PostgreSQL holds the underlying rows through commit; the parent lock also
+    protects new foreign-key insertions. SQLite needs a real database writer
+    reservation, since SELECT FOR UPDATE and the in-process schedule guard
+    cannot serialize an unrelated connection's Woodboss/gear transaction.
+    """
+    from models import CollegeCompetitor, ProCompetitor, Tournament, WoodConfig
+
+    if db.session.get_bind().dialect.name == 'sqlite':
+        db.session.execute(Tournament.__table__.update().where(
+            Tournament.id == event.tournament_id).values(id=Tournament.id))
+    for model in (WoodConfig, ProCompetitor, CollegeCompetitor):
+        (model.query.filter_by(tournament_id=event.tournament_id).order_by(model.id)
+         .populate_existing().with_for_update().all())
 
 
 def _validate_host_context(event, state, mapping):
@@ -413,6 +443,15 @@ def _project_latest(event, result):
     if current and result['revision'] == current['revision'] and canonical(result) != canonical(current):
         raise ManagedEventError('Changed managed state for an existing revision.')
     if not current or result['revision'] > current['revision']:
+        # A shared editor can prepare newer fields without changing its config.
+        # Those fields must still describe current host enrollment/division/gear.
+        # Receipt-only forecast recovery with no fields must remain possible
+        # after registration edits; it publishes no physical heat to schedule.
+        has_fields = any(round_['fields'] for round_ in result['rounds'])
+        roster_changed = ('config' in result and current and
+                          result['config']['roster'] != current['config']['roster'])
+        mapping = (_host_roster(event, result['config']) if 'config' in result and
+                   (not current or has_fields or roster_changed) else None)
         if not current:
             # A recovered original request can differ from a subsequently
             # refused candidate. Bind the source's creating actor/request and
@@ -433,9 +472,10 @@ def _project_latest(event, result):
                     candidate.response_json = canonical({'error': 'initial_creation_superseded',
                                                           'source_creation_request_id': creation['request_id']})
         elif 'config' in result and result['config']['roster'] != current['config']['roster']:
-            mapping = _host_roster(event, result['config'])
             _reconcile_pending_results(event, json.loads(link.mapping_json), mapping)
             link.mapping_json = canonical(mapping)
+        elif mapping is not None and mapping != json.loads(link.mapping_json):
+            raise ManagedEventError('Source roster differs from the retained host entry mapping.')
         project_fields(event, result)
         link.state_json = canonical(result)
 

@@ -636,3 +636,116 @@ def test_bulk_payout_configuration_uses_one_fence_for_all_managed_events(tmp_pat
     with app.app_context():
         assert db.session.get(Event, event_id).get_payout_for_position(1) == 100
         assert db.session.get(Event, second_id).get_payout_for_position(1) == 100
+
+
+@pytest.mark.parametrize('change', ['add', 'remove', 'gear', 'division'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_shared_field_refresh_rechecks_unchanged_source_roster(tmp_path, change):
+    from models import ProCompetitor
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        state = managed_events.bind_event(event, user, config)
+        entrant = ProCompetitor.query.one()
+        if change == 'add':
+            make_pro_competitor(db.session, event.tournament, 'Synthetic unprojected entrant', events=['Underhand'])
+        elif change == 'remove':
+            entrant.events_entered = '[]'
+        elif change == 'gear':
+            entrant.gear_sharing = json.dumps({'Underhand': 'Synthetic unresolved gear owner'})
+        else:
+            entrant.gender = 'M' if entrant.gender == 'F' else 'F'
+        db.session.commit()
+        managed_events._call(user, event.managed_operation, {
+            'operation': 'fields', 'event_id': state['event_id'], 'request_id': 'shared-refreshed-field',
+            'expected_revision': state['revision'], 'editor': 'missoula', 'payload': {'fields': [
+                {'heat_id': 'refreshed-field', 'entries': [config['roster'][0]['entry_id']], 'stands': ['1']}]}})
+        with pytest.raises(ManagedEventError):
+            managed_events.submit(event, user, {'operation': 'read'})
+        db.session.rollback()
+        assert event.heats.count() == 0
+        assert json.loads(event.managed_operation.state_json)['revision'] == state['revision']
+
+
+@pytest.mark.parametrize('size', [None, 0, float('inf')])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_incomplete_or_invalid_host_wood_is_a_managed_validation_error(tmp_path, size):
+    from models import WoodConfig
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        WoodConfig.query.one().size_value = size
+        db.session.commit()
+        with pytest.raises(ManagedEventError, match='wood'):
+            managed_events.bind_event(db.session.get(Event, event_id), db.session.get(User, user_id), config)
+        db.session.rollback()
+        assert db.session.get(Event, event_id).managed_operation is None
+
+
+@pytest.mark.parametrize('operation', ['accept', 'awards'])
+@pytest.mark.parametrize('change', ['wood', 'gear'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_uncoordinated_context_writer_waits_through_actual_host_commit(tmp_path, monkeypatch, operation, change):
+    from models import ProCompetitor, WoodConfig
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    attempted, finished = threading.Event(), threading.Event()
+    errors = queue.Queue()
+    writer = None
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        _single_entry_final(event, user, config)
+        exported = managed_events.submit(event, user, {'operation': 'export'})
+        if operation == 'awards':
+            managed_events.accept_export(event, user, exported)
+            db.session.commit()
+        real_context = managed_events._validate_host_context
+
+        def write_without_parent_lock():
+            try:
+                with app.app_context():
+                    if change == 'wood':
+                        row = WoodConfig.query.one()
+                        row.size_value = 280
+                    else:
+                        row = ProCompetitor.query.one()
+                        row.gear_sharing = json.dumps({'Underhand': 'Synthetic later gear change'})
+                    attempted.set()
+                    # Deliberately no tournament lock/route decorator: this
+                    # models the existing Woodboss/gear writers' transaction.
+                    db.session.commit()
+            except Exception as exc:
+                errors.put(exc)
+            finally:
+                finished.set()
+
+        def after_context_validation(*args):
+            nonlocal writer
+            real_context(*args)
+            if writer is None:
+                writer = threading.Thread(target=write_without_parent_lock)
+                writer.start()
+                assert attempted.wait(10)
+                assert not finished.wait(0.25), 'Host context changed between validation and commit'
+
+        monkeypatch.setattr(managed_events, '_validate_host_context', after_context_validation)
+        try:
+            if operation == 'awards':
+                managed_events.apply_host_awards(event, user)
+            else:
+                managed_events.accept_export(event, user, exported)
+            assert not finished.is_set()
+            db.session.commit()
+        finally:
+            db.session.rollback()
+            if writer is not None:
+                writer.join(10)
+        assert finished.is_set() and not writer.is_alive()
+        assert errors.empty(), list(errors.queue)
+        assert db.session.get(Event, event_id).status == 'completed'
+        if operation == 'awards':
+            assert db.session.get(Event, event_id).is_finalized

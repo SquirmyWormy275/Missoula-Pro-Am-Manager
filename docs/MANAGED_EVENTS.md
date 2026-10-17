@@ -45,6 +45,22 @@ the source configuration. An unchanged source roster cannot conceal a host-side
 entry addition/removal. Exact retries of an already accepted export retain their
 original receipt after later registration edits.
 
+Award application repeats these current host checks. Projection also validates
+wood and, whenever physical fields are published, current enrollment, divisions
+and gear even if the source roster itself is unchanged. Unissued roster shrink
+removes only empty pending result placeholders; recorded scores (including zero),
+mark review, awards, settlement or other result history prevent deletion.
+Receipt-only recovery of a committed forecast with no fields remains possible
+after registration edits; it does not publish a physical heat for scheduling.
+
+Host context is fenced through the actual transaction commit, including existing
+Woodboss and gear writers that do not acquire the tournament parent lock.
+PostgreSQL locks the underlying wood/competitor rows as well as the parent;
+SQLite reserves its real database writer before validating/projecting. The
+in-process schedule guard alone is insufficient for those independent connections.
+Incomplete/nonfinite/nonpositive wood size or invalid gear declarations produce
+managed validation messages, not an uncaught conversion/generation exception.
+
 Acceptance and award application retain a host-owned SQLite writer fence through
 the outer host transaction. The private adapter first asks exact rc11 to export
 and verify the snapshot, then hands off to a standard SQLite mutex in the host
