@@ -6,10 +6,14 @@ Canonical [architecture agreement](https://github.com/SquirmyWormy275/STRATHMARK
 ## Current delivery and resumption point
 
 Documentation refreshed 2026-10-16 after fetching all four repositories. The
-application implementation is verified at Missoula head
-`47f9bb558816e07f35d2c54f3ed4454f0c6fc21e`; its last application-code commit is
-`0727e9b63cdaaeb7ac994f5729d82b8114456d7d`. Later documentation commits must record
-their own check status rather than inherit an exact-head CI claim.
+latest application-code commit is
+`62216f492facd3691293bd52d0d3884fe20974c1`, with fresh 159-test SQLite,
+96-test PostgreSQL and clean-source R09/R12 verification. Its exact-head
+[CI 38984242587](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/actions/runs/38984242587)
+passed all eight applicable jobs (production audit skipped). Follow-up review
+has its own status; consult the current PR checks.
+Earlier full CI/review checkpoints below remain explicitly source-bound.
+Later documentation commits must record their own checks.
 
 | Component | Delivered state | Verified revision / record |
 | --- | --- | --- |
@@ -20,8 +24,9 @@ their own check status rather than inherit an exact-head CI claim.
 
 [CI 38897926622](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/actions/runs/38897926622)
 passed all eight applicable jobs on 47f9bb5, including full SQLite and PostgreSQL
-suites. The production tournament audit stayed skipped. Exact-head automated
-review completed with no findings; all 18 earlier review threads are resolved.
+suites. The production tournament audit stayed skipped. At that checkpoint automated review completed with no findings and all 18
+then-existing review threads were resolved. A later review identified three
+additional defects; their failure/fix evidence is recorded below.
 The [final verification comment](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125#issuecomment-6215277443)
 records these results without changing the tested commit.
 
@@ -33,8 +38,8 @@ production main and 47f9bb5. The managed receipts' dirty flag is solely generate
 `managed-results.xml`; reconstructing its collector bytes yields
 `e16f71a453059345780a389693645fcaef474bf4a575f9b6f148b74dea29b8d5`.
 Local clean 0727e9b independently passes R12 and historical rollback R09, 13
-checks each, cleanup PASS. Earlier failures and intermediate receipts below are
-historical evidence, not outstanding functionality or current pass claims.
+checks each, cleanup PASS. Earlier failures and intermediate receipts below are historical evidence,
+not current pass claims. Current follow-up review/check status is separate.
 
 Durable workstation inventory: `../evidence/REPOSITORY_STATUS.json`, captured
 2026-10-16 12:15 UTC, contains full repository refs, CI/review status, published
@@ -56,6 +61,46 @@ remain BLOCKED under their original input/identity requirements. The separate
 [MNEMEX project memory](https://github.com/SquirmyWormy275/mnemex/blob/main/docs/project-memory/START_HERE.md)
 provides the model-neutral design/context entry point; this file remains the
 implementation evidence record.
+
+## Follow-up from the documentation review — 2026-10-16
+
+Documentation-only source `70109349dc668a73b30f1cd48fc33b201ab2375c` passed
+all eight applicable jobs in
+[CI 38982953991](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/actions/runs/38982953991).
+Its fresh review identified three real consistency defects. Application commit
+`62216f492facd3691293bd52d0d3884fe20974c1` fixes them:
+
+- Awards revalidate current active registration, show wood and host profile under
+  the tournament lock even after a finalized export was previously accepted.
+- An unissued roster shrink removes only unused pending result placeholders.
+  Any score, including a recorded zero timer, reviewed mark, award/settlement,
+  flag or other result history blocks deletion and preserves the old mapping.
+- Every projected source config validates fresh show wood and physical stands,
+  even when a shared editor changes wood without changing the roster.
+
+Five installed-component regression cases reproduced the defects before the fix.
+The first RED pass also exposed three test-fixture setup errors; after correcting
+unique engine identity and RPC/config envelope shape, the final three cases
+failed for the actual shrink/wood defects. Both original logs are retained;
+test setup errors are not claimed as production bug reproductions.
+`host-context-red.xml` retains the two genuine award failures;
+`host-context-red-valid.xml` retains the two shrink and one wood failures.
+The corrected code passes **159 SQLite and 96 PostgreSQL tests, zero skips**, plus
+ruff. PostgreSQL namespace/resource cleanup passes. Policy-only fixtures stub
+only their literal synthetic peer; installed integration still uses the actual
+component and current host registration.
+
+Fresh R12 source/acceptance-crash and R09 historical rollback drills each pass all
+13 checks with cleanup PASS at clean source 62216f4. Receipts:
+`../evidence/host-context-final.xml`, `host-context-postgres/report.json`,
+`recovery-host-context-managed-acceptance-crashes/report.json`, and
+`recovery-host-context-code-schema-rollback/report.json`.
+[Exact application CI 38984242587](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/actions/runs/38984242587)
+passes all eight applicable jobs, including the complete host SQLite/PostgreSQL
+suites and installed managed integration; the production audit stays skipped.
+All three new findings are fixed/resolved; the latest automated review is
+tracked separately on the PR. Later documentation-head checks remain distinct.
+These proofs do not satisfy the hosted backup/key gate or authorize deployment.
 
 ## Repository record
 
@@ -114,7 +159,7 @@ private historical/training corpus was used for these checks.
 | Repository | Implementation / delivery |
 | --- | --- |
 | STRATHMARK | final reviewed source `0839f640b8f1a02270a8275246e5801260458391`; [PR 35](https://github.com/SquirmyWormy275/STRATHMARK/pull/35) MERGED at `f184e9f2e110bd01d5fec2abd2ef1bfe6f22e214` after all 25 checks passed and all six review findings were fixed/resolved; rc11 PUBLISHED to [PyPI](https://pypi.org/project/strathmark/3.0.0rc11/) and [GitHub prerelease](https://github.com/SquirmyWormy275/STRATHMARK/releases/tag/v3.0.0rc11) after successful main CI and exact artifact/extra installation checks |
-| Missoula | managed integration and review fixes through application source `0727e9b63cdaaeb7ac994f5729d82b8114456d7d`; verified documentation head `47f9bb558816e07f35d2c54f3ed4454f0c6fc21e`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; all eight applicable jobs passed in run `38897926622`, automated review clean, all 18 earlier findings resolved; merge BLOCKED by hosted backup/recovery proof. Intermediate commits and failure/fix receipts are retained in the dated sections below. |
+| Missoula | managed integration and follow-up fixes through application source `62216f492facd3691293bd52d0d3884fe20974c1` (159 SQLite / 96 PostgreSQL, clean R09/R12); historical full-CI documentation checkpoints `47f9bb558816e07f35d2c54f3ed4454f0c6fc21e` and `70109349dc668a73b30f1cd48fc33b201ab2375c`; branch `feature/modular-events-20261015`; [PR 125](https://github.com/SquirmyWormy275/Missoula-Pro-Am-Manager/pull/125), draft; historical all-eight-job runs `38897926622` and `38982953991` passed; 18 earlier findings resolved, three later findings fixed in 62216f4 with current review/check status tracked separately; merge BLOCKED by hosted backup/recovery proof. Intermediate commits and failure/fix receipts are retained in the dated sections below. |
 | STRATHEX | `bcf7ffc19c3796ac189c6dd8c2c59d2abb472f89`; [PR 34](https://github.com/SquirmyWormy275/STRATHEX/pull/34), MERGED at `bcfe4e50e1449b2585a037215c79f5a7e955e9da`; both findings fixed/resolved; all 11 PR checks and main run `38885236056` passed, including installed published rc11; version 7.4.3 |
 | MNEMEX | implementation PR 5 MERGED at `7f96f798317ac3b1afd7e0a37eb021c6099389a4`; binding/scope PR 6 MERGED at `43b1d9382da0e0b7f56eaa98e368c5a5b095590d`; provenance/security source `83d9e6d296b990ba01884fc04c5662fea36c6eb6` in [PR 7](https://github.com/SquirmyWormy275/mnemex/pull/7) MERGED at `7a315946c92e24a125fc213c7d139eef6278f12c`. Each passed exact-head Linux/Windows CI; PR 7 automated review completed with no findings; all earlier eight findings fixed/resolved; no deployment |
 
