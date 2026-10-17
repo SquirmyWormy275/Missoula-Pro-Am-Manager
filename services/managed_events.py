@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import uuid
 from decimal import Decimal, InvalidOperation
@@ -110,9 +111,13 @@ def _call(user, link, request):
         response = json.loads(completed.stdout)
     except (ValueError, TypeError) as exc:
         raise ManagedEventError('Invalid STRATHMARK response; retained request requires recovery.') from exc
+    if not isinstance(response, dict):
+        raise ManagedEventError('Invalid STRATHMARK response object; retained request requires recovery.')
     if completed.returncode or not response.get('ok'):
         raise ManagedEventError(str(response.get('error', 'STRATHMARK command refused.')))
-    result = response['result']
+    result = response.get('result')
+    if not isinstance(result, dict):
+        raise ManagedEventError('Invalid STRATHMARK result response; retained request requires recovery.')
     if result.get('schema_version') != CONTRACT:
         raise ManagedEventError('Incompatible managed-event component; no fallback is permitted.')
     return result
@@ -168,6 +173,7 @@ def bind_event(event, user, config):
     with sqlite_schedule_writer_guard(event.tournament_id):
         lock_tournament_schedule(event.tournament_id)
         db.session.query(Event).filter_by(id=event.id).populate_existing().with_for_update().one()
+        _lock_host_context(event)
         db.session.expire(event, ['managed_operation'])
         return _bind_event_locked(event, user, config)
 
@@ -185,6 +191,7 @@ def _bind_event_locked(event, user, config):
         raise ManagedEventError('Managed v1 requires a fresh, single-run individual event.')
     _validate_show_wood(event, config)
     mapping = _host_roster(event, config, assign_gear=True)
+    _reconcile_initial_results(event, mapping)
     expected_event = event.shadow_event_occurrence_id + ':managed'
     if config['event_id'] != expected_event or config['tournament_id'] != event.tournament.shadow_tournament_id or config['discipline'] != {'underhand': 'UH', 'standing_block': 'SB'}[event.stand_type] or config['publisher'] != 'host':
         raise ManagedEventError('Source event/tournament/discipline/publisher binding differs from this show.')
@@ -267,11 +274,12 @@ def _validate_show_wood(event, config):
         if wood.size_value is None or wood.size_unit not in {'in', 'mm'}:
             raise ValueError('missing size or unsupported unit')
         diameter = Decimal(str(wood.size_value)) * (Decimal('25.4') if wood.size_unit == 'in' else Decimal(1))
-        if not diameter.is_finite() or diameter <= 0:
+        supplied = Decimal(str(config['wood']['diameter_mm']))
+        if not diameter.is_finite() or diameter <= 0 or not supplied.is_finite() or supplied <= 0:
             raise ValueError('nonpositive or nonfinite size')
-    except (InvalidOperation, TypeError, ValueError) as exc:
+    except (InvalidOperation, KeyError, TypeError, ValueError) as exc:
         raise ManagedEventError('Configure a finite positive show wood size and supported unit before managed operations.') from exc
-    if str(config['wood']['species']).casefold() != str(wood.species).casefold() or Decimal(str(config['wood']['diameter_mm'])) != diameter:
+    if str(config['wood']['species']).casefold() != str(wood.species).casefold() or supplied != diameter:
         raise ManagedEventError('Managed wood differs from the configured show wood; prepare a reviewed revision.')
     _validate_physical_stands(event, config)
 
@@ -288,6 +296,10 @@ def _validate_physical_stands(event, config):
 
 
 def _validate_host_profile(event, config):
+    # The show scope is persisted before source create can validate the whole
+    # config. Enforce the existing component identity grammar at that boundary.
+    if not isinstance(config, dict) or not isinstance(config.get('show_id'), str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/-]{0,223}', config['show_id']):
+        raise ManagedEventError('A valid explicit managed show identity is required before binding.')
     if (config['event_id'] != event.shadow_event_occurrence_id + ':managed' or
         config['tournament_id'] != event.tournament.shadow_tournament_id or
         config['discipline'] != {'underhand': 'UH', 'standing_block': 'SB'}.get(event.stand_type) or
@@ -366,6 +378,19 @@ def submit(event, user, request, *, _initial_binding=False):
                                payload_json=canonical(request), payload_digest=binding)
         db.session.add(saved)
         db.session.commit()
+    if request['operation'] == 'create' and not already_committed:
+        # Durable link/intent commits intentionally release earlier locks.
+        # Reacquire and revalidate after the last commit, then hold the real
+        # host facts across source creation and host projection/commit.
+        from services.flight_builder import lock_tournament_schedule
+
+        lock_tournament_schedule(event.tournament_id)
+        _locked_link(event)
+        candidate = json.loads(saved.payload_json)['payload']
+        _validate_host_profile(event, candidate)
+        _validate_show_wood(event, candidate)
+        mapping = _host_roster(event, candidate)
+        _reconcile_initial_results(event, mapping)
     result = _call(user, link, json.loads(saved.payload_json))
     _project_latest(event, result)
     saved.status, saved.response_json = 'accepted', canonical(result)
@@ -408,18 +433,29 @@ def _validate_host_context(event, state, mapping):
         raise ManagedEventError('Refresh the managed entry mapping before accepting this revision.')
 
 
+def _has_result_history(row):
+    recorded = ('result_value', 'run1_value', 'run2_value', 'run3_value', 'best_run',
+                't1_run1', 't2_run1', 't1_run2', 't2_run2', 'tiebreak_value',
+                'predicted_time', 'mark_assigned_at', 'final_position', 'status_reason', 'partner_name')
+    return (row.status != 'pending' or any(getattr(row, name) is not None for name in recorded)
+            or row.handicap_factor or row.points_awarded or row.payout_amount
+            or row.payout_settled or row.throwoff_pending or row.is_flagged)
+
+
+def _reconcile_initial_results(event, mapping):
+    rows = event.results.populate_existing().with_for_update().all()
+    if any(row.competitor_type != event.event_type or _has_result_history(row) for row in rows):
+        raise ManagedEventError('Managed binding requires fresh pending results without recorded history.')
+    _reconcile_pending_results(event, {str(row.id): row.competitor_id for row in rows}, mapping)
+
+
 def _reconcile_pending_results(event, old_mapping, mapping):
     """An unissued roster replacement may remove only unused placeholder rows."""
     removed = set(old_mapping.values()) - set(mapping.values())
     rows = (EventResult.query.filter_by(event_id=event.id, competitor_type=event.event_type)
             .filter(EventResult.competitor_id.in_(removed)).populate_existing().with_for_update().all())
-    recorded = ('result_value', 'run1_value', 'run2_value', 'run3_value', 'best_run',
-                't1_run1', 't2_run1', 't1_run2', 't2_run2', 'tiebreak_value',
-                'predicted_time', 'mark_assigned_at', 'final_position', 'status_reason', 'partner_name')
     for row in rows:
-        if (row.status != 'pending' or any(getattr(row, name) is not None for name in recorded)
-                or row.handicap_factor or row.points_awarded or row.payout_amount
-                or row.payout_settled or row.throwoff_pending or row.is_flagged):
+        if _has_result_history(row):
             raise ManagedEventError('Cannot discard host result history while replacing the managed roster.')
     for row in rows:
         db.session.delete(row)
@@ -755,6 +791,8 @@ def deliver_career_results(event, user, *, limit=25, transport=None):
                 if response.status_code not in {200, 409} or len(response.content) > 65536:
                     raise ManagedEventError('receiver_unavailable_or_refused')
                 receipt = response.json()
+                if not isinstance(receipt, dict):
+                    raise ManagedEventError('receiver_receipt_must_be_an_object')
                 if receipt.get('schema_version') != 'mnemex.show-result-receipt.v1' or receipt.get('source_result_id') != payload['source_result_id'] or receipt.get('source_revision') != payload['source_revision'] or receipt.get('state') not in {'unlinked', 'pending_predecessor', 'accepted', 'conflicting'}:
                     raise ManagedEventError('receiver_receipt_mismatch')
                 if receipt.get('payload_digest') != digest({k: v for k, v in envelope.items() if k != 'message_id'}):

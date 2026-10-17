@@ -76,6 +76,16 @@ Initial binding shares SQLite's schedule-writer guard and PostgreSQL's tournamen
 parent lock with heat generation. It reloads the event/link and checks freshness
 under that lock before committing delegation. Authority-presence reads also avoid
 a relationship's stale cached absence after another request delegates the event.
+It removes only empty stale pending result placeholders and refuses any recorded
+history before opting in. Both stored and supplied wood diameters must be finite
+and positive. After committing its durable link and command intent, binding
+reacquires the host-context fence and revalidates the exact saved configuration,
+then holds it across actual source creation, projection and host commit. An edit
+in the intent-commit gap cannot create a source event from outdated host facts.
+
+Malformed local RPC envelopes/results and non-object MNEMEX acknowledgement JSON
+produce handled errors. Career messages retain pending state for an exact retry;
+they cannot become acknowledged because a proxy returned syntactically valid JSON.
 
 A pending creation keeps legacy writes fenced while its outcome is uncertain.
 Recover its exact request first. If its supplied configuration was refused, the

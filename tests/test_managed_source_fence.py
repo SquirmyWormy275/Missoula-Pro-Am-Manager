@@ -749,3 +749,174 @@ def test_uncoordinated_context_writer_waits_through_actual_host_commit(tmp_path,
         assert db.session.get(Event, event_id).status == 'completed'
         if operation == 'awards':
             assert db.session.get(Event, event_id).is_finalized
+
+
+@pytest.mark.parametrize('diameter', [None, {}, 'not-a-diameter', float('nan')])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_supplied_wood_diameter_is_validated_before_source_creation(tmp_path, diameter):
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    config['wood']['diameter_mm'] = diameter
+    with app.app_context():
+        with pytest.raises(ManagedEventError, match='wood'):
+            managed_events.bind_event(db.session.get(Event, event_id), db.session.get(User, user_id), config)
+        db.session.rollback()
+        assert db.session.get(Event, event_id).managed_operation is None
+
+
+@pytest.mark.parametrize('history', [False, True])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_initial_binding_reconciles_only_empty_stale_pending_results(tmp_path, history):
+    from models import EventResult
+    from services import managed_events
+    from tests.conftest import make_event_result
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        withdrawn = make_pro_competitor(db.session, event.tournament, 'Synthetic old pending entry', events=[])
+        row = make_event_result(db.session, event, withdrawn, status='pending')
+        if history:
+            row.t1_run1 = 0
+        db.session.commit()
+        if history:
+            with pytest.raises(ManagedEventError, match='history|fresh'):
+                managed_events.bind_event(event, user, config)
+            db.session.rollback()
+            assert event.managed_operation is None
+            assert EventResult.query.filter_by(competitor_id=withdrawn.id).one().t1_run1 == 0
+        else:
+            managed_events.bind_event(event, user, config)
+            assert event.results.count() == 1
+            assert event.results.one().competitor_id != withdrawn.id
+
+
+@pytest.mark.parametrize('change', ['wood', 'gear'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_initial_source_creation_holds_host_context_fence(tmp_path, monkeypatch, change):
+    from models import ProCompetitor, WoodConfig
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    attempted, finished = threading.Event(), threading.Event()
+    errors = queue.Queue()
+    writer = None
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        real_call = managed_events._call
+
+        def write_without_parent_lock():
+            try:
+                with app.app_context():
+                    if change == 'wood':
+                        WoodConfig.query.one().size_value = 280
+                    else:
+                        ProCompetitor.query.one().gear_sharing = json.dumps({'Underhand': 'Synthetic later gear owner'})
+                    attempted.set()
+                    db.session.commit()
+            except Exception as exc:
+                errors.put(exc)
+            finally:
+                finished.set()
+
+        def source_call_under_fence(*args):
+            nonlocal writer
+            if args[2]['operation'] == 'create':
+                writer = threading.Thread(target=write_without_parent_lock)
+                writer.start()
+                assert attempted.wait(10)
+                assert not finished.wait(0.25), 'Context writer crossed initial source creation'
+                result = real_call(*args)
+                assert not finished.is_set()
+                return result
+            return real_call(*args)
+
+        monkeypatch.setattr(managed_events, '_call', source_call_under_fence)
+        try:
+            managed_events.bind_event(event, user, config)
+        finally:
+            db.session.rollback()
+            if writer is not None:
+                writer.join(10)
+        assert finished.is_set() and not writer.is_alive()
+        assert errors.empty(), list(errors.queue)
+        assert event.managed_operation.state_json
+
+
+@pytest.mark.parametrize('change', ['wood', 'gear'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_creation_rechecks_host_context_after_durable_intent_commit(tmp_path, monkeypatch, change):
+    from models import ProCompetitor, WoodConfig
+    from models.managed_event import ManagedCommand
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        commits = 0
+        session = db.session()
+        def alter_after_intent(_session):
+            nonlocal commits
+            commits += 1
+            if commits == 2:  # Link, then durable create intent, before RPC.
+                with db.engine.begin() as connection:
+                    if change == 'wood':
+                        connection.execute(WoodConfig.__table__.update().values(size_value=280))
+                    else:
+                        connection.execute(ProCompetitor.__table__.update().values(
+                            gear_sharing=json.dumps({'Underhand': 'Synthetic changed gear'})))
+        def forbidden_call(*_args):
+            pytest.fail('Source create reached with context changed after intent commit')
+        monkeypatch.setattr(managed_events, '_call', forbidden_call)
+        sa_event.listen(session, 'after_commit', alter_after_intent)
+        try:
+            with pytest.raises(ManagedEventError, match='wood|gear'):
+                managed_events.bind_event(event, user, config)
+        finally:
+            sa_event.remove(session, 'after_commit', alter_after_intent)
+            db.session.rollback()
+        assert commits == 2 and ManagedCommand.query.one().status == 'pending'
+        assert event.managed_operation.state_json is None
+        assert not (tmp_path / 'authority.sqlite3').exists()
+
+
+@pytest.mark.parametrize('receipt', [[], None, 7, 'not-an-object'])
+def test_nonobject_career_receipt_is_retained_for_retry(receipt):
+    from types import SimpleNamespace
+
+    from models.managed_event import ManagedCareerDelivery
+    from services import managed_events
+
+    app, event_id, user_id, _ = _projection_fixture()
+    app.config.update(MNEMEX_SHOW_RESULTS_URL='http://127.0.0.1/partners/results/ingest',
+                      MNEMEX_SHOW_RESULTS_TOKEN='synthetic-scoped-token')
+    with app.app_context():
+        event, user = db.session.get(Event, event_id), db.session.get(User, user_id)
+        event.managed_operation.mapping_json = json.dumps({'e0': 1})
+        payload = {'source_result_id': 'synthetic:result:0', 'source_revision': 1, 'outcome': {'entry_id': 'e0'}}
+        item = ManagedCareerDelivery(delivery_id='d' * 64, event_id=event.id,
+            payload_json=managed_events.canonical(payload), payload_digest=managed_events.digest(payload))
+        db.session.add(item)
+        db.session.commit()
+        response = SimpleNamespace(status_code=200, content=b'[]', json=lambda: receipt)
+        result = managed_events.deliver_career_results(event, user, transport=lambda *_args, **_kw: response)
+        assert result['remaining_pending'] == result['pending_attempts'] == 1
+        assert result['accepted'] == 0 and item.status == 'pending'
+        assert item.last_error_code == 'receiver_unavailable_or_invalid_receipt'
+        assert item.receipt_json is None
+
+
+@pytest.mark.parametrize('show_id', [None, {}, 7, '', 'x' * 225, 'contains spaces'])
+@pytest.mark.skipif(not os.environ.get('PROAM_MANAGED_TEST_PYTHON'), reason='requires installed component')
+def test_invalid_show_identity_cannot_allocate_a_pending_link(tmp_path, show_id):
+    from services import managed_events
+
+    app, event_id, user_id, config = _binding_fixture(tmp_path)
+    config['show_id'] = show_id
+    with app.app_context():
+        with pytest.raises(ManagedEventError):
+            managed_events.bind_event(db.session.get(Event, event_id), db.session.get(User, user_id), config)
+        db.session.rollback()
+        assert db.session.get(Event, event_id).managed_operation is None
+        assert not (tmp_path / 'authority.sqlite3').exists()

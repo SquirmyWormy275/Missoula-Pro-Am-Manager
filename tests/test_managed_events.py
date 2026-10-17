@@ -369,3 +369,21 @@ def _real_mnemex_delivery(event, user, app, tmp_path, command, submit, accept_ex
         server.terminate()
         server.communicate(timeout=15)
         (root/'ready.json').unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize('response', [[], None, 'invalid', {'ok': True, 'result': []}, {'ok': True, 'result': None}])
+def test_nonobject_local_rpc_response_is_a_managed_error(tmp_path, monkeypatch, response):
+    from types import SimpleNamespace
+
+    from database import db
+    from models import Event, User
+    from services import managed_events
+
+    app, event_id, user_id, _ = _projection_fixture()
+    with app.app_context():
+        monkeypatch.setattr(managed_events, '_configured_runtime', lambda: (Path(sys.executable), tmp_path / 'authority.sqlite3'))
+        monkeypatch.setattr(managed_events.subprocess, 'run', lambda *_args, **_kwargs:
+                            SimpleNamespace(returncode=0, stdout=json.dumps(response)))
+        with pytest.raises(ManagedEventError, match='response'):
+            managed_events._call(db.session.get(User, user_id), db.session.get(Event, event_id).managed_operation,
+                                 {'operation': 'read', 'event_id': 'synthetic:projection:event'})
