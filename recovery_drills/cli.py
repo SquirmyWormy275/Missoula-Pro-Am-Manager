@@ -116,6 +116,9 @@ def run(args):
     FUNCTIONS['browser-offline-replay'] = run_browser
     from recovery_drills.shadow import run_shadow
     FUNCTIONS['shadow-delivery'] = run_shadow
+    from recovery_drills.managed import acceptance_crashes, portability
+    FUNCTIONS['managed-component-portability'] = portability
+    FUNCTIONS['managed-acceptance-crashes'] = acceptance_crashes
     selected = [args.scenario] if args.scenario else [name for name, (_, suite) in SCENARIOS.items()
                                                       if args.suite == 'all' or suite == 'core']
     owner = OwnedRun(args.output, create=True)
@@ -150,6 +153,12 @@ def run(args):
                 if name not in FUNCTIONS:
                     raise FileNotFoundError('Scenario implementation is not available yet.')
                 lab = Lab(child, args.pg_bin, args.pg_library, args.tools_bin)
+                if args.managed_python:
+                    executable = Path(args.managed_python).absolute()
+                    if not executable.is_file():
+                        raise FileNotFoundError('Explicit managed-event interpreter is unavailable.')
+                    lab.settings['managed_python'] = str(executable)
+                    lab.write_settings()
                 # A controlled peer also imports reviewed contract helpers in
                 # the coordinator. Give those imports the same owned storage
                 # before loading them, rather than retaining the caller's home.
@@ -251,6 +260,7 @@ def main(argv=None):
     execute.add_argument('--pg-bin', default=os.environ.get('PROAM_LAB_PG_BIN', '/usr/bin'))
     execute.add_argument('--pg-library', default=None)
     execute.add_argument('--tools-bin', default=None)
+    execute.add_argument('--managed-python', default=None, help='Explicit installed STRATHMARK interpreter for R11/R12; no automatic dependency/runtime fallback')
     for name in ('report', 'cleanup'):
         command = sub.add_parser(name)
         command.add_argument('--run', required=True)

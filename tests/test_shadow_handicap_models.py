@@ -59,7 +59,9 @@ def test_shadow_schema_keeps_outcome_identity_and_outbox_foreign_key_in_parity()
 def test_shadow_settlement_outbox_freezes_a_distinct_delivery_principal():
     delivery_actor = ShadowSettlementOutbox.__table__.c.delivery_actor_id
 
-    assert delivery_actor.nullable is False
+    # c8 intentionally permits b7 code-only rollback writes. Application
+    # delivery still fails closed without its exact frozen principal.
+    assert delivery_actor.nullable is True
     assert {fk.target_fullname for fk in delivery_actor.foreign_keys} == {"users.id"}
 
 

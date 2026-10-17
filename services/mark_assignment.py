@@ -3,8 +3,9 @@ Mark Assignment Service — STRATHMARK handicap start-mark pipeline.
 
 When an event is configured as a handicap-format event (Event.is_handicap=True),
 each competitor needs a start mark (in seconds) assigned before the event runs.
-The start mark is stored on EventResult.handicap_factor and is subtracted from
-the competitor's raw time by scoring_engine._metric() to produce their net time.
+The start mark is stored on EventResult.handicap_factor and is added to
+the competitor's raw time by scoring_engine._metric() to produce common-count
+completion. A smaller mark starts earlier.
 
 This module provides:
   - assign_handicap_marks(event)  — top-level call; populates
@@ -100,6 +101,8 @@ def is_mark_assignment_eligible(event: Event) -> bool:
       - event.stand_type maps to a STRATHMARK-supported event code
         (currently {SB, UH} only — springboard is NOT yet supported upstream)
     """
+    if getattr(event, 'operation_mode', 'host') == 'managed':
+        return False
     if not getattr(event, 'is_handicap', False):
         return False
     if event.scoring_type != 'time':

@@ -1,0 +1,2 @@
+# Separate STRATHMARK interpreter only; never add to Missoula requirements.txt.
+strathmark[workspace]==3.0.0rc11

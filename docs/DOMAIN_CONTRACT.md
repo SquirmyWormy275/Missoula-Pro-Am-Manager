@@ -1,5 +1,12 @@
 # Missoula Pro-Am Domain Contract
 
+Current architecture addition (2026-10-16): [delegated synthetic events](MANAGED_EVENTS.md)
+use shared STRATHMARK operations. Existing host-owned official events and
+scoring-inert shadow events keep the rules below. Registration, whole-show
+scheduling/resources, points and payouts stay in Missoula. Managed production
+activation is disabled.
+
+
 This is the canonical operating contract for core tournament behavior. When this
 file conflicts with older docs, this file wins and the older doc should be
 updated or marked stale.

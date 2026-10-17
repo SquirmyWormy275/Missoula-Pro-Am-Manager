@@ -1,5 +1,17 @@
 # Missoula Pro Am Manager — V2.14.16
 
+Current architecture addition (2026-10-16): [delegated synthetic events](docs/MANAGED_EVENTS.md)
+use shared STRATHMARK operations. Existing host-owned official events and
+scoring-inert shadow events keep the rules below. Registration, whole-show
+scheduling/resources, points and payouts stay in Missoula. Managed production
+activation is disabled.
+
+See the [delivery and verification record](docs/MODULAR_EXECUTION_STATUS.md) for
+merged component versions, exact CI evidence and the outstanding hosted-backup
+and recovery-key merge gates. Cross-repository decisions and resumption context
+live in [MNEMEX project memory](https://github.com/SquirmyWormy275/mnemex/blob/main/docs/project-memory/START_HERE.md).
+
+
 A web-based tournament management system for the Missoula Pro Am timbersports competition.
 
 ## Quick Start

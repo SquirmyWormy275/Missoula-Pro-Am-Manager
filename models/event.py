@@ -118,6 +118,22 @@ class Event(db.Model):
         return f'<Event {self.name}{gender_str}>'
 
     @property
+    def operation_mode(self):
+        """Old events retain host authority; only an explicit link delegates."""
+        from models.managed_event import ManagedEventLink
+
+        if self.id is None:
+            return 'managed' if self.managed_operation is not None else 'host'
+        # A relationship loaded before waiting for a schedule lock may cache
+        # None. The authority-presence check must observe the committed link.
+        pending = self.__dict__.get('managed_operation')
+        if pending is not None and pending in db.session.new:
+            return 'managed'
+        with db.session.no_autoflush:
+            linked = db.session.query(ManagedEventLink.event_id).filter_by(event_id=self.id).first()
+        return 'managed' if linked else 'host'
+
+    @property
     def display_name(self):
         """Return event name with gender prefix if applicable."""
         name = (self.name or '').strip()

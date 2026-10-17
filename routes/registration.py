@@ -48,7 +48,7 @@ def _college_deletion_has_recorded_history(
     tournament_id: int,
     competitor_ids: list[int],
 ) -> bool:
-    """Return whether deletion would erase published result or heat history."""
+    """Protect recorded history and every retained delegated entry mapping."""
     if not competitor_ids:
         return False
 
@@ -60,6 +60,13 @@ def _college_deletion_has_recorded_history(
     ]
     if not college_event_ids:
         return False
+
+    from models.managed_event import ManagedEventLink
+
+    protected_ids = set(competitor_ids)
+    links = ManagedEventLink.query.filter(ManagedEventLink.event_id.in_(college_event_ids)).all()
+    if any(protected_ids.intersection(json.loads(link.mapping_json).values()) for link in links):
+        return True
 
     if EventResult.query.filter(
         EventResult.event_id.in_(college_event_ids),
@@ -73,7 +80,6 @@ def _college_deletion_has_recorded_history(
         Heat.event_id.in_(college_event_ids),
         Heat.status == 'completed',
     ).all()
-    protected_ids = set(competitor_ids)
     return any(
         protected_ids.intersection(heat.get_competitors())
         for heat in completed_heats
@@ -348,7 +354,7 @@ def delete_college_competitor(tournament_id, competitor_id):
     if _college_deletion_has_recorded_history(tournament_id, [competitor.id]):
         flash(
             'Competitor deletion is blocked because recorded scoring or heat '
-            'history exists. Scratch the competitor instead so race-day history '
+            'history or managed delegation exists. Scratch the competitor instead so race-day history '
             'is preserved.',
             'error',
         )
@@ -408,7 +414,7 @@ def delete_college_team(tournament_id, team_id):
     ):
         flash(
             'Team deletion is blocked because at least one member has recorded '
-            'scoring or heat history. Scratch affected competitors instead so '
+            'scoring or heat history or managed delegation. Scratch affected competitors instead so '
             'race-day history is preserved.',
             'error',
         )
@@ -984,6 +990,9 @@ def pro_gear_sync_heats(tournament_id):
         db.session.commit()
         invalidate_tournament_caches(tournament_id)
         msg = f'Heat sync complete: {result["fixed"]} conflict(s) resolved.'
+        if result.get('managed_events_skipped'):
+            msg += (f' {len(result["managed_events_skipped"])} managed event(s) unchanged; '
+                    'revise their gear declarations and fields through STRATHMARK.')
         if result['failed']:
             msg += f' {len(result["failed"])} conflict(s) could not be auto-resolved.'
             for fail in result['failed'][:3]:

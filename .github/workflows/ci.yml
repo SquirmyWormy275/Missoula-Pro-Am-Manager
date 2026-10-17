@@ -53,6 +53,62 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  managed-integration:
+    name: Installed managed events and real MNEMEX receiver
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.10"
+      - name: Isolate retained host environment
+        run: |
+          python -m venv .tmp/managed-host
+          .tmp/managed-host/bin/python -m pip install -r requirements.txt -r requirements-shadow-verifier.txt pytest
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+      - name: Install exact separate producer and records runtimes
+        run: |
+          python -m venv .tmp/managed-producer
+          python -m venv .tmp/managed-records
+          .tmp/managed-producer/bin/python -m pip install -r requirements-managed-runtime.txt
+          .tmp/managed-records/bin/python -m pip install 'mnemex @ git+https://github.com/SquirmyWormy275/mnemex.git@7a315946c92e24a125fc213c7d139eef6278f12c'
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16
+      - name: Exercise actual installed source and HTTP contracts
+        env:
+          FLASK_ENV: testing
+          SECRET_KEY: synthetic-managed-ci-only
+          PROAM_MANAGED_TEST_PYTHON: ${{ github.workspace }}/.tmp/managed-producer/bin/python
+          PROAM_MNEMEX_TEST_PYTHON: ${{ github.workspace }}/.tmp/managed-records/bin/python
+        run: .tmp/managed-host/bin/python -m pytest tests/test_managed_events.py tests/test_managed_host_policy.py tests/test_managed_source_fence.py -q -p no:cacheprovider --junitxml=managed-results.xml
+      - name: Rehearse two-show portability and atomic host acceptance
+        run: |
+          LAB_PYTHON="$PWD/.tmp/managed-host/bin/python"
+          PRODUCER_PYTHON="$PWD/.tmp/managed-producer/bin/python"
+          for scenario in managed-component-portability managed-acceptance-crashes; do
+            sudo unshare --net bash -c '
+              set -e
+              ip link set lo up
+              exec runuser -u "$1" -- "$2" "$3" run --scenario "$4" --output "$5" --pg-bin /usr/lib/postgresql/16/bin --managed-python "$6"
+            ' recovery "$USER" "$LAB_PYTHON" "$PWD/scripts/recovery_drills.py" "$scenario" "$RUNNER_TEMP/$scenario" "$PRODUCER_PYTHON"
+          done
+      - name: Retain sanitized managed proof
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: managed-integration-${{ github.run_id }}
+          path: |
+            managed-results.xml
+            ${{ runner.temp }}/managed-component-portability/report.*
+            ${{ runner.temp }}/managed-acceptance-crashes/report.*
+          if-no-files-found: error
+          retention-days: 14
+
   tournament-audit:
     if: github.event_name == 'workflow_dispatch' && inputs.audit_tournament_data
     needs: [unit-postgres, postgres-smoke]

@@ -555,6 +555,12 @@ def save_heat_results_submission(
     # Scoring and schedule rebuilds share this parent lock. A rebuild that
     # starts second must observe the completed heat and fail closed instead of
     # clearing the placement while the judge is saving it.
+    if getattr(event, 'operation_mode', 'host') == 'managed':
+        return {
+            'ok': False, 'category': 'error', 'message': 'Use managed STRATHMARK outcomes for this event.',
+            'error_code': 'managed_authority', 'redirect_kind': 'heat_entry',
+            'redirect_event_id': event.id, 'redirect_heat_id': heat.id, 'status_code': 409,
+        }
     original_heat_id = heat.id
     original_event_id = event.id
     request_id = _normalized_request_id(form_data)

@@ -495,6 +495,9 @@ def calculate_positions(event: Event) -> None:
     """
     logger.info('scoring_engine: calculate_positions event_id=%s name=%r type=%s',
                 event.id, event.name, event.event_type)
+    from services.managed_events import assert_host_owned
+
+    assert_host_owned(event)
     all_results = event.results.all()
     prior_payouts = {
         result.id: float(result.payout_amount or 0.0)
@@ -1141,7 +1144,7 @@ def live_standings_data(event: Event) -> dict:
     """
     results = event.results.all()
     completed = [r for r in results if r.status == 'completed']
-    if event.is_finalized:
+    if event.is_finalized or getattr(event, 'operation_mode', 'host') == 'managed':
         # Finalized placements are recorded authority. Reading a historical
         # event must not decide its winners again under a newer calculation.
         completed.sort(key=lambda r: (r.final_position is None, r.final_position or 0, r.id))
@@ -1176,7 +1179,7 @@ def live_standings_data(event: Event) -> dict:
             r = completed[j]
             metric = _metric(r, event)
             rows.append({
-                'position': r.final_position if event.is_finalized else position,
+                'position': r.final_position if event.is_finalized or getattr(event, 'operation_mode', 'host') == 'managed' else position,
                 'competitor_name': r.competitor_name,
                 'result_value': float(metric) if metric is not None else None,
                 'run1_value': float(r.run1_value) if r.run1_value is not None else None,
@@ -1431,7 +1434,7 @@ def save_payout_template(name: str, payout_dict: dict) -> PayoutTemplate:
     return template
 
 
-def apply_payout_template(event: Event, template_id: int) -> bool:
+def apply_payout_template(event: Event, template_id: int, *, managed_actor=None) -> bool:
     """Apply a saved template's payout structure to an event.
 
     If the event is already finalized, re-runs calculate_positions() so that
@@ -1441,10 +1444,21 @@ def apply_payout_template(event: Event, template_id: int) -> bool:
     template = db.session.get(PayoutTemplate, template_id)
     if template is None:
         return False
+    if event.operation_mode == 'managed':
+        from services.flight_builder import lock_tournament_schedule
+        from services.managed_events import guard_managed_awards
+
+        guard_managed_awards([event], managed_actor)
+        lock_tournament_schedule(event.tournament_id)
     event.set_payouts(template.get_payouts())
     if event.is_finalized:
         with db.session.begin_nested():
-            calculate_positions(event)
+            if event.operation_mode == 'managed':
+                from services.managed_events import apply_host_awards
+
+                apply_host_awards(event, managed_actor)
+            else:
+                calculate_positions(event)
     db.session.commit()
     return True
 
