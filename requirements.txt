@@ -58,7 +58,7 @@ sentry-sdk==2.22.0
 # Extras enabled only for the retained legacy official workflow:
 #   [db] — Supabase client used by services/strathmark_sync.py
 #   [ml] — historical official mark-assignment dependencies
-strathmark[db,ml] @ git+https://github.com/SquirmyWormy275/STRATHMARK@5408939a9eeb40c9c03f47a28c0ddb181ff99894
+strathmark[db,ml] @ git+https://github.com/SquirmyWormy275/STRATHMARK@f064d67abe4baf7672239a14796c0bdc4f8c2071
 
 # Optional: SMS notifications (install to enable Twilio SMS features)
 # twilio>=8.0.0
