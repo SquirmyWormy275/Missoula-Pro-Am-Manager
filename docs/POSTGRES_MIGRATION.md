@@ -262,7 +262,7 @@ behavior in the operator runbook.
 - [ ] First deploy: `flask db upgrade` runs automatically, creates all tables
 - [ ] Data migration script run (if moving existing data from SQLite)
 - [ ] Sequences reset after bulk import
-- [ ] Login to `/auth/bootstrap` to create the first admin account
+- [ ] For an empty user database only, run `flask auth create-admin` on the trusted server console after migrations; existing installations retain their administrator accounts. Public `/auth/bootstrap` cannot create accounts.
 - [ ] `/health` endpoint returns `{"status": "ok", "db": true}`
 - [ ] Smoke-test at least one tournament create + event setup + heat generate cycle
 - [ ] STRATHMARK env vars set if live sync is desired (`STRATHMARK_API_URL`, etc.)
