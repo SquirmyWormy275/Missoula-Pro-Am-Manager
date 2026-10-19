@@ -1,0 +1,5 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Managed handicap events</h1><p>Synthetic rehearsal only. Live activation remains disabled.</p>
+<ul>{% for event in events %}<li><a href="{{url_for('managed.event_workspace',tournament_id=tournament.id,event_id=event.id)}}">{{event.display_name}}</a> — {{event.operation_mode}}</li>{% else %}<li>No handicap events configured.</li>{% endfor %}</ul>
+{% endblock %}

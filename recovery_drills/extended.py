@@ -104,8 +104,9 @@ def bad_backup(lab, result):
     lab.worker('backup')
     backup = json.loads((lab.private / 'backup.json').read_text())
     positive = Path(backup['dest'])
+    schema_head = lab.query('SELECT version_num FROM alembic_version')[0]['version_num']
     manifest = {'sha256': digest(positive), 'complete': True, 'fixture': lab.fixture,
-                 'schema': 'a6b7c8d9e0f1', 'source': lab.owner.record['run_id']}
+                 'schema': schema_head, 'source': lab.owner.record['run_id']}
     for name, mutate_bytes, mutate_manifest in (
             ('truncated', lambda data: data[:80], {}),
             ('modified', lambda data: data[:50] + bytes([data[50] ^ 1]) + data[51:], {}),
@@ -133,7 +134,7 @@ def bad_backup(lab, result):
     wrong = json.loads((lab.private / 'backup.json').read_text())
     with lab.connect() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("UPDATE alembic_version SET version_num='a6b7c8d9e0f1'")
+            cursor.execute("UPDATE alembic_version SET version_num=%s", (schema_head,))
         connection.commit()
     restore(lab, wrong['dest'], 'incompatible')
     lab.database = 'incompatible'
@@ -268,8 +269,12 @@ def code_rollback(lab, result):
     lab.write_settings()
     lab.start_app()
     same_state(result, 'candidate returns without undoing baseline accepted data', recorded, lab.snapshot())
-    result['compatibility'] = {'baseline': baseline, 'schema': 'a6b7c8d9e0f1',
-                                'candidate_has_schema_changes': False,
+    from alembic.script import ScriptDirectory
+    baseline_head = ScriptDirectory(str(checkout / 'migrations')).get_current_head()
+    candidate_head = lab.query('SELECT version_num FROM alembic_version')[0]['version_num']
+    result['compatibility'] = {'baseline': baseline, 'schema': candidate_head,
+                                'baseline_schema': baseline_head,
+                                'candidate_has_schema_changes': candidate_head != baseline_head,
                                 'flow': 'scratch timed scoring; handicap semantic correction is deliberately separate'}
     result['limitations'].append('No schema downgrade. Incompatible schema activation is refused by R05; '
                                   'code rollback does not repair data or replace provider recovery.')

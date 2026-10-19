@@ -1,5 +1,12 @@
 # Handicap Marks and STRATHMARK Shadow Recommendations
 
+Current architecture addition (2026-10-16): [delegated synthetic events](MANAGED_EVENTS.md)
+use shared STRATHMARK operations. Existing host-owned official events and
+scoring-inert shadow events keep the rules below. Registration, whole-show
+scheduling/resources, points and payouts stay in Missoula. Managed production
+activation is disabled.
+
+
 **Audience:** Show director, head judge, scoring lead, and release operator
 
 **Authority:** `Event.handicap_authority_mode` is the deciding switch

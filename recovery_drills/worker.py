@@ -43,6 +43,9 @@ def application(settings):
     assert not app.testing and not app.debug and app.config['WTF_CSRF_ENABLED']
     assert app.config['SQLALCHEMY_DATABASE_URI'] == settings['database_url']
     app.config['PROPAGATE_EXCEPTIONS'] = False
+    if settings.get('managed_python'):
+        app.config.update(MANAGED_EVENTS_ENABLED=True, MANAGED_EVENTS_PYTHON=settings['managed_python'],
+                          MANAGED_EVENTS_DATABASE=str(Path(settings['private'])/'managed-authority.sqlite3'))
     return app
 
 
@@ -69,7 +72,19 @@ def barrier(settings, point, request_id=None, extra=None):
 
 def instrument(settings):
     from flask import has_request_context, request
+    from sqlalchemy import event as sa_event
     from sqlalchemy.orm import Session
+
+    @sa_event.listens_for(Session, 'before_flush')
+    def note_managed_acceptance(session, _context, _instances):
+        # The R09 historical checkout deliberately has no managed model module.
+        if any(getattr(type(item), '__tablename__', None) == 'managed_acceptances'
+               for item in session.new):
+            session.info['lab_managed_acceptance_transaction'] = True
+
+    @sa_event.listens_for(Session, 'after_rollback')
+    def forget_managed_acceptance(session):
+        session.info.pop('lab_managed_acceptance_transaction', None)
 
     real_commit = Session.commit
 
@@ -81,9 +96,18 @@ def instrument(settings):
             # Include receipt/audit INSERTs, not only earlier result flushes.
             session.flush()
             barrier(settings, 'score-precommit', target)
+        managed = (request.form.get('request_id') if has_request_context()
+                   and request.endpoint == 'managed.event_workspace'
+                   and request.form.get('action') == 'accept_export'
+                   and session.info.pop('lab_managed_acceptance_transaction', False) else None)
+        if managed:
+            session.flush()
+            barrier(settings, 'managed-accept-precommit', managed)
         result = real_commit(session)
         if target:
             barrier(settings, 'score-postcommit', target)
+        if managed:
+            barrier(settings, 'managed-accept-postcommit', managed)
         return result
     Session.commit = commit
 
@@ -146,7 +170,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('settings')
     parser.add_argument('action', choices=['migrate', 'seed', 'backup', 'serve', 'obsolete-job',
-                                         'shadow-seed', 'shadow-deliver'])
+                                         'shadow-seed', 'shadow-deliver', 'managed-seed', 'managed-correct'])
     args = parser.parse_args()
     settings = json.loads(Path(args.settings).read_text())
     if settings.get('application_root'):
@@ -173,6 +197,12 @@ def main():
         result = jobs._persist_job(settings['job_id'], status='completed',
                                    result={'path': 'obsolete'}, require_active_owner=True)
         publish(Path(settings['private']) / 'obsolete.json', json.dumps({'accepted': result}))
+    elif args.action in ('managed-seed', 'managed-correct'):
+        from recovery_drills.managed import correct_managed, seed_managed
+        if args.action == 'managed-seed':
+            seed_managed(app, settings)
+        else:
+            correct_managed(app, settings)
     elif args.action in ('shadow-seed', 'shadow-deliver'):
         from recovery_drills.shadow import deliver_shadow, seed_shadow
         if args.action == 'shadow-seed':

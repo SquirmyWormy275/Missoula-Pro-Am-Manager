@@ -437,6 +437,14 @@ def setup_events(tournament_id):
             )
         action_scope = request.form.get("action_scope", "both")  # 'college', 'pro', or 'both'
 
+        from models.managed_event import ManagedEventLink
+
+        affected_types = ['college', 'pro'] if action_scope == 'both' else [action_scope]
+        if Event.query.join(ManagedEventLink).filter(
+            Event.tournament_id == tournament_id, Event.event_type.in_(affected_types)
+        ).first():
+            abort(409, description='Managed event configuration must be changed through its delegated authority.')
+
         if not current_user.is_judge:
             if action_scope in {"college", "both"}:
                 _assert_scorer_shadow_authority_submission_allowed(

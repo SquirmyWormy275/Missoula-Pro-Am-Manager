@@ -1,5 +1,10 @@
 # Flight Logic — Missoula Pro Am Manager
 
+For the approved incremental shared-event boundary, see [managed events](docs/MANAGED_EVENTS.md).
+The canonical [domain contract](docs/DOMAIN_CONTRACT.md) still controls Missoula
+show sequence, resources and sporting behavior; historical proposals below do not override it.
+
+
 `docs/DOMAIN_CONTRACT.md` is the canonical operating contract for core tournament behavior.
 This document is the detailed reference for flight-builder and heat-generation algorithms.
 Update both files when flight or heat rules change. If this document conflicts with

@@ -545,6 +545,10 @@ def generate_event_heats(
     logger.info('heat_generator: generate_event_heats event_id=%s name=%r type=%s',
                 event.id, event.name, event.event_type)
 
+    if getattr(event, 'operation_mode', 'host') == 'managed':
+        # Module-owned fields may be scheduled, but never replaced locally.
+        return event.heats.count()
+
     # The routes normally reject regeneration after scoring, but this service
     # is also used by bulk and background workflows. Keep every caller from
     # deleting completed score or heat history, including an all-scratch heat
@@ -735,11 +739,15 @@ def generate_event_heats(
     return actual_heat_count
 
 
-def _get_event_competitors(event: Event) -> list:
+def _get_event_competitors(event: Event, *, refresh=False, create_results=True) -> list:
     """Get list of competitors entered in this event with their info.
 
     Always scans active competitors to discover new registrations that don't
     yet have EventResult rows (fixes silent omission on heat regeneration).
+    Delegated acceptance can refresh already loaded registrations after taking
+    the tournament lock; an ORM identity cache is not a registration snapshot.
+    Managed pre-intent validation can opt out of placeholder writes; projection
+    creates them under the host lock after the source operation has completed.
     """
     competitors = []
     seen_ids: set[int] = set()
@@ -759,15 +767,16 @@ def _get_event_competitors(event: Event) -> list:
     # generated heat roster changed. id order is registration order, so this
     # makes the fallback's comment true instead of coincidental.
     if event.event_type == 'college':
-        all_comps = CollegeCompetitor.query.filter_by(
+        query = CollegeCompetitor.query.filter_by(
             tournament_id=event.tournament_id,
             status='active'
-        ).order_by(CollegeCompetitor.id).all()
+        ).order_by(CollegeCompetitor.id)
     else:
-        all_comps = ProCompetitor.query.filter_by(
+        query = ProCompetitor.query.filter_by(
             tournament_id=event.tournament_id,
             status='active'
-        ).order_by(ProCompetitor.id).all()
+        ).order_by(ProCompetitor.id)
+    all_comps = (query.populate_existing() if refresh else query).all()
 
     # Filter by gender if gendered event.
     # Record who this drops before dropping them. An active competitor who is
@@ -815,7 +824,7 @@ def _get_event_competitors(event: Event) -> list:
         seen_ids.add(comp.id)
 
         # Create EventResult row if one doesn't exist yet (new entrant).
-        if comp.id not in existing_result_comp_ids:
+        if create_results and comp.id not in existing_result_comp_ids:
             result = EventResult(
                 event_id=event.id,
                 competitor_id=comp.id,
@@ -842,7 +851,8 @@ def _get_event_competitors(event: Event) -> list:
 
         competitors.append(comp_data)
 
-    db.session.flush()
+    if create_results:
+        db.session.flush()
     return competitors
 
 

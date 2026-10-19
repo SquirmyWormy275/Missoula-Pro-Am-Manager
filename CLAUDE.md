@@ -1,5 +1,12 @@
 # CLAUDE.md — Missoula Pro-Am Manager
 
+Current architecture addition (2026-10-16): [delegated synthetic events](docs/MANAGED_EVENTS.md)
+use shared STRATHMARK operations. Existing host-owned official events and
+scoring-inert shadow events keep the rules below. Registration, whole-show
+scheduling/resources, points and payouts stay in Missoula. Managed production
+activation is disabled.
+
+
 This file is read by Claude Code at the start of every session. It documents the project's identity, architecture, domain logic, data model, current state, development rules, and relationship to the broader STRATHEX ecosystem. Read it in full before making any changes.
 
 ---

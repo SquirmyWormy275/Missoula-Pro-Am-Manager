@@ -47,6 +47,7 @@ from services.flight_builder import (
     lock_tournament_schedule,
     serialize_sqlite_schedule_writer,
 )
+from services.managed_events import ManagedEventError
 from services.print_catalog import record_print
 from services.scoring_workflow import (
     competitor_lookup_for_event,
@@ -1583,6 +1584,12 @@ def scratch_confirm(tournament_id, competitor_id):
     """
     lock_tournament_schedule(tournament_id)
     comp, tournament = _load_competitor_for_tournament(tournament_id, competitor_id)
+    from services.managed_events import assert_host_scratch_allowed
+
+    try:
+        assert_host_scratch_allowed(comp, tournament)
+    except ManagedEventError as exc:
+        abort(409, description=str(exc))
 
     from services.scratch_cascade import (
         CascadeEffect,
@@ -1787,12 +1794,29 @@ def offline_ops(tournament_id):
 # Routes: configure payouts + payout templates
 # ---------------------------------------------------------------------------
 
+def _refresh_payouts_from_authority(event):
+    if event.operation_mode == 'managed':
+        from services.managed_events import apply_host_awards
+
+        apply_host_awards(event, current_user)
+    else:
+        engine.calculate_positions(event)
+
+
 @scoring_bp.route('/<int:tournament_id>/event/<int:event_id>/payouts', methods=['GET', 'POST'])
 @serialize_sqlite_schedule_writer
 def configure_payouts(tournament_id, event_id):
     tournament = db.get_or_404(Tournament, tournament_id)
     event = _event_for_tournament_or_404(tournament_id, event_id)
     if request.method == 'POST':
+        from services.managed_events import guard_managed_awards
+
+        try:
+            guard_managed_awards([event], current_user)
+        except ManagedEventError as exc:
+            db.session.rollback()
+            flash(str(exc), 'error')
+            return redirect(url_for('scoring.configure_payouts', tournament_id=tournament_id, event_id=event_id))
         tournament = lock_tournament_schedule(tournament)
         db.session.refresh(event)
 
@@ -1810,10 +1834,15 @@ def configure_payouts(tournament_id, event_id):
 
         if action == 'apply_template':
             tpl_id = request.form.get('template_id', type=int)
-            if engine.apply_payout_template(event, tpl_id):
-                flash('Template applied.', 'success')
-            else:
-                flash('Template not found.', 'error')
+            try:
+                if engine.apply_payout_template(event, tpl_id, managed_actor=current_user):
+                    invalidate_tournament_caches(tournament_id)
+                    flash('Template applied.', 'success')
+                else:
+                    flash('Template not found.', 'error')
+            except (StaleDataError, IntegrityError, ManagedEventError):
+                db.session.rollback()
+                flash('Accept the current source result before applying payouts, then retry.', 'error')
             return redirect(url_for('scoring.configure_payouts',
                                     tournament_id=tournament_id, event_id=event_id))
 
@@ -1854,12 +1883,12 @@ def configure_payouts(tournament_id, event_id):
             # re-finalize after configuring payouts.
             if event.is_finalized:
                 with db.session.begin_nested():
-                    engine.calculate_positions(event)
+                    _refresh_payouts_from_authority(event)
                 flash('Payouts saved and standings recalculated.', 'success')
             else:
                 flash(text.FLASH['payouts_saved'], 'success')
             db.session.commit()
-        except (StaleDataError, IntegrityError):
+        except (StaleDataError, IntegrityError, ManagedEventError):
             db.session.rollback()
             flash('Another user changed this event while saving. Please retry.', 'error')
             return redirect(url_for('scoring.configure_payouts',
@@ -1907,8 +1936,25 @@ def tournament_payout_manager(tournament_id):
         return redirect(url_for('scoring.tournament_payout_manager', tournament_id=tournament_id))
 
     if request.method == 'POST':
-        tournament = lock_tournament_schedule(tournament)
         action = request.form.get('action', '')
+
+        # Acquire one source fence for the complete batch before host locks or
+        # payout edits. Later per-event award calls reuse these exact exports.
+        from services.managed_events import guard_managed_awards
+
+        raw_ids = request.form.getlist('event_ids') if action == 'bulk_apply' else [request.form.get('event_id')]
+        try:
+            selected_ids = [int(value) for value in raw_ids if value]
+        except (TypeError, ValueError):
+            selected_ids = []
+        selected = Event.query.filter(Event.tournament_id == tournament_id, Event.event_type == 'pro', Event.id.in_(selected_ids)).all()
+        try:
+            guard_managed_awards(selected, current_user)
+        except ManagedEventError as exc:
+            db.session.rollback()
+            flash(str(exc), 'error')
+            return _payout_redirect()
+        tournament = lock_tournament_schedule(tournament)
 
         if action == 'bulk_apply':
             tpl_id = request.form.get('template_id', type=int)
@@ -1950,9 +1996,9 @@ def tournament_payout_manager(tournament_id):
                     if ev.is_finalized:
                         try:
                             with db.session.begin_nested():
-                                engine.calculate_positions(ev)
+                                _refresh_payouts_from_authority(ev)
                             recalculated += 1
-                        except (StaleDataError, IntegrityError):
+                        except (StaleDataError, IntegrityError, ManagedEventError):
                             # Savepoint only: the rest of the batch keeps its
                             # applied template. Name the event that did not
                             # repay so the operator knows which one to redo.
@@ -1975,7 +2021,7 @@ def tournament_payout_manager(tournament_id):
                               'repaid and still owe the old purse: '
                               + ', '.join(recalc_failed)
                               + '. Re-finalize them.', 'warning')
-                except (StaleDataError, IntegrityError):
+                except (StaleDataError, IntegrityError, ManagedEventError):
                     db.session.rollback()
                     flash('Save failed — please retry.', 'error')
             else:
@@ -2000,9 +2046,9 @@ def tournament_payout_manager(tournament_id):
                     if was_finalized:
                         try:
                             with db.session.begin_nested():
-                                engine.calculate_positions(ev)
+                                _refresh_payouts_from_authority(ev)
                             cleared_money = True
-                        except (StaleDataError, IntegrityError):
+                        except (StaleDataError, IntegrityError, ManagedEventError):
                             db.session.rollback()
                             flash(f'Could not clear payouts for {ev.display_name} — '
                                   f'another user changed it. Please retry.', 'error')

@@ -504,7 +504,9 @@ class ShadowSettlementOutbox(db.Model):
     delivery_actor_id = db.Column(
         db.Integer,
         db.ForeignKey("users.id"),
-        nullable=False,
+        # c8 deliberately permits the old b7 writer during code-only rollback.
+        # Delivery still requires a frozen actor in application validation.
+        nullable=True,
     )
     delivery_status = db.Column(
         db.String(24),
