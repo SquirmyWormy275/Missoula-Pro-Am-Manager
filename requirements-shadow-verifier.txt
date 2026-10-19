@@ -4,4 +4,4 @@
 # deliberately keeps the API extra out of requirements.txt. CI imports the
 # pinned service app in-process to verify Missoula's exact request/response
 # contract, so those jobs need the matching API extra from the same commit.
-strathmark[api] @ git+https://github.com/SquirmyWormy275/STRATHMARK@f064d67abe4baf7672239a14796c0bdc4f8c2071
+strathmark[api] @ git+https://github.com/SquirmyWormy275/STRATHMARK@c382b3f4e719a8621a373e3fa2ec2400bdb9ecd4

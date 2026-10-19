@@ -23,6 +23,12 @@ tournament assignment remains global within its role. Existing assignments are
 honored without migrating accounts or changing roles. Public spectator access
 is unchanged, and the shadow workflow remains separate from official scoring.
 
+The legacy calculator dependency and the installed shadow-contract rehearsal use
+the same immutable STRATHMARK 3.0.0rc14 source,
+`c382b3f4e719a8621a373e3fa2ec2400bdb9ecd4`. The published shadow contract and
+official mark calculations retain their existing behavior. Existing saved shadow
+runs keep their frozen model, source and contract identities.
+
 ## Verification follow-up (2.14.18)
 
 Flight holding-bin labels render stored names as literal text. Content security
