@@ -730,7 +730,7 @@ def test_shadow_post_uses_schedule_guard_and_holds_it_through_commit(app, monkey
     errors = []
 
     monkeypatch.setattr(shadow_routes, "current_user", SimpleNamespace(id=7))
-    monkeypatch.setattr(shadow_routes, "_require_shadow_operator", lambda: None)
+    monkeypatch.setattr(shadow_routes, "_require_shadow_operator", lambda _tournament_id: None)
     monkeypatch.setattr(shadow_routes, "_load_event", lambda *_args: (tournament, event))
     monkeypatch.setattr(shadow_routes, "_latest_run", lambda *_args: run)
     monkeypatch.setattr(shadow_routes, "transition_shadow_run", lambda *_args, **_kwargs: run)

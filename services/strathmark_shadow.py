@@ -270,6 +270,7 @@ class StrathmarkShadowClient:
             path="/v1/shadow/receipts/lookup",
             action="shadow.receipt.lookup",
             subject_revision=run.run_revision,
+            tournament_id=run.tournament_id,
             actor=actor,
             payload=payload,
             timeout_ms=2000,
@@ -291,6 +292,7 @@ class StrathmarkShadowClient:
             path="/v1/shadow/calculate",
             action="shadow.calculate",
             subject_revision=run.run_revision,
+            tournament_id=run.tournament_id,
             actor=actor,
             payload=payload,
             timeout_ms=int(payload.get("timeout_ms", 5000)),
@@ -316,6 +318,7 @@ class StrathmarkShadowClient:
             path="/v1/shadow/status",
             action="shadow.status.read",
             subject_revision=run.run_revision,
+            tournament_id=run.tournament_id,
             actor=actor,
             payload=payload,
             timeout_ms=2000,
@@ -340,6 +343,7 @@ class StrathmarkShadowClient:
             path="/v1/shadow/outcomes/apply",
             action="shadow.outcome.apply",
             subject_revision=run.run_revision,
+            tournament_id=run.tournament_id,
             actor=actor,
             payload=payload,
             timeout_ms=int(payload.get("timeout_ms", 5000)),
@@ -353,6 +357,7 @@ class StrathmarkShadowClient:
         path: str,
         action: str,
         subject_revision: str,
+        tournament_id: int,
         actor: User,
         payload: Mapping[str, Any],
         timeout_ms: int,
@@ -365,6 +370,8 @@ class StrathmarkShadowClient:
             )
         if actor.role not in {User.ROLE_ADMIN, User.ROLE_JUDGE}:
             raise ShadowIdentityError("authenticated role is not authorized for shadow operation")
+        if not actor.can_access_tournament(tournament_id):
+            raise ShadowIdentityError("authenticated account cannot operate on this tournament")
         request_digest = canonical_shadow_request_digest(payload)
         issued_at = int(time.time())
         claims = {
@@ -420,6 +427,8 @@ def prepare_shadow_run(
     event_code = _validate_shadow_event(event)
     if actor.role not in {User.ROLE_ADMIN, User.ROLE_JUDGE}:
         raise ShadowIdentityError("judge or admin role required for shadow preparation")
+    if not actor.can_access_tournament(event.tournament_id):
+        raise ShadowIdentityError("authenticated account cannot prepare this tournament")
     _require_namespaced(actor.shadow_actor_id, "operator_id")
     _require_sha256(schedule_fingerprint, "schedule_fingerprint")
     _require_sha256(observation_fingerprint, "observation_fingerprint")

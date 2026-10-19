@@ -52,11 +52,11 @@ from services.strathmark_shadow import (
 from . import scheduling_bp
 
 
-def _require_shadow_operator():
+def _require_shadow_operator(tournament_id):
     if not getattr(current_user, "is_authenticated", False) or current_user.role not in {
         User.ROLE_ADMIN,
         User.ROLE_JUDGE,
-    }:
+    } or not current_user.can_access_tournament(tournament_id):
         abort(403)
 
 
@@ -215,7 +215,7 @@ def _record_known_context_task(run: ShadowHandicapRun, action: str) -> int:
 def shadow_marks(tournament_id: int, event_id: int):
     """Prepare, calculate, review, and issue one whole-field shadow sheet."""
 
-    _require_shadow_operator()
+    _require_shadow_operator(tournament_id)
     if request.method == "POST":
         lock_tournament_schedule(tournament_id)
     tournament, event = _load_event(tournament_id, event_id)
@@ -405,7 +405,7 @@ def shadow_marks(tournament_id: int, event_id: int):
 def shadow_marks_export(tournament_id: int, event_id: int, run_pk: int):
     """Download the verified, non-importable, pseudonymous issue artifact."""
 
-    _require_shadow_operator()
+    _require_shadow_operator(tournament_id)
     _tournament, _event = _load_event(tournament_id, event_id)
     run = ShadowHandicapRun.query.filter_by(id=run_pk, event_id=event_id).first_or_404()
     if not run.issue_artifacts:
@@ -438,7 +438,7 @@ def shadow_marks_export(tournament_id: int, event_id: int, run_pk: int):
 def shadow_context_export(tournament_id: int, event_id: int, run_pk: int):
     """Download redacted prospective context with provenance and no numeric authority."""
 
-    _require_shadow_operator()
+    _require_shadow_operator(tournament_id)
     _tournament, _event = _load_event(tournament_id, event_id)
     run = ShadowHandicapRun.query.filter_by(id=run_pk, event_id=event_id).first_or_404()
     try:

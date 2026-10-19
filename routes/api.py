@@ -295,5 +295,5 @@ def handicap_input(tournament_id):
             'name': tournament.name,
             'year': tournament.year,
         },
-        'chopping_results': build_chopping_rows(tournament),
+        'chopping_results': build_chopping_rows(tournament, published_only=True),
     })

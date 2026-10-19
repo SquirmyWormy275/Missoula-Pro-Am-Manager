@@ -422,6 +422,8 @@ def relay_payouts(tournament_id):
 @serialize_sqlite_schedule_writer
 def save_relay_payouts(tournament_id):
     """Save per-team lump sum payout amounts."""
+    if not getattr(current_user, 'can_manage_payouts', False):
+        abort(403)
     tournament = lock_tournament_schedule(tournament_id)
     relay_event = Event.query.filter_by(
         tournament_id=tournament_id, name='Pro-Am Relay'

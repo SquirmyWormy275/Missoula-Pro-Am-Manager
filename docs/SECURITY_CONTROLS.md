@@ -1,8 +1,33 @@
 # Security controls and rollout
 
-Release 2.14.18 adds the verification-scan repairs to the 2.14.17 account,
+Release 2.14.19 adds the final verification-scan repairs to the existing account,
 access-control, resource-limit and transport protections. Existing administrator credentials, stored portal PINs and
 tournament results are preserved. This release adds no schema migration.
+
+## Final verification follow-up (2.14.19)
+
+Relay payout changes require a judge or administrator, including when a scorer
+has a valid form token and current state digest. Scorers can read the amounts;
+the form explains that only judges and administrators can edit them. Ordinary
+scoring, relay operation and scheduling permissions remain unchanged.
+
+The anonymous handicap-input feed publishes only completed chopping events and
+completed result rows, matching public historical results. Staff exports retain
+the complete operational data. This changes publication only; stored scores,
+placements and payouts are not rewritten.
+
+A staff account assigned to a tournament can use management routes only for that
+tournament. This applies before route reads, schedule locks and mutations, and
+also before shadow preparation or signed provider requests. An account with no
+tournament assignment remains global within its role. Existing assignments are
+honored without migrating accounts or changing roles. Public spectator access
+is unchanged, and the shadow workflow remains separate from official scoring.
+
+The legacy calculator dependency and the installed shadow-contract rehearsal use
+the same immutable STRATHMARK 3.0.0rc14 source,
+`c382b3f4e719a8621a373e3fa2ec2400bdb9ecd4`. The published shadow contract and
+official mark calculations retain their existing behavior. Existing saved shadow
+runs keep their frozen model, source and contract identities.
 
 ## Verification follow-up (2.14.18)
 
