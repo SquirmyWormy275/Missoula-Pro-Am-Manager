@@ -20,7 +20,7 @@ from database import db
 from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.school_captain import SchoolCaptain
-from routes.api import write_limit
+from routes.api import credential_limit, write_limit
 from services.report_cache import get_or_compute as cache_get_or_compute
 
 portal_bp = Blueprint('portal', __name__)
@@ -256,6 +256,7 @@ def competitor_public():
 @portal_bp.route('/competitor/claim', methods=['GET', 'POST'])
 # Rate limit: blocks 4-digit PIN brute force (10000 combos / 5 per min = 33 hours).
 @write_limit('5 per minute')
+@credential_limit('tournament_id', 'competitor_type', 'competitor_id')
 def competitor_claim():
     """Set or verify a competitor PIN before granting access."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
@@ -313,37 +314,7 @@ def competitor_claim():
                 view=view_mode,
             ))
 
-        pin = (request.form.get('pin') or '').strip()
-        confirm_pin = (request.form.get('confirm_pin') or '').strip()
-        if not _is_valid_pin(pin):
-            flash('PIN must be 4-8 digits.', 'error')
-            return redirect(url_for(
-                'portal.competitor_claim',
-                tournament_id=tournament_id,
-                competitor_type=competitor_type,
-                competitor_id=competitor_id,
-                view=view_mode,
-            ))
-        if pin != confirm_pin:
-            flash('PIN confirmation does not match.', 'error')
-            return redirect(url_for(
-                'portal.competitor_claim',
-                tournament_id=tournament_id,
-                competitor_type=competitor_type,
-                competitor_id=competitor_id,
-                view=view_mode,
-            ))
-        competitor.set_portal_pin(pin)
-        _mark_competitor_session_authorized(tournament_id, competitor_type, competitor_id)
-        db.session.commit()
-        flash('PIN set. Your competitor portal is now protected.', 'success')
-        return redirect(url_for(
-            'portal.competitor_public',
-            tournament_id=tournament_id,
-            competitor_type=competitor_type,
-            competitor_id=competitor_id,
-            view=view_mode,
-        ))
+        abort(403, description='Ask an administrator to provision your portal PIN in person.')
 
     return render_template(
         'portal/competitor_claim.html',
@@ -509,6 +480,12 @@ def _find_competitor_matches(tournament: Tournament, full_name: str):
     return matches
 
 
+def _pin_session_stamp(pin_hash):
+    import hashlib
+    import hmac
+    return hmac.new(current_app.secret_key.encode(), pin_hash.encode(), hashlib.sha256).hexdigest()
+
+
 def _portal_session_key(tournament_id: int, competitor_type: str, competitor_id: int) -> str:
     return f'{tournament_id}:{competitor_type}:{competitor_id}'
 
@@ -517,7 +494,8 @@ def _mark_competitor_session_authorized(tournament_id: int, competitor_type: str
     authorized = session.get('competitor_portal_auth', {})
     if not isinstance(authorized, dict):
         authorized = {}
-    authorized[_portal_session_key(tournament_id, competitor_type, competitor_id)] = True
+    competitor = _load_competitor(tournament_id, competitor_type, competitor_id)
+    authorized[_portal_session_key(tournament_id, competitor_type, competitor_id)] = _pin_session_stamp(competitor.portal_pin_hash)
     session['competitor_portal_auth'] = authorized
     session.modified = True
 
@@ -526,7 +504,9 @@ def _is_competitor_session_authorized(tournament_id: int, competitor_type: str, 
     authorized = session.get('competitor_portal_auth', {})
     if not isinstance(authorized, dict):
         return False
-    return bool(authorized.get(_portal_session_key(tournament_id, competitor_type, competitor_id)))
+    competitor = _load_competitor(tournament_id, competitor_type, competitor_id)
+    return bool(competitor and competitor.portal_pin_hash and
+                authorized.get(_portal_session_key(tournament_id, competitor_type, competitor_id)) == _pin_session_stamp(competitor.portal_pin_hash))
 
 
 def _can_access_competitor_page(tournament_id: int, competitor_type: str, competitor_id: int) -> bool:
@@ -855,6 +835,7 @@ def school_access():
 @portal_bp.route('/school/claim', methods=['GET', 'POST'])
 # Rate limit: blocks 4-digit PIN brute force (10000 combos / 5 per min = 33 hours).
 @write_limit('5 per minute')
+@credential_limit('tournament_id', 'school_name')
 def school_claim():
     """Create or verify the school captain PIN."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
@@ -912,38 +893,7 @@ def school_claim():
                 view=view_mode,
             ))
 
-        pin = (request.form.get('pin') or '').strip()
-        confirm_pin = (request.form.get('confirm_pin') or '').strip()
-        if not _is_valid_pin(pin):
-            flash('PIN must be 4-8 digits.', 'error')
-            return redirect(url_for(
-                'portal.school_claim',
-                tournament_id=tournament_id,
-                school_name=school_name,
-                view=view_mode,
-            ))
-        if pin != confirm_pin:
-            flash('PIN confirmation does not match.', 'error')
-            return redirect(url_for(
-                'portal.school_claim',
-                tournament_id=tournament_id,
-                school_name=school_name,
-                view=view_mode,
-            ))
-
-        if captain is None:
-            captain = SchoolCaptain(tournament_id=tournament_id, school_name=school_name)
-            db.session.add(captain)
-        captain.set_pin(pin)
-        _mark_school_session_authorized(tournament_id, school_name)
-        db.session.commit()
-        flash('School captain profile created. Your portal is now protected by your PIN.', 'success')
-        return redirect(url_for(
-            'portal.school_dashboard',
-            tournament_id=tournament_id,
-            school_name=school_name,
-            view=view_mode,
-        ))
+        abort(403, description='Ask an administrator to provision your school PIN in person.')
 
     return render_template(
         'portal/school_claim.html',
@@ -1097,7 +1047,8 @@ def _mark_school_session_authorized(tournament_id: int, school_name: str):
     authorized = session.get('school_portal_auth', {})
     if not isinstance(authorized, dict):
         authorized = {}
-    authorized[_school_session_key(tournament_id, school_name)] = True
+    captain = SchoolCaptain.query.filter_by(tournament_id=tournament_id, school_name=school_name).first()
+    authorized[_school_session_key(tournament_id, school_name)] = _pin_session_stamp(captain.pin_hash)
     session['school_portal_auth'] = authorized
     session.modified = True
 
@@ -1106,7 +1057,9 @@ def _is_school_session_authorized(tournament_id: int, school_name: str) -> bool:
     authorized = session.get('school_portal_auth', {})
     if not isinstance(authorized, dict):
         return False
-    return bool(authorized.get(_school_session_key(tournament_id, school_name)))
+    captain = SchoolCaptain.query.filter_by(tournament_id=tournament_id, school_name=school_name).first()
+    return bool(captain and captain.pin_hash and
+                authorized.get(_school_session_key(tournament_id, school_name)) == _pin_session_stamp(captain.pin_hash))
 
 
 def _can_access_school_page(tournament_id: int, school_name: str) -> bool:

@@ -29,6 +29,7 @@ except ModuleNotFoundError:
     current_user = _AnonymousCurrentUser()
 from database import db
 from models import Event, Tournament
+from routes.api import write_limit
 from services.audit import log_action
 from services.background_jobs import get as get_job
 from services.print_catalog import record_print
@@ -352,6 +353,7 @@ def all_results_print(tournament_id):
 
 
 @reporting_bp.route('/<int:tournament_id>/export-results')
+@write_limit('3 per minute; 30 per hour')
 def export_results(tournament_id):
     """Export standings and event results to Excel."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -375,6 +377,7 @@ def export_results(tournament_id):
 
 
 @reporting_bp.route('/<int:tournament_id>/export-chopping')
+@write_limit('3 per minute; 30 per hour')
 def export_chopping_results(tournament_id):
     """Export only chopping event scores/results for external handicap tools."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -410,6 +413,7 @@ def export_chopping_results(tournament_id):
 
 
 @reporting_bp.route('/<int:tournament_id>/export-results/async', methods=['POST'])
+@write_limit('3 per minute; 30 per hour')
 def export_results_async(tournament_id):
     """Start export generation as a background job for larger tournaments."""
     tournament = db.get_or_404(Tournament, tournament_id)
@@ -487,6 +491,7 @@ def export_results_job_status(tournament_id, job_id):
 
 
 @reporting_bp.route('/<int:tournament_id>/export-video-judge')
+@write_limit('3 per minute; 30 per hour')
 def export_video_judge_workbook(tournament_id):
     """Synchronous Video Judge Excel workbook download.
 
@@ -520,6 +525,7 @@ def export_video_judge_workbook(tournament_id):
 
 
 @reporting_bp.route('/<int:tournament_id>/export-video-judge/async', methods=['POST'])
+@write_limit('3 per minute; 30 per hour')
 def export_video_judge_workbook_async(tournament_id):
     """Start Video Judge workbook generation as a background job."""
     tournament = db.get_or_404(Tournament, tournament_id)

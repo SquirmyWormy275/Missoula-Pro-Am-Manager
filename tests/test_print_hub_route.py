@@ -160,6 +160,7 @@ def test_email_send_queues_log_on_valid_input(
 
     # Match the real signature: submit(label, fn, *args, **kwargs).
     def sync_submit(label, fn, *args, **kwargs):
+        kwargs.pop("metadata", None)
         fn(*args, **kwargs)
 
     import services.background_jobs as bj
@@ -236,7 +237,7 @@ def test_email_admin_only_doc_allowed_for_admin(
     import services.background_jobs as bj
     # submit(label, fn, *args, ...) — match the real signature so the bug
     # flagged by Codex 2026-04-22 stays fixed.
-    monkeypatch.setattr(bj, "submit", lambda label, fn, *a, **kw: fn(*a, **kw))
+    monkeypatch.setattr(bj, "submit", lambda label, fn, *a, metadata=None, **kw: fn(*a, **kw))
     _FakeSMTP.instances = []
     monkeypatch.setattr(smtplib, "SMTP", _FakeSMTP)
 

@@ -17,6 +17,8 @@ import os
 
 import pytest
 
+from tests.db_test_utils import portal_session_stamp
+
 os.environ.setdefault('SECRET_KEY', 'test-secret-hardening')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
@@ -483,7 +485,7 @@ class TestCompetitorDataLeakage:
         """Pro Alpha's dashboard should not contain College Gamma's details."""
         with client.session_transaction() as sess:
             auth = sess.get('competitor_portal_auth', {})
-            auth[f'{tid_a}:pro:{pro_a_id}'] = True
+            auth[f'{tid_a}:pro:{pro_a_id}'] = portal_session_stamp(client, f'{tid_a}:pro:{pro_a_id}')
             sess['competitor_portal_auth'] = auth
 
         r = client.get(f'/portal/competitor/public?tournament_id={tid_a}'
@@ -505,7 +507,7 @@ class TestCrossTournamentIsolation:
         """Auth for Pro Alpha in tournament A does NOT grant access to Pro Beta in B."""
         with client.session_transaction() as sess:
             auth = sess.get('competitor_portal_auth', {})
-            auth[f'{tid_a}:pro:{pro_a_id}'] = True
+            auth[f'{tid_a}:pro:{pro_a_id}'] = portal_session_stamp(client, f'{tid_a}:pro:{pro_a_id}')
             sess['competitor_portal_auth'] = auth
 
         # Try to access Pro Beta in tournament B
@@ -519,7 +521,7 @@ class TestCrossTournamentIsolation:
         """Auth for Pro Alpha does NOT grant access to College Gamma (same tournament)."""
         with client.session_transaction() as sess:
             auth = sess.get('competitor_portal_auth', {})
-            auth[f'{tid_a}:pro:{pro_a_id}'] = True
+            auth[f'{tid_a}:pro:{pro_a_id}'] = portal_session_stamp(client, f'{tid_a}:pro:{pro_a_id}')
             sess['competitor_portal_auth'] = auth
 
         r = client.get(f'/portal/competitor/public?tournament_id={tid_a}'
@@ -763,8 +765,8 @@ class TestCompetitorPortalEdgeCases:
         c = app.test_client()
         with c.session_transaction() as sess:
             auth = {
-                f'{tid_a}:pro:{pro_a_id}': True,
-                f'{tid_a}:college:{cc_a_id}': True,
+                f'{tid_a}:pro:{pro_a_id}': portal_session_stamp(c, f'{tid_a}:pro:{pro_a_id}'),
+                f'{tid_a}:college:{cc_a_id}': portal_session_stamp(c, f'{tid_a}:college:{cc_a_id}'),
             }
             sess['competitor_portal_auth'] = auth
 

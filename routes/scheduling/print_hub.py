@@ -111,7 +111,7 @@ def _users_with_email() -> list:
 
 
 @scheduling_bp.route("/<int:tournament_id>/print-hub/email", methods=["POST"])
-@write_limit("20 per minute")
+@write_limit("3 per minute; 20 per hour")
 def print_hub_email(tournament_id):
     tournament = db.get_or_404(Tournament, tournament_id)
 

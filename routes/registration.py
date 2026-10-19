@@ -3,9 +3,11 @@ Registration routes for uploading and managing competitor entries.
 """
 import json
 import logging
+import os
 
 from flask import (
     Blueprint,
+    abort,
     current_app,
     flash,
     jsonify,
@@ -14,6 +16,7 @@ from flask import (
     request,
     url_for,
 )
+from flask_login import current_user
 
 import strings as text
 from database import db
@@ -227,6 +230,9 @@ def upload_college_entry(tournament_id):
             db.session.rollback()
             current_app.logger.exception('Unexpected error during college upload for tournament %s', tournament_id)
             flash('An unexpected error occurred during import. Please contact an administrator.', 'error')
+
+        finally:
+            os.unlink(filepath)
 
         return redirect(url_for('registration.college_registration', tournament_id=tournament_id))
 
@@ -476,6 +482,12 @@ def revalidate_team(tournament_id, team_id):
 @registration_bp.route('/<int:tournament_id>/college/team/<int:team_id>/override-validation', methods=['POST'])
 def override_team_validation(tournament_id, team_id):
     """Admin override: force a team to valid status despite validation errors."""
+    if not current_user.is_authenticated or not current_user.is_judge:
+        abort(403)
+    reason = (request.form.get('reason') or '').strip()
+    if not reason:
+        flash('Please provide a reason for the validation override change.', 'error')
+        return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
     team = db.get_or_404(Team, team_id)
     if team.tournament_id != tournament_id:
         flash('Team not found in this tournament.', 'error')
@@ -498,8 +510,9 @@ def override_team_validation(tournament_id, team_id):
         'team_validation_override',
         'team',
         team.id,
-        {'team_code': team.team_code, 'error_count': len(team_errors)},
+        {'team_code': team.team_code, 'error_count': len(team_errors), 'reason': reason},
     )
+    db.session.commit()
     flash(
         f'Team {team.team_code} forced to valid via admin override '
         f'({len(team_errors)} validation error(s) ignored). '
@@ -518,6 +531,12 @@ def remove_team_override(tournament_id, team_id):
     re-apply the override.
     """
     from services.excel_io import _validate_college_entry_constraints
+    if not current_user.is_authenticated or not current_user.is_judge:
+        abort(403)
+    reason = (request.form.get('reason') or '').strip()
+    if not reason:
+        flash('Please provide a reason for the validation override change.', 'error')
+        return redirect(url_for('registration.team_detail', tournament_id=tournament_id, team_id=team_id))
     team = db.get_or_404(Team, team_id)
     if team.tournament_id != tournament_id:
         flash('Team not found in this tournament.', 'error')
@@ -533,7 +552,8 @@ def remove_team_override(tournament_id, team_id):
     team.set_validation_errors(team_errors)
     db.session.commit()
     invalidate_tournament_caches(tournament_id)
-    log_action('team_validation_override_removed', 'team', team.id, {'team_code': team.team_code})
+    log_action('team_validation_override_removed', 'team', team.id, {'team_code': team.team_code, 'reason': reason})
+    db.session.commit()
 
     if team_errors:
         flash(

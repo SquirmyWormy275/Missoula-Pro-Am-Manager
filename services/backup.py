@@ -240,7 +240,7 @@ def _pg_dump_args_and_env(db_uri):
     should append --format=custom and --file=... to args_prefix and merge
     env_overlay into os.environ.copy() before invoking pg_dump.
     """
-    from urllib.parse import unquote, urlparse
+    from urllib.parse import parse_qsl, unquote, urlparse
     parsed = urlparse(db_uri)
     host = parsed.hostname or 'localhost'
     port = str(parsed.port or 5432)
@@ -253,6 +253,16 @@ def _pg_dump_args_and_env(db_uri):
     if dbname:
         args.extend(['--dbname', dbname])
     env_overlay = {}
+    # Preserve libpq transport and authentication requirements from DATABASE_URL.
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key in {'sslmode', 'sslrootcert', 'sslcert', 'sslkey', 'sslcrl',
+                   'sslcrldir', 'sslsni', 'sslcertmode', 'sslnegotiation', 'ssl_min_protocol_version',
+                   'ssl_max_protocol_version', 'channel_binding', 'gssencmode',
+                   'connect_timeout', 'target_session_attrs', 'require_auth'}:
+            env_name = {'ssl_min_protocol_version': 'PGSSLMINPROTOCOLVERSION', 'ssl_max_protocol_version': 'PGSSLMAXPROTOCOLVERSION', 'connect_timeout': 'PGCONNECT_TIMEOUT'}.get(key, 'PG' + key.upper().replace('_', ''))
+            env_overlay[env_name] = value
+        else:
+            raise ValueError('Unsupported PostgreSQL backup connection option.')
     if password:
         env_overlay['PGPASSWORD'] = password
     return args, env_overlay
@@ -283,8 +293,8 @@ def backup_pg_to_s3(db_uri: str, tournament_id: int) -> dict:
             capture_output=True, text=True, timeout=300, env=env,
         )
         if result.returncode != 0:
-            logger.error('pg_dump failed: %s', result.stderr)
-            return {'ok': False, 'error': f'pg_dump failed: {result.stderr[:500]}'}
+            logger.error('pg_dump failed with exit status %s', result.returncode)
+            return {'ok': False, 'error': 'pg_dump failed. Check the database connection and TLS configuration.'}
 
         upload_result = _upload_to_s3(dump_file, s3_key)
         return upload_result
@@ -321,8 +331,8 @@ def backup_pg_to_local(db_uri: str, dest_dir: str, tournament_id: int) -> dict:
             capture_output=True, text=True, timeout=300, env=env,
         )
         if result.returncode != 0:
-            logger.error('pg_dump failed: %s', result.stderr)
-            return {'ok': False, 'error': f'pg_dump failed: {result.stderr[:500]}'}
+            logger.error('pg_dump failed with exit status %s', result.returncode)
+            return {'ok': False, 'error': 'pg_dump failed. Check the database connection and TLS configuration.'}
 
         size = os.path.getsize(temp_dest)
         if size < 1:

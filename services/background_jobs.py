@@ -11,8 +11,11 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
+from flask import has_request_context
+from flask_login import current_user
 from sqlalchemy import inspect, or_
 from sqlalchemy.exc import SQLAlchemyError
+from werkzeug.exceptions import ServiceUnavailable
 
 from database import db
 from models.background_job import BackgroundJob
@@ -29,6 +32,33 @@ PROCESS_MODEL = 'one-gunicorn-worker-with-threads'
 logger = logging.getLogger(__name__)
 _PERSIST_RETRY_ATTEMPTS = 3
 _PERSIST_RETRY_DELAY_SECONDS = 0.05
+MAX_PENDING_JOBS = 16
+MAX_PENDING_PER_USER = 2
+MAX_PENDING_PER_TOURNAMENT = 4
+MAX_TERMINAL_JOBS = 1000
+
+
+class JobQueueFull(ServiceUnavailable):
+    description = 'The background queue is full. Please retry after existing jobs finish.'
+
+
+def _prune_terminal_jobs():
+    cutoff = utc_now_naive() - timedelta(hours=24)
+    with _lock:
+        terminal = sorted(
+            (j for j in _jobs.values() if j['status'] not in {'queued', 'running'}),
+            key=lambda j: j['submitted_at'], reverse=True,
+        )
+        for index, job in enumerate(terminal):
+            if job.get('terminal_persisted') and (index >= MAX_TERMINAL_JOBS or job['submitted_at'] < cutoff):
+                _jobs.pop(job['id'], None)
+    if _app is not None:
+        with _app.app_context():
+            query = BackgroundJob.query.filter(BackgroundJob.status.notin_(('queued', 'running')))
+            old_ids = query.with_entities(BackgroundJob.id).order_by(BackgroundJob.submitted_at.desc()).offset(MAX_TERMINAL_JOBS)
+            query.filter(or_(BackgroundJob.submitted_at < cutoff, BackgroundJob.id.in_(old_ids))).delete(synchronize_session=False)
+            db.session.commit()
+
 
 
 def boot_id() -> str:
@@ -219,9 +249,20 @@ def _row_to_dict(row: BackgroundJob) -> dict:
 
 
 def submit(label: str, fn, *args, metadata: dict | None = None, **kwargs) -> str:
+    _prune_terminal_jobs()
+    metadata = dict(metadata or {})
+    if has_request_context() and current_user.is_authenticated:
+        metadata.setdefault('user_id', current_user.id)
     job_id = uuid.uuid4().hex
     submitted_at = utc_now_naive()
     with _lock:
+        pending = [job for job in _jobs.values() if job['status'] in {'queued', 'running'}]
+        user_id = metadata.get('user_id')
+        tournament_id = metadata.get('tournament_id')
+        if (len(pending) >= MAX_PENDING_JOBS or
+                (user_id is not None and sum(j['metadata'].get('user_id') == user_id for j in pending) >= MAX_PENDING_PER_USER) or
+                (tournament_id is not None and sum(j['metadata'].get('tournament_id') == tournament_id for j in pending) >= MAX_PENDING_PER_TOURNAMENT)):
+            raise JobQueueFull()
         _jobs[job_id] = {
             'id': job_id,
             'label': label,
@@ -235,15 +276,21 @@ def submit(label: str, fn, *args, metadata: dict | None = None, **kwargs) -> str
             'owner_heartbeat_at': submitted_at,
             'terminal_persisted': False,
         }
-    _persist_job(
-        job_id,
-        label=label,
-        status='queued',
-        submitted_at=submitted_at,
-        metadata=dict(metadata or {}),
-        owner_boot_id=_BOOT_ID,
-        owner_heartbeat_at=submitted_at,
-    )
+    try:
+        _persist_job(
+            job_id,
+            label=label,
+            status='queued',
+            submitted_at=submitted_at,
+            metadata=dict(metadata or {}),
+            owner_boot_id=_BOOT_ID,
+            owner_heartbeat_at=submitted_at,
+        )
+
+    except Exception:
+        with _lock:
+            _jobs.pop(job_id, None)
+        raise
 
     def _run_job():
         started_at = utc_now_naive()
@@ -264,7 +311,13 @@ def submit(label: str, fn, *args, metadata: dict | None = None, **kwargs) -> str
             raise RuntimeError('Background job ownership expired before execution.')
         return _run_with_app_context(fn, *args, **kwargs)
 
-    future = _executor.submit(_run_job)
+    try:
+        future = _executor.submit(_run_job)
+    except Exception:
+        with _lock:
+            _jobs.pop(job_id, None)
+        _persist_job(job_id, status='failed', finished_at=utc_now_naive(), error='Queue submission failed.')
+        raise
 
     def _done_callback(done_future):
         with _lock:

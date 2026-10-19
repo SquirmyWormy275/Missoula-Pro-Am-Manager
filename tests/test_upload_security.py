@@ -22,6 +22,14 @@ from services.upload_security import (
 # Constants (mirrors the module's private magic bytes)
 # ---------------------------------------------------------------------------
 XLSX_MAGIC = b"PK\x03\x04"
+
+def _valid_xlsx():
+    import openpyxl
+    output = io.BytesIO()
+    openpyxl.Workbook().save(output)
+    return output.getvalue()
+
+VALID_XLSX = _valid_xlsx()
 XLS_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 ALLOWED = {"xlsx", "xls"}
 
@@ -45,8 +53,8 @@ class TestValidXlsx:
     """Valid .xlsx uploads should pass magic-byte check."""
 
     def test_valid_xlsx_minimal(self):
-        """Bare XLSX magic bytes (4 bytes) pass validation."""
-        fs = _make_file("report.xlsx", XLSX_MAGIC)
+        """A real minimal workbook passes validation."""
+        fs = _make_file("report.xlsx", VALID_XLSX)
         result = validate_excel_upload(fs, ALLOWED)
         assert result.ok is True
         assert result.extension == "xlsx"
@@ -54,7 +62,7 @@ class TestValidXlsx:
 
     def test_valid_xlsx_with_trailing_data(self):
         """Real-world XLSX files have data after the magic header."""
-        content = XLSX_MAGIC + b"\x00" * 1024
+        content = VALID_XLSX
         fs = _make_file("data.xlsx", content)
         result = validate_excel_upload(fs, ALLOWED)
         assert result.ok is True
@@ -174,21 +182,21 @@ class TestFilenameSanitization:
 
     def test_extension_case_insensitive(self):
         """Uppercase .XLSX should still be accepted."""
-        fs = _make_file("REPORT.XLSX", XLSX_MAGIC + b"\x00" * 100)
+        fs = _make_file("REPORT.XLSX", VALID_XLSX)
         result = validate_excel_upload(fs, ALLOWED)
         assert result.ok is True
         assert result.extension == "xlsx"
 
     def test_double_extension(self):
         """Only the last extension matters (werkzeug secure_filename)."""
-        fs = _make_file("report.csv.xlsx", XLSX_MAGIC)
+        fs = _make_file("report.csv.xlsx", VALID_XLSX)
         result = validate_excel_upload(fs, ALLOWED)
         assert result.ok is True
         assert result.extension == "xlsx"
 
     def test_path_traversal_filename(self):
         """Path traversal in filename must not leak into safe_name."""
-        fs = _make_file("../../etc/passwd.xlsx", XLSX_MAGIC)
+        fs = _make_file("../../etc/passwd.xlsx", VALID_XLSX)
         result = validate_excel_upload(fs, ALLOWED)
         # werkzeug secure_filename strips traversal — should still validate
         assert result.ok is True
@@ -198,7 +206,7 @@ class TestFilenameSanitization:
 
     def test_spaces_and_special_chars(self):
         """Special characters in filename produce a safe UUID name."""
-        fs = _make_file("my report (final) [v2].xlsx", XLSX_MAGIC)
+        fs = _make_file("my report (final) [v2].xlsx", VALID_XLSX)
         result = validate_excel_upload(fs, ALLOWED)
         assert result.ok is True
         # safe_name should be UUID-based, not contain spaces/brackets
@@ -207,7 +215,7 @@ class TestFilenameSanitization:
 
     def test_custom_allowed_set(self):
         """Only extensions in the provided set are allowed."""
-        fs = _make_file("data.xlsx", XLSX_MAGIC)
+        fs = _make_file("data.xlsx", VALID_XLSX)
         result = validate_excel_upload(fs, {"csv"})
         assert result.ok is False
         assert "Invalid file extension" in result.error
@@ -220,7 +228,7 @@ class TestSafeNameGeneration:
     """The safe_name returned on success must be UUID-hex based."""
 
     def test_safe_name_is_uuid_hex_with_extension(self):
-        fs = _make_file("report.xlsx", XLSX_MAGIC)
+        fs = _make_file("report.xlsx", VALID_XLSX)
         result = validate_excel_upload(fs, ALLOWED)
         stem, ext = result.safe_name.rsplit(".", 1)
         assert ext == "xlsx"
@@ -235,7 +243,7 @@ class TestSafeNameGeneration:
         """Two validations of the same file should produce different UUIDs."""
         names = set()
         for _ in range(10):
-            fs = _make_file("same.xlsx", XLSX_MAGIC)
+            fs = _make_file("same.xlsx", VALID_XLSX)
             result = validate_excel_upload(fs, ALLOWED)
             names.add(result.safe_name)
         assert len(names) == 10
@@ -267,14 +275,15 @@ class TestSaveUpload:
         path = save_upload(fs, dest, "abc.xlsx")
         assert path == os.path.join(dest, "abc.xlsx")
 
-    def test_overwrites_existing(self, tmp_path):
+    def test_rejects_existing_destination(self, tmp_path):
         dest = str(tmp_path)
         fs1 = _make_file("a.xlsx", b"first")
         save_upload(fs1, dest, "same.xlsx")
         fs2 = _make_file("b.xlsx", b"second")
-        save_upload(fs2, dest, "same.xlsx")
+        with pytest.raises(FileExistsError):
+            save_upload(fs2, dest, "same.xlsx")
         with open(os.path.join(dest, "same.xlsx"), "rb") as f:
-            assert f.read() == b"second"
+            assert f.read() == b"first"
 
 
 # ---------------------------------------------------------------------------

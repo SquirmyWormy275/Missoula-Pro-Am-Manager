@@ -121,6 +121,7 @@ class TestOverrideTeamValidationRoute:
 
         resp = auth_client.post(
             f"/registration/{t.id}/college/team/{team.id}/override-validation",
+            data={"reason": "Verified roster exception"},
             follow_redirects=False,
         )
         assert resp.status_code in (302, 303)
@@ -164,6 +165,7 @@ class TestOverrideTeamValidationRoute:
 
         resp = auth_client.post(
             f"/registration/{t.id}/college/team/{team.id}/remove-override",
+            data={"reason": "Roster review completed"},
             follow_redirects=False,
         )
         assert resp.status_code in (302, 303)
@@ -186,6 +188,7 @@ class TestOverrideTeamValidationRoute:
 
         resp = auth_client.post(
             f"/registration/{t.id}/college/team/{team.id}/remove-override",
+            data={"reason": "Roster review completed"},
             follow_redirects=False,
         )
         assert resp.status_code in (302, 303)

@@ -17,6 +17,8 @@ import os
 
 import pytest
 
+from tests.db_test_utils import portal_session_stamp
+
 os.environ.setdefault('SECRET_KEY', 'test-secret-competitor')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
@@ -276,8 +278,8 @@ class TestCompetitorPINSetup:
             'pin': '5678',
             'confirm_pin': '5678',
         }, follow_redirects=False)
-        assert r.status_code == 302
-        assert 'competitor/public' in r.headers['Location']
+        assert r.status_code == 403
+        assert not pro_bob.portal_pin_hash
 
     def test_set_pin_mismatch(self, client, tid, pro_bob):
         r = client.post('/portal/competitor/claim', data={
@@ -287,9 +289,7 @@ class TestCompetitorPINSetup:
             'pin': '5678',
             'confirm_pin': '9999',
         }, follow_redirects=True)
-        assert r.status_code == 200
-        # Flash message: "PIN confirmation does not match." — may appear in toast
-        assert b'does not match' in r.data or b'PIN' in r.data
+        assert r.status_code == 403
 
     def test_set_pin_too_short(self, client, tid, pro_bob):
         r = client.post('/portal/competitor/claim', data={
@@ -299,8 +299,7 @@ class TestCompetitorPINSetup:
             'pin': '12',
             'confirm_pin': '12',
         }, follow_redirects=True)
-        assert r.status_code == 200
-        assert b'4-8 digits' in r.data
+        assert r.status_code == 403
 
     def test_set_pin_non_numeric(self, client, tid, pro_bob):
         r = client.post('/portal/competitor/claim', data={
@@ -310,8 +309,7 @@ class TestCompetitorPINSetup:
             'pin': 'abcd',
             'confirm_pin': 'abcd',
         }, follow_redirects=True)
-        assert r.status_code == 200
-        assert b'4-8 digits' in r.data
+        assert r.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +391,7 @@ class TestCompetitorDashboard:
         # Authorize via session_transaction (bypass PIN requirement)
         with client.session_transaction() as sess:
             auth = sess.get('competitor_portal_auth', {})
-            auth[f'{tid}:pro:{pro_bob.id}'] = True
+            auth[f'{tid}:pro:{pro_bob.id}'] = portal_session_stamp(client, f'{tid}:pro:{pro_bob.id}')
             sess['competitor_portal_auth'] = auth
 
         r = client.get(f'/portal/competitor/public?tournament_id={tid}'
@@ -405,7 +403,7 @@ class TestCompetitorDashboard:
         """Bob has a completed result — dashboard should show it."""
         with client.session_transaction() as sess:
             auth = sess.get('competitor_portal_auth', {})
-            auth[f'{tid}:pro:{pro_bob.id}'] = True
+            auth[f'{tid}:pro:{pro_bob.id}'] = portal_session_stamp(client, f'{tid}:pro:{pro_bob.id}')
             sess['competitor_portal_auth'] = auth
 
         r = client.get(f'/portal/competitor/public?tournament_id={tid}'
@@ -478,7 +476,7 @@ class TestJudgeCompetitorOverride:
         # Set session auth directly (simulates what the claim route does)
         with c.session_transaction() as sess:
             auth = sess.get('competitor_portal_auth', {})
-            auth[f'{tid}:pro:{pro_charlie.id}'] = True
+            auth[f'{tid}:pro:{pro_charlie.id}'] = portal_session_stamp(c, f'{tid}:pro:{pro_charlie.id}')
             sess['competitor_portal_auth'] = auth
 
         r = c.get(f'/portal/competitor/public?tournament_id={tid}'
@@ -531,7 +529,11 @@ class TestCollegeCompetitorPortal:
         assert r.status_code == 200
 
     def test_college_set_pin_and_access(self, client, tid, college_alice, app):
-        # Set PIN
+        # A trusted operator provisions the PIN before public verification.
+        with app.app_context():
+            from models.competitor import CollegeCompetitor
+            _db.session.get(CollegeCompetitor, college_alice.id).set_portal_pin('7777')
+            _db.session.commit()
         r = client.post('/portal/competitor/claim', data={
             'tournament_id': tid,
             'competitor_type': 'college',
@@ -628,8 +630,16 @@ class TestSchoolCaptainPortal:
                        f'&school_name=University of Montana')
         assert r.status_code == 200
 
-    def test_school_set_pin_and_access(self, client, tid):
-        # Set PIN for school captain
+    def test_school_set_pin_and_access(self, client, tid, app):
+        # A trusted operator provisions the captain before public verification.
+        with app.app_context():
+            from models.school_captain import SchoolCaptain
+            captain = SchoolCaptain.query.filter_by(tournament_id=tid, school_name='University of Montana').first()
+            if captain is None:
+                captain = SchoolCaptain(tournament_id=tid, school_name='University of Montana')
+            captain.set_pin('5555')
+            _db.session.add(captain)
+            _db.session.commit()
         r = client.post('/portal/school/claim', data={
             'tournament_id': tid,
             'school_name': 'University of Montana',

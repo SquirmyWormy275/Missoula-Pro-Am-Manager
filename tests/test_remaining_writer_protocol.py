@@ -174,7 +174,7 @@ def test_registration_generation_editors_lock_before_competitor_read(
 
 
 def test_generation_input_routes_take_tournament_lock(
-    app, db_session, monkeypatch,
+    app, db_session, monkeypatch, tmp_path,
 ):
     import routes.registration as registration_routes
     import routes.scheduling.ability_rankings as ranking_routes
@@ -246,7 +246,9 @@ def test_generation_input_routes_take_tournament_lock(
             safe_name='entry.xlsx',
         ),
     )
-    monkeypatch.setattr(registration_routes, 'save_upload', lambda *_args, **_kwargs: 'entry.xlsx')
+    saved_upload = tmp_path / 'entry.xlsx'
+    saved_upload.write_bytes(b'test workbook')
+    monkeypatch.setattr(registration_routes, 'save_upload', lambda *_args, **_kwargs: str(saved_upload))
     monkeypatch.setattr(registration_routes, 'malware_scan', lambda *_args, **_kwargs: None)
     monkeypatch.setattr(registration_routes, 'log_action', lambda *_args, **_kwargs: None)
     monkeypatch.setattr('services.excel_io.process_college_entry_form', process_import)

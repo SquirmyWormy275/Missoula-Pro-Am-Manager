@@ -34,7 +34,7 @@ def csrf_app(monkeypatch):
 
 
 def test_csrf_error_on_html_route_redirects_with_flash(csrf_app):
-    """A POST with missing CSRF on an HTML route redirects to the referrer
+    """A POST with missing CSRF on an HTML route redirects to a safe local path
     with a user-friendly warning flash, rather than returning a raw 400 page."""
     with csrf_app.test_client() as client:
         referrer = "http://localhost/scheduling/2/events"
@@ -48,7 +48,7 @@ def test_csrf_error_on_html_route_redirects_with_flash(csrf_app):
             f"expected redirect (handler caught CSRFError), got {resp.status_code}; "
             "regression: CSRFError handler is missing or broken"
         )
-        assert resp.headers.get("Location") == referrer
+        assert resp.headers.get("Location") == "/scheduling/2/events"
 
         with client.session_transaction() as sess:
             flashes = sess.get("_flashes", [])
