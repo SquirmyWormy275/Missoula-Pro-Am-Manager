@@ -75,7 +75,7 @@ def health():
         'migration_current': migration_current,
         'migration_head': migration_head,
         'migration_rev': migration_current_rev,
-        'version': '2.14.16',
+        'version': '2.14.17',
         'git_commit': os.environ.get('RAILWAY_GIT_COMMIT_SHA')
                       or os.environ.get('GIT_COMMIT_SHA'),
     })
@@ -164,7 +164,7 @@ def health_diag():
             'hsts_will_be_set': cfg.get('ENV_NAME') == 'production',
             'csp_will_be_set': True,
         },
-        'version': '2.14.16',
+        'version': '2.14.17',
     })
 
 

@@ -26,93 +26,73 @@ def _json_default(obj):
         return obj.isoformat()
     raise TypeError(f'Object of type {obj.__class__.__name__} is not JSON serializable')
 
+from flask import request
+
+# One shared extension exists before route decoration; missing dependencies fail closed.
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_login import current_user
+
 from models import Event, EventResult, Heat, Team, Tournament
 from models.competitor import ProCompetitor
 from services.handicap_export import build_chopping_rows
 from services.report_cache import get as cache_get
 from services.report_cache import get_or_compute as cache_get_or_compute
 
-# ---------------------------------------------------------------------------
-# SSE connection counter — caps concurrent long-lived streams at SSE_MAX_CONNECTIONS
-# to prevent thread exhaustion on gunicorn/gevent workers.
-# ---------------------------------------------------------------------------
-_sse_connection_count = 0
-_sse_lock = threading.Lock()
-SSE_MAX_CONNECTIONS = 150
-
 api_bp = Blueprint('api', __name__)
 
-# ---------------------------------------------------------------------------
-# Write-endpoint rate limiter — attached in create_app() via _init_write_limiter.
-# Applies to POST/PUT/DELETE routes on management blueprints.
-# Falls back to a no-op if flask-limiter is not installed.
-# ---------------------------------------------------------------------------
-_write_limiter = None
+
+def _actor_limit_key():
+    if current_user.is_authenticated:
+        return f'user:{current_user.id}'
+    return f'ip:{get_remote_address()}'
+
+
+_limiter = Limiter(key_func=get_remote_address, default_limits=[])
+_write_limiter = _limiter
+_limiter.limit('60 per minute; 600 per hour')(api_bp)
+
+
+@_limiter.request_filter
+def _rate_limits_disabled():
+    return not current_app.config.get('RATELIMIT_ENABLED', True)
+
+
+def _init_limiter(app):
+    # The supported production process is one worker (Procfile/background_jobs).
+    # A shared store can be supplied when moving to a multi-instance deployment.
+    import os
+    app.config.setdefault('RATELIMIT_STORAGE_URI', os.environ.get('RATELIMIT_STORAGE_URI', 'memory://'))
+    _limiter.init_app(app)
+
 
 def _init_write_limiter(app):
-    """Optionally create a shared Limiter for management write routes."""
-    global _write_limiter
-    try:
-        from flask_limiter import Limiter  # type: ignore
-        from flask_limiter.util import get_remote_address  # type: ignore
-        _write_limiter = Limiter(
-            key_func=get_remote_address,
-            default_limits=[],
-            storage_uri='memory://',
-        )
-        _write_limiter.init_app(app)
-    except ImportError:
-        _write_limiter = None
+    # Kept for existing factory callers; both kinds share the same extension.
+    pass
+
 
 def write_limit(rate: str = '30 per minute'):
-    """Decorator applying a write-specific rate limit. No-op when limiter unavailable."""
-    import functools
-    def decorator(f):
-        if _write_limiter is not None:
-            return _write_limiter.limit(rate)(f)
-        @functools.wraps(f)
-        def wrapper(*args, **kwargs):
-            return f(*args, **kwargs)
-        return wrapper
-    return decorator
+    return _limiter.limit(rate, key_func=_actor_limit_key)
 
-# ---------------------------------------------------------------------------
-# Rate limiting — gracefully no-ops if flask-limiter is not installed.
-# Set RATELIMIT_STORAGE_URI in env (e.g. "memory://") or rely on the default.
-# Default limits: 60 requests/minute, 600/hour per remote IP.
-# ---------------------------------------------------------------------------
-try:
-    from flask_limiter import Limiter  # type: ignore
-    from flask_limiter.util import get_remote_address  # type: ignore
 
-    _limiter = Limiter(
-        key_func=get_remote_address,
-        default_limits=['600 per hour', '60 per minute'],
-        storage_uri='memory://',
-    )
+def credential_limit(*fields):
+    """Bound attempts per account/resource, including attempts from changing IPs."""
+    import hashlib
+    def key():
+        values = []
+        for field in fields:
+            source = request.form if field == 'username' else request.values
+            if field in {'tournament_id', 'competitor_id'}:
+                value = source.get(field, type=int)
+            else:
+                value = str(source.get(field, '')).strip().casefold()
+            values.append(value)
+        return hashlib.sha256(repr(values).encode()).hexdigest()
+    return _limiter.limit('5 per minute; 30 per hour', key_func=key, methods=['POST'])
 
-    def _init_limiter(app):
-        """Attach the limiter to the Flask app — call from create_app()."""
-        _limiter.init_app(app)
 
-    def _limit(rate: str):
-        """Decorator applying a specific rate limit to a route."""
-        return _limiter.limit(rate)
-
-except ImportError:
-    import functools
-
-    def _init_limiter(app):  # type: ignore[misc]
-        pass
-
-    def _limit(rate: str):  # type: ignore[misc]
-        """No-op decorator when flask-limiter is not installed."""
-        def decorator(f):
-            @functools.wraps(f)
-            def wrapper(*args, **kwargs):
-                return f(*args, **kwargs)
-            return wrapper
-        return decorator
+def _limit(rate: str):
+    return _limiter.limit(rate)
 
 
 @api_bp.route('/public/tournaments/<int:tournament_id>/standings')
@@ -289,72 +269,14 @@ def standings_poll(tournament_id):
 
 @api_bp.route('/public/tournaments/<int:tournament_id>/standings-stream')
 def standings_stream(tournament_id):
-    """
-    SSE endpoint for real-time leaderboard updates.
-
-    The browser connects once and receives push events as scores are entered.
-    Replaces the 30-second polling loop in spectator_college.html when JS
-    EventSource is supported.
-
-    Events:
-      data: <JSON payload>  — same shape as standings-poll
-      : keep-alive comment  — sent every 15s when no data changes
-
-    Clients should reconnect automatically (EventSource does this by default).
-    Max stream duration: 5 minutes to avoid long-lived connections on Railway.
-
-    Connection cap: returns HTTP 503 with Retry-After: 10 when SSE_MAX_CONNECTIONS
-    is reached, preventing thread exhaustion under heavy spectator load.
-    """
-    global _sse_connection_count
-
-    # Enforce connection cap before opening the stream.
-    with _sse_lock:
-        if _sse_connection_count >= SSE_MAX_CONNECTIONS:
-            return jsonify({
-                'error': 'Too many live connections. Please retry in a few seconds.',
-                'retry_after': 10,
-            }), 503, {'Retry-After': '10'}
-        _sse_connection_count += 1
-
-    app = current_app._get_current_object()
-    ttl_seconds = max(1, int(app.config.get('PUBLIC_CACHE_TTL_SECONDS', 5)))
-    max_duration = 300  # 5 minutes
-    poll_interval = 5   # seconds between DB checks
-    cache_key = f'api:standings-poll:{tournament_id}'
-
-    @stream_with_context
-    def _generate():
-        global _sse_connection_count
-        try:
-            start = time.monotonic()
-            last_payload_json = None
-            while time.monotonic() - start < max_duration:
-                # Read from the shared standings-poll cache populated by standings_poll().
-                # Falls back to None when cache is cold (first poll hasn't fired yet).
-                payload = cache_get(cache_key)
-                if payload is None:
-                    # Cache miss — yield keep-alive and let standings_poll warm the cache.
-                    yield ': keep-alive\n\n'
-                    time.sleep(poll_interval)
-                    continue
-                payload_json = json.dumps(payload, default=_json_default)
-                if payload_json != last_payload_json:
-                    last_payload_json = payload_json
-                    yield f'data: {payload_json}\n\n'
-                else:
-                    # Keep-alive comment so the connection doesn't time out.
-                    yield ': keep-alive\n\n'
-                time.sleep(poll_interval)
-        finally:
-            # Decrement connection count when the stream ends (client disconnect or timeout).
-            with _sse_lock:
-                _sse_connection_count = max(0, _sse_connection_count - 1)
-
-    return Response(_generate(), mimetype='text/event-stream', headers={
-        'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no',  # Disable Nginx buffering for SSE
-    })
+    """Retire long-lived WSGI streams; the spectator UI uses standings-poll."""
+    # The four-thread WSGI process must never park threads for public streams.
+    # Spectators already use standings-poll; a retired stream fails immediately.
+    db.get_or_404(Tournament, tournament_id)
+    return jsonify({
+        'error': 'Live streams are unavailable. Use standings-poll.',
+        'poll_url': f'/api/public/tournaments/{tournament_id}/standings-poll',
+    }), 410
 
 
 @api_bp.route('/public/tournaments/<int:tournament_id>/handicap-input')

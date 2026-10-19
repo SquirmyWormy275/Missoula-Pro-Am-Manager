@@ -66,13 +66,16 @@
             <strong>Admin override active — {{ validation_errors|length }} validation error{% if validation_errors|length != 1 %}s{% endif %} ignored.</strong>
             This team competes normally: members appear in heats, earn points, and show in standings. The override persists through re-validation and Excel re-imports. Review the ignored errors below.
         </div>
+        {% if current_user.is_judge %}
         <form action="{{ url_for('registration.remove_team_override', tournament_id=tournament.id, team_id=team.id) }}" method="POST" class="ms-2">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label>Reason <input class="form-control" name="reason" maxlength="500" required></label>
             <button type="submit" class="btn btn-sm btn-outline-dark"
                     onclick="return confirm('Remove the override and re-run validation? The team will flip back to invalid if errors remain.')">
                 <i class="bi bi-x-circle"></i> Remove Override
             </button>
         </form>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -689,12 +692,15 @@
                                 <i class="bi bi-arrow-repeat"></i> Re-validate Team After Fixes
                             </button>
                         </form>
-                        <form action="{{ url_for('registration.override_team_validation', tournament_id=tournament.id, team_id=team.id) }}" method="POST" class="mt-2">
+                        {% if current_user.is_judge %}
+        <form action="{{ url_for('registration.override_team_validation', tournament_id=tournament.id, team_id=team.id) }}" method="POST" class="mt-2">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-outline-danger w-100" onclick="return confirm('Override validation and mark this team as valid despite errors?')">
+                            <label>Reason <input class="form-control" name="reason" maxlength="500" required></label>
+            <button type="submit" class="btn btn-outline-danger w-100" onclick="return confirm('Override validation and mark this team as valid despite errors?')">
                                 <i class="bi bi-shield-exclamation"></i> Admin Override — Force Valid
                             </button>
                         </form>
+        {% endif %}
                     </div>
                 </div>
             </div>

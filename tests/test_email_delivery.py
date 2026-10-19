@@ -118,7 +118,11 @@ class _FakeSMTP:
     def __exit__(self, *args):
         return False
 
-    def starttls(self):
+    def ehlo(self):
+        return 250, b"ok"
+
+    def starttls(self, context=None):
+        self.tls_context = context
         if "starttls" in self._raise_on:
             raise smtplib.SMTPException("tls failed")
 
@@ -240,6 +244,7 @@ def test_queue_document_email_writes_log_and_sends(
     # Force synchronous send — background_jobs may not be usable in tests.
     # Match the real signature: submit(label, fn, *args, **kwargs).
     def sync_submit(label, fn, *args, **kwargs):
+        kwargs.pop("metadata", None)
         fn(*args, **kwargs)
 
     import services.background_jobs as bj
@@ -281,6 +286,7 @@ def test_queue_document_email_marks_failed_on_smtp_error(
 
     # Match the real signature: submit(label, fn, *args, **kwargs).
     def sync_submit(label, fn, *args, **kwargs):
+        kwargs.pop("metadata", None)
         fn(*args, **kwargs)
 
     import services.background_jobs as bj

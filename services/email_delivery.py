@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import smtplib
+import ssl
 from dataclasses import dataclass
 from email import encoders
 from email.mime.base import MIMEBase
@@ -35,6 +36,8 @@ from typing import Iterable, Optional
 from services.time_utils import utc_now_naive
 
 logger = logging.getLogger(__name__)
+MAX_RECIPIENTS = 10
+MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 
 
 # RFC-5322 local-part is complex; we accept anything with a single @ and a
@@ -105,6 +108,9 @@ def validate_recipients(recipients: Iterable[str]) -> tuple[list[str], list[str]
             if domain not in allowed:
                 invalid.append(addr)
                 continue
+        if len(valid) >= MAX_RECIPIENTS:
+            invalid.append(addr)
+            continue
         valid.append(addr)
 
     return valid, invalid
@@ -128,6 +134,9 @@ def send_document(
     Returns EmailResult(status='sent'|'failed', error=...). Never raises.
     Credentials NEVER appear in the error string.
     """
+    valid, invalid = validate_recipients(to)
+    if invalid or len(attachment_bytes) > MAX_ATTACHMENT_BYTES:
+        return EmailResult(status='failed', error='Recipient or attachment limits exceeded.')
     if not to:
         return EmailResult(status="failed", error="No recipients.")
     if not is_configured():
@@ -162,7 +171,9 @@ def send_document(
         msg.attach(part)
 
         with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
-            server.starttls()
+            server.ehlo()
+            server.starttls(context=ssl.create_default_context())
+            server.ehlo()
             server.login(smtp_user, smtp_password)
             server.send_message(msg)
 
@@ -210,6 +221,11 @@ def queue_document_email(
     from database import db
     from models import PrintEmailLog
 
+    valid, invalid = validate_recipients(recipients)
+    if not valid or invalid or len(attachment_bytes) > MAX_ATTACHMENT_BYTES:
+        from werkzeug.exceptions import BadRequest
+        raise BadRequest('Use at most 10 permitted recipients and an attachment no larger than 5 MiB.')
+
     log = PrintEmailLog(
         tournament_id=tournament_id,
         doc_key=doc_key,
@@ -225,9 +241,8 @@ def queue_document_email(
     db.session.commit()
     log_id = log.id
 
-    # Submit to the background-jobs thread pool. Fall back to synchronous
-    # send if background_jobs isn't available (e.g., in tests where the
-    # pool is shut down).
+    # Submit to the bounded background-jobs pool. A full/unavailable queue
+    # fails closed; sending synchronously would bypass admission control.
     try:
         from services import background_jobs
 
@@ -242,18 +257,14 @@ def queue_document_email(
             attachment_bytes,
             attachment_name,
             attachment_mime,
+            metadata={'tournament_id': tournament_id, 'user_id': sent_by_user_id},
         )
     except Exception:
-        logger.exception("background_jobs.submit failed — falling back to sync send")
-        _worker_send(
-            log_id,
-            recipients,
-            subject,
-            body,
-            attachment_bytes,
-            attachment_name,
-            attachment_mime,
-        )
+        # Admission rejection must never become a synchronous SMTP send.
+        log.status = 'failed'
+        log.error = 'Email queue unavailable. Please retry later.'
+        db.session.commit()
+        raise
 
     return log_id
 

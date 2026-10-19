@@ -20,6 +20,8 @@ import os
 
 import pytest
 
+from tests.db_test_utils import portal_session_stamp
+
 os.environ.setdefault('SECRET_KEY', 'test-secret-school')
 os.environ.setdefault('WTF_CSRF_ENABLED', 'False')
 
@@ -158,7 +160,7 @@ def _authorize_school(client, tid, school_name):
     """Set school session auth directly."""
     with client.session_transaction() as sess:
         auth = sess.get('school_portal_auth', {})
-        auth[f'{tid}:school:{school_name.lower()}'] = True
+        auth[f'{tid}:school:{school_name.lower()}'] = portal_session_stamp(client, f'{tid}:school:{school_name.lower()}')
         sess['school_portal_auth'] = auth
 
 
@@ -222,7 +224,7 @@ class TestSchoolClaimPIN:
             'pin': '7777',
             'confirm_pin': '7777',
         }, follow_redirects=False)
-        assert r.status_code == 302
+        assert r.status_code == 403
 
     def test_set_pin_mismatch(self, client, tid):
         r = client.post('/portal/school/claim', data={

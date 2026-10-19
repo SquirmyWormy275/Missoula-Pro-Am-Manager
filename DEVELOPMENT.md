@@ -9,6 +9,14 @@ The Missoula Pro Am Manager is a Flask-based web application for managing the an
 
 ---
 
+## V2.14.17 — Security Cloud remediation (October 2026)
+
+See [Security controls and rollout](docs/SECURITY_CONTROLS.md) for the current
+administrator provisioning command, admin-issued portal PINs, required rate
+limiter, bounded uploads/jobs, spreadsheet text handling, TLS guarantees and
+finding disposition. This section supersedes historical bootstrap/PIN behavior
+in the changelog. No schema migration is introduced by these fixes.
+
 ## Architecture
 
 ### Technology Stack

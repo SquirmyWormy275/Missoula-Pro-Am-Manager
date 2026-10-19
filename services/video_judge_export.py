@@ -364,6 +364,8 @@ def write_workbook(sheets: "OrderedDict[str, dict]", path: str) -> None:
         for idx, width in enumerate(widths, start=1):
             ws.column_dimensions[chr(ord("A") + idx - 1)].width = width
 
+    from services.spreadsheet_security import literal_workbook
+    literal_workbook(wb)
     try:
         wb.save(path)
     except Exception as exc:  # noqa: BLE001

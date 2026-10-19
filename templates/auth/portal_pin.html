@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block title %}Provision Portal PIN{% endblock %}
+{% block content %}
+<div class="container py-4">
+<h1>Provision Portal PIN</h1>
+<p>{{ tournament.name }}. Verify the person's identity before issuing or replacing a PIN. Give the PIN directly to the competitor or verified school captain.</p>
+{% if issued_pin %}<div class="alert alert-success">PIN for {{ subject_name }}: <strong>{{ issued_pin }}</strong>. This PIN is shown only on this response. Previous portal sessions have been revoked.</div>{% endif %}
+<form method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<input type="hidden" name="tournament_id" value="{{ tournament.id }}">
+<label>Competitor or school
+<select name="profile" class="form-select" required>
+<option value="">Choose a verified profile</option>
+<optgroup label="Pro competitors">{% for person in pro_profiles %}<option value="pro:{{ person.id }}" {% if selected_profile == 'pro:' ~ person.id %}selected{% endif %}>{{ person.name }}</option>{% endfor %}</optgroup>
+<optgroup label="College competitors">{% for person in college_profiles %}<option value="college:{{ person.id }}" {% if selected_profile == 'college:' ~ person.id %}selected{% endif %}>{{ person.name }}</option>{% endfor %}</optgroup>
+<optgroup label="School captains">{% for school in schools %}<option value="school:{{ school }}">{{ school }}</option>{% endfor %}</optgroup>
+</select></label>
+<label><input type="checkbox" name="identity_verified" value="yes" required> I verified the person's identity and authority for this profile.</label>
+<button class="btn btn-primary" type="submit">Generate and replace PIN</button>
+</form>
+</div>
+{% endblock %}

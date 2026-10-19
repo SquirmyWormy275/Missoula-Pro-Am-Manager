@@ -311,7 +311,8 @@ def _create_app_inner():
             if not user_id:
                 return None
             try:
-                return db.session.get(User, int(user_id))
+                user = db.session.get(User, int(user_id))
+                return user if user and user.is_active else None
             except (ValueError, TypeError):
                 return None
 
@@ -423,7 +424,7 @@ def _create_app_inner():
         app.register_blueprint(api_bp, url_prefix='/api')
         # Also register api_bp at /api/v1/ for forwards-compatible clients (#19)
         app.register_blueprint(api_bp, url_prefix='/api/v1', name='api_v1')
-        # Attach rate limiters to the app (no-op if flask-limiter not installed)
+        # Attach the required shared rate limiter after blueprint registration.
         from routes.api import _init_limiter, _init_write_limiter
         _init_limiter(app)
         _init_write_limiter(app)
@@ -463,7 +464,7 @@ def _create_app_inner():
         if not HAS_FLASK_LOGIN:
             return None
 
-        if not current_user.is_authenticated:
+        if not current_user.is_authenticated or not current_user.is_active:
             return login_manager.unauthorized()
 
         permission_attr = BLUEPRINT_PERMISSIONS.get(blueprint_name, 'is_judge')
@@ -624,7 +625,8 @@ def _create_app_inner():
         if request.path.startswith('/api/'):
             return jsonify({'error': 'CSRF token missing or expired', 'status': 400}), 400
         flash('Your session expired for security. Please try that action again.', 'warning')
-        target = request.referrer or request.path or '/'
+        from routes.auth import _safe_redirect_target
+        target = _safe_redirect_target(request.referrer) or request.path or '/'
         return redirect(target)
 
     return app

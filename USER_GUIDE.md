@@ -48,7 +48,15 @@ The system supports 7 roles: **admin**, **judge**, **scorer**, **registrar**, **
 - **Spectator**: Public standings and results view
 - **Viewer**: Read-only access
 
-The first time you run the app, visit `/auth/bootstrap` to create the initial admin account. After that, admins can manage users at `/auth/users`.
+For the first account, ask the server administrator to run `flask auth create-admin`
+after database setup. Public web setup cannot create an administrator. Existing
+admins manage users at `/auth/users`.
+
+To activate a competitor or school captain portal, an admin selects the tournament
+in Manage Users and opens **Provision competitor or school PIN**. After verifying
+the person's identity, choose their name or school and generate a PIN. Give it to
+that person directly. Replacing a PIN revokes earlier portal sessions; it does not
+change their registration or results. See [Security controls](docs/SECURITY_CONTROLS.md).
 
 ---
 

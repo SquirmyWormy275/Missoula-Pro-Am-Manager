@@ -410,6 +410,8 @@ def _run_smoke(route: dict[str, object], smoke_env) -> None:
 
     path = _build_path(rule, ids)
     query = _QUERY_ARGS.get(endpoint)
+    if endpoint == "auth.provision_portal_pin":
+        query = {"tournament_id": str(ids["tournament_id"])}
     if query:
         path = path + ("&" if "?" in path else "?") + urlencode(query)
     if method == "GET":
@@ -418,6 +420,9 @@ def _run_smoke(route: dict[str, object], smoke_env) -> None:
         response = client.post(path, data={}, follow_redirects=False)
 
     allowed = {200, 202, 301, 302, 403}
+    if endpoint in {"api.standings_stream", "api_v1.standings_stream"}:
+        # The retired stream gives polling clients an immediate 410 response.
+        allowed = {410}
     if method == "POST":
         # Empty generic smoke payloads can be rejected by validation (400) or
         # by a required stale-state token (409). Focused route tests prove the

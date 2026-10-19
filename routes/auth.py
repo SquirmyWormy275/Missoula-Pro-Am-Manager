@@ -3,7 +3,16 @@ Authentication and user-management routes.
 """
 from urllib.parse import urlsplit
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    abort,
+    flash,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user, login_required, login_user, logout_user
 
 from database import db
@@ -11,28 +20,20 @@ from models import Tournament
 from models.audit_log import AuditLog
 from models.competitor import CollegeCompetitor, ProCompetitor
 from models.user import User
+from routes.api import credential_limit
+from routes.api import write_limit as _write_limit
 from services.audit import log_action
 
 auth_bp = Blueprint('auth', __name__)
 
-# Login rate limiting — import write_limit from api.py (no-op if flask-limiter absent)
-try:
-    from routes.api import write_limit as _write_limit
-except ImportError:
-    import functools as _functools
-    def _write_limit(rate: str = '30 per minute'):
-        def decorator(f):
-            @_functools.wraps(f)
-            def wrapper(*args, **kwargs):
-                return f(*args, **kwargs)
-            return wrapper
-        return decorator
-
 
 def _safe_redirect_target(target: str | None):
-    if not target:
+    if not target or '\\' in target or target.startswith('//') or any(ord(c) < 32 for c in target):
         return None
-    parsed = urlsplit(target)
+    try:
+        parsed = urlsplit(target)
+    except ValueError:
+        return None
     if parsed.scheme or parsed.netloc:
         return None
     if not target.startswith('/'):
@@ -68,6 +69,7 @@ def _require_admin():
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 @_write_limit('10 per minute')
+@credential_limit('username')
 def login():
     """Log in an existing user."""
     if current_user.is_authenticated:
@@ -109,36 +111,31 @@ def logout():
 
 @auth_bp.route('/bootstrap', methods=['GET', 'POST'])
 def bootstrap():
-    """Create the first judge/admin account when DB is empty."""
+    """Legacy setup URL; account provisioning requires the trusted console."""
     if User.query.count() > 0:
-        flash('Bootstrap is disabled because users already exist.', 'warning')
         return redirect(url_for('auth.login'))
+    # Database emptiness is not proof that a remote visitor owns this deployment.
+    # Keep bootstrap closed after provisioning as well as before it.
+    abort(404)
 
-    if request.method == 'POST':
-        username = (request.form.get('username') or '').strip()
-        password = request.form.get('password') or ''
-        role = request.form.get('role', User.ROLE_ADMIN)
-        if role not in {User.ROLE_ADMIN, User.ROLE_JUDGE}:
-            role = User.ROLE_ADMIN
 
-        if len(username) < 3:
-            flash('Username must be at least 3 characters.', 'error')
-            return render_template('auth/bootstrap.html')
-        if len(password) < 8:
-            flash('Password must be at least 8 characters.', 'error')
-            return render_template('auth/bootstrap.html')
-
-        user = User(username=username, role=role, display_name='Head Judge')
-        user.set_password(password)
-        db.session.add(user)
-        db.session.commit()
-        log_action('bootstrap_user_created', 'user', user.id, {'role': role})
-        db.session.commit()
-
-        flash('Initial judge account created. Please log in.', 'success')
-        return redirect(url_for('auth.login'))
-
-    return render_template('auth/bootstrap.html')
+@auth_bp.cli.command('create-admin')
+def create_admin():
+    """Provision the initial administrator from the trusted server console."""
+    import click
+    if User.query.count() > 0:
+        raise click.ClickException('Bootstrap is disabled because users already exist.')
+    username = click.prompt('Username').strip()
+    password = click.prompt('Password', hide_input=True, confirmation_prompt=True)
+    if len(username) < 3 or len(password) < 12:
+        raise click.ClickException('Use a username of at least 3 characters and a password of at least 12.')
+    user = User(username=username, role=User.ROLE_ADMIN, display_name='Head Judge')
+    user.set_password(password)
+    db.session.add(user)
+    db.session.flush()
+    log_action('bootstrap_user_created', 'user', user.id, {'role': User.ROLE_ADMIN})
+    db.session.commit()
+    click.echo('Initial administrator created.')
 
 
 @auth_bp.route('/users', methods=['GET', 'POST'])
@@ -282,30 +279,76 @@ def reset_competitor_pin():
     tournament_id = request.form.get('tournament_id', type=int)
     competitor_type = (request.form.get('competitor_type') or '').strip()
     competitor_id = request.form.get('competitor_id', type=int)
-    user_id = request.form.get('user_id', type=int)
 
     competitor = _load_competitor(tournament_id, competitor_type, competitor_id)
     if not competitor:
         flash('Competitor record not found for PIN reset.', 'error')
         return redirect(url_for('auth.manage_users', tournament_id=tournament_id))
 
-    competitor.portal_pin_hash = None
-    db.session.commit()
-    log_action(
-        'competitor_pin_reset',
-        'user',
-        user_id,
-        {
-            'tournament_id': tournament_id,
-            'competitor_type': competitor_type,
-            'competitor_id': competitor_id,
-            'competitor_name': competitor.name,
-        }
-    )
-    db.session.commit()
+    return redirect(url_for('auth.provision_portal_pin', tournament_id=tournament_id,
+                            competitor_type=competitor_type, competitor_id=competitor_id))
 
-    flash(f'PIN reset for {competitor.name}. They must set a new PIN on next access.', 'success')
-    return redirect(url_for('auth.manage_users', tournament_id=tournament_id))
+
+@auth_bp.route('/users/portal-pin', methods=['GET', 'POST'])
+@_write_limit('10 per minute')
+def provision_portal_pin():
+    """An administrator verifies identity and hands out a generated PIN in person."""
+    denied = _require_admin()
+    if denied:
+        return denied
+    import secrets
+
+    from models import Team
+    from models.school_captain import SchoolCaptain
+    tournament_id = request.values.get('tournament_id', type=int)
+    tournament = db.get_or_404(Tournament, tournament_id)
+    issued_pin = None
+    subject_name = None
+    if request.method == 'POST':
+        if request.form.get('identity_verified') != 'yes':
+            abort(400)
+        kind = request.form.get('competitor_type')
+        competitor_id = request.form.get('competitor_id', type=int)
+        school_name = request.form.get('school_name', '').strip()
+        profile = request.form.get('profile', '')
+        if profile:
+            kind, _, identifier = profile.partition(':')
+            if kind == 'school':
+                school_name = identifier
+            else:
+                try:
+                    competitor_id = int(identifier)
+                except (ValueError, TypeError):
+                    abort(400)
+        issued_pin = f'{secrets.randbelow(100000000):08d}'
+        if kind == 'school':
+            if not Team.query.filter_by(tournament_id=tournament_id, school_name=school_name).first():
+                abort(404)
+            subject = SchoolCaptain.query.filter_by(tournament_id=tournament_id, school_name=school_name).first()
+            if subject is None:
+                subject = SchoolCaptain(tournament_id=tournament_id, school_name=school_name)
+                db.session.add(subject)
+            subject.set_pin(issued_pin)
+            subject_name = school_name
+        else:
+            subject = _load_competitor(tournament_id, kind, competitor_id)
+            if subject is None:
+                abort(404)
+            subject.set_portal_pin(issued_pin)
+            subject_name = subject.name
+        db.session.flush()
+        log_action('portal_pin_provisioned', kind, subject.id, {'tournament_id': tournament_id})
+        db.session.commit()
+    response = make_response(render_template(
+        'auth/portal_pin.html', tournament=tournament, issued_pin=issued_pin,
+        subject_name=subject_name,
+        pro_profiles=tournament.pro_competitors.filter_by(status='active').order_by(ProCompetitor.name).all(),
+        college_profiles=tournament.college_competitors.filter_by(status='active').order_by(CollegeCompetitor.name).all(),
+        schools=sorted({team.school_name for team in tournament.teams.filter_by(status='active').all()}),
+        selected_profile=f"{request.args.get('competitor_type', '')}:{request.args.get('competitor_id', '')}",
+    ))
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 def _load_competitor(tournament_id: int, competitor_type: str, competitor_id: int):

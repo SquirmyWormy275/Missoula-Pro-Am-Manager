@@ -316,7 +316,7 @@ def test_release_docs_and_dependency_comments_describe_the_real_shadow_authority
     assert "python scripts/verify_strathmark_shadow_contract.py" in workflow
     assert "@9c021c5" not in requirements
     assert "strathmark[api]" in verifier_requirements.lower()
-    assert "@da5c44d07311b226c1e9842104477efaf61253fa" in verifier_requirements
+    assert "@5408939a9eeb40c9c03f47a28c0ddb181ff99894" in verifier_requirements
     verifier_install = "pip install -r requirements.txt -r requirements-shadow-verifier.txt"
     test_job = workflow.split("  test:\n", 1)[1].split("\n  postgres-smoke:\n", 1)[0]
     unit_postgres_job = workflow.split("  unit-postgres:\n", 1)[1].split("\n  lint:\n", 1)[0]
@@ -356,7 +356,7 @@ def test_installed_contract_rehearsal_executes_status_and_idempotent_numeric_out
 
     assert Path.cwd() == cwd_before
     assert {name: os.environ[name] for name in artifact_values} == artifact_values
-    assert result["distribution_commit"] == "da5c44d07311b226c1e9842104477efaf61253fa"
+    assert result["distribution_commit"] == "5408939a9eeb40c9c03f47a28c0ddb181ff99894"
     assert result["status_readiness"] == "ready"
     assert result["numeric_outcome"] == "recorded"
     assert result["numeric_outcome_retry"] == "duplicate"

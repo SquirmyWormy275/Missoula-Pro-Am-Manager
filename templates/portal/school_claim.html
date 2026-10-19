@@ -34,30 +34,7 @@
                 </div>
             </form>
             {% else %}
-            <p class="text-muted">
-                No PIN has been set yet for <strong>{{ school_name }}</strong>.
-                Create one now — this PIN will protect your school's dashboard and should be shared
-                only with your team's captain.
-            </p>
-            <form method="POST" class="row g-3">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="tournament_id" value="{{ tournament.id }}">
-                <input type="hidden" name="school_name" value="{{ school_name }}">
-                <input type="hidden" name="view" value="{{ view_mode }}">
-                <div class="col-md-6">
-                    <label class="form-label">New PIN (4-8 digits)</label>
-                    <input class="form-control" type="password" name="pin"
-                           inputmode="numeric" pattern="[0-9]{4,8}" required autofocus>
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label">Confirm PIN</label>
-                    <input class="form-control" type="password" name="confirm_pin"
-                           inputmode="numeric" pattern="[0-9]{4,8}" required>
-                </div>
-                <div class="col-12">
-                    <button class="btn btn-proam" type="submit">Create Captain Profile &amp; Continue</button>
-                </div>
-            </form>
+            <p class="text-muted">Your portal is not activated yet. Ask an administrator to verify your identity and provide your PIN in person.</p>
             {% endif %}
         </div>
     </div>

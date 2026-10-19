@@ -1154,3 +1154,5 @@ def export_results_to_excel(tournament: Tournament, filepath: str):
                 'Tournament': f'{tournament.name} {tournament.year}',
                 'Status': 'No standings or completed event results are available yet.',
             }]).to_excel(writer, sheet_name='Overview', index=False)
+        from services.spreadsheet_security import literal_workbook
+        literal_workbook(writer.book)

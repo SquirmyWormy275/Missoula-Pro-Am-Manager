@@ -1,4 +1,4 @@
-# Missoula Pro Am Manager — V2.14.16
+# Missoula Pro Am Manager — V2.14.17
 
 A web-based tournament management system for the Missoula Pro Am timbersports competition.
 
@@ -505,6 +505,22 @@ flask db upgrade
 python app.py
 ```
 
+### Initial administrator and portal access
+
+After initializing a new database, provision the first administrator from the
+trusted server console with `flask auth create-admin`. The command prompts for
+the password without echoing it and refuses to run once any user exists.
+The public `/auth/bootstrap` endpoint cannot create accounts.
+
+In **Manage Users**, choose a tournament and open **Provision competitor or
+school PIN**. Verify the person's identity, select the exact profile, then hand
+them the generated PIN in person. Competitors and school captains cannot claim
+an unconfigured profile by name alone. Replacing a PIN revokes prior portal
+sessions; existing configured PINs remain usable.
+
+See [Security controls and rollout](docs/SECURITY_CONTROLS.md) for operational
+limits and the Security Cloud finding dispositions.
+
 ### Tests
 
 ```bash
@@ -562,4 +578,4 @@ Operational docs:
 ---
 
 *Setup and version references checked October 11, 2026. Application version:
-2.14.16, as declared in [pyproject.toml](pyproject.toml).*
+2.14.17, as declared in [pyproject.toml](pyproject.toml).*

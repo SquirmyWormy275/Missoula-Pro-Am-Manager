@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}User Accounts - {{ COMPETITION.app_title }}{% endblock %}
 {% block content %}
+{% if selected_tournament_id %}
+<p><a class="btn btn-outline-primary" href="{{ url_for('auth.provision_portal_pin', tournament_id=selected_tournament_id) }}">Provision competitor or school PIN</a></p>
+{% endif %}
 <div class="container-fluid py-3">
     <div class="row g-3">
         <div class="col-lg-4">

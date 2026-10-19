@@ -63,4 +63,6 @@ def export_chopping_results_to_excel(tournament: Tournament, filepath: str) -> N
     rows = build_chopping_rows(tournament)
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
         pd.DataFrame(rows).to_excel(writer, sheet_name='Chopping Results', index=False)
+        from services.spreadsheet_security import literal_workbook
+        literal_workbook(writer.book)
 

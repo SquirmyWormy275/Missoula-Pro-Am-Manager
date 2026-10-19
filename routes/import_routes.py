@@ -25,6 +25,7 @@ from flask import (
 
 from database import db
 from models import Event, EventResult, ProCompetitor, Tournament
+from routes.api import write_limit
 from services.audit import log_action
 from services.gear_sharing import build_name_index, parse_gear_sharing_details, resolve_partner_name
 from services.time_utils import utc_now_naive
@@ -100,6 +101,7 @@ def _gender_mismatch_messages(entries: list[dict]) -> list[str]:
 # POST /import/<id>/pro-entries — process uploaded file, redirect to review
 # ---------------------------------------------------------------------------
 @import_pro_bp.route('/<int:tournament_id>/pro-entries', methods=['GET', 'POST'])
+@write_limit('5 per minute')
 def upload_pro_entries(tournament_id):
     tournament = db.get_or_404(Tournament, tournament_id)
 
@@ -127,68 +129,75 @@ def upload_pro_entries(tournament_id):
 
     upload_path = save_upload(f, current_app.config['UPLOAD_FOLDER'], validation.safe_name)
 
-    # Parse
     try:
-        malware_scan(
-            upload_path,
-            enabled=bool(current_app.config.get('ENABLE_UPLOAD_MALWARE_SCAN', False)),
-            command_template=current_app.config.get('MALWARE_SCAN_COMMAND', '')
-        )
-        from services.pro_entry_importer import compute_review_flags, parse_pro_entries
-        entries = parse_pro_entries(upload_path)
-    except Exception as exc:
-        current_app.logger.exception(
-            'Pro-entry parse failed for tournament %s upload %s', tournament_id, upload_path,
-        )
-        flash(
-            'Could not parse file. Confirm it is a valid .xlsx export from the entry form, '
-            'then try again. If the problem persists, contact admin.',
-            'error',
-        )
-        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
-
-    if not entries:
-        flash('No competitor entries found in the file.', 'warning')
-        return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
-
-    # Run enhanced import pipeline for validation, cross-validation, and report
-    import_report_text = ''
-    try:
-        from services.registration_import import run_import_pipeline, to_entry_dicts
-        import_result = run_import_pipeline(upload_path)
-        import_report_text = import_result.report_text()
-        # Use enhanced entries (with resolved partners, deduped, etc.)
-        if import_result.competitors and not import_result.errors:
-            entries = to_entry_dicts(import_result)
-    except Exception as exc:
-        logger.warning('Enhanced import pipeline failed, falling back to basic parser: %s', exc)
-
-    # Compute review flags (#18: pass existing competitor names for duplicate detection)
-    existing_names = [
-        c.name for c in tournament.pro_competitors.filter_by(status='active').all()
-    ]
-    compute_review_flags(entries, existing_names=existing_names)
-
-    # Persist parsed data and import report to temp JSON files
-    temp_name = f'pro_import_{tournament_id}_{uuid.uuid4().hex}.json'
-    with open(_temp_path(temp_name), 'w', encoding='utf-8') as fh:
-        json.dump(entries, fh, ensure_ascii=False)
-
-    # Store import report alongside parsed data
-    report_name = temp_name.replace('.json', '_report.txt')
-    if import_report_text:
+        # Parse
         try:
-            with open(_temp_path(report_name), 'w', encoding='utf-8') as fh:
-                fh.write(import_report_text)
-        except OSError:
-            pass
+            malware_scan(
+                upload_path,
+                enabled=bool(current_app.config.get('ENABLE_UPLOAD_MALWARE_SCAN', False)),
+                command_template=current_app.config.get('MALWARE_SCAN_COMMAND', '')
+            )
+            from services.pro_entry_importer import compute_review_flags, parse_pro_entries
+            entries = parse_pro_entries(upload_path)
+        except Exception as exc:
+            current_app.logger.exception(
+                'Pro-entry parse failed for tournament %s upload %s', tournament_id, upload_path,
+            )
+            flash(
+                'Could not parse file. Confirm it is a valid .xlsx export from the entry form, '
+                'then try again. If the problem persists, contact admin.',
+                'error',
+            )
+            return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
 
-    # Store only the filename in the session
-    session[_session_key(tournament_id)] = temp_name
-    log_action('pro_upload_parsed', 'tournament', tournament_id, {'entries': len(entries), 'filename': validation.safe_name})
-    db.session.commit()
+        if not entries:
+            flash('No competitor entries found in the file.', 'warning')
+            return redirect(url_for('import_pro.upload_pro_entries', tournament_id=tournament_id))
 
-    return redirect(url_for('import_pro.review_pro_entries', tournament_id=tournament_id))
+        # Run enhanced import pipeline for validation, cross-validation, and report
+        import_report_text = ''
+        try:
+            from services.registration_import import run_import_pipeline, to_entry_dicts
+            import_result = run_import_pipeline(upload_path)
+            import_report_text = import_result.report_text()
+            # Use enhanced entries (with resolved partners, deduped, etc.)
+            if import_result.competitors and not import_result.errors:
+                entries = to_entry_dicts(import_result)
+        except Exception as exc:
+            logger.warning('Enhanced import pipeline failed, falling back to basic parser: %s', exc)
+
+        # Compute review flags (#18: pass existing competitor names for duplicate detection)
+        existing_names = [
+            c.name for c in tournament.pro_competitors.filter_by(status='active').all()
+        ]
+        compute_review_flags(entries, existing_names=existing_names)
+
+        # Persist parsed data and import report to temp JSON files
+        from flask_login import current_user
+        temp_name = f'pro_import_{tournament_id}_user_{current_user.id}.json'
+        with open(_temp_path(temp_name), 'w', encoding='utf-8') as fh:
+            json.dump(entries, fh, ensure_ascii=False)
+
+        # Store import report alongside parsed data
+        report_name = temp_name.replace('.json', '_report.txt')
+        if import_report_text:
+            try:
+                with open(_temp_path(report_name), 'w', encoding='utf-8') as fh:
+                    fh.write(import_report_text)
+            except OSError:
+                pass
+        elif os.path.exists(_temp_path(report_name)):
+            os.unlink(_temp_path(report_name))
+
+        # Store only the filename in the session
+        session[_session_key(tournament_id)] = temp_name
+        log_action('pro_upload_parsed', 'tournament', tournament_id, {'entries': len(entries), 'filename': validation.safe_name})
+        db.session.commit()
+
+        return redirect(url_for('import_pro.review_pro_entries', tournament_id=tournament_id))
+
+    finally:
+        os.unlink(upload_path)
 
 
 # ---------------------------------------------------------------------------

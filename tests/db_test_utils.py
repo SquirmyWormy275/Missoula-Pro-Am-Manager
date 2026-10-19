@@ -254,6 +254,7 @@ def _create_test_app_pg():
             'TESTING': True,
             'SQLALCHEMY_DATABASE_URI': f"{_PG_URL}/{name}",
             'WTF_CSRF_ENABLED': False,
+            'RATELIMIT_ENABLED': False,
             'WTF_CSRF_CHECK_DEFAULT': False,
             'SERVER_NAME': None,
         })
@@ -322,6 +323,7 @@ def create_test_app(*, use_migrations=False):
             'TESTING': True,
             'SQLALCHEMY_DATABASE_URI': f'sqlite:///{db_path}',
             'WTF_CSRF_ENABLED': False,
+            'RATELIMIT_ENABLED': False,
             'WTF_CSRF_CHECK_DEFAULT': False,
             'SERVER_NAME': None,
         })
@@ -502,3 +504,36 @@ def skip_unless_migrated(session, subject):
             'was built by db.create_all() (TEST_USE_CREATE_ALL=1), which '
             'emits anonymous constraints for inline unique/ForeignKey.'
         )
+
+
+def portal_session_stamp(client, key):
+    """Provision a synthetic profile and return its current portal-session stamp."""
+    from models.competitor import CollegeCompetitor, ProCompetitor
+    from models.school_captain import SchoolCaptain
+    from routes.portal import _pin_session_stamp
+    tid, kind, subject_id = key.split(':', 2)
+    with client.application.app_context():
+        if kind == 'school':
+            subject = SchoolCaptain.query.filter_by(tournament_id=int(tid)).filter(
+                _db.func.lower(SchoolCaptain.school_name) == subject_id.lower()
+            ).first()
+            if subject is None:
+                from models import Team
+                team = Team.query.filter_by(tournament_id=int(tid)).filter(
+                    _db.func.lower(Team.school_name) == subject_id.lower()
+                ).first()
+                if team is None:
+                    return 'unprovisioned-profile'
+                subject = SchoolCaptain(tournament_id=int(tid), school_name=team.school_name)
+                _db.session.add(subject)
+            if not subject.pin_hash:
+                subject.set_pin('13572468')
+            credential = subject.pin_hash
+        else:
+            cls = ProCompetitor if kind == 'pro' else CollegeCompetitor
+            subject = _db.session.get(cls, int(subject_id))
+            if not subject.portal_pin_hash:
+                subject.set_portal_pin('13572468')
+            credential = subject.portal_pin_hash
+        _db.session.commit()
+        return _pin_session_stamp(credential)
