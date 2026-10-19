@@ -101,6 +101,16 @@ class User(UserMixin, db.Model):
         return self.role in {self.ROLE_ADMIN, self.ROLE_JUDGE, self.ROLE_SCORER}
 
     @property
+    def can_manage_fees(self):
+        """Registration staff may collect and configure entry fees."""
+        return self.can_register
+
+    @property
+    def can_manage_payouts(self):
+        """Judges and administrators may configure event prize money."""
+        return self.is_judge
+
+    @property
     def can_report(self):
         return self.role in {
             self.ROLE_ADMIN,

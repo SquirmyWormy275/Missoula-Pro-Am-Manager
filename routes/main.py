@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import time
-from urllib.parse import urlsplit
 
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import text as sql_text
@@ -75,7 +74,7 @@ def health():
         'migration_current': migration_current,
         'migration_head': migration_head,
         'migration_rev': migration_current_rev,
-        'version': '2.14.17',
+        'version': '2.14.18',
         'git_commit': os.environ.get('RAILWAY_GIT_COMMIT_SHA')
                       or os.environ.get('GIT_COMMIT_SHA'),
     })
@@ -164,7 +163,7 @@ def health_diag():
             'hsts_will_be_set': cfg.get('ENV_NAME') == 'production',
             'csp_will_be_set': True,
         },
-        'version': '2.14.17',
+        'version': '2.14.18',
     })
 
 
@@ -179,14 +178,8 @@ def _can_access_arapaho_mode() -> bool:
 
 def _safe_redirect_target(target: str | None):
     """Only allow local relative redirects."""
-    if not target:
-        return None
-    parsed = urlsplit(target)
-    if parsed.scheme or parsed.netloc:
-        return None
-    if not target.startswith('/'):
-        return None
-    return target
+    from routes.auth import _safe_redirect_target as safe_target
+    return safe_target(target)
 
 
 @main_bp.route('/')

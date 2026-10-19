@@ -51,8 +51,9 @@ function lockManager() {
     };
 }
 
-function loadTab(storage, locks) {
+function loadTab(storage, locks, owner = {issuer_user_id: 11, issuer_role: 'scorer'}) {
     const window = {
+        ProAmCurrentUser: owner,
         crypto: {
             randomUUID: () => `00000000-0000-4000-8000-${String(Math.random()).slice(2, 14).padEnd(12, '0')}`,
             getRandomValues: (bytes) => bytes,
@@ -73,6 +74,7 @@ function loadTab(storage, locks) {
         Uint8Array,
         window
     });
+    storage.setItem('proam_active_queue_owner_v1', `${owner.issuer_user_id}:${owner.issuer_role}`);
     vm.runInContext(SOURCE, context, {filename: 'offline_queue_shared.js'});
     return window.ProAmOfflineQueue;
 }
@@ -83,6 +85,7 @@ function entry(id, heatId) {
         tournament_id: 7,
         heat_id: heatId,
         issuer_user_id: 11,
+        issuer_role: 'scorer',
         payload_sha256: `sha-${id}`
     };
 }
@@ -176,6 +179,22 @@ async function main() {
     assert.notEqual(firstAction.request_id, secondAction.request_id);
     const retriedAction = await firstTab.prepareEntry(firstAction, context);
     assert.equal(retriedAction.request_id, firstAction.request_id);
+
+    // Switching accounts hides the previous queue without deleting any scores.
+    const retainedIds = Array.from(firstTab.read(), row => row.request_id).sort();
+    const otherTab = loadTab(storage, locks, {issuer_user_id: 22, issuer_role: 'judge'});
+    assert.equal(otherTab.read().length, 0);
+    assert.equal(firstTab.read().length, 0, 'an already-open tab is locked after account switch');
+    const otherScore = {...entry('other-owner', 3), issuer_user_id: 22, issuer_role: 'judge'};
+    await otherTab.upsert(otherScore);
+    await assert.rejects(otherTab.merge([alpha]), error => error.code === 'issuer_mismatch');
+    await otherTab.removeTournament(7);
+    const restored = loadTab(storage, locks);
+    assert.deepEqual(Array.from(restored.read(), row => row.request_id).sort(), retainedIds,
+        'clearing one owner never deletes another owner scores');
+    storage.setItem('proam_active_queue_owner_v1', '');
+    assert.equal(restored.read().length, 0, 'logout hides scores without deleting raw data');
+    await assert.rejects(restored.upsert(alpha), error => error.code === 'issuer_mismatch');
 
     const fallbackStorage = sharedStorage();
     const fallbackFirst = loadTab(fallbackStorage, undefined);

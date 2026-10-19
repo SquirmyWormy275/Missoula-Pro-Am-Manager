@@ -204,3 +204,27 @@ def test_workflow_does_not_claim_unapproved_race_weekend_dates():
 
     assert "cron: '0 * 24-26 4 *'" not in workflow
     assert '2027 event dates are not configured' in workflow
+
+
+def test_secret_bearing_tools_are_immutable_and_audit_is_main_only():
+    root = WORKFLOW_PATH.parents[2]
+    workflow = _workflow_text()
+    ci = (root / '.github/workflows/ci.yml').read_text()
+    tools = (root / 'scripts/ci_backup_tools.sh').read_text()
+    for source in [workflow, ci]:
+        for reference in re.findall(r'uses:\s*(\S+)', source):
+            assert re.fullmatch(r'[^@]+@[a-f0-9]{40}', reference), reference
+    assert re.search(r'image: postgres:18\.6-bookworm@sha256:[a-f0-9]{64}', workflow)
+    assert 'apt-get' not in workflow and 'curl' not in workflow
+    assert 'sha256sum --check --strict' in tools
+    assert tools.index('sha256sum --check --strict') < tools.index('tar -xzf')
+    assert 'postgres:18.6-bookworm@sha256:' in tools
+    assert "github.ref == 'refs/heads/main'" in ci
+    assert "github.ref == 'refs/heads/main'" in workflow
+    assert '--require-hashes --only-binary=:all: -r requirements-audit.lock' in ci
+    lock = (root / 'requirements-audit.lock').read_text()
+    for line in lock.splitlines():
+        if line and not line.startswith('#'):
+            assert re.fullmatch(r'[\w.-]+==[\w.]+ --hash=sha256:[a-f0-9]{64}', line)
+    assert 'strathmark' not in lock.lower()
+    assert 'Immutable backup toolchain rehearsal' in ci

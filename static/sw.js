@@ -1,15 +1,24 @@
 /** Missoula Pro-Am prepared offline cache and legacy queue drain. */
 
 const CACHE_PREFIX = 'proam-scoring-';
-const CACHE_NAME = 'proam-scoring-v2';
+const CACHE_NAME = 'proam-scoring-v3';
 const OFFLINE_FALLBACK = '/static/offline.html';
 const SCORE_ENTRY_PATTERN = /\/scoring\/\d+\/heat\/\d+\/enter/;
 const LOGOUT_PATTERN = /\/auth\/logout\/?$/;
-const PREPARED_CACHE_PREFIX = 'proam-prepared-pages-v2-';
-const PREPARED_META_CACHE = 'proam-prepared-meta-v2';
+const PREPARED_CACHE_PREFIX = 'proam-prepared-pages-v3-';
+const PREPARED_META_CACHE = 'proam-prepared-meta-v3';
+const ACCOUNT_URL = '/__proam_offline_account__';
 const PREPARED_META_URL = '/__proam_prepared_manifest__';
 const LEGACY_DB_NAME = 'proam-offline-queue';
 const LEGACY_STORE_NAME = 'queue';
+let accountEpoch = 0;
+let accountTail = Promise.resolve();
+
+function withAccountLock(callback) {
+    const operation = accountTail.then(callback, callback);
+    accountTail = operation.catch(() => {});
+    return operation;
+}
 const MAX_REPLAY_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 self.addEventListener('install', (event) => {
@@ -26,7 +35,9 @@ self.addEventListener('activate', (event) => {
         await Promise.all(names.filter((name) =>
             (name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME) ||
             name.startsWith('proam-prepared-pages-v1-') ||
-            name === 'proam-prepared-meta-v1'
+            name === 'proam-prepared-meta-v1' ||
+            name.startsWith('proam-prepared-pages-v2-') ||
+            name === 'proam-prepared-meta-v2'
         ).map((name) => caches.delete(name)));
         await self.clients.claim();
     })());
@@ -36,18 +47,15 @@ function sameOrigin(url) {
     return new URL(url, self.location.origin).origin === self.location.origin;
 }
 
-function isCacheableScorePage(response, request) {
-    const contentType = response.headers.get('content-type') || '';
-    return response.ok
-        && !response.redirected
-        && response.url === request.url
-        && contentType.includes('text/html');
-}
-
 self.addEventListener('fetch', (event) => {
     const request = event.request;
-    if (request.method === 'POST' && LOGOUT_PATTERN.test(request.url)) {
+    if (request.method === 'POST' && LOGOUT_PATTERN.test(request.url) && sameOrigin(request.url)) {
         event.respondWith(handleLogout(request));
+        return;
+    }
+    if (request.method === 'POST' && sameOrigin(request.url) &&
+            new URL(request.url).pathname === '/auth/login') {
+        event.respondWith(accountAwareFetch(request));
         return;
     }
     if (request.method !== 'GET' || !sameOrigin(request.url)) return;
@@ -55,38 +63,77 @@ self.addEventListener('fetch', (event) => {
 });
 
 async function handleLogout(request) {
+    accountEpoch += 1;
+    await withAccountLock(async () => {
+        await clearPreparedPackage();
+        await saveAccount('anonymous');
+    });
+    return accountAwareFetch(request);
+}
+
+function accountChangedResponse() {
+    return new Response('Account changed. Reload this page while online.', {
+        status: 503,
+        headers: {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store'}
+    });
+}
+
+async function accountAwareFetch(request) {
+    const requestEpoch = accountEpoch;
     const response = await fetch(request);
-    if (response.ok || response.redirected) await clearPreparedPackage();
-    return response;
+    if (!response.headers.get('X-ProAm-Account')) return response;
+    const observedEpoch = await observeAccount(response, requestEpoch);
+    return observedEpoch !== null && observedEpoch === accountEpoch ?
+        response : accountChangedResponse();
+}
+
+async function saveAccount(account) {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(ACCOUNT_URL, new Response(account));
+}
+
+async function readAccount() {
+    const cache = await caches.open(CACHE_NAME);
+    const stored = await cache.match(ACCOUNT_URL);
+    return stored ? stored.text() : '';
+}
+
+async function observeAccount(response, requestEpoch) {
+    const account = response.headers.get('X-ProAm-Account');
+    return withAccountLock(async () => {
+        if (requestEpoch !== accountEpoch) return null;
+        const previous = await readAccount();
+        if (requestEpoch !== accountEpoch) return null;
+        let observedEpoch = requestEpoch;
+        if (account !== previous) {
+            observedEpoch = ++accountEpoch;
+            await clearPreparedPackage();
+            await saveAccount(account);
+        }
+        return observedEpoch === accountEpoch ? observedEpoch : null;
+    });
 }
 
 async function networkFirstPreparedFallback(request) {
     try {
-        const response = await fetch(request);
-        if (SCORE_ENTRY_PATTERN.test(request.url) &&
-                isCacheableScorePage(response, request)) {
-            try {
-                const cache = await caches.open(CACHE_NAME);
-                await cache.put(request, response.clone());
-            } catch (_cacheErr) {
-                // A quota/cache failure must never replace a valid live page.
-            }
-        }
-        return response;
+        return await accountAwareFetch(request);
     } catch (networkError) {
-        const manifest = await readPreparedManifest();
-        if (manifest && manifest.cache_name) {
-            const preparedCache = await caches.open(manifest.cache_name);
-            const prepared = await preparedCache.match(request, {ignoreSearch: false});
-            if (prepared) return prepared;
-        }
+        const fallbackEpoch = accountEpoch;
+        const prepared = await withAccountLock(async () => {
+            const manifest = await readPreparedManifest();
+            if (manifest && manifest.cache_name &&
+                    await readAccount() === String(manifest.issuer_user_id) + ':' + manifest.issuer_role) {
+                const preparedCache = await caches.open(manifest.cache_name);
+                const page = await preparedCache.match(request, {ignoreSearch: false});
+                if (fallbackEpoch === accountEpoch) return page;
+            }
+            return null;
+        });
+        if (prepared && fallbackEpoch === accountEpoch) return prepared;
 
         if (SCORE_ENTRY_PATTERN.test(request.url)) {
             try {
                 const cache = await caches.open(CACHE_NAME);
-                const cachedPage = await cache.match(request);
-                if (cachedPage) return cachedPage;
-
                 const fallback = await cache.match(OFFLINE_FALLBACK);
                 if (fallback) return fallback;
             } catch (_cacheReadErr) {
@@ -224,16 +271,17 @@ function cacheNameFor(manifest) {
 }
 
 async function prepareOfflinePackage(manifest, source) {
+    const preparationEpoch = accountEpoch;
     if (!manifest || Number(manifest.schema_version) !== 2 ||
             !Array.isArray(manifest.pages) || !Array.isArray(manifest.assets) ||
             !await verifyManifestRows(manifest)) {
         throw new Error('Invalid prepared-offline manifest.');
     }
 
-    const previous = await readPreparedManifest();
-    if (previous && !contextMatches(previous, manifest)) {
-        await clearPreparedPackage();
-    }
+    await withAccountLock(async () => {
+        const previous = await readPreparedManifest();
+        if (previous && !contextMatches(previous, manifest)) await clearPreparedPackage();
+    });
 
     const cacheName = cacheNameFor(manifest);
     await caches.delete(cacheName);
@@ -276,6 +324,9 @@ async function prepareOfflinePackage(manifest, source) {
         }
     }
 
+    if (preparationEpoch !== accountEpoch) {
+        failures.push({error: 'account_changed'});
+    }
     if (failures.length) {
         await caches.delete(cacheName);
         return {
@@ -286,19 +337,33 @@ async function prepareOfflinePackage(manifest, source) {
         };
     }
 
-    const names = await caches.keys();
-    await Promise.all(names.filter((name) =>
-        name.startsWith(PREPARED_CACHE_PREFIX) && name !== cacheName
-    ).map((name) => caches.delete(name)));
-    const stored = Object.assign({}, manifest, {
-        cache_name: cacheName,
-        prepared_at: new Date().toISOString(),
-        completed: completed,
-        total: rows.length,
-        cached_content_digests: cachedContentDigests
+    return withAccountLock(async () => {
+        if (preparationEpoch !== accountEpoch) {
+            await caches.delete(cacheName);
+            return {state: 'incomplete', failures: [{error: 'account_changed'}]};
+        }
+        const names = await caches.keys();
+        await Promise.all(names.filter((name) =>
+            name.startsWith(PREPARED_CACHE_PREFIX) && name !== cacheName
+        ).map((name) => caches.delete(name)));
+        const stored = Object.assign({}, manifest, {
+            cache_name: cacheName,
+            prepared_at: new Date().toISOString(),
+            completed: completed,
+            total: rows.length,
+            cached_content_digests: cachedContentDigests
+        });
+        await saveAccount(String(manifest.issuer_user_id) + ':' + manifest.issuer_role);
+        await writePreparedManifest(stored);
+        // Logout marks its epoch immediately, even while this short commit holds
+        // the lock. Roll back this publication before any reader can see it.
+        if (preparationEpoch !== accountEpoch) {
+            await clearPreparedPackage();
+            await saveAccount('anonymous');
+            return {state: 'incomplete', failures: [{error: 'account_changed'}]};
+        }
+        return Object.assign({state: 'ready'}, stored);
     });
-    await writePreparedManifest(stored);
-    return Object.assign({state: 'ready'}, stored);
 }
 
 async function preparedStatus(context) {
@@ -524,9 +589,27 @@ async function replayLegacyEntry(database, rawEntry) {
     return true;
 }
 
+function legacyOwner(entry) {
+    const params = new URLSearchParams(entry.body || '');
+    const user = entry.issuer_user_id || params.get('issuer_user_id');
+    const role = entry.issuer_role || params.get('issuer_role');
+    return user && role ? String(user) + ':' + String(role) : '';
+}
+
+function isSameOriginScoreEntryUrl(value) {
+    try {
+        const url = new URL(value, self.location.origin);
+        return url.origin === self.location.origin &&
+            /^\/scoring\/\d+\/heat\/\d+\/enter$/.test(url.pathname);
+    } catch (_error) {
+        return false;
+    }
+}
+
 async function legacyQueueStatus() {
     const database = await openLegacyDB();
-    const entries = await legacyEntries(database);
+    const account = await readAccount();
+    const entries = (await legacyEntries(database)).filter(entry => account && legacyOwner(entry) === account);
     const prepared = [];
     for (const entry of entries) {
         prepared.push((await prepareLegacyEntry(database, entry)).entry);
@@ -543,16 +626,17 @@ async function legacyQueueStatus() {
 
 async function replayLegacyQueue() {
     const database = await openLegacyDB();
-    const entries = await legacyEntries(database);
+    const account = await readAccount();
+    const entries = (await legacyEntries(database)).filter(entry => account && legacyOwner(entry) === account);
     let success = 0;
     const reasons = [];
     for (const entry of entries) {
         if (!isSameOriginScoreEntryUrl(entry.url)) {
-            failedCount++;
-            failReasons.push('invalid_queue_target');
+            reasons.push('invalid_queue_target');
             continue;
         }
         try {
+            if (account !== await readAccount()) throw new Error('legacy_issuer_session_mismatch');
             await replayLegacyEntry(database, entry);
             success += 1;
         } catch (error) {
@@ -583,13 +667,14 @@ self.addEventListener('message', (event) => {
             })));
     } else if (data.type === 'validate-prepared-package' ||
             data.type === 'prepared-package-status') {
-        event.waitUntil(preparedStatus(data.context).then((result) =>
+        event.waitUntil(withAccountLock(() => preparedStatus(data.context)).then((result) =>
             event.source && event.source.postMessage({
                 type: 'prepared-package-status', result: result
             })
         ));
     } else if (data.type === 'clear-prepared-package') {
-        event.waitUntil(clearPreparedPackage().then(() =>
+        accountEpoch += 1;
+        event.waitUntil(withAccountLock(clearPreparedPackage).then(() =>
             event.source && event.source.postMessage({
                 type: 'prepared-package-status', result: {state: 'not_prepared'}
             })

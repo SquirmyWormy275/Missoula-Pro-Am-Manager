@@ -26,6 +26,15 @@ from recovery_drills.ownership import (
 pytestmark = pytest.mark.skipif(sys.platform != 'linux', reason='Linux process lab uses flock/pidfd; native Windows recovery is a separate lane')
 
 
+def _started_child_identity(process, command):
+    # /proc may expose an empty cmdline during exec; match the same readiness
+    # boundary as Lab.launch before recording an immutable process identity.
+    def ready():
+        current = process_identity(process.pid)
+        return current if current and current['command'] == command else None
+    return wait_until(ready, 3, 'allocated executable and argv')
+
+
 def test_preexisting_output_and_live_exact_run_are_refused(tmp_path):
     path = tmp_path / 'run'
     owner = OwnedRun(path, create=True)
@@ -115,7 +124,7 @@ def test_cleanup_of_one_run_preserves_a_second_live_run(tmp_path):
             owner.intent('sleeper', command)
             process = subprocess.Popen(command, env={'PROAM_LAB_RUN_ID': owner.record['run_id']})
             processes.append(process)
-            identity = wait_until(lambda: process_identity(process.pid), 3)
+            identity = _started_child_identity(process, command)
             owner.remember(identity, 'sleeper')
         owners[0].stop_all()
         processes[0].wait(timeout=5)
@@ -135,7 +144,7 @@ def test_interrupted_allocation_is_reconciled_by_exact_intent(tmp_path):
     owner.intent('sleeper', command)
     process = subprocess.Popen(command, env={'PROAM_LAB_RUN_ID': owner.record['run_id']})
     try:
-        wait_until(lambda: process_identity(process.pid), 3)
+        _started_child_identity(process, command)
         owner.stop_all()  # no remember() call; simulates runner death after spawn
         process.wait(timeout=5)
         assert process.returncode != 0

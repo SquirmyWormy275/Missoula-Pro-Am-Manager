@@ -8,10 +8,18 @@ const {webcrypto} = require('crypto');
 const source = fs.readFileSync('static/sw.js', 'utf8') + `
 globalThis.__swTest = {
     sha256Bytes,
+    networkFirstPreparedFallback,
+    handleLogout,
+    writePreparedManifest,
+    saveAccount,
+    readPreparedManifest,
+    readAccount,
+    prepareOfflinePackage,
     verifyFetchedRow,
     renewLegacyReplayToken,
     replayLegacyEntry,
     setHooks(hooks) {
+        if (hooks.verifyManifestRows) verifyManifestRows = hooks.verifyManifestRows;
         if (hooks.prepareLegacyEntry) prepareLegacyEntry = hooks.prepareLegacyEntry;
         if (hooks.postLegacy) postLegacy = hooks.postLegacy;
         if (hooks.updateLegacyEntry) updateLegacyEntry = hooks.updateLegacyEntry;
@@ -58,6 +66,121 @@ async function expectRejects(promise, expected) {
 
 async function run() {
     const api = context.__swTest;
+    const stores = new Map();
+    let beforeKeys = null;
+    let beforeMatch = null;
+    const cacheKey = value => typeof value === 'string' ? value : value.url;
+    context.caches = {
+        keys: async () => {
+            if (beforeKeys) await beforeKeys();
+            return Array.from(stores.keys());
+        },
+        delete: async name => stores.delete(name),
+        open: async name => {
+            if (!stores.has(name)) stores.set(name, new Map());
+            const rows = stores.get(name);
+            return {
+                match: async key => {
+                    const response = rows.get(cacheKey(key))?.clone() || null;
+                    if (beforeMatch) await beforeMatch(name, key);
+                    return response;
+                },
+                put: async (key, response) => rows.set(cacheKey(key), response.clone())
+            };
+        }
+    };
+    const scoreRequest = new Request('https://proam.test/scoring/1/heat/2/enter');
+    const fallback = await context.caches.open('proam-scoring-v3');
+    await fallback.put('/static/offline.html', new Response('Prepare this account online first'));
+    context.fetch = async () => new Response('Private scorer A page', {
+        headers: {'Content-Type': 'text/html', 'X-ProAm-Account': '11:scorer'}
+    });
+    await api.networkFirstPreparedFallback(scoreRequest);
+    assert.equal(await fallback.match(scoreRequest), null, 'live authenticated HTML is never generally cached');
+    async function seedPrepared() {
+        await api.saveAccount('11:scorer');
+        const cacheName = 'proam-prepared-pages-v3-account11';
+        const cache = await context.caches.open(cacheName);
+        await cache.put(scoreRequest, new Response('Private scorer A page'));
+        await api.writePreparedManifest({cache_name: cacheName, issuer_user_id: 11, issuer_role: 'scorer'});
+    }
+    await seedPrepared();
+    context.fetch = async () => { throw new Error('offline'); };
+    assert.equal(await (await api.networkFirstPreparedFallback(scoreRequest)).text(), 'Private scorer A page');
+    context.fetch = async () => new Response('Signed out', {headers: {'X-ProAm-Account': 'anonymous'}});
+    await api.handleLogout(new Request('https://proam.test/auth/logout', {method: 'POST'}));
+    assert.equal(await api.readPreparedManifest(), null);
+    context.fetch = async () => { throw new Error('offline'); };
+    assert.equal(await (await api.networkFirstPreparedFallback(scoreRequest)).text(), 'Prepare this account online first');
+    await seedPrepared();
+    context.fetch = async () => new Response('Scorer B dashboard', {headers: {'X-ProAm-Account': '22:scorer'}});
+    await api.networkFirstPreparedFallback(new Request('https://proam.test/'));
+    assert.equal(await api.readPreparedManifest(), null, 'account switch invalidates prepared HTML');
+    // An old authenticated response cannot restore its account after a newer login.
+    await api.saveAccount('11:scorer');
+    let deliverOldPage;
+    context.fetch = () => new Promise(resolve => { deliverOldPage = resolve; });
+    const oldNetworkPage = api.networkFirstPreparedFallback(scoreRequest);
+    context.fetch = async () => new Response('Scorer B', {headers: {'X-ProAm-Account': '22:scorer'}});
+    await api.networkFirstPreparedFallback(new Request('https://proam.test/'));
+    deliverOldPage(new Response('Private old account A page', {headers: {'X-ProAm-Account': '11:scorer'}}));
+    const rejectedOldPage = await oldNetworkPage;
+    assert.equal(rejectedOldPage.status, 503);
+    assert.equal(await api.readAccount(), '22:scorer');
+    assert(!String(await rejectedOldPage.text()).includes('Private'));
+    context.fetch = () => new Promise(resolve => { deliverOldPage = resolve; });
+    const pageBeforeLogout = api.networkFirstPreparedFallback(scoreRequest);
+    context.fetch = async () => new Response('Signed out', {headers: {'X-ProAm-Account': 'anonymous'}});
+    await api.handleLogout(new Request('https://proam.test/auth/logout', {method: 'POST'}));
+    deliverOldPage(new Response('Private B', {headers: {'X-ProAm-Account': '22:scorer'}}));
+    assert.equal((await pageBeforeLogout).status, 503);
+    assert.equal(await api.readAccount(), 'anonymous');
+
+
+    // Pause after preparation's last admission check, during final publication.
+    let releaseCommit;
+    let reachedCommit;
+    const commitReached = new Promise(resolve => { reachedCommit = resolve; });
+    const commitBlocked = new Promise(resolve => { releaseCommit = resolve; });
+    beforeKeys = async () => {
+        beforeKeys = null;
+        reachedCommit();
+        await commitBlocked;
+    };
+    api.setHooks({verifyManifestRows: async () => true});
+    const preparing = api.prepareOfflinePackage({schema_version: 2, pages: [], assets: [],
+        issuer_user_id: 11, issuer_role: 'scorer', tournament_id: 1,
+        application_build: 'build', schedule_fingerprint: 'schedule'}, null);
+    await commitReached;
+    const logoutDuringCommit = api.handleLogout(new Request('https://proam.test/auth/logout', {method: 'POST'}));
+    releaseCommit();
+    assert.equal((await preparing).state, 'incomplete');
+    await logoutDuringCommit;
+    assert.equal(await api.readPreparedManifest(), null, 'logout cannot be undone by an in-flight prepare commit');
+    assert.equal(await api.readAccount(), 'anonymous');
+
+    // A cache read already in flight must not release private HTML after logout starts.
+    await seedPrepared();
+    let releaseRead;
+    let reachedRead;
+    const readReached = new Promise(resolve => { reachedRead = resolve; });
+    const readBlocked = new Promise(resolve => { releaseRead = resolve; });
+    beforeMatch = async (name, key) => {
+        if (!name.startsWith('proam-prepared-pages-') || cacheKey(key) !== scoreRequest.url) return;
+        beforeMatch = null;
+        reachedRead();
+        await readBlocked;
+    };
+    context.fetch = async () => { throw new Error('offline'); };
+    const pendingPage = api.networkFirstPreparedFallback(scoreRequest);
+    await readReached;
+    context.fetch = async () => new Response('Signed out');
+    const logoutDuringRead = api.handleLogout(new Request('https://proam.test/auth/logout', {method: 'POST'}));
+    releaseRead();
+    assert.equal(await (await pendingPage).text(), 'Prepare this account online first');
+    await logoutDuringRead;
+
+
     const assetBody = 'verified asset bytes';
     const assetDigest = await api.sha256Bytes(
         new TextEncoder().encode(assetBody).buffer

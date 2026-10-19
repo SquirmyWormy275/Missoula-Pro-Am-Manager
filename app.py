@@ -490,6 +490,16 @@ def _create_app_inner():
         if request.method not in ('GET', 'HEAD', 'OPTIONS') and not getattr(
                 current_user, 'can_write', False):
             abort(403)
+        finance_permission = {
+            'reporting.fee_tracker': 'can_manage_fees',
+            'reporting.pro_event_fees': 'can_manage_fees',
+            'scoring.configure_payouts': 'can_manage_payouts',
+            'scoring.tournament_payout_manager': 'can_manage_payouts',
+        }.get(endpoint)
+        if (request.method not in ('GET', 'HEAD', 'OPTIONS')
+                and finance_permission
+                and not getattr(current_user, finance_permission, False)):
+            abort(403)
         return None
 
     @app.before_request
@@ -573,6 +583,11 @@ def _create_app_inner():
         # Bootstrap relies on inline styles for display:none toggles, transient
         # widths, etc.). Style-based XSS is rare and low-impact compared to
         # script execution; this trade-off is intentional.
+        if response.mimetype == 'text/html':
+            response.cache_control.no_store = True
+            response.headers['X-ProAm-Account'] = (
+                f'{current_user.id}:{current_user.role}'
+                if current_user.is_authenticated else 'anonymous')
         nonce = getattr(g, 'csp_nonce', '')
         script_nonce = f"'nonce-{nonce}' " if nonce else ''
         response.headers.setdefault(
@@ -583,7 +598,7 @@ def _create_app_inner():
             "font-src 'self'; "
             "img-src 'self' data:; "
             "connect-src 'self'; "
-            "frame-ancestors 'none'"
+            "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
         )
         return response
 

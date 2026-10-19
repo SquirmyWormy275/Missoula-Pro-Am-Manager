@@ -407,8 +407,8 @@ def _print_reproject_followup(applied, url):
           'what the')
     print('bracket pages read. Rebuild them from the repaired documents:')
     print('')
-    print(f'    python -m scripts.reproject_birling '
-          f'--database-url {url} {ids}')
+    print('Use the same privately configured DATABASE_URL for the follow-up:')
+    print(f'    python -m scripts.reproject_birling {ids}')
     print('')
     print('That script is idempotent, so running it twice is harmless and '
           'running it')
@@ -434,7 +434,7 @@ def main(argv=None):
     from sqlalchemy.orm import Session
 
     engine = sa.create_engine(url)
-    print(f'database: {url.rsplit("/", 1)[-1]}')
+    print(f'database: {sa.engine.make_url(url).database or "(unnamed)"}')
 
     with Session(engine) as session:
         findings = audit(session)

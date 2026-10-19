@@ -25,7 +25,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 EXPECTED_CONTRACT_DIGEST = "8b0a11a6613c74ad7a5e01f3fe99d6bbede8b94dc7cdffe27930b5d0193d90db"
-EXPECTED_STRATHMARK_COMMIT = "5408939a9eeb40c9c03f47a28c0ddb181ff99894"
+EXPECTED_STRATHMARK_COMMIT = "f064d67abe4baf7672239a14796c0bdc4f8c2071"
 EXPECTED_PATHS = frozenset(
     {
         "/health",

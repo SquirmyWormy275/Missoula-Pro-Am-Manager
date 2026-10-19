@@ -27,7 +27,7 @@ def test_worker_installs_fallback_and_retires_only_old_scoring_caches():
     source = _worker_source()
 
     assert "const CACHE_PREFIX = 'proam-scoring-'" in source
-    assert "const CACHE_NAME = 'proam-scoring-v2'" in source
+    assert "const CACHE_NAME = 'proam-scoring-v3'" in source
     assert "const OFFLINE_FALLBACK = '/static/offline.html'" in source
     assert "cache.addAll([OFFLINE_FALLBACK])" in source
     assert ".then(() => self.skipWaiting())" in source
@@ -37,15 +37,11 @@ def test_worker_installs_fallback_and_retires_only_old_scoring_caches():
     assert "caches.delete(name)" in source
 
 
-def test_worker_never_caches_redirects_errors_or_non_html_score_responses():
+def test_worker_never_caches_live_authenticated_html_in_the_general_cache():
     source = _worker_source()
-
-    assert "response.ok" in source
-    assert "!response.redirected" in source
-    assert "response.url === request.url" in source
-    assert "contentType.includes('text/html')" in source
-    assert "isCacheableScorePage(response, request)" in source
-    assert "catch (_cacheErr)" in source
+    assert "await cache.put(request, response.clone())" not in source
+    assert "await observeAccount(response, requestEpoch)" in source
+    assert "await readAccount() === String(manifest.issuer_user_id)" in source
 
 
 def test_worker_keeps_new_score_posts_in_the_canonical_page_queue():
@@ -62,8 +58,8 @@ def test_worker_keeps_new_score_posts_in_the_canonical_page_queue():
 def test_worker_uses_exact_cached_page_then_static_fallback_then_bounded_503():
     source = _worker_source()
 
-    assert source.count("const cache = await caches.open(CACHE_NAME)") == 2
-    assert "await cache.match(request)" in source
+    assert "await cache.match(request)" not in source
+    assert "preparedCache.match(request, {ignoreSearch: false})" in source
     assert "await cache.match(OFFLINE_FALLBACK)" in source
     assert "await caches.match(request)" not in source
     assert "status: 503" in source

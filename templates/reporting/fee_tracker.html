@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Fee Tracker — {{ tournament.name }}{% endblock %}
 {% block content %}
+{% if not current_user.can_manage_fees %}<div class="alert alert-info">Your account can view these amounts. Financial changes require an administrator, judge or registrar.</div>{% endif %}
 <div class="container-fluid py-3">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h4 class="mb-0"><i class="bi bi-receipt"></i> Pro Entry Fee Tracker</h4>
@@ -89,6 +90,7 @@
                 </td>
                 <td class="text-center">
                     <form method="POST" style="display:inline;">
+<fieldset {% if not current_user.can_manage_fees %}disabled{% endif %}>
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="competitor_id" value="{{ c.id }}">
                         {% if balance <= 0 and c.total_fees_owed > 0 %}
@@ -98,7 +100,7 @@
                         <input type="hidden" name="action" value="mark_all_paid">
                         <button type="submit" class="btn btn-sm btn-outline-success">Mark Paid</button>
                         {% endif %}
-                    </form>
+                    </fieldset></form>
                 </td>
             </tr>
             <!-- Per-event detail row (hidden by default) -->

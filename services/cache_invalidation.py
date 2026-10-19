@@ -8,4 +8,6 @@ def invalidate_tournament_caches(tournament_id: int) -> None:
     invalidate_prefix(f'reports:{tid}:')
     invalidate_prefix(f'portal:college:{tid}:')
     invalidate_prefix(f'portal:pro:{tid}:')
+    invalidate_prefix(f'portal:event:{tid}:')
+    invalidate_prefix(f'portal:kiosk:{tid}:')
     invalidate_prefix(f'api:standings-poll:{tid}:')

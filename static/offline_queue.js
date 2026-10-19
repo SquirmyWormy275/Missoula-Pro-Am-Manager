@@ -2,6 +2,12 @@
 (function () {
     'use strict';
 
+    document.addEventListener('submit', function (event) {
+        if (!event.target.matches('[data-offline-logout]')) return;
+        localStorage.setItem('proam_active_queue_owner_v1', '');
+        controllerMessage({type: 'clear-prepared-package'});
+    }, true);
+
     function controllerMessage(message) {
         if (navigator.serviceWorker && navigator.serviceWorker.controller) {
             navigator.serviceWorker.controller.postMessage(message);
