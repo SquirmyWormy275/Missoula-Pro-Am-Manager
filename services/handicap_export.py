@@ -28,12 +28,17 @@ def is_chopping_event(event: Event) -> bool:
     return any(keyword in name for keyword in _CHOPPING_KEYWORDS)
 
 
-def build_chopping_rows(tournament: Tournament) -> list[dict]:
+def build_chopping_rows(tournament: Tournament, *, published_only: bool = False) -> list[dict]:
     rows: list[dict] = []
-    for event in tournament.events.order_by(Event.event_type, Event.name, Event.gender).all():
+    events = tournament.events
+    if published_only:
+        events = events.filter_by(status='completed')
+    for event in events.order_by(Event.event_type, Event.name, Event.gender).all():
         if not is_chopping_event(event):
             continue
         for result in event.get_results_sorted():
+            if published_only and result.status != 'completed':
+                continue
             rows.append({
                 'tournament_id': tournament.id,
                 'tournament_name': tournament.name,

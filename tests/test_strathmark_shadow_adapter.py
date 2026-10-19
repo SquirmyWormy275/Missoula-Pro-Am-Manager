@@ -958,3 +958,36 @@ def test_complete_numeric_outcome_response_is_accepted(prepared_shadow, db_sessi
     transport.queue("/v1/shadow/outcomes/apply", expected)
 
     assert _client(transport).apply_outcome(run, actor, payload) == expected
+
+
+@pytest.mark.parametrize('operation', ['lookup', 'status', 'calculate', 'apply_outcome'])
+def test_scoped_actor_cannot_attest_to_another_tournament(prepared_shadow, admin_user, db_session, operation):
+    _event, _results, run, _ids = prepared_shadow
+    other = make_tournament(db_session, name='Other operator assignment', year=2028)
+    admin_user.tournament_id = other.id
+    db_session.flush()
+    transport = FakeTransport()
+    client = _client(transport)
+    arguments = [run, admin_user]
+    if operation in {'calculate', 'apply_outcome'}:
+        arguments.append({'consumer_id': run.consumer_id, 'timeout_ms': 5000})
+    with pytest.raises(ShadowIdentityError, match='this tournament'):
+        getattr(client, operation)(*arguments)
+    assert transport.calls == []
+
+
+def test_scoped_actor_cannot_prepare_another_tournament(prepared_shadow, admin_user, db_session):
+    event, _results, run, _ids = prepared_shadow
+    other = make_tournament(db_session, name='Other preparation assignment', year=2028)
+    admin_user.tournament_id = other.id
+    db_session.flush()
+    before = ShadowHandicapRun.query.count()
+    with pytest.raises(ShadowIdentityError, match='this tournament'):
+        prepare_shadow_run(
+            event, actor=admin_user, prediction_as_of=date(2027, 5, 8),
+            schedule_fingerprint='1' * 64,
+            observation_schema_version='strathmark.shadow-observation-fingerprint.v1',
+            observation_fingerprint='2' * 64,
+        )
+    assert ShadowHandicapRun.query.count() == before
+    assert run.created_by_id == admin_user.id

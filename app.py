@@ -471,6 +471,13 @@ def _create_app_inner():
         if not getattr(current_user, permission_attr, False):
             abort(403)
 
+        # Bind the authenticated account before any management route can read,
+        # lock or mutate another tournament. Null account scope remains global.
+        route_values = request.view_args or {}
+        tournament_id = route_values.get('tournament_id', route_values.get('tid'))
+        if tournament_id is not None and not current_user.can_access_tournament(tournament_id):
+            abort(403)
+
         # Read access is not write access. The map above answers "may this role
         # see this blueprint"; it never answered "may this role change what it
         # sees". reporting is admitted on can_report, which includes spectator
@@ -495,6 +502,7 @@ def _create_app_inner():
             'reporting.pro_event_fees': 'can_manage_fees',
             'scoring.configure_payouts': 'can_manage_payouts',
             'scoring.tournament_payout_manager': 'can_manage_payouts',
+            'proam_relay.save_relay_payouts': 'can_manage_payouts',
         }.get(endpoint)
         if (request.method not in ('GET', 'HEAD', 'OPTIONS')
                 and finance_permission

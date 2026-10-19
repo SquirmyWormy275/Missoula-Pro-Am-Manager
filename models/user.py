@@ -84,6 +84,12 @@ class User(UserMixin, db.Model):
     def is_spectator(self):
         return self.role in {self.ROLE_SPECTATOR, self.ROLE_VIEWER}
 
+    def can_access_tournament(self, tournament_id):
+        """A null assignment is global; an assigned account stays in its tournament."""
+        return tournament_id is not None and (
+            self.tournament_id is None or int(self.tournament_id) == int(tournament_id)
+        )
+
     @property
     def can_manage_users(self):
         return self.is_admin

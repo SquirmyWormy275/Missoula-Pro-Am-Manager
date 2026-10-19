@@ -31,7 +31,11 @@
             Leave blank for no payout at that place.
           </p>
 
+          {% if not current_user.can_manage_payouts %}
+          <p class="alert alert-info">Only judges and administrators can change relay payouts.</p>
+          {% endif %}
           <form method="POST" id="relayPayoutForm">
+            <fieldset{% if not current_user.can_manage_payouts %} disabled{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="expected_payout_digest" value="{{ expected_payout_digest }}">
 
@@ -86,6 +90,7 @@
                 <i class="bi bi-arrow-left"></i> Back to Relay Dashboard
               </a>
             </div>
+            </fieldset>
           </form>
         </div>
       </div>

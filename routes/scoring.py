@@ -139,8 +139,7 @@ def _current_user_id() -> int | None:
 def _current_user_can_score_tournament(tournament_id: int) -> bool:
     if not current_user.is_authenticated or not getattr(current_user, 'can_score', False):
         return False
-    user_tournament_id = getattr(current_user, 'tournament_id', None)
-    return user_tournament_id is None or int(user_tournament_id) == int(tournament_id)
+    return current_user.can_access_tournament(tournament_id)
 
 
 def _acquire_heat_edit_lock(heat: Heat, user_id: int) -> tuple[Heat, bool]:
