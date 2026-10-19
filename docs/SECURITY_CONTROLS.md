@@ -1,8 +1,9 @@
 # Security controls and rollout
 
-Release 2.14.17 responds to the October 19, 2026 Security Cloud scan of revision
-`3a61ec7`. They do not deploy the application, change existing credentials, send
-email, apply database migrations, or modify tournament results.
+Release 2.14.17 addresses the October 19, 2026 Security Cloud findings for revision
+`3a61ec7` with stronger account provisioning, access controls, resource limits and
+transport checks. Existing administrator credentials, stored portal PINs and
+tournament results are preserved. This release adds no schema migration.
 
 ## Account and portal provisioning
 
