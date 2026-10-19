@@ -134,7 +134,7 @@
                     {% endif %}
 
                     {% if current_user.is_authenticated %}
-                    <form method="POST" action="{{ url_for('auth.logout') }}" class="d-inline">
+                    <form method="POST" action="{{ url_for('auth.logout') }}" class="d-inline" data-offline-logout>
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button class="btn btn-outline-light btn-sm" type="submit"
                                 aria-label="Log out" title="Logout">
@@ -849,6 +849,20 @@
         }());
     </script>
 
+    <script>
+    window.ProAmCurrentUser = {% if current_user.is_authenticated %}{{ {'issuer_user_id': current_user.id, 'issuer_role': current_user.role}|tojson }}{% else %}null{% endif %};
+    // Queue contents stay on this device; only their original account can open them.
+    var pageQueueOwner = window.ProAmCurrentUser ?
+        String(window.ProAmCurrentUser.issuer_user_id) + ':' + window.ProAmCurrentUser.issuer_role : '';
+    localStorage.setItem('proam_active_queue_owner_v1', pageQueueOwner);
+    function lockPreviousAccountPage() {
+        if (pageQueueOwner && localStorage.getItem('proam_active_queue_owner_v1') !== pageQueueOwner) {
+            document.body.textContent = 'This page belongs to a previous login. Reopen the app to continue. Pending scores are preserved for their original account.';
+        }
+    }
+    window.addEventListener('pageshow', lockPreviousAccountPage);
+    window.addEventListener('storage', lockPreviousAccountPage);
+    </script>
     {% block extra_js %}{% endblock %}
 
     <!-- Mobile sidebar drawer JS + swipe-to-close (items 9, 23) -->

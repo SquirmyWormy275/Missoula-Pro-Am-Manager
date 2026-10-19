@@ -1,6 +1,11 @@
-# Missoula Pro Am Manager — V2.14.17
+# Missoula Pro Am Manager — V2.14.18
 
 A web-based tournament management system for the Missoula Pro Am timbersports competition.
+
+V2.14.18 strengthens portal PIN revocation, financial permissions, offline account
+isolation and deployment tool verification. Existing credentials and scores are
+preserved. See [Security controls and rollout](docs/SECURITY_CONTROLS.md) before
+preparing offline devices for this update.
 
 ## Quick Start
 
@@ -578,4 +583,4 @@ Operational docs:
 ---
 
 *Setup and version references checked October 11, 2026. Application version:
-2.14.17, as declared in [pyproject.toml](pyproject.toml).*
+2.14.18, as declared in [pyproject.toml](pyproject.toml).*

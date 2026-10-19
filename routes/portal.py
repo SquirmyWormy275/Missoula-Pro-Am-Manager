@@ -14,6 +14,7 @@ from flask import (
 )
 from flask_login import current_user, login_required
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 
 from config import TournamentStatus
 from database import db
@@ -176,6 +177,7 @@ def spectator_relay_results(tournament_id):
 
 
 @portal_bp.route('/spectator/<int:tournament_id>/event/<int:event_id>')
+@write_limit('30 per minute')
 def spectator_event_results(tournament_id, event_id):
     """Public event results page with heat/ranking sorting options."""
     view_mode = _resolve_view_mode(prefer_mobile=True)
@@ -191,8 +193,13 @@ def spectator_event_results(tournament_id, event_id):
     if sort_by not in {'ranking', 'heat'}:
         sort_by = 'ranking'
 
-    ranking_rows = _build_event_ranking_rows(event)
-    heat_rows = _build_event_heat_rows(event)
+    rows = _cached_public_payload(
+        f'portal:event:{tournament_id}:{event_id}:{sort_by}',
+        lambda: (_build_event_heat_rows(event) if sort_by == 'heat'
+                 else _build_event_ranking_rows(event)),
+    )
+    ranking_rows = rows if sort_by == 'ranking' else []
+    heat_rows = rows if sort_by == 'heat' else []
 
     return render_template(
         'portal/event_results.html',
@@ -538,7 +545,10 @@ def _build_event_ranking_rows(event: Event):
 
 
 def _build_event_heat_rows(event: Event):
-    heats = event.heats.order_by(Heat.heat_number, Heat.run_number).all()
+    heats = event.heats.options(selectinload(Heat.assignments)).order_by(
+        Heat.heat_number, Heat.run_number).all()
+    comp_lookup = _event_competitor_lookup(
+        event, [cid for heat in heats for cid in heat.get_competitors()])
     result_lookup = {
         int(r.competitor_id): r
         for r in event.results.filter_by(status='completed').all()
@@ -547,7 +557,6 @@ def _build_event_heat_rows(event: Event):
     heat_rows = []
     for heat in heats:
         comp_ids = [int(cid) for cid in heat.get_competitors() if cid is not None]
-        comp_lookup = _event_competitor_lookup(event, comp_ids)
         assignments = heat.get_stand_assignments()
         competitors = []
         for comp_id in comp_ids:
@@ -668,54 +677,71 @@ def _build_pro_spectator_payload(tournament: Tournament) -> dict:
 # ---------------------------------------------------------------------------
 
 @portal_bp.route('/kiosk/<int:tournament_id>')
+@write_limit('30 per minute')
 def kiosk(tournament_id):
     """Auto-rotating fullscreen kiosk display for TV/projector."""
     tournament = db.get_or_404(Tournament, tournament_id)
+    payload = _cached_public_payload(
+        f'portal:kiosk:{tournament_id}', lambda: _build_kiosk_payload(tournament))
+    return render_template('portal/kiosk.html', tournament=tournament, **payload)
 
+
+def _build_kiosk_payload(tournament):
+    """Load the public display in bounded query batches, caching plain data."""
     # College team standings
-    from models import Team
     college_teams = tournament.teams.order_by(Team.total_points.desc()).limit(10).all()
-
     # Pro top earners
-    pro_competitors = tournament.pro_competitors.filter_by(status='active').all()
-    pro_top = sorted(pro_competitors, key=lambda c: c.total_earnings or 0, reverse=True)[:10]
-
+    pro_top = tournament.pro_competitors.filter_by(status='active').order_by(
+        ProCompetitor.total_earnings.desc(), ProCompetitor.id).limit(10).all()
     # Most recently completed events
     recent_events = tournament.events.filter_by(status='completed').order_by(
         Event.id.desc()).limit(5).all()
     recent_results = []
+    # Five recent events bound this loop independently of tournament size.
     for event in recent_events:
-        top3 = event.results.filter(
-            EventResult.final_position != None
-        ).order_by(EventResult.final_position).limit(3).all()
+        top3 = event.results.filter(EventResult.final_position.isnot(None)).order_by(
+            EventResult.final_position).limit(3).all()
         if top3:
-            recent_results.append({'event': event, 'results': top3})
-
-    # Active heats (in progress)
-    active_heats = []
-    from models import Heat
-    for event in tournament.events.filter_by(status='in_progress').all():
-        heats = event.heats.filter_by(status='in_progress').limit(4).all()
-        for heat in heats:
-            comp_ids = heat.get_competitors()
-            if event.event_type == 'college':
-                comps = CollegeCompetitor.query.filter(CollegeCompetitor.id.in_(comp_ids)).all()
-            else:
-                comps = ProCompetitor.query.filter(ProCompetitor.id.in_(comp_ids)).all()
-            active_heats.append({
-                'event': event,
-                'heat': heat,
-                'competitors': comps,
+            recent_results.append({
+                'event': {'display_name': event.display_name, 'scoring_type': event.scoring_type},
+                'results': [{'final_position': r.final_position,
+                             'competitor_name': r.competitor_name,
+                             'result_value': r.result_value} for r in top3],
             })
 
-    return render_template(
-        'portal/kiosk.html',
-        tournament=tournament,
-        college_teams=college_teams,
-        pro_top=pro_top,
-        recent_results=recent_results,
-        active_heats=active_heats,
-    )
+    # Active heats (in progress)
+    active_events = tournament.events.filter_by(status='in_progress').all()
+    event_lookup = {event.id: event for event in active_events}
+    ranked_heats = db.session.query(
+        Heat.id.label('id'),
+        func.row_number().over(partition_by=Heat.event_id, order_by=Heat.id).label('row_number'),
+    ).filter(Heat.event_id.in_(event_lookup), Heat.status == 'in_progress').subquery()
+    heats = Heat.query.join(ranked_heats, Heat.id == ranked_heats.c.id).filter(
+        ranked_heats.c.row_number <= 4).options(selectinload(Heat.assignments)).order_by(
+            Heat.event_id, Heat.id).all()
+    ids_by_kind = {'college': set(), 'pro': set()}
+    for heat in heats:
+        ids_by_kind[event_lookup[heat.event_id].event_type].update(heat.get_competitors())
+    competitors = {}
+    for kind, model in [('college', CollegeCompetitor), ('pro', ProCompetitor)]:
+        competitors[kind] = {c.id: c.name for c in model.query.filter(
+            model.id.in_(ids_by_kind[kind])).all()} if ids_by_kind[kind] else {}
+    active_heats = []
+    for heat in heats:
+        event = event_lookup[heat.event_id]
+        names = competitors[event.event_type]
+        active_heats.append({
+            'event': {'display_name': event.display_name},
+            'heat': {'heat_number': heat.heat_number},
+            'competitors': [{'name': names[cid]} for cid in heat.get_competitors() if cid in names],
+        })
+    return {
+        'college_teams': [{'school_name': team.school_name, 'team_code': team.team_code,
+                           'total_points': team.total_points} for team in college_teams],
+        'pro_top': [{'display_name': c.display_name, 'total_earnings': c.total_earnings} for c in pro_top],
+        'recent_results': recent_results,
+        'active_heats': active_heats,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1086,6 +1112,7 @@ def user_guide():
                  methods=['GET', 'POST'])
 # Rate limit: blocks 4-digit PIN brute force (10000 combos / 5 per min = 33 hours).
 @write_limit('5 per minute')
+@credential_limit('tournament_id', 'competitor_type', 'competitor_id')
 def competitor_my_results(tournament_id, competitor_type, competitor_id):
     """
     Self-service page for a competitor to view their own:
@@ -1114,12 +1141,13 @@ def competitor_my_results(tournament_id, competitor_type, competitor_id):
 
     # Session auth check — key set by competitor_dashboard / competitor_claim
     session_key = f'competitor_auth_{tournament_id}_{competitor_type}_{competitor_id}'
-    if not session.get(session_key):
+    session.pop(session_key, None)
+    if not _can_access_competitor_page(tournament_id, competitor_type, competitor_id):
         # PIN gate
         if request.method == 'POST':
             pin = (request.form.get('pin') or '').strip()
             if competitor.check_portal_pin(pin):
-                session[session_key] = True
+                _mark_competitor_session_authorized(tournament_id, competitor_type, competitor_id)
             else:
                 flash('Incorrect PIN. Please try again.', 'error')
                 return render_template(
@@ -1130,9 +1158,9 @@ def competitor_my_results(tournament_id, competitor_type, competitor_id):
                 )
         elif not competitor.has_portal_pin:
             # SECURITY FIX (CSO #3): refuse open access by ID enumeration. Send the
-            # visitor through the claim flow which forces them to prove identity by
-            # name lookup AND set a PIN before reading any personal data.
-            flash('Set a PIN before viewing your results.', 'info')
+            # visitor through the claim flow. PIN provisioning now requires an
+            # administrator; name lookup alone cannot authorize personal data.
+            flash('Ask an administrator to issue your portal PIN before viewing your results.', 'info')
             return redirect(url_for(
                 'portal.competitor_claim',
                 tournament_id=tournament_id,

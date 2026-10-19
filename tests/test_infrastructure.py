@@ -911,6 +911,8 @@ class TestCacheInvalidation:
                 'reports:7:',
                 'portal:college:7:',
                 'portal:pro:7:',
+                'portal:event:7:',
+                'portal:kiosk:7:',
                 'api:standings-poll:7:',
             ]
             actual_prefixes = [call.args[0] for call in mock_inv.call_args_list]

@@ -615,10 +615,16 @@
             el.dataset.eventId = String(item.event_id);
             el.dataset.competitorName = item.name;
             if (item.partner_id) { el.dataset.partnerId = String(item.partner_id); }
-            el.innerHTML =
-                '<i class="bi bi-grip-vertical"></i>' +
-                '<span class="bin-item-event">' + item.event_name + '</span>' +
-                '<span>' + item.name + '</span>';
+            var grip = document.createElement('i');
+            grip.className = 'bi bi-grip-vertical';
+            var eventLabel = document.createElement('span');
+            eventLabel.className = 'bin-item-event';
+            eventLabel.textContent = item.event_name;
+            var competitorLabel = document.createElement('span');
+            competitorLabel.textContent = item.name;
+            el.appendChild(grip);
+            el.appendChild(eventLabel);
+            el.appendChild(competitorLabel);
             binItemsEl.appendChild(el);
         });
         binCountEl.textContent = items.length + (items.length === 1 ? ' competitor' : ' competitors');

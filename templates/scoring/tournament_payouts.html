@@ -69,6 +69,7 @@
 {% endblock %}
 
 {% block content %}
+{% if not current_user.can_manage_payouts %}<div class="alert alert-info">Your account can view these amounts. Financial changes require an administrator or judge.</div>{% endif %}
 <div class="container-fluid py-4">
 
   {# ── breadcrumb ──────────────────────────────────────────────────────── #}
@@ -112,6 +113,7 @@
       <div class="card mb-3" style="border-color:rgba(243,159,27,0.3);">
         <div class="card-body py-2 px-3">
           <form method="POST" id="bulkForm">
+<fieldset {% if not current_user.can_manage_payouts %}disabled{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="bulk_apply">
             <div class="row g-2 align-items-center">
@@ -141,7 +143,7 @@
                 </button>
               </div>
             </div>
-          </form>
+          </fieldset></form>
         </div>
       </div>
 
@@ -271,13 +273,14 @@
                     {% if row.purse > 0 %}
                     <form method="POST" class="d-inline"
                           data-confirm="Clear all payouts for {{ ev.display_name }}?">
+<fieldset {% if not current_user.can_manage_payouts %}disabled{% endif %}>
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <input type="hidden" name="action" value="clear_event">
                       <input type="hidden" name="event_id" value="{{ ev.id }}">
                       <button type="submit" class="btn btn-outline-danger" title="Clear payouts">
                         <i class="bi bi-x-circle"></i>
                       </button>
-                    </form>
+                    </fieldset></form>
                     {% endif %}
                   </div>
                 </td>
@@ -357,6 +360,7 @@
                 </button>
                 <form method="POST" class="d-inline"
                       data-confirm="Delete template '{{ tpl.name }}'?">
+<fieldset {% if not current_user.can_manage_payouts %}disabled{% endif %}>
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="action" value="delete_template">
                   <input type="hidden" name="template_id" value="{{ tpl.id }}">
@@ -364,7 +368,7 @@
                           style="font-size:.7rem; padding:1px 6px;" title="Delete template">
                     <i class="bi bi-trash"></i>
                   </button>
-                </form>
+                </fieldset></form>
               </div>
             </div>
           </div>
@@ -424,6 +428,7 @@
           <hr class="my-3">
 
           <form method="POST" id="newTemplateForm">
+<fieldset {% if not current_user.can_manage_payouts %}disabled{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="save_template">
 
@@ -475,7 +480,7 @@
                 <i class="bi bi-bookmark-check me-1"></i>Save
               </button>
             </div>
-          </form>
+          </fieldset></form>
 
         </div>
       </div>

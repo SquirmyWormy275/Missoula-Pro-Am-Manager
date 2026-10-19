@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Event Fee Configuration — {{ tournament.name }}{% endblock %}
 {% block content %}
+{% if not current_user.can_manage_fees %}<div class="alert alert-info">Your account can view these amounts. Financial changes require an administrator, judge or registrar.</div>{% endif %}
 <div class="container-fluid py-3">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h4 class="mb-0">Pro Event Fee Configuration</h4>
@@ -24,6 +25,7 @@
     {% endwith %}
 
     <form method="post">
+    <fieldset {% if not current_user.can_manage_fees %}disabled{% endif %}>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <div class="card shadow-sm mb-3">
@@ -87,6 +89,6 @@
             <a href="{{ url_for('reporting.fee_tracker', tournament_id=tournament.id) }}"
                class="btn btn-outline-secondary">Cancel</a>
         </div>
-    </form>
+    </fieldset></form>
 </div>
 {% endblock %}

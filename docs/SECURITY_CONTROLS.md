@@ -1,9 +1,53 @@
 # Security controls and rollout
 
-Release 2.14.17 addresses the October 19, 2026 Security Cloud findings for revision
-`3a61ec7` with stronger account provisioning, access controls, resource limits and
-transport checks. Existing administrator credentials, stored portal PINs and
+Release 2.14.18 adds the verification-scan repairs to the 2.14.17 account,
+access-control, resource-limit and transport protections. Existing administrator credentials, stored portal PINs and
 tournament results are preserved. This release adds no schema migration.
+
+## Verification follow-up (2.14.18)
+
+Flight holding-bin labels render stored names as literal text. Content security
+policy also restricts form destinations to this application and disallows base
+URL overrides. Language switches accept only safe local redirect paths.
+
+Scorers retain score entry and scheduling. Entry-fee configuration and payment
+tracking require an administrator, judge or registrar. Payout configuration and
+templates require a judge or administrator; the existing settlement toggles
+remain administrator-only. Financial controls are disabled for read-only roles.
+
+Both competitor PIN entry paths use the same current-hash session proof and
+same target rate bucket. A replaced PIN revokes the older personal-results
+session too. A legacy Boolean session must unlock once with the existing PIN.
+
+Public event results build only the requested ranking or heat view, batch heat
+rosters, and cache plain results for five seconds on SQLite. The kiosk fetches
+only ten earners and batches active heats. PostgreSQL retains its existing
+uncached behavior to avoid cross-worker stale results. Both routes allow thirty
+requests per minute per source, comfortably above the display refresh cadence.
+
+Offline score pages require explicit preparation by the current account. General
+score-page HTML caches are retired. Logout and account changes invalidate prepared
+pages and lock already-open pages from the previous account. Pending scores stay
+on this device, but queue display, export, import, removal and replay belong to
+the original account. Sign back in as that account to reconcile them. Scores
+without an original account binding are retained for manual recovery, never
+silently assigned to the new account. Do not clear browser site data before all
+scores are reconciled. After this update, prepare offline pages again while
+online; existing pending scores are preserved.
+
+Repair-script follow-up instructions refer to the privately configured
+`DATABASE_URL` instead of printing credentials or URL query parameters.
+
+The optional production audit runs only from `main`, uses a minimal, completely
+hash-locked wheel set (`requirements-audit.lock`, Python 3.10/Linux x86_64), and
+installs no application or model plugins. Secret-bearing workflows pin actions
+to commit IDs. Backup PostgreSQL server and clients use the same official 18.6
+image digest; age 1.3.2 is verified against its release SHA-256 before execution.
+A separate CI job rehearses dump, encryption, decryption and restore using only
+disposable synthetic data. Updating these pins requires reviewing the official
+release provenance and rerunning that rehearsal. Existing recipient approval,
+read-only dump credentials, local-only restore guards and ciphertext-only
+artifact retention remain enforced.
 
 ## Account and portal provisioning
 

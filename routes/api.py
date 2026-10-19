@@ -82,13 +82,16 @@ def credential_limit(*fields):
         values = []
         for field in fields:
             source = request.form if field == 'username' else request.values
-            if field in {'tournament_id', 'competitor_id'}:
+            if field in (request.view_args or {}):
+                value = request.view_args[field]
+            elif field in {'tournament_id', 'competitor_id'}:
                 value = source.get(field, type=int)
             else:
                 value = str(source.get(field, '')).strip().casefold()
             values.append(value)
         return hashlib.sha256(repr(values).encode()).hexdigest()
-    return _limiter.limit('5 per minute; 30 per hour', key_func=key, methods=['POST'])
+    return _limiter.shared_limit('5 per minute; 30 per hour', scope='credential:' + ','.join(fields),
+                                 key_func=key, methods=['POST'])
 
 
 def _limit(rate: str):

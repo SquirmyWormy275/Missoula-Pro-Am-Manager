@@ -3,13 +3,13 @@ Competitor my-results page tests — the self-service personal results portal
 at /portal/competitor/<tid>/<type>/<id>/my-results.
 
 Tests the full lifecycle:
-  - No-PIN competitors get open access
+  - No-PIN competitors require administrator provisioning
   - PIN-protected competitors see PIN gate first
   - Correct PIN grants access + session persists
   - Wrong PIN shows error, no access
   - Dashboard shows events entered, heat assignments, results, gear-sharing
   - Invalid competitor type / ID / tournament returns 404
-  - Cross-competitor session isolation (different session key format)
+  - Legacy Boolean claims cannot authorize either personal portal
 
 Run:
     pytest tests/test_competitor_my_results.py -v
@@ -244,8 +244,9 @@ class TestMyResultsData:
     """Verify the my-results page shows correct personal data."""
 
     def _authorize(self, client, tid, comp_id):
-        with client.session_transaction() as sess:
-            sess[f'competitor_auth_{tid}_pro_{comp_id}'] = True
+        response = client.post(
+            f'/portal/competitor/{tid}/pro/{comp_id}/my-results', data={'pin': '4444'})
+        assert response.status_code == 200
 
     def test_shows_events_entered(self, client, tid, pro_pinned):
         self._authorize(client, tid, pro_pinned.id)
@@ -296,22 +297,22 @@ class TestMyResultsInvalid:
 # ---------------------------------------------------------------------------
 
 class TestMyResultsSessionIsolation:
-    """my-results uses a different session key format from competitor/public."""
+    """Neither personal portal accepts legacy Boolean session claims."""
 
     def test_public_auth_does_not_grant_myresults(self, client, tid, pro_pinned):
-        """competitor_portal_auth key does NOT unlock my-results (different key format)."""
+        """A Boolean in the shared map does not prove the current PIN hash."""
         with client.session_transaction() as sess:
             auth = sess.get('competitor_portal_auth', {})
             auth[f'{tid}:pro:{pro_pinned.id}'] = True
             sess['competitor_portal_auth'] = auth
 
         r = client.get(f'/portal/competitor/{tid}/pro/{pro_pinned.id}/my-results')
-        # Should still show PIN gate (different session key)
+        # Should still show PIN gate (no current-hash proof).
         assert r.status_code == 200
         assert b'pin' in r.data.lower()
 
     def test_myresults_auth_does_not_grant_public(self, client, tid, pro_pinned):
-        """competitor_auth_ key does NOT unlock competitor/public (different key)."""
+        """The retired personal-results Boolean cannot unlock the public portal."""
         with client.session_transaction() as sess:
             sess[f'competitor_auth_{tid}_pro_{pro_pinned.id}'] = True
 

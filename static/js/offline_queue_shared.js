@@ -3,6 +3,7 @@
     'use strict';
 
     var KEY = 'proam_heat_score_queue_v1';
+    var OWNER_KEY = 'proam_active_queue_owner_v1';
     var LOCK_PREFIX = KEY + '_mutation_participant_v1:';
     var LOCK_NAME = KEY + '_mutation';
     var SCHEMA_VERSION = 2;
@@ -43,13 +44,31 @@
             hex.slice(16, 20), hex.slice(20)].join('-');
     }
 
-    function read() {
+    function readRaw() {
         try {
             var parsed = JSON.parse(localStorage.getItem(KEY) || '[]');
             return Array.isArray(parsed) ? parsed : [];
         } catch (_err) {
             return [];
         }
+    }
+
+    function ownerKey(owner) {
+        return owner && owner.issuer_user_id && owner.issuer_role ?
+            String(owner.issuer_user_id) + ':' + String(owner.issuer_role) : '';
+    }
+
+    function currentOwner() {
+        var owner = ownerKey(window.ProAmCurrentUser);
+        return owner && localStorage.getItem(OWNER_KEY) === owner ? owner : '';
+    }
+
+    function owns(entry) {
+        return Boolean(currentOwner() && ownerKey(entry) === currentOwner());
+    }
+
+    function read() {
+        return readRaw().filter(owns);
     }
 
     function writeRaw(queue) {
@@ -177,8 +196,16 @@
     async function mutateQueue(mutator, verifier) {
         return withQueueLock(async function () {
             for (var attempt = 0; attempt < MAX_MUTATION_ATTEMPTS; attempt += 1) {
-                var next = normalizeQueue(mutator(read().slice()));
-                writeRaw(next);
+                var owner = currentOwner();
+                if (!owner) throw new QueueError('issuer_mismatch',
+                    'Sign in as the score owner before opening the offline queue.');
+                var allEntries = readRaw();
+                var retained = allEntries.filter(function (entry) { return !owns(entry); });
+                var next = normalizeQueue(mutator(allEntries.filter(owns)));
+                if (currentOwner() !== owner || next.some(function (entry) { return !owns(entry); })) {
+                    throw new QueueError('issuer_mismatch', 'Queued scores belong to another account.');
+                }
+                writeRaw(retained.concat(next));
                 var committed = read();
                 if (containsExpected(committed, next) && verifier(committed, next)) {
                     return committed;
@@ -273,6 +300,8 @@
     }
 
     function upsert(entry) {
+        if (!owns(entry)) return Promise.reject(new QueueError('issuer_mismatch',
+            'Queued scores belong to another account.'));
         return mutateQueue(function (queue) {
             queue = queue.filter(function (item) {
                 return String(item.request_id || '') !== String(entry.request_id || '');
@@ -328,6 +357,10 @@
     }
 
     function merge(entries) {
+        if ((entries || []).some(function (entry) { return !owns(entry); })) {
+            return Promise.reject(new QueueError('issuer_mismatch',
+                'Import scores only while signed in as their original owner.'));
+        }
         return mutateQueue(function (queue) {
             var known = {};
             queue.forEach(function (item, index) {
